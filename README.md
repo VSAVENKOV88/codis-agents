@@ -13,7 +13,7 @@ post-check that keeps read-only roles read-only, and hooks that refuse blanket s
 | path | what |
 |---|---|
 | `workflows/role-chain.js` | the chain: preconditions -> (analyst) -> programmer -> tester -> reviewer (+ security reviewer); fix rounds; an analyst after the second rejection |
-| `agents/*.md` | role agents: `analyst`, `programmer`, `tester`, `reviewer`, `security-reviewer` (tester and reviewers have no Edit/Write/NotebookEdit) |
+| `agents/*.md` | role agents: `analyst`, `programmer`, `tester`, `reviewer`, `security-reviewer` (all may edit files - the tester its guards, the reviewers their reports; what they may change in the worktree is enforced by the git post-check, not by tool lists) |
 | `skills/role-chain` | reads the project config and starts the workflow |
 | `skills/brief` | how to write a task brief |
 | `skills/coordinator` | the coordinator's loop |
@@ -84,6 +84,22 @@ Git hooks for all worktrees of the project (optional; the Claude Code hook cover
 git -C <repo> config core.hooksPath /path/to/codis-agents/scripts/git-hooks
 ```
 
+`core.hooksPath` holds one directory, so the plugin's `pre-commit` runs the project's own checks for it: list them in
+`gitHooks.preCommit`. Each entry is a shell command run in the repository root; a non-zero exit refuses the commit and
+its output is shown. Keep project-specific checks (a bundle that must match its sources, a secrets scanner) in the
+project, for example in its `.githooks/`, and call them from there:
+
+```json
+"gitHooks": {
+  "blockICloudCopies": true,
+  "preCommit": ["node .githooks/pre-commit.js"]
+}
+```
+
+If the project keeps its own hooks directory as `core.hooksPath` instead, call the plugin from it:
+`node /path/to/codis-agents/scripts/git-hooks/pre-commit.js` in its `pre-commit`, and pipe stdin to
+`/path/to/codis-agents/scripts/git-hooks/pre-push "$@"` in its `pre-push`.
+
 ## Run a chain
 
 1. Write a brief: `<sharedDir>/<task>/BRIEF.md` with the owner's words verbatim and dated, the scope, and the
@@ -118,7 +134,10 @@ Each task ends `done` or `stopped` with the reason, the open questions, a propos
   the tester. A second rejection for code brings the analyst into the same run for one more round; after that the
   coordinator decides.
 - **Post-checks**: after the tester and each reviewer, `role-diff-check.js` compares the worktree with the previous
-  role's HEAD; any change a role may not make stops the chain.
+  role's HEAD; any change a role may not make stops the chain. This, not a tool list, keeps product code out of their
+  reach: a hook on Edit/Write would miss `sed -i`, `python -c`, a heredoc or a `git checkout`, while the post-check
+  sees the result. The tester may change only paths matching `testerWritable` (guards and fixtures); the reviewers
+  nothing in the worktree (their reports live in `sharedDir`).
 - Every role prompt carries the marked rules of `rules/multi-agent.md`: wait at most 270 s at a time, hand over past
   ~200k of context, open questions go to the coordinator, stage by path, never push.
 
