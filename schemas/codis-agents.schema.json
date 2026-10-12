@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "codis-agents project configuration (.claude/codis-agents.json)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["repoDir", "worktreeRoot", "sharedDir"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "repoDir": { "type": "string", "description": "Main checkout of the project; worktrees are created from it. ~ is expanded." },
+    "worktreeRoot": { "type": "string", "description": "Directory that holds one worktree per task; a worktree name is resolved against it." },
+    "sharedDir": { "type": "string", "description": "Task folders live here: <sharedDir>/<task>/{BRIEF,analyst,prog,test,review}.md. Guard logs go here too." },
+    "guardCommand": { "type": "string", "description": "Full guard run, executed with zsh in the worktree. Placeholders: {wt} worktree directory, {jobs} worker count from the slot budget, {limitFile} (optional) file the runner re-reads for an adaptive worker limit." },
+    "guardCommandLegacy": { "type": "string", "description": "Guard command for worktrees whose runner has no adaptive limit (no {limitFile}). Used when guardAdaptiveProbe fails." },
+    "guardAdaptiveProbe": {
+      "type": "object", "additionalProperties": false, "required": ["file", "contains"],
+      "properties": { "file": { "type": "string", "description": "Path relative to the worktree." }, "contains": { "type": "string" } },
+      "description": "When set, guardCommand is used only if <wt>/<file> contains <contains>; otherwise guardCommandLegacy."
+    },
+    "worktreeSetup": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "scan": { "type": "array", "items": { "type": "string" }, "description": "Directories whose git-ignored contents are copied into a new worktree." },
+        "skip": { "type": "array", "items": { "type": "string" }, "description": "Globs of ignored paths that are not copied." },
+        "link": { "type": "array", "items": { "type": "string" }, "description": "Globs of ignored paths that are symlinked instead of cloned. Everything else is an APFS clone (cp -c), never a link." }
+      }
+    },
+    "slots": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "medium": { "type": "integer", "minimum": 1, "description": "Medium slots (tsc, one bundler build without a browser)." },
+        "heavy": { "type": "integer", "minimum": 1, "description": "Heavy slots (browser guards, full guard runs, image builds). One more is admitted only while free memory holds and swap does not grow." },
+        "total": { "type": "integer", "minimum": 1, "description": "Ceiling for medium + heavy slots together." },
+        "lockDir": { "type": "string", "description": "Directory for slot lock files and the waiting queue." },
+        "legacyLock": { "type": "string", "description": "Optional single lock file of an older setup; while held it counts as one heavy slot." },
+        "jobsAlone": { "type": "integer", "minimum": 1, "description": "Guard workers of all full runs together; a lone full run gets all of them." },
+        "jobsShared": { "type": "integer", "minimum": 1, "description": "Worker cap for a full run while another heavy slot is busy." }
+      }
+    },
+    "reportLanguage": { "type": "string", "description": "Language of role reports (prompts stay in English)." },
+    "protectedBranches": { "type": "array", "items": { "type": "string" }, "description": "Branches nobody pushes to without ALLOW_PROTECTED_PUSH=1." },
+    "protectedTagPattern": { "type": "string", "description": "Regular expression for tag names that must not be pushed without ALLOW_PROTECTED_PUSH=1 (e.g. release tags that deploy)." },
+    "ownerStackReadOnly": { "type": "string", "description": "Docker Compose project of the owner: roles may only read from it." },
+    "medianTaskIE": { "type": "number", "description": "Median input-equivalent tokens of an accepted task; chain-cost flags tasks above twice this." },
+    "testerWritable": { "type": "array", "items": { "type": "string" }, "description": "Regular expressions of paths the tester may change (guards and their fixtures)." },
+    "roleNotes": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "analyst": { "type": "string" }, "programmer": { "type": "string" }, "tester": { "type": "string" },
+        "reviewer": { "type": "string" }, "security-reviewer": { "type": "string" }
+      },
+      "description": "Project-specific lines appended to one role's prompt."
+    },
+    "threatModel": { "type": "string", "description": "Path (relative to the worktree) of the threat model the security reviewer reads." },
+    "gitHooks": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "blockICloudCopies": { "type": "boolean", "description": "pre-commit refuses files named like iCloud conflict copies (\"name 2.ext\")." },
+        "preCommit": { "type": "array", "items": { "type": "string" }, "description": "Extra shell commands run by pre-commit in the repository root; a non-zero exit refuses the commit." }
+      }
+    }
+  }
+}

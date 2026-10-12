@@ -1,0 +1,17 @@
+{
+  "description": "codis-agents: refuses `git add -A` / `git add .` and pushes to protected branches or of protected tags without ALLOW_PROTECTED_PUSH=1. Active only in projects with .claude/codis-agents.json.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/hooks/guard-bash.js\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

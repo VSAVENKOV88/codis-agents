@@ -1,0 +1,131 @@
+#!/usr/bin/env node
+'use strict';
+// Claude Code PreToolUse hook on Bash (hooks/hooks.json). Refuses:
+//  * `git add -A` / `--all` / `.` / `:/` - stage files by path (cloud-synced folders spawn conflict copies, and a
+//    blanket add sweeps in scratch files of other agents);
+//  * `git push` to a protected branch, of a protected tag, or `--all` / `--mirror` / `--tags` / `--follow-tags`
+//    (project config "protectedBranches", "protectedTagPattern") unless ALLOW_PROTECTED_PUSH=1 is set, inline or in
+//    the environment, on the owner's explicit word.
+// Active only in projects that have .claude/codis-agents.json: the plugin is opt-in per project.
+// The git pre-push hook (scripts/git-hooks/pre-push) is the last line; this hook explains the refusal to the agent
+// before anything runs.
+const path = require('path');
+const { spawnSync } = require('child_process');
+const { find, load } = require(path.join(__dirname, '..', 'config.js'));
+
+// Splits a command line into simple commands (on && || ; | & and newlines) and words, honouring quotes.
+function parse(line) {
+  const cmds = [];
+  let words = [], w = null, i = 0;
+  const end = () => { if (w !== null) { words.push(w); w = null; } };
+  const cut = () => { end(); if (words.length) cmds.push(words); words = []; };
+  while (i < line.length) {
+    const ch = line[i];
+    if (ch === "'") { const j = line.indexOf("'", i + 1); w = (w || '') + line.slice(i + 1, j < 0 ? line.length : j); i = j < 0 ? line.length : j + 1; continue; }
+    if (ch === '"') {
+      let j = i + 1, s = '';
+      while (j < line.length && line[j] !== '"') { if (line[j] === '\\' && j + 1 < line.length) j++; s += line[j]; j++; }
+      w = (w || '') + s; i = j + 1; continue;
+    }
+    if (ch === '\\' && i + 1 < line.length) { w = (w || '') + line[i + 1]; i += 2; continue; }
+    if (/[;&|\n()]/.test(ch)) { cut(); i++; continue; }
+    if (/\s/.test(ch)) { end(); i++; continue; }
+    w = (w || '') + ch; i++;
+  }
+  cut();
+  return cmds;
+}
+
+const GIT_GLOBAL_WITH_VALUE = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--exec-path', '--config-env']);
+const PUSH_WITH_VALUE = new Set(['-o', '--push-option', '--repo', '--receive-pack', '--exec', '--signed']);
+
+// -> null (allowed) or a refusal reason.
+function judge(words, ctx) {
+  let i = 0, allow = ctx.env.ALLOW_PROTECTED_PUSH === '1';
+  while (i < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i])) { if (words[i] === 'ALLOW_PROTECTED_PUSH=1') allow = true; i++; }
+  if (words[i] === 'env') { i++; while (i < words.length && /=/.test(words[i])) { if (words[i] === 'ALLOW_PROTECTED_PUSH=1') allow = true; i++; } }
+  if (!(words[i] === 'git' || /\/git$/.test(words[i] || ''))) return null;
+  i++;
+  let dir = ctx.cwd;
+  while (i < words.length && words[i].startsWith('-')) {
+    const o = words[i];
+    if (GIT_GLOBAL_WITH_VALUE.has(o)) { if (o === '-C') dir = path.resolve(dir, words[i + 1] || ''); i += 2; } else i++;
+  }
+  const sub = words[i], args = words.slice(i + 1);
+  if (sub !== 'add' && sub !== 'push') return null;
+  const cfg = ctx.cfgFor(dir);
+  if (!cfg) return null;
+  if (sub === 'add') {
+    const blanket = args.find((a) => a === '-A' || a === '--all' || a === '--no-ignore-removal' || a === '.' || a === './' || a === ':/' || /^-[a-zA-Z]*A[a-zA-Z]*$/.test(a));
+    if (blanket) return `\`git add ${blanket}\` is refused: stage files by path (git add <path>...), never everything at once.`;
+    return null;
+  }
+  if (sub !== 'push' || allow) return null;
+  const tagRe = new RegExp(cfg.protectedTagPattern);
+  const pos = [];
+  for (let k = 0; k < args.length; k++) {
+    const a = args[k];
+    if (a === '--all' || a === '--mirror') return `\`git push ${a}\` is refused: it pushes protected refs too. Push your branch by name.`;
+    if (a === '--tags' || a === '--follow-tags') return `\`git push ${a}\` is refused: tags matching ${cfg.protectedTagPattern} may deploy to production. Push a tag only on the owner's explicit word, with ALLOW_PROTECTED_PUSH=1.`;
+    if (PUSH_WITH_VALUE.has(a)) { k++; continue; }
+    if (a === '--') continue;
+    if (a.startsWith('-')) continue;
+    pos.push(a);
+  }
+  const g = (...x) => spawnSync('git', ['-C', dir, ...x], { encoding: 'utf8' });
+  const current = () => g('rev-parse', '--abbrev-ref', 'HEAD').stdout.trim();
+  const refspecs = pos.slice(1);
+  const dsts = refspecs.length ? refspecs.map((r) => { const s = r.replace(/^\+/, ''); const c = s.indexOf(':'); return c >= 0 ? s.slice(c + 1) : s; }) : [current()];
+  for (let d of dsts) {
+    if (d === 'HEAD' || d === '@') d = current();
+    let tag = null, branch = null;
+    if (d.startsWith('refs/tags/')) tag = d.slice(10);
+    else if (d.startsWith('refs/heads/')) branch = d.slice(11);
+    else {
+      // A bare name: a branch, or a tag when such a tag exists or no branch of that name does (git would push the
+      // tag, or fail - refusing early is safe).
+      branch = d;
+      const isTag = g('show-ref', '--verify', '--quiet', 'refs/tags/' + d).status === 0;
+      const isBranch = g('show-ref', '--verify', '--quiet', 'refs/heads/' + d).status === 0;
+      if (isTag || !isBranch) tag = d;
+    }
+    if (branch && cfg.protectedBranches.includes(branch)) return `\`git push\` to ${branch} is refused: ${branch} is protected. Work on a branch; pushing or merging into ${branch} is the owner's call (ALLOW_PROTECTED_PUSH=1 only on the owner's explicit word).`;
+    if (tag !== null && tagRe.test(tag)) return `\`git push\` of tag ${tag} is refused: it may deploy to production (ALLOW_PROTECTED_PUSH=1 only on the owner's explicit word).`;
+  }
+  return null;
+}
+
+function decide(input, env = process.env) {
+  if (!input || input.tool_name !== 'Bash' || !input.tool_input || typeof input.tool_input.command !== 'string') return null;
+  const cwd = input.cwd || process.cwd();
+  const cache = new Map();
+  const cfgFor = (dir) => {
+    if (!cache.has(dir)) {
+      let file = null;
+      try { file = find(dir, env); } catch { /* no config */ }
+      cache.set(dir, file ? load(file).config : null);
+    }
+    return cache.get(dir);
+  };
+  for (const words of parse(input.tool_input.command)) {
+    const why = judge(words, { cwd, env, cfgFor });
+    if (why) return why;
+  }
+  return null;
+}
+
+module.exports = { parse, decide };
+
+if (require.main === module) {
+  let raw = '';
+  process.stdin.on('data', (d) => { raw += d; });
+  process.stdin.on('end', () => {
+    let input = null;
+    try { input = JSON.parse(raw); } catch { process.exit(0); }
+    const why = decide(input);
+    if (why) {
+      process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: 'codis-agents: ' + why } }));
+    }
+    process.exit(0);
+  });
+}

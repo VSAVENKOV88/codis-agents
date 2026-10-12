@@ -1,0 +1,27 @@
+{
+  "$schema": "../schemas/codis-agents.schema.json",
+  "repoDir": "~/dev/my-app",
+  "worktreeRoot": "~/work-trees",
+  "sharedDir": "~/work-trees/_shared",
+  "guardCommand": "cd {wt}/server && npm run guards -- --all --concurrency {jobs} --concurrency-file {limitFile}",
+  "guardCommandLegacy": "cd {wt}/server && npm run guards -- --all --concurrency {jobs}",
+  "guardAdaptiveProbe": { "file": "server/tools/guards.js", "contains": "--concurrency-file" },
+  "worktreeSetup": {
+    "scan": ["server", "client"],
+    "skip": ["*.DS_Store"],
+    "link": ["*/node_modules", "*/dist"]
+  },
+  "slots": { "medium": 2, "heavy": 2, "total": 4, "lockDir": "~/work-trees/_shared/slots", "jobsAlone": 6, "jobsShared": 3 },
+  "reportLanguage": "English",
+  "protectedBranches": ["main"],
+  "protectedTagPattern": "^v",
+  "ownerStackReadOnly": "my-app",
+  "medianTaskIE": 5000000,
+  "testerWritable": ["-run\\.(js|mjs|cjs)$", "(^|/)(__)?fixtures(__)?/"],
+  "roleNotes": {
+    "programmer": "After changing client/src, rebuild client/bundle.js: a guard compares it with the sources.",
+    "tester": "Visual checks run in both Chromium and WebKit."
+  },
+  "threatModel": "ACCESS.md",
+  "gitHooks": { "blockICloudCopies": true, "preCommit": [] }
+}

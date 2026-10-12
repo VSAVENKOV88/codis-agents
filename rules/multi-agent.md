@@ -1,0 +1,89 @@
+# Multi-agent work: process rules
+
+These are the rules of the codis-agents process. A project imports them from its `CLAUDE.md`
+(`@<plugin>/rules/multi-agent.md`, or a copy) so that the coordinator session follows them.
+
+Workflow agents do **not** see `CLAUDE.md`: a rule reaches a role only through its prompt. Lines marked
+`<!-- role:<id> -->` are therefore carried into every role prompt by `workflows/role-chain.js` (`RULE_LIST`, same id),
+and `tests/role-chain.test.js` fails when a marked line has no rule or a role prompt lacks one.
+
+## Roles
+
+Larger changes run as a chain of agents, each in its own role:
+
+- **Coordinator.** The main session. Writes `BRIEF.md`, launches and routes roles, merges accepted branches and resolves
+  merge conflicts. Does not write product code inside a role's task. When roles disagree or the brief does not answer a
+  question, it writes the question into the brief and asks the owner instead of deciding.
+  - Only the coordinator writes the owner's decisions into a brief: verbatim, dated, in the same turn, before the next
+    action. A role that meets an open question writes it into its own report as "❓ coordinator:" and does not answer it itself (a programmer once recorded "owner's answers" that the owner never gave). <!-- role:decisions -->
+  - The coordinator's own context grows too: around 700k it saves the continuation point and continues in a fresh
+    session or after a compaction, in a pause between runs (an early compaction loses the owner's exact words).
+- **Analyst or diagnoser.** Goes before the programmer when the work needs a spec, or when a defect needs its cause
+  found first. A diagnosis costs little and halves code rejections, so use it by default for defects.
+  - For a feature with several dimensions the analyst first writes a matrix of cases into the brief (every dimension:
+    states x events x environments). Without it each round closed one cell and broke the next.
+  - **Split the task before the first programmer** if any holds: the matrix has more than ~30 cells; it spans more
+    than two subsystems; acceptance depends on a question the owner has not answered; or the change lifts an
+    "inactive while ..." restriction (that creates new pairs of transports). Rounds grow with the number of dimensions,
+    not with lines of code.
+- **Programmer.** Commits a red guard first, then the code: for a defect the guard reproduces it; for a feature it is
+  the brief's acceptance scenario turned into a test before any code.
+- **Tester.** Builds an inventory independently of the programmer (routes, controls, places) and compares the two.
+  Adds guards and mutation-tests them after committing. Does not edit product code. Runs the brief's acceptance
+  scenario in the real environment and puts the evidence (log, screenshot, numbers) into `test.md`.
+- **Reviewer.** Reads only and tries to refute the claim; may rerun guards. Checks the tester's evidence against the
+  acceptance scenario rather than re-running the scenario. Gives a verdict of done or rejected, with file:line. Do not
+  lower the reviewer's effort: it pays for itself (security holes, a guard fed data the server never sends).
+- **Security reviewer.** Only when the brief marks the task as security work (accounts and login, connectors and OAuth,
+  access passes, rollout to a host). Reads the diff with an attacker's view against the project's threat model.
+
+## Order and shortcuts
+
+- If the tester finds red, skip the review and send the task straight back to the programmer.
+- On rejection: a fix round, then a second review. A second rejection for a code defect sends the task to the analyst
+  (cases, cause) inside the same run, then one more full round; a third rejection goes to the coordinator. A question
+  of scope goes to the owner.
+- A rejection only for docs or guard wording is fixed by the programmer and re-reviewed on that diff only, without a
+  tester round. The workflow checks the claim against the changed paths.
+- The tester does not repeat the programmer's full guard run: it reuses the programmer's log, runs the new and touched
+  guards plus mutations, and runs the full suite only after its own commits.
+- After the tester and after each reviewer, a git post-check (`scripts/role-diff-check.js`) compares the worktree with
+  the HEAD of the previous committing role: the tester may change only guards and their fixtures, a reviewer nothing.
+  A violation stops the chain.
+
+## Task folder and reports
+
+- **One shared directory per task**: `<sharedDir>/<task>/` holds `BRIEF.md` and one report per role (`analyst.md`,
+  `prog.md`, `test.md`, `review.md`, `review-sec.md`).
+- Agents write their report as they go. A restarted agent resumes from its report plus `git log`, not from scratch. The report always ends with an up-to-date line "Next step: ...". <!-- role:report -->
+- The brief states the owner's acceptance as a scenario in the real environment ("Add -> the item builds with no tab
+  open"), not just a feature name. The review checks the scenario, not the wording.
+- A workflow gives agents only tasks the owner asked for, and says so explicitly; an agent that sees "the owner asked only for H" next to task F refuses F. <!-- role:scope -->
+
+## Waiting, context and cost
+
+- **Never sit idle longer than 270 s at a time.** Prompt caches of workflow agents expire after about 5 minutes; after a longer pause the whole context is written again (such pauses were 21 % of all token spend before this rule, 7.4 % after it). Run anything long through Bash `run_in_background` and wait with Monitor in slices of at most 270 s. An agent with no output for 10 minutes is killed. A wake-up costs about 0.1 of the context and a cache miss about 1.25, so keeping a cache warm pays off only up to about 45 minutes: for a longer wait, write the report with its next step and finish. <!-- role:pauses -->
+- **Context about 200k is a cost signpost, not a limit.** Every call re-reads the whole context, so a step at 400k costs twice a step at 200k. Past ~200k an agent finishes its current stage instead of starting a new large one; if much work remains, it writes the report with its next step and hands over to a fresh agent; if the task is nearly done, it finishes itself. <!-- role:context -->
+- Size the task so one programmer can finish it (see "Split the task") rather than relying on the handover.
+- After a run, `scripts/chain-cost.js` computes the cost of each task from the transcripts and flags tasks above twice
+  the median (`medianTaskIE`); the next similar task is split.
+
+## Machine and environment
+
+- **Heavy work goes through memory slots, not one shared lock.** Light (read-only agents, guards without a bundler, browser or tsc): no slot. Medium (<= 0.85 GB: tsc, a plugin build, one bundler build without a browser): `scripts/medium.sh <cmd>`. Heavy (~1 GB+: browser and bundler guards, full guard runs, measurements, docker image builds and test stacks): `scripts/heavy.sh <cmd>` and `scripts/guards-all.sh <worktree>`. <!-- role:slots -->
+- A full guard run picks its worker count from what else holds heavy slots: all full runs together never exceed the
+  budget (`slots.jobsAlone`).
+- Guards that share a resource (a fixed port, a shared temp dir or corpus file, a docker project) carry
+  `// guards:exclusive — <reason>` and run one at a time under their own lock.
+- **Docker.** The owner's stack is read-only for roles (`docker cp` out is fine); writing into its containers needs explicit consent. Only a tester runs its own stack, and only when the brief asks for one. <!-- role:docker -->
+- A step that changes process launch, permissions, Docker or the runtime version is accepted only after a smoke run in
+  the real image (an own compose project, torn down after).
+- **Worktrees get their own copy of ignored data** (an APFS clone, `scripts/wt-setup.sh`), never a symlink to the main
+  checkout: with a symlink, guards in the worktree write into the main data.
+
+## Git
+
+- Stage files by path; never `git add -A` or `git add .` (cloud-synced folders spawn conflict copies named "name 2.ext", and a blanket add sweeps in other agents' scratch files). <!-- role:gitadd -->
+- Never push, merge into a protected branch, or create or push tags (a release tag may deploy to production) on your own initiative. Pushing and merging are the owner's call; one explicit request authorizes exactly one push, merge or tag. <!-- role:push -->
+- Every fix gets a guard, and the guard is mutation-tested **after** committing: break the code, see red,
+  `git checkout` the file, see green. Mutating before the commit loses the fix silently.

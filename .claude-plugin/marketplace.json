@@ -1,0 +1,12 @@
+{
+  "name": "codis-agents",
+  "owner": { "name": "codis-agents contributors" },
+  "metadata": { "description": "Local marketplace for the codis-agents plugin." },
+  "plugins": [
+    {
+      "name": "codis-agents",
+      "source": "./",
+      "description": "Coordinator and role chain (analyst, programmer, tester, reviewer, security reviewer) as a Claude Code plugin."
+    }
+  ]
+}
