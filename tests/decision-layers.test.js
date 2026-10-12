@@ -18,7 +18,7 @@ const MUST = [
   ['layer 2: what is never local', /not a storage format, an address, sharing, data deletion or security/],
   ['layer 2 marker', /coordinator's decision, not from the model - candidate/],
   ['layer 2: the owner can overturn it', /owner can overturn it/],
-  ['layer 3: judged by the screen', /judges? by (looking at )?the screen/],
+  ['layer 3: judged by the screen (look, placement, wording)', /judges? by (looking at )?the screen \(look, placement,( UI)? wording/],
   ['layer 3: two principles in conflict', /two principles in conflict/],
   ['layer 3: one list, a recommendation each', /one list/],
   ['roles do not answer owner questions', /(never answers? (an )?owner questions?|does not answer it itself|never answers it itself)/],
