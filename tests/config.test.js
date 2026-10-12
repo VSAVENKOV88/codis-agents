@@ -7,7 +7,7 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const C = require('../scripts/config');
-const { ok, done } = require('./lib');
+const { ok, skip, has, done } = require('./lib');
 
 const ROOT = path.join(__dirname, '..');
 const example = JSON.parse(fs.readFileSync(path.join(ROOT, 'examples', 'codis-agents.example.json'), 'utf8'));
@@ -56,10 +56,15 @@ try {
   ok('lookup: linked worktree -> config of the main checkout', cli(['get', 'repoDir'], wt).stdout.trim() === proj, cli(['get', 'repoDir'], wt).stderr);
   ok('no config anywhere -> exit 1 with a message', (() => { const x = cli(['path'], os.tmpdir()); return x.status === 1 && /no \.claude\/codis-agents\.json/.test(x.stderr); })());
   const sh = cli(['shell'], sub).stdout;
-  const z = spawnSync('zsh', ['-c', sh + '\nprint -r -- "$SLOTS_DIR|$CODIS_SHARED_DIR|$SLOT_HEAVY_N|${+SLOT_LEGACY_LOCK}"'], { encoding: 'utf8', env: { HOME: os.homedir(), PATH: process.env.PATH } });
-  ok('shell output: quoted values, ~ expanded, empty values defined', z.stdout.trim() === `${os.homedir()}/x|${path.join(dir, "it's shared")}|2|1`, z.stdout + z.stderr);
-  const z2 = spawnSync('zsh', ['-c', sh + '\nprint -r -- $SLOTS_DIR'], { encoding: 'utf8', env: { HOME: os.homedir(), PATH: process.env.PATH, SLOTS_DIR: '/env' } });
-  ok('shell output: the environment wins over the config', z2.stdout.trim() === '/env', z2.stdout);
+  if (!has('zsh')) {
+    skip('shell output: quoted values, ~ expanded, empty values defined', 'zsh not found');
+    skip('shell output: the environment wins over the config', 'zsh not found');
+  } else {
+    const z = spawnSync('zsh', ['-c', sh + '\nprint -r -- "$SLOTS_DIR|$CODIS_SHARED_DIR|$SLOT_HEAVY_N|${+SLOT_LEGACY_LOCK}"'], { encoding: 'utf8', env: { HOME: os.homedir(), PATH: process.env.PATH } });
+    ok('shell output: quoted values, ~ expanded, empty values defined', z.stdout.trim() === `${os.homedir()}/x|${path.join(dir, "it's shared")}|2|1`, z.stdout + z.stderr);
+    const z2 = spawnSync('zsh', ['-c', sh + '\nprint -r -- $SLOTS_DIR'], { encoding: 'utf8', env: { HOME: os.homedir(), PATH: process.env.PATH, SLOTS_DIR: '/env' } });
+    ok('shell output: the environment wins over the config', z2.stdout.trim() === '/env', z2.stdout);
+  }
   ok('check: exit 0 on the example', cli(['check', path.join(ROOT, 'examples', 'codis-agents.example.json')], dir).status === 0);
   const j = JSON.parse(cli(['json'], sub).stdout);
   ok('json: plugin paths added for the workflow', j.scriptsDir === path.join(ROOT, 'scripts') && j.pluginRoot === ROOT && j.configPath, JSON.stringify(j).slice(0, 200));

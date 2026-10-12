@@ -129,8 +129,11 @@ claude plugin install codis-agents@codis-agents
 After editing a local clone, run `/reload-plugins` in a session. `claude plugin validate /path/to/codis-agents` checks
 the manifests.
 
-Requirements: Node.js 18+, git, zsh. The slot scripts use `/usr/bin/lockf`, `memory_pressure`, `vm_stat` and APFS
-clones (`cp -c`), so they are **macOS-only**; the workflow, agents, hooks and post-checks work anywhere.
+Requirements: Node.js 18+ and git everywhere; zsh for the slot scripts and `scripts/wt-setup.sh`. The slot scripts also
+use `/usr/bin/lockf`, `memory_pressure` and `vm_stat`, so they are **macOS-only**; the workflow, agents, hooks and
+post-checks work anywhere. `wt-setup.sh` clones ignored data with an APFS clone (`cp -c`) and, where that is refused,
+with `cp -r --reflink=auto` (GNU), then a plain copy. On a machine without zsh (Linux, CI) `npm test` stays green and
+the zsh tests are skipped with "skipped: zsh not found" in their line and in the final tally.
 
 ## Configure a project
 
@@ -253,8 +256,8 @@ npm test            # or: node tests/run.js [filter]
 
 The suite checks the chain logic with fake agents (every routing case, the post-checks, the rule markers against
 `RULE_LIST` and every role prompt), the post-check and cost scripts, the config, the hooks, the worktree setup, the
-slots on a fake machine (classes, the extra slot, swap, queue order, worker budget), and that the repository holds no
-Cyrillic text, home paths or e-mail addresses.
+slots on a fake machine (classes, the extra slot, swap, queue order, worker budget), that the repository holds no
+Cyrillic text, home paths or e-mail addresses, and that a run without zsh skips the zsh tests visibly instead of failing.
 
 ## License
 

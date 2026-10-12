@@ -8,7 +8,9 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const { ok, done } = require('./lib');
+const { ok, skip, has, done } = require('./lib');
+
+if (!has('zsh')) { skip('scripts/wt-setup.sh (a zsh script)', 'zsh not found'); done(); }
 
 const ROOT = path.join(__dirname, '..');
 const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wt-setup-')));
