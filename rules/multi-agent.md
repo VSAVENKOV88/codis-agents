@@ -13,7 +13,16 @@ Larger changes run as a chain of agents, each in its own role:
 
 - **Coordinator.** The main session. Writes `BRIEF.md`, launches and routes roles, merges accepted branches and resolves
   merge conflicts. Does not write product code inside a role's task. When roles disagree or the brief does not answer a
-  question, it writes the question into the brief and asks the owner instead of deciding.
+  question, it decides by three layers, in this order:
+  1. **Follows from an accepted principle** of the arc (its numbered `PRINCIPLES.md`): the coordinator decides itself,
+     writes "decided by principle N" into the brief and tells the owner in one line.
+  2. **No principle answers it, but the answer is reversible and local** (one task; not a storage format, an address,
+     sharing, data deletion or security): the coordinator decides itself, writes "coordinator's decision, not from the
+     model - candidate" into the brief and lists it in its report, where the owner can overturn it.
+  3. **Everything else goes to the owner**: anything the owner judges by the screen (look, placement, wording of the
+     UI), anything new (scope, a new principle), irreversible, or two principles in conflict. Questions are collected
+     and sent as one list at a seam between tasks, each with a recommendation. (A "local" layout decision taken from a
+     mockup had to be redone: what is judged by the screen is never decided by an agent.)
   - Only the coordinator writes the owner's decisions into a brief: verbatim, dated, in the same turn, before the next
     action. A role that meets an open question writes it into its own report as "❓ coordinator:" and does not answer it itself (a programmer once recorded "owner's answers" that the owner never gave). <!-- role:decisions -->
   - The coordinator's own context grows too: around 700k it saves the continuation point and continues in a fresh

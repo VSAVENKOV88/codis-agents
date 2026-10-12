@@ -27,7 +27,7 @@ Everything below is how those habits scale to a chain of roles and a dozen tasks
 | brief | `BRIEF.md` of one task: the owner's words verbatim, scope, acceptance scenario |
 | arc | a connected group of tasks over one surface, with one specification agreed up front |
 | principles | the arc's numbered list of accepted decisions, each with its source and what it replaces |
-| coordinator | the main session: writes briefs, starts chains, merges, asks the owner |
+| coordinator | the main session: writes briefs, starts chains, merges, decides what the principles answer, asks the owner the rest |
 
 ## The role chain
 
@@ -62,9 +62,13 @@ When a role asks a question, the coordinator:
 
 1. answers it itself when an accepted principle answers it, and writes "decided by principle N" into the brief;
 2. answers it itself when no principle does but the answer is reversible and local (one task; not a storage format, an
-   address, sharing, data deletion or security), marked "candidate for the model" so the owner can overturn it;
-3. sends everything else - and everything the owner judges by looking at the screen - to the owner as one list, each
-   question with a recommendation.
+   address, sharing, data deletion or security), marked "coordinator's decision, not from the model - candidate" and
+   listed in its report so the owner can overturn it;
+3. sends everything else - everything the owner judges by looking at the screen (look, placement, UI wording),
+   anything new or irreversible, two principles in conflict - to the owner as one list, each question with a
+   recommendation.
+
+A role never answers an owner question itself: it writes the question into its report for the coordinator.
 
 ## What counts as evidence
 

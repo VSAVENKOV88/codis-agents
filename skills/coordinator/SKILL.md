@@ -22,8 +22,15 @@ usually imports them from its `CLAUDE.md`).
    the memory slots, so do not start more chains than the machine's slots can serve.
 6. **Route.** `done` -> merge the branch into the integration branch yourself, resolve conflicts, rerun the guards of
    both sides. `stopped` -> read the reason: questions go to the owner (and their answers into the brief), a proposed
-   split becomes new briefs, a second rejection goes to the analyst. Never answer a question for the owner.
-7. **Cost.** After each run, `node "${CLAUDE_PLUGIN_ROOT}/scripts/chain-cost.js" <transcripts>`; a task above twice the
+   split becomes new briefs, a second rejection goes to the analyst.
+7. **Questions.** Decide by three layers (rules, "Coordinator"): a question that follows from an accepted principle -
+   decide it, write "decided by principle N" into the brief, tell the owner in one line; no principle, but the answer is
+   reversible and local (one task; not a storage format, an address, sharing, data deletion or security) - decide it,
+   mark it "coordinator's decision, not from the model - candidate" in the brief and list it in your report so the
+   owner can overturn it; everything the owner judges by the screen (look, placement, UI wording), anything new,
+   irreversible, or two principles in conflict - to the owner as one list, each question with a recommendation. Roles
+   never answer owner questions themselves; they write them into their reports.
+8. **Cost.** After each run, `node "${CLAUDE_PLUGIN_ROOT}/scripts/chain-cost.js" <transcripts>`; a task above twice the
    median means the next similar one is split earlier.
 
 ## Limits
