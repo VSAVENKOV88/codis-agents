@@ -12,6 +12,8 @@
 #   late single heavy jobs do not pass it either; exit 75 (budget taken after admission) - back to the queue with the
 #   same ticket (SLOT_RETRY_RC).
 # Command: project config key guardCommand, run with zsh in the worktree; placeholders {wt}, {jobs}, {limitFile}.
+# Exit code: the runner's own (the last 25 log lines are printed either way). The runner's code travels through a file,
+#   so a runner that itself exits 75 is never mistaken for "no worker budget" and retried.
 # usage: guards-all.sh <worktree>   (a name under worktreeRoot, or a path) -> log in <sharedDir>/guards-<name>.txt
 H=${0:A:h}
 [[ -n $1 ]] || { print -u2 "usage: guards-all.sh <worktree name or path>"; exit 64; }
@@ -27,9 +29,12 @@ CMD=$(cfg guardCommand); LEGACY=$(cfg guardCommandLegacy); PFILE=$(cfg guardAdap
 # Older branches may carry a runner without the adaptive limit: the probe decides per worktree.
 if [[ -n $PFILE ]] && ! grep -qF -- "$PTEXT" "$WT/$PFILE" 2>/dev/null; then CMD=$LEGACY; fi
 mode=fixed; [[ $CMD == *'{limitFile}'* ]] && mode=adaptive
+RCF=$(mktemp -t guardsrc)
+trap 'rm -f $RCF' EXIT
 while true; do
+  : > $RCF
   SLOT_KIND=full SLOT_RETRY_RC=75 slot_run heavy zsh -c '
-    source "$1"; WT="$2"; OUT="$3"; CMD="$4"; mode="$5"
+    source "$1"; WT="$2"; OUT="$3"; CMD="$4"; mode="$5"; RCF="$6"
     cd "$WT" || exit 1
     t0=$EPOCHSECONDS said=0
     while true; do
@@ -49,15 +54,16 @@ while true; do
       print -r -- "workers at start: $n (ceiling $GUARDS_JOBS_ALONE, re-evaluated every $SLOT_POLL s; $SLOT_PATH)"
       { while sleep $SLOT_POLL; do slot_guard_plan "$SLOT_PATH" adaptive run > /dev/null; done } &
       tk=$!
-      zsh -c "$(sub "$CMD" $GUARDS_JOBS_ALONE)" > "$OUT" 2>&1
+      zsh -c "$(sub "$CMD" $GUARDS_JOBS_ALONE)" > "$OUT" 2>&1; print -r -- $? > "$RCF"
       pkill -P $tk 2>/dev/null; kill $tk 2>/dev/null   # and its sleep - no orphans
     else
       print -r -- "workers: $n for the whole run (fixed runner; $SLOT_PATH)"
-      zsh -c "$(sub "$CMD" $n)" > "$OUT" 2>&1
+      zsh -c "$(sub "$CMD" $n)" > "$OUT" 2>&1; print -r -- $? > "$RCF"
     fi
     rm -f "$SLOT_PATH.jobs" "$SLOT_PATH.limit" "$SLOT_PATH.limit.tmp" "$SLOT_PATH.limit.active"
-    tail -25 "$OUT"' guards-all "$H/slots.zsh" "$WT" "$OUT" "$CMD" "$mode"
+    tail -25 "$OUT"' guards-all "$H/slots.zsh" "$WT" "$OUT" "$CMD" "$mode" "$RCF"
   rc=$?
-  (( rc == 75 )) || exit $rc
+  [[ -s $RCF ]] && exit $(<$RCF)          # the runner ran: its code
+  (( rc == 75 )) || exit $rc              # 75 without a run: no worker budget - queue again
   sleep $SLOT_SAY
 done
