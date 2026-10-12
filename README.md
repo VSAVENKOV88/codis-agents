@@ -1,12 +1,101 @@
 # codis-agents
 
-A multi-agent delivery process for [Claude Code](https://claude.com/claude-code), packaged as a plugin.
+**Agents are not what makes this work. What is written down around them is.**
 
-The main session acts as a **coordinator**: it writes a brief per task and starts a **role chain** - a workflow that
-runs an analyst, a programmer, a tester, a reviewer and (for security work) a security reviewer as separate agents,
-routes their verdicts and stops with a precise reason when the owner has to decide. Around it, the plugin ships what
-made the process hold up on a single 16 GB laptop running several chains at once: memory slots for heavy jobs, a git
-post-check that keeps read-only roles read-only, and hooks that refuse blanket staging and unauthorised pushes.
+A multi-agent delivery process for [Claude Code](https://claude.com/claude-code), packaged as a plugin: a coordinator
+session, a chain of role agents that try to refute each other, and the written rules that keep them honest. It grew out
+of a real product built with Claude Code on a single 16 GB laptop, several task chains a day, and every rule in it
+exists because something broke without it.
+
+## Start here - no plugin needed
+
+Three habits carry most of the value, and they work for one person with one agent:
+
+1. **A brief before work.** A file with the requester's words quoted verbatim and dated, and the acceptance written as a
+   scenario in the real environment ("Add -> the item builds with no tab open"), not as a feature name.
+2. **A red guard before code.** The agent first commits an executable check that fails on the current code, then the fix.
+3. **Mutation after the commit.** Break the fix, see the guard go red, restore it, see it green. A check that does not
+   turn red on a broken fix proves nothing.
+
+Everything below is how those habits scale to a chain of roles and a dozen tasks a day.
+
+## Terms
+
+| term | meaning |
+|---|---|
+| guard | an executable check (`*-run.js`) judged by its exit code |
+| brief | `BRIEF.md` of one task: the owner's words verbatim, scope, acceptance scenario |
+| arc | a connected group of tasks over one surface, with one specification agreed up front |
+| principles | the arc's numbered list of accepted decisions, each with its source and what it replaces |
+| coordinator | the main session: writes briefs, starts chains, merges, asks the owner |
+
+## The role chain
+
+```mermaid
+flowchart LR
+  owner([Owner]) -->|decisions, verbatim| coord[Coordinator<br/>brief, merge]
+  coord --> pre{Preconditions<br/>acceptance, scope}
+  pre -->|incomplete brief| coord
+  pre --> analyst[Analyst<br/>matrix, split]
+  analyst -->|over ~30 cells: split| coord
+  analyst --> prog[Programmer<br/>red guard, then code]
+  prog --> tester[Tester<br/>own inventory, acceptance]
+  tester -->|red| prog
+  tester --> reviewer[Reviewer<br/>tries to refute]
+  reviewer -->|rejected: fix round| prog
+  reviewer --> merge((Merge<br/>full guard run))
+```
+
+Each role runs as its own agent in its own git worktree. A second rejection for code stops the fix rounds: the next round
+starts with the analyst. Work on access, keys or cookies gets a security reviewer as well. A role that hits an open
+question writes it into its report for the coordinator and never answers it itself.
+
+## Decisions live in three layers
+
+| layer | what it holds | size on the project it came from |
+|---|---|---|
+| brief | one task: the owner's words, scope, acceptance scenario | one file per task |
+| principles | numbered decisions, each with its source and a "Replaces:" line | 121 decisions |
+| short model | one-sentence rules, each linked to the principle it comes from | 31 rules, two pages |
+
+When a role asks a question, the coordinator:
+
+1. answers it itself when an accepted principle answers it, and writes "decided by principle N" into the brief;
+2. answers it itself when no principle does but the answer is reversible and local (one task; not a storage format, an
+   address, sharing, data deletion or security), marked "candidate for the model" so the owner can overturn it;
+3. sends everything else - and everything the owner judges by looking at the screen - to the owner as one list, each
+   question with a recommendation.
+
+## What counts as evidence
+
+- **Guards**, red first, and **mutation-tested after the commit**.
+- **Two browsers** for anything visual: WebKit drops things Chromium draws.
+- **The real environment**: a change that touches two services is accepted in a two-service container stack driven
+  through the real client, not in one process on the laptop, where guards stay green while the image fails.
+- **A full guard run** after every merge: "N green - N new red - N known red"; only new red is a regression.
+
+Its limit, honestly: no headless browser reproduced a blurry label in real Safari. A person looking at the screen found
+it. Agents do not replace that.
+
+## Rules that grew out of failures
+
+| what happened | rule |
+|---|---|
+| a feature took three days with about ten owner questions per task; one decision flipped three times | a specification of the whole arc before its first task; principles with "Replaces:" |
+| a decision the owner made never reached the list and was never started | a decision not in the principles is lost; the list is the only list |
+| a layout arrived "locally" with a mockup, no decision behind it, and had to be redone | what the owner judges by the screen is never decided by an agent |
+| one task was re-scoped three times mid-flight and cost twice the median | split before the first programmer: over ~30 cells or more than two subsystems |
+| the precondition check stopped tasks with an incomplete acceptance three times in one day | acceptance is a scenario in the real environment |
+| agents were killed while their run waited for a heavy slot | reports are written as you go and end with "Next step"; a fresh agent continues |
+| a role recorded "owner's answers" the owner never gave | only the coordinator writes decisions into a brief |
+| idle waits over five minutes cost 21 % of all tokens | wait in slices of at most 270 s; the rule sits in every role prompt (21 % -> 7.4 %) |
+
+## The bottleneck is the owner's attention
+
+A day of fourteen tasks is about forty decisions a person has to make. Faster agents do not help until fewer questions
+reach that person: rules that answer themselves, questions batched with a recommendation each, a mockup instead of a
+description for anything visual, and a two-page model a human can hold in their head next to the long list the agents
+read.
 
 ## What is inside
 
