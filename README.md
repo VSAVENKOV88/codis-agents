@@ -85,14 +85,18 @@ it. Agents do not replace that.
 
 | what happened | rule |
 |---|---|
-| a feature took three days with about ten owner questions per task; one decision flipped three times | a specification of the whole arc before its first task; principles with "Replaces:" |
+| a feature took three days with about ten owner questions per task; one decision flipped three times | a specification of the whole arc before its first task; one numbered `PRINCIPLES.md` with "Replaces:" lines |
 | a decision the owner made never reached the list and was never started | a decision not in the principles is lost; the list is the only list |
-| a layout arrived "locally" with a mockup, no decision behind it, and had to be redone | what the owner judges by the screen is never decided by an agent |
+| a layout arrived "locally" with a mockup, no decision behind it, and had to be redone | what the owner judges by the screen is never decided by an agent; a mockup of all states before code |
+| a UX spec last touched at a redesign said nothing about the features built after it | living specs change in the same commit as the behaviour they describe |
 | one task was re-scoped three times mid-flight and cost twice the median | split before the first programmer: over ~30 cells or more than two subsystems |
 | the precondition check stopped tasks with an incomplete acceptance three times in one day | acceptance is a scenario in the real environment |
 | agents were killed while their run waited for a heavy slot | reports are written as you go and end with "Next step"; a fresh agent continues |
 | a role recorded "owner's answers" the owner never gave | only the coordinator writes decisions into a brief |
 | idle waits over five minutes cost 21 % of all tokens | wait in slices of at most 270 s; the rule sits in every role prompt (21 % -> 7.4 %) |
+| a resumed run of parallel tasks replayed one task's cached results into another, and both chains stopped | never `resumeFromRunId` for a multi-task run; relaunch each unfinished task alone with `start` |
+| two parallel branches, each green alone, gave six red guards after the second merge | after merging the second of parallel branches over the same files: the guards of both tasks, then the full guard run |
+| several container stacks at once pushed a 16 GB machine into swap | at most two chains with acceptance in Docker at once |
 
 ## The bottleneck is the owner's attention
 
@@ -132,6 +136,15 @@ claude plugin install codis-agents@codis-agents
 
 After editing a local clone, run `/reload-plugins` in a session. `claude plugin validate /path/to/codis-agents` checks
 the manifests.
+
+Things that bite on first use:
+
+- A plugin installed in the middle of a session gives its skills, workflows and agents only after a session restart.
+- `scripts/wt-setup.sh` is a zsh script: run it directly (its shebang is zsh) or with `zsh`, not with `bash`, which fails
+  on its zsh syntax.
+- A Workflow started by `scriptPath` (for example a modified copy of the role-chain workflow) takes the script only
+  from the working directory or the session's scratchpad; anything else is refused. The plugin's own workflow is
+  started by name.
 
 Requirements: Node.js 18+ and git everywhere; zsh for the slot scripts and `scripts/wt-setup.sh`. The slot scripts also
 use `/usr/bin/lockf`, `memory_pressure` and `vm_stat`, so they are **macOS-only**; the workflow, agents, hooks and
@@ -235,7 +248,8 @@ Each task ends `done` or `stopped` with the reason, the open questions, a propos
   sees the result. The tester may change only paths matching `testerWritable` (guards and fixtures); the reviewers
   nothing in the worktree (their reports live in `sharedDir`).
 - Every role prompt carries the marked rules of `rules/multi-agent.md`: wait at most 270 s at a time, hand over past
-  ~200k of context, open questions go to the coordinator, stage by path, never push.
+  ~200k of context, open questions go to the coordinator, living specs change with the behaviour, stage by path,
+  never push.
 
 ## Memory slots
 

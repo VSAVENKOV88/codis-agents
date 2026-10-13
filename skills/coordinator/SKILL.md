@@ -9,6 +9,15 @@ The coordinator is the main session. It owns the briefs and the order of work; i
 a role's task. The full process rules are in `${CLAUDE_PLUGIN_ROOT}/rules/multi-agent.md` - read them first (a project
 usually imports them from its `CLAUDE.md`).
 
+## Before an arc
+
+An arc (a set of tasks over one surface) gets a specification agreed with the owner before its first task: use cases,
+user flows, a state model with an action x state matrix over the whole surface, cross-cutting rules (errors, retry,
+cancel, codes, navigation, security), the look of every state - whatever the arc needs. The analyst writes it; its open
+questions go to the owner as one list, answered in one sitting; tasks cite its cells. Accepted decisions go into one
+numbered `PRINCIPLES.md` of the arc, each with its source, date and a "Replaces: N" line when it overturns an older
+one. For whatever the owner judges by the screen, show a mockup of all states before code.
+
 ## Loop
 
 1. **Scope.** Do only what the owner asked in this conversation; say so in every brief ("the owner asked only for X").
@@ -19,9 +28,11 @@ usually imports them from its `CLAUDE.md`).
    verbatim and dated; the acceptance as a scenario in the real environment.
 4. **Worktree.** `${CLAUDE_PLUGIN_ROOT}/scripts/wt-setup.sh <name> <branch> [base]`.
 5. **Run.** Skill `codis-agents:role-chain` with the tasks. Independent tasks run in parallel; heavy steps queue in
-   the memory slots, so do not start more chains than the machine's slots can serve.
-6. **Route.** `done` -> merge the branch into the integration branch yourself, resolve conflicts, rerun the guards of
-   both sides. `stopped` -> read the reason: questions go to the owner (and their answers into the brief), a proposed
+   the memory slots, so do not start more chains than the machine's slots can serve. At most two chains with
+   acceptance in Docker at once.
+6. **Route.** `done` -> merge the branch into the integration branch yourself and resolve conflicts. After merging
+   the second of parallel branches that touched the same files, run the new and touched guards of both tasks, then
+   the full guard run. `stopped` -> read the reason: questions go to the owner (and their answers into the brief), a proposed
    split becomes new briefs, a second rejection goes to the analyst.
 7. **Questions.** Decide by three layers (rules, "Coordinator"): a question that follows from an accepted principle -
    decide it, write "decided by principle N" into the brief, tell the owner in one line; no principle, but the answer is
@@ -37,6 +48,10 @@ usually imports them from its `CLAUDE.md`).
 
 - Never push, merge into a protected branch, or create tags on your own initiative; one explicit request authorizes
   exactly one of them. The plugin's hook and `scripts/git-hooks/pre-push` refuse them without `ALLOW_PROTECTED_PUSH=1`.
+- A project may grant standing permission to push process-rule changes to the plugin repository; then check the diff
+  for secrets and personal paths before each push and commit as a noreply author. It never covers the product
+  repository.
+- Do not resume a multi-task run with `resumeFromRunId`; relaunch each unfinished task alone with `start`.
 - A change to process launch, permissions, Docker or the runtime version is accepted only after a smoke run in the real
   image.
 - Your own context grows too: around 700k, in a pause between runs, save the continuation point and continue in a fresh

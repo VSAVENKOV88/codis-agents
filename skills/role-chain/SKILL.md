@@ -56,5 +56,8 @@ role agents are unavailable).
   owner; write the owner's answers into the brief yourself (verbatim, dated) before the next run.
 - Cost: `node "${CLAUDE_PLUGIN_ROOT}/scripts/chain-cost.js" <directory with the run's agent transcripts>` prints the
   input-equivalent cost per task and flags tasks above twice `medianTaskIE`; put the lines into the report to the owner.
+- An interrupted run with several tasks is never resumed with `resumeFromRunId`: cached agent results replay by call
+  order, which differs between parallel tasks, so results land in the wrong task. Relaunch each unfinished task alone,
+  with `start` pointing to its report and the step it stopped at.
 - Accepted branches are merged by the coordinator; pushing, merging into a protected branch and tagging stay the
   owner's call.

@@ -50,6 +50,6 @@ ok('RULE_LIST specs: same commit as the behaviour', /\['specs', [^\n]*same commi
 // README: environment notes.
 const rd = read(README);
 ok('README: wt-setup.sh with zsh, not bash', /wt-setup\.sh[^.]*zsh[^.]*not (with )?`?bash/.test(rd));
-ok('README: a plugin installed mid-session needs a session restart', /installed (in the middle of|mid-)session[^.]*restart/.test(rd));
+ok('README: a plugin installed mid-session needs a session restart', /installed (in the middle of a |mid-)session[^.]*restart/.test(rd));
 ok('README: Workflow scriptPath only from the working directory or the scratchpad', /scriptPath[^.]*working directory[^.]*scratchpad/.test(rd));
 done();

@@ -46,6 +46,23 @@ Larger changes run as a chain of agents, each in its own role:
 - **Security reviewer.** Only when the brief marks the task as security work (accounts and login, connectors and OAuth,
   access passes, rollout to a host). Reads the diff with an attacker's view against the project's threat model.
 
+## Arcs: specification, principles, mockups
+
+- **An arc starts with a specification agreed with the owner before its first task.** An arc (a set of tasks over one
+  surface) is specified up front, not discovered task by task. What the specification holds depends on the arc: use
+  cases, user flows, a state model with an action x state matrix over the whole surface (not one task), cross-cutting
+  rules (errors, retry, cancel, codes, navigation, security), the look of every state. The analyst writes it; its open
+  questions go to the owner as one list and are answered in one sitting. Tasks then cite its cells and do not reopen
+  them. (A specification that covered only the architecture left the behaviour to be settled piecemeal, task by task:
+  about ten owner questions per task.)
+- **One numbered `PRINCIPLES.md` per arc**, every accepted decision with its source and date, and a new decision with
+  a "Replaces: N" line naming the one it overturns, so no rule exists in several versions (one decision flipped three
+  times before this rule). A decision that is not in the principles is lost.
+- **A mockup of all states before code** for whatever the owner judges by the screen: one page with every state (rows,
+  buttons, hints) is shown to the owner before the programmer starts. It costs less than the fix rounds that the first
+  look at the live screen otherwise starts.
+- Living specs change in the same commit as the behaviour they describe (UX specs, state models, gap lists): a spec left behind at one redesign says nothing about what came after. <!-- role:specs -->
+
 ## Order and shortcuts
 
 - If the tester finds red, skip the review and send the task straight back to the programmer.
@@ -59,6 +76,13 @@ Larger changes run as a chain of agents, each in its own role:
 - After the tester and after each reviewer, a git post-check (`scripts/role-diff-check.js`) compares the worktree with
   the HEAD of the previous committing role: the tester may change only guards and their fixtures, a reviewer nothing.
   A violation stops the chain.
+- **Do not resume a multi-task workflow run with `resumeFromRunId`.** Cached agent results replay by call order; with
+  tasks in parallel the order differs, so results land in the wrong task (after a pause one task's programmer HEAD
+  became another task's base, and the post-check stopped both chains on files their testers never touched). Relaunch
+  each unfinished task alone, with `start` pointing to its report and the step it stopped at.
+- **Check the seam of parallel branches.** After merging the second of parallel branches that touched the same files,
+  the coordinator runs the new and touched guards of both tasks, then the full guard run. Each branch was green alone;
+  after such a merge one guard gave six red from the seam alone.
 
 ## Task folder and reports
 
@@ -85,6 +109,9 @@ Larger changes run as a chain of agents, each in its own role:
 - Guards that share a resource (a fixed port, a shared temp dir or corpus file, a docker project) carry
   `// guards:exclusive — <reason>` and run one at a time under their own lock.
 - **Docker.** The owner's stack is read-only for roles (`docker cp` out is fine); writing into its containers needs explicit consent. Only a tester runs its own stack, and only when the brief asks for one. <!-- role:docker -->
+- **At most two chains with acceptance in Docker at once.** An acceptance stack (several services, its image build, a
+  browser driving it) is the heaviest job on a 16 GB machine; the coordinator starts a third such chain only after one
+  of the two is done.
 - A step that changes process launch, permissions, Docker or the runtime version is accepted only after a smoke run in
   the real image (an own compose project, torn down after).
 - **Worktrees get their own copy of ignored data** (an APFS clone, `scripts/wt-setup.sh`), never a symlink to the main
@@ -94,5 +121,9 @@ Larger changes run as a chain of agents, each in its own role:
 
 - Stage files by path; never `git add -A` or `git add .` (cloud-synced folders spawn conflict copies named "name 2.ext", and a blanket add sweeps in other agents' scratch files). <!-- role:gitadd -->
 - Never push, merge into a protected branch, or create or push tags (a release tag may deploy to production) on your own initiative. Pushing and merging are the owner's call; one explicit request authorizes exactly one push, merge or tag. <!-- role:push -->
+- A project may grant standing permission to push process-rule changes to the plugin repository (rules, skills,
+  workflows, agents, scripts, tests, README) without a separate "yes" for each. The coordinator still checks the diff
+  for secrets and personal paths before the push and commits as a noreply author. The permission does not extend to
+  the product repository: its protected branches, merges into them and tags still need an explicit request.
 - Every fix gets a guard, and the guard is mutation-tested **after** committing: break the code, see red,
   `git checkout` the file, see green. Mutating before the commit loses the fix silently.
