@@ -21,6 +21,8 @@ ok('schema top-level keys = config.js keys', same(Object.keys(schema.properties)
 ok('schema slots keys = config.js', same(Object.keys(schema.properties.slots.properties), Object.keys(C.SLOT_SPEC)));
 ok('schema worktreeSetup keys = config.js', same(Object.keys(schema.properties.worktreeSetup.properties), Object.keys(C.WT_SPEC)));
 ok('schema gitHooks keys = config.js', same(Object.keys(schema.properties.gitHooks.properties), Object.keys(C.HOOKS_SPEC)));
+ok('schema standingPush keys = config.js', schema.properties.standingPush && same(Object.keys(schema.properties.standingPush.properties), Object.keys(C.STANDING_SPEC || {})));
+ok('schema standingPush says it is only for the process-rules repository', schema.properties.standingPush && /only for the repository of process rules/.test(schema.properties.standingPush.description));
 ok('schema roleNotes keys = roles', same(Object.keys(schema.properties.roleNotes.properties), C.ROLES));
 ok('schema required = config.js required', same(schema.required, ['repoDir', 'worktreeRoot', 'sharedDir']));
 
@@ -36,6 +38,14 @@ bad({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s', guardCommand: 'npm tes
 bad({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s', guardCommand: 'cd {wt} && npm test' }, /must contain \{jobs\}/, 'guard command without {jobs} - error');
 bad({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s', guardAdaptiveProbe: { file: 'a', contains: 'b' } }, /needs guardCommandLegacy/, 'probe without a legacy command - error');
 bad({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s', roleNotes: { coder: 'x' } }, /roleNotes.coder: unknown role/, 'notes for an unknown role - error');
+bad({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s', standingPush: { branches: ['main'] } }, /standingPush: branches and check are required/, 'standingPush without a check - error');
+bad({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s', standingPush: { branches: [], check: 'true' } }, /standingPush: branches and check are required/, 'standingPush with no branches - error');
+bad({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s', standingPush: { branches: ['main'], check: 'true', tags: true } }, /standingPush.tags: unknown key/, 'standingPush never takes tags - error');
+// The plugin repository itself declares the standing permission, gated by its hygiene test.
+const own = C.resolve(JSON.parse(fs.readFileSync(path.join(ROOT, '.claude', 'codis-agents.json'), 'utf8')));
+ok('own .claude/codis-agents.json validates', own.errors.length === 0, own.errors.join('; '));
+ok('own config: standing push to main only, gated by tests/hygiene.test.js', own.config.standingPush && own.config.standingPush.branches.join() === 'main'
+  && own.config.standingPush.check === 'node tests/hygiene.test.js', JSON.stringify(own.config.standingPush));
 bad({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s', testerWritable: ['('] }, /bad regular expression/, 'bad regular expression - error');
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'config-test-'));

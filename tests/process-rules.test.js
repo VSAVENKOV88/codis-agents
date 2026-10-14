@@ -32,6 +32,7 @@ const CHECKS = [
   [[RULES, COORD, README], 'seam of parallel branches: guards of both tasks, then the full run', /guards of both tasks[^.]*then the full guard run/],
   [[RULES, COORD, README], 'at most two chains with acceptance in Docker at once', /[Aa]t most two chains with acceptance in Docker at once/],
   [[RULES, COORD], 'standing permission to push process-rule changes to the plugin repository', /standing permission to push process-rule changes to the plugin repository/],
+  [[RULES, README], 'the hooks let through a standing push declared by a committed standingPush', /committed `standingPush`/],
   [[RULES, COORD], 'still checked for secrets and personal paths, noreply author', /secrets and personal paths[^.]*noreply/],
 ];
 for (const [files, name, re] of CHECKS) for (const f of files) ok(`${f}: ${name}`, re.test(read(f)));

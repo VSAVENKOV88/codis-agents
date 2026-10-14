@@ -59,6 +59,65 @@ try {
   const pre = hj.hooks.PreToolUse.find((h) => h.matcher === 'Bash');
   ok('hooks.json wires guard-bash.js on Bash through ${CLAUDE_PLUGIN_ROOT}', pre && pre.hooks[0].command === 'node "${CLAUDE_PLUGIN_ROOT}/scripts/hooks/guard-bash.js"', JSON.stringify(pre));
 
+  console.log('1b. standing push (config "standingPush" committed in the repository that pushes)');
+  // P: a repository that declares a standing permission for main; O: another repository without it.
+  const P = path.join(dir, 'plugin'), O = path.join(dir, 'other');
+  const gp = (...a) => spawnSync('git', ['-C', P, ...a], { encoding: 'utf8' });
+  const go = (...a) => spawnSync('git', ['-C', O, ...a], { encoding: 'utf8' });
+  for (const [d, gx] of [[P, gp], [O, go]]) {
+    fs.mkdirSync(path.join(d, '.claude'), { recursive: true });
+    gx('init', '-q', '-b', 'main'); gx('config', 'user.email', 't@t'); gx('config', 'user.name', 't'); gx('config', 'core.hooksPath', '/dev/null');
+  }
+  const base = { repoDir: P, worktreeRoot: dir, sharedDir: dir, protectedBranches: ['main', 'release'] };
+  const standingCfg = Object.assign({}, base, { standingPush: { branches: ['main'], check: 'test -f clean.txt' } });
+  const commitCfg = (d, gx, c) => { fs.writeFileSync(path.join(d, '.claude', 'codis-agents.json'), JSON.stringify(c)); gx('add', '.claude/codis-agents.json'); gx('commit', '-qm', 'cfg'); };
+  fs.writeFileSync(path.join(P, 'clean.txt'), 'x'); gp('add', 'clean.txt');
+  commitCfg(P, gp, base);
+  commitCfg(O, go, Object.assign({}, base, { repoDir: O }));
+  gp('tag', 'v9.0.0');
+  const inP = (c, e = env) => bash(c, P, e);
+  ok('no standingPush field - push to main refused', /main is protected/.test(inP('git push origin main') || ''), String(inP('git push origin main')));
+  fs.writeFileSync(path.join(P, '.claude', 'codis-agents.json'), JSON.stringify(standingCfg));
+  ok('field only in the working tree (not committed) - refused', /main is protected/.test(inP('git push origin main') || ''), String(inP('git push origin main')));
+  gp('add', '.claude/codis-agents.json'); gp('commit', '-qm', 'standing');
+  for (const c of ['git push origin main', 'git push', 'git push -u origin main', 'git push origin HEAD:main', 'git push origin HEAD', `git -C ${P} push origin main`])
+    ok(`with the field - allowed: ${c}`, inP(c) === null, String(inP(c)));
+  ok('with the field - allowed from a subdirectory (git root, not cwd)', bash('git push origin main', path.join(P, '.claude')) === null, String(bash('git push origin main', path.join(P, '.claude'))));
+  for (const c of ['git push origin v9.0.0', 'git push origin refs/tags/v9.0.0', 'git push --tags', 'git push origin main --follow-tags', 'git push --all origin'])
+    ok(`with the field - tags never: ${c}`, /refused/.test(inP(c) || ''), String(inP(c)));
+  for (const c of ['git push -f origin main', 'git push --force origin main', 'git push --force-with-lease origin main', 'git push origin +main', 'git push origin :main', 'git push origin --delete main', 'git push -d origin main'])
+    ok(`with the field - forced or deleting push refused: ${c}`, /refused/.test(inP(c) || ''), String(inP(c)));
+  ok('with the field - a branch not listed (release) refused', /release is protected/.test(inP('git push origin main:release') || ''), String(inP('git push origin main:release')));
+  gp('branch', 'side'); gp('checkout', '-q', 'side'); fs.writeFileSync(path.join(P, 's.txt'), 's'); gp('add', 's.txt'); gp('commit', '-qm', 's');
+  ok('with the field - a source other than HEAD refused (main while on side)', /HEAD/.test(inP('git push origin main') || ''), String(inP('git push origin main')));
+  ok('with the field - side:main from side (HEAD) allowed', inP('git push origin side:main') === null, String(inP('git push origin side:main')));
+  gp('checkout', '-q', 'main');
+  fs.writeFileSync(path.join(P, 'clean.txt'), 'changed');
+  ok('with the field - modified tracked files refused', /uncommitted/.test(inP('git push origin main') || ''), String(inP('git push origin main')));
+  gp('checkout', '-q', '--', 'clean.txt');
+  gp('rm', '-q', 'clean.txt'); gp('commit', '-qm', 'drop clean');
+  ok('with the field - failing check refused, named', /test -f clean\.txt/.test(inP('git push origin main') || ''), String(inP('git push origin main')));
+  fs.writeFileSync(path.join(P, 'clean.txt'), 'x'); gp('add', 'clean.txt'); gp('commit', '-qm', 'clean back');
+  ok('with the field - check passes again - allowed', inP('git push origin main') === null, String(inP('git push origin main')));
+  // The session is in P (CLAUDE_PROJECT_DIR, cwd), the push runs in O, which has no field.
+  const sessP = Object.assign({}, env, { CLAUDE_PROJECT_DIR: P });
+  ok('push from another repository (no field), session in P - refused (-C)', /main is protected/.test(bash(`git -C ${O} push origin main`, P, sessP) || ''), String(bash(`git -C ${O} push origin main`, P, sessP)));
+  ok('push from another repository (no field), session in P - refused (cd)', /main is protected/.test(bash(`cd ${O} && git push origin main`, O, sessP) || ''), String(bash('git push origin main', O, sessP)));
+  // The session is in O (its config protects main), the push runs in P: P's own committed field decides.
+  const sessO = Object.assign({}, env, { CLAUDE_PROJECT_DIR: O });
+  ok('push from P with the session in O - allowed by P\'s field', bash(`git -C ${P} push origin main`, O, sessO) === null, String(bash(`git -C ${P} push origin main`, O, sessO)));
+
+  console.log('1c. git pre-push with a standing permission');
+  const prePush = (cwd, rref, sha, e = env) => spawnSync(path.join(ROOT, 'scripts', 'git-hooks', 'pre-push'), ['origin', 'url'],
+    { cwd, input: `refs/heads/main ${sha} ${rref} ${'0'.repeat(40)}\n`, encoding: 'utf8', env: Object.assign({}, e) });
+  const headP = gp('rev-parse', 'HEAD').stdout.trim(), headO = go('rev-parse', 'HEAD').stdout.trim();
+  ok('pre-push: P, main at HEAD - allowed', prePush(P, 'refs/heads/main', headP).status === 0, prePush(P, 'refs/heads/main', headP).stderr);
+  ok('pre-push: P, main at HEAD, session in O - allowed', prePush(P, 'refs/heads/main', headP, sessO).status === 0);
+  ok('pre-push: P, tag - refused', prePush(P, 'refs/tags/v9.0.0', headP).status === 1);
+  ok('pre-push: P, main from a commit other than HEAD - refused', prePush(P, 'refs/heads/main', '1'.repeat(40)).status === 1);
+  ok('pre-push: P, main deleted - refused', prePush(P, 'refs/heads/main', '0'.repeat(40)).status === 1);
+  ok('pre-push: O (no field), session in P - refused', prePush(O, 'refs/heads/main', headO, sessP).status === 1);
+
   console.log('2. git pre-push');
   const push = (lines, e = {}) => spawnSync(path.join(ROOT, 'scripts', 'git-hooks', 'pre-push'), ['origin', 'url'],
     { cwd: repo, input: lines.map((r) => `refs/heads/x ${'1'.repeat(40)} ${r} ${'0'.repeat(40)}`).join('\n') + '\n', encoding: 'utf8', env: Object.assign({}, env, e) });
