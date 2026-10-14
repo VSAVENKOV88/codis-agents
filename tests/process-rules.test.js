@@ -48,6 +48,11 @@ ok('rules: living specs line is marked role:specs', /[Ll]iving specs change in t
 const wf = fs.readFileSync(path.join(ROOT, 'workflows', 'role-chain.js'), 'utf8');
 ok('RULE_LIST specs: same commit as the behaviour', /\['specs', [^\n]*same commit as the behaviour/.test(wf));
 
+// Docker cleanup (owner 2026-10-14, after old test stacks filled the disk): the role:docker line reaches every role.
+const dockerLine = (rules.match(/[^\n]*<!-- role:docker -->/) || [''])[0];
+ok('rules: role:docker - a tester removes its stack with its images and volumes', /docker compose -p <stack> down -v --rmi all/.test(dockerLine), dockerLine);
+ok('rules: role:docker - the owner\'s stack images never, other images and the build cache not by roles', /owner's stack[^.]*never[^.]*/.test(dockerLine) && /other images[^.]*build cache/.test(dockerLine), dockerLine);
+ok('README: failures table - test stacks left behind filled the disk', /\| [^|\n]*filled the disk[^|\n]*\| [^|\n]*down -v --rmi all[^|\n]*\|/.test(fs.readFileSync(path.join(ROOT, README), 'utf8')));
 // README: environment notes.
 const rd = read(README);
 ok('README: wt-setup.sh with zsh, not bash', /wt-setup\.sh[^.]*zsh[^.]*not (with )?`?bash/.test(rd));

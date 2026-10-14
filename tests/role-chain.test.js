@@ -130,6 +130,11 @@ async function run(script, task = T, extra = {}) {
   try { await run({}, T, { config: { sharedDir: '/s' } }); } catch (e) { threw = e.message; }
   ok('missing config -> clear error before any agent', /args\.config\.worktreeRoot is missing/.test(threw), threw);
 
+  // A tester with its own stack tears it down with its images and volumes; the owner's stack and shared images stay.
+  x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D] }, Object.assign({}, T, { stack: 'k-test' }));
+  const tp = x.prompts.find((p) => p.role === 'test').prompt;
+  ok('tester prompt: own stack torn down with images and volumes (docker compose -p <stack> down -v --rmi all)', tp.includes('docker compose -p k-test down -v --rmi all'), tp);
+  ok('every role prompt: the owner\'s stack images are never removed, nor other images or the build cache', x.prompts.filter((p) => p.role !== 'diff').every((p) => /never remove[^.]*owner's stack[^.]*other images[^.]*build cache/.test(p.prompt)));
   // One source of role rules: markers in rules/multi-agent.md <-> RULE_LIST <-> the prompt of every role.
   const rules = fs.readFileSync(path.join(ROOT, 'rules', 'multi-agent.md'), 'utf8');
   const marked = [...rules.matchAll(/<!-- role:([\w-]+) -->/g)].map((m) => m[1]);
