@@ -97,6 +97,7 @@ it. Agents do not replace that.
 | a resumed run of parallel tasks replayed one task's cached results into another, and both chains stopped | never `resumeFromRunId` for a multi-task run; relaunch each unfinished task alone with `start` |
 | two parallel branches, each green alone, gave six red guards after the second merge | after merging the second of parallel branches over the same files: the guards of both tasks, then the full guard run |
 | several container stacks at once pushed a 16 GB machine into swap | at most two chains with acceptance in Docker at once |
+| images of old test stacks (481 of them, ~130 GB) filled the disk and stopped the chains | a tester removes its own stack with `docker compose -p <stack> down -v --rmi all`; the owner's stack is never touched, other images and the build cache are not cleaned by roles |
 
 ## The bottleneck is the owner's attention
 

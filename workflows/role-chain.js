@@ -49,7 +49,7 @@ const RULE_LIST = (t) => [
   ['pauses', 'Pauses: never wait longer than 270 s at a time - run anything long through Bash run_in_background and wait with Monitor in slices; an agent with no output for 10 minutes is killed.'],
   ['context', 'Context: past ~200k finish the current stage, write the report with "Next step: ..." and stop - a fresh agent continues.'],
   ['slots', `Heavy work goes through memory slots: ${SCRIPTS}/heavy.sh <cmd>, ${SCRIPTS}/medium.sh <cmd>, full guard run ${SCRIPTS}/guards-all.sh ${t.gdir}.`],
-  ['docker', `Docker: ${CFG.ownerStackReadOnly ? `the owner's stack ${CFG.ownerStackReadOnly}` : 'the owner\'s stack'} is read-only (docker cp out is fine); never write into its containers; only a tester runs its own stack, and only when the brief asks.`],
+  ['docker', `Docker: ${CFG.ownerStackReadOnly ? `the owner's stack ${CFG.ownerStackReadOnly}` : 'the owner\'s stack'} is read-only (docker cp out is fine); never write into its containers; only a tester runs its own stack, and only when the brief asks, then removes it with its images and volumes (docker compose -p <stack> down -v --rmi all). Never remove the owner's stack or its images; other images and the build cache are not yours to clean.`],
   ['specs', 'Living specs (UX specs, state models, gap lists) change in the same commit as the behaviour they describe.'],
   ['push', `Do not push, do not merge into ${PROTECTED}, do not create tags.`],
   ['gitadd', 'git add only by path (never -A or .): synced folders spawn conflict copies "name 2.ext".'],
@@ -123,7 +123,7 @@ Order: red guard -> commit -> code -> commit -> mutations AFTER the commit (tabl
 const test = (t, n) => agent(`You are the TESTER. You do not change product code. ${RULES(t)} Report: ${t.dir}/test.md (round ${n}; keep earlier rounds).
 1. An independent inventory before reading the diff (inputs, places, cells) - compare it with the programmer's coverage.
 2. Your own guards for what is not covered -> commit -> mutations after the commit.
-3. Acceptance in the real environment: ${t.accept}${t.stack ? ` Your own stack: docker compose -p ${t.stack}, tear it down afterwards.` : ''} Evidence (logs, numbers, screenshots) goes into ${t.dir} with the prefix test-.
+3. Acceptance in the real environment: ${t.accept}${t.stack ? ` Your own stack: docker compose -p ${t.stack}; afterwards remove it with its images and volumes: docker compose -p ${t.stack} down -v --rmi all.` : ''} Evidence (logs, numbers, screenshots) goes into ${t.dir} with the prefix test-.
 4. Do not repeat the programmer's full run: new and touched guards and mutations; a full run only after your own commits.
 green - only if the brief's acceptance is met in full.${note('tester')}`,
   { label: `test:${t.key}#${n}`, phase: 'Tester', schema: TEST_SCHEMA, agentType: roleType('tester') })
