@@ -40,6 +40,7 @@ const SPEC = {
   roleNotes: ['object', null],
   threatModel: ['string', ''],
   gitHooks: ['object', null],
+  standingPush: ['object', null],
   $schema: ['string', ''],
 };
 const REQUIRED = ['repoDir', 'worktreeRoot', 'sharedDir'];
@@ -50,6 +51,7 @@ const SLOT_SPEC = {
 const WT_SPEC = { scan: ['string[]', []], skip: ['string[]', []], link: ['string[]', []] };
 const PROBE_SPEC = { file: ['string', undefined], contains: ['string', undefined] };
 const HOOKS_SPEC = { blockICloudCopies: ['boolean', false], preCommit: ['string[]', []] };
+const STANDING_SPEC = { branches: ['string[]', []], check: ['string', ''] };
 const ROLES = ['analyst', 'programmer', 'tester', 'reviewer', 'security-reviewer'];
 
 const expand = (p) => (typeof p === 'string' && p ? p.replace(/^~(?=$|\/)/, os.homedir()).replace(/\$\{HOME\}|\$HOME\b/g, os.homedir()) : p);
@@ -91,6 +93,10 @@ function resolve(raw) {
     c.guardAdaptiveProbe = level(PROBE_SPEC, c.guardAdaptiveProbe, 'guardAdaptiveProbe.', errors);
     if (!c.guardAdaptiveProbe.file || !c.guardAdaptiveProbe.contains) errors.push('guardAdaptiveProbe: file and contains are required');
     if (!c.guardCommandLegacy) errors.push('guardAdaptiveProbe: needs guardCommandLegacy (the command for worktrees where the probe fails)');
+  }
+  if (c.standingPush) {
+    c.standingPush = level(STANDING_SPEC, c.standingPush, 'standingPush.', errors);
+    if (!c.standingPush.branches.length || !c.standingPush.check.trim()) errors.push('standingPush: branches and check are required');
   }
   const notes = c.roleNotes || {};
   for (const [k, v] of Object.entries(notes)) {
@@ -152,7 +158,7 @@ function shellLines(c) {
   return Object.entries(v).map(([k, x]) => (x === '' ? `[[ -v ${k} ]] || ${k}=''` : `: \${${k}:=${q(x)}}`)).join('\n');
 }
 
-module.exports = { find, load, resolve, shellLines, SPEC, SLOT_SPEC, WT_SPEC, PROBE_SPEC, HOOKS_SPEC, ROLES, expand };
+module.exports = { find, load, resolve, shellLines, SPEC, SLOT_SPEC, WT_SPEC, PROBE_SPEC, HOOKS_SPEC, STANDING_SPEC, ROLES, expand };
 
 if (require.main === module) {
   const [cmd, ...rest] = process.argv.slice(2);

@@ -5,13 +5,15 @@
 //    blanket add sweeps in scratch files of other agents);
 //  * `git push` to a protected branch, of a protected tag, or `--all` / `--mirror` / `--tags` / `--follow-tags`
 //    (project config "protectedBranches", "protectedTagPattern") unless ALLOW_PROTECTED_PUSH=1 is set, inline or in
-//    the environment, on the owner's explicit word.
+//    the environment, on the owner's explicit word, or - for a branch only - when the pushing repository itself declares a
+//    standing push in its committed config (scripts/standing-push.js: HEAD only, no force or delete, check green).
 // Active only in projects that have .claude/codis-agents.json: the plugin is opt-in per project.
 // The git pre-push hook (scripts/git-hooks/pre-push) is the last line; this hook explains the refusal to the agent
 // before anything runs.
 const path = require('path');
 const { spawnSync } = require('child_process');
 const { find, load } = require(path.join(__dirname, '..', 'config.js'));
+const standingPush = require(path.join(__dirname, '..', 'standing-push.js'));
 
 // Splits a command line into simple commands (on && || ; | & and newlines) and words, honouring quotes.
 function parse(line) {
@@ -63,8 +65,11 @@ function judge(words, ctx) {
   if (sub !== 'push' || allow) return null;
   const tagRe = new RegExp(cfg.protectedTagPattern);
   const pos = [];
+  let force = false, del = false;
   for (let k = 0; k < args.length; k++) {
     const a = args[k];
+    if (a === '--force' || a.startsWith('--force-with-lease') || a === '--force-if-includes' || /^-[a-zA-Z]*f[a-zA-Z]*$/.test(a)) force = true;
+    if (a === '--delete' || /^-[a-zA-Z]*d[a-zA-Z]*$/.test(a)) del = true;
     if (a === '--all' || a === '--mirror') return `\`git push ${a}\` is refused: it pushes protected refs too. Push your branch by name.`;
     if (a === '--tags' || a === '--follow-tags') return `\`git push ${a}\` is refused: tags matching ${cfg.protectedTagPattern} may deploy to production. Push a tag only on the owner's explicit word, with ALLOW_PROTECTED_PUSH=1.`;
     if (PUSH_WITH_VALUE.has(a)) { k++; continue; }
@@ -75,8 +80,14 @@ function judge(words, ctx) {
   const g = (...x) => spawnSync('git', ['-C', dir, ...x], { encoding: 'utf8' });
   const current = () => g('rev-parse', '--abbrev-ref', 'HEAD').stdout.trim();
   const refspecs = pos.slice(1);
-  const dsts = refspecs.length ? refspecs.map((r) => { const s = r.replace(/^\+/, ''); const c = s.indexOf(':'); return c >= 0 ? s.slice(c + 1) : s; }) : [current()];
-  for (let d of dsts) {
+  // [source, destination, forced]; a source '' deletes the destination.
+  const specs = refspecs.length ? refspecs.map((r) => {
+    const s = r.replace(/^\+/, ''), c = s.indexOf(':');
+    return [del ? '' : (c >= 0 ? s.slice(0, c) : s), c >= 0 ? s.slice(c + 1) : s, force || r.startsWith('+')];
+  }) : [['HEAD', current(), force]];
+  let st;   // the standing push of the pushing repository, looked up once on demand
+  const pending = [];
+  for (let [src, d, forced] of specs) {
     if (d === 'HEAD' || d === '@') d = current();
     let tag = null, branch = null;
     if (d.startsWith('refs/tags/')) tag = d.slice(10);
@@ -89,10 +100,19 @@ function judge(words, ctx) {
       const isBranch = g('show-ref', '--verify', '--quiet', 'refs/heads/' + d).status === 0;
       if (isTag || !isBranch) tag = d;
     }
+    if (branch && cfg.protectedBranches.includes(branch) && tag === null) {
+      if (st === undefined) st = standingPush.standing(dir);
+      if (st && st.branches.includes(branch)) {
+        if (forced || !src) return `\`git push\` to ${branch} is refused: a standing push never forces or deletes (ALLOW_PROTECTED_PUSH=1 only on the owner's explicit word).`;
+        if (standingPush.sha(st, src) !== st.head) return `\`git push\` to ${branch} is refused: a standing push sends only the checked-out HEAD, and ${src} is not HEAD.`;
+        pending.push(branch);
+        continue;
+      }
+    }
     if (branch && cfg.protectedBranches.includes(branch)) return `\`git push\` to ${branch} is refused: ${branch} is protected. Work on a branch; pushing or merging into ${branch} is the owner's call (ALLOW_PROTECTED_PUSH=1 only on the owner's explicit word).`;
     if (tag !== null && tagRe.test(tag)) return `\`git push\` of tag ${tag} is refused: it may deploy to production (ALLOW_PROTECTED_PUSH=1 only on the owner's explicit word).`;
   }
-  return null;
+  return pending.length ? standingPush.verify(st) : null;
 }
 
 function decide(input, env = process.env) {

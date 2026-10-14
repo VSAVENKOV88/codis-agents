@@ -125,5 +125,6 @@ Larger changes run as a chain of agents, each in its own role:
   workflows, agents, scripts, tests, README) without a separate "yes" for each. The coordinator still checks the diff
   for secrets and personal paths before the push and commits as a noreply author. The permission does not extend to
   the product repository: its protected branches, merges into them and tags still need an explicit request.
+  The hooks let it through only from the plugin repository's own committed `standingPush` (its HEAD, no force, tags never, its hygiene test green).
 - Every fix gets a guard, and the guard is mutation-tested **after** committing: break the code, see red,
   `git checkout` the file, see green. Mutating before the commit loses the fix silently.

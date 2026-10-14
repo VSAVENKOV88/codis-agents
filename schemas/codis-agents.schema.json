@@ -57,6 +57,14 @@
         "blockICloudCopies": { "type": "boolean", "description": "pre-commit refuses files named like iCloud conflict copies (\"name 2.ext\")." },
         "preCommit": { "type": "array", "items": { "type": "string" }, "description": "Extra shell commands run by pre-commit in the repository root; a non-zero exit refuses the commit." }
       }
+    },
+    "standingPush": {
+      "type": "object", "additionalProperties": false, "required": ["branches", "check"],
+      "properties": {
+        "branches": { "type": "array", "minItems": 1, "items": { "type": "string" }, "description": "Branches this repository's HEAD may be pushed to without ALLOW_PROTECTED_PUSH=1." },
+        "check": { "type": "string", "minLength": 1, "description": "Shell command run in the repository root before the push (e.g. the test for secrets and personal paths); a non-zero exit refuses the push." }
+      },
+      "description": "Standing permission to push - only for the repository of process rules (the plugin itself), whose owner granted it; never in a product repository. Honoured only from the committed config of the repository that pushes (not the session's project, not an uncommitted edit), only for the checked-out HEAD with unmodified tracked files, never forced or deleting; tags are never covered."
     }
   }
 }

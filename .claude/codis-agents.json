@@ -1,0 +1,7 @@
+{
+  "$schema": "../schemas/codis-agents.schema.json",
+  "repoDir": ".",
+  "worktreeRoot": "..",
+  "sharedDir": "..",
+  "standingPush": { "branches": ["main"], "check": "node tests/hygiene.test.js" }
+}
