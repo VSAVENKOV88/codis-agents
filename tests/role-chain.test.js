@@ -14,7 +14,7 @@ const ROOT = path.join(__dirname, '..');
 const SRC = fs.readFileSync(path.join(ROOT, 'workflows', 'role-chain.js'), 'utf8').replace(/^export const meta/m, 'const meta');
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
-const CFG = { sharedDir: '/s', worktreeRoot: '/r', scriptsDir: '/p/scripts', reportLanguage: 'Russian', ownerStackReadOnly: 'own',
+const CFG = { sharedDir: '/s', worktreeRoot: '/r', scriptsDir: '/p/scripts', reportLanguage: 'Russian', ownerStackReadOnly: 'own', slots: { lockDir: '/slots' },
   protectedBranches: ['main'], testerWritable: ['-run\\.js$'], roleNotes: { programmer: 'rebuild the bundle' }, threatModel: 'ACCESS.md' };
 const T = { key: 'x', title: 'X', dir: '/d', wt: '/w', branch: 'b', gdir: 'w', accept: 'acc' };
 const PRE = { ok: true, problems: [], blockingQuestions: [] };
@@ -30,8 +30,9 @@ async function run(script, task = T, extra = {}) {
   const agent = async (prompt, opts) => {
     const role = opts.label.split(':')[0];
     prompts.push({ role, label: opts.label, prompt, opts });
-    full.push(role === 'diff' ? opts.label : role);
+    full.push(role === 'diff' || role === 'left' ? opts.label : role);
     if (role === 'diff') return q.diff && q.diff.length ? q.diff.shift() : { ok: true, offending: [] };
+    if (role === 'left') return q.left && q.left.length ? q.left.shift() : { ok: true, found: [], removed: [], remaining: [] };
     trace.push(role);
     if (!q[role] || !q[role].length) throw new Error('extra call ' + role + ' after ' + trace.join('>'));
     const v = q[role].shift();
@@ -81,9 +82,10 @@ async function run(script, task = T, extra = {}) {
   ok('analystFirst: split -> stop before the programmer', x.r.status === 'stopped' && x.trace === 'pre>analyst', x.trace);
 
   // Git post-check: after every tester and reviewer, from the HEAD of the previous committing role.
+  const D0 = { verdict: 'done', docsOnly: false, summary: '' };
   x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [{ verdict: 'done', docsOnly: false, summary: '' }] });
   const dp = x.prompts.filter((p) => p.role === 'diff');
-  ok('post-check after the tester and the reviewer', x.full === 'pre>prog>test>diff:x:tester>review>diff:x:reviewer', x.full);
+  ok('post-check after the tester and the reviewer', x.full === 'pre>prog>test>diff:x:tester>left:x:tester>review>diff:x:reviewer>left:x:end', x.full);
   ok('tester checked from the programmer HEAD, reviewer from the tester HEAD',
     dp.length === 2 && / --since P --role tester/.test(dp[0].prompt) && / --since T --role reviewer( |\n|$)/.test(dp[1].prompt), dp.map((p) => p.prompt).join(' | '));
   ok('post-check runs the plugin script with the tester allow-list from the config',
@@ -99,11 +101,32 @@ async function run(script, task = T, extra = {}) {
   x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [{ verdict: 'done', docsOnly: false, summary: '' }], diff: [null] });
   ok('post-check without a result -> stop (not a silent ok)', x.r.status === 'stopped' && /returned no result/.test(x.r.why) && !x.trace.includes('review'), JSON.stringify(x.r));
 
+  // Leftovers post-check (scripts/role-leftovers-check.js --fix): after every tester and at the end of the task.
+  x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D0] }, Object.assign({}, T, { stack: 'k-test' }));
+  const lp = x.prompts.filter((p) => p.role === 'left');
+  ok('leftovers: runs the plugin script with --fix, the stack, the owner stack, the slots dir and the task log',
+    lp.length === 2 && lp.every((p) => p.prompt.includes('node /p/scripts/role-leftovers-check.js --wt /w ') && p.prompt.includes("--stack 'k-test'")
+      && p.prompt.includes("--owner-stack 'own'") && p.prompt.includes("--slots-dir '/slots'") && p.prompt.includes('--fix') && p.prompt.includes("--log '/d/leftovers.md'")), lp.map((p) => p.prompt).join(' | '));
+  ok('leftovers: a cheap agent like the git post-check', lp.every((p) => p.opts.agentType === 'general-purpose' && p.opts.model === 'haiku'));
+  x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D0],
+    left: [{ ok: true, found: ['container c1'], removed: ['container c1'], remaining: [] }] });
+  ok('leftovers removed after the tester -> the chain goes on, the result names them', x.r.status === 'done' && x.trace.includes('review') && JSON.stringify(x.r.leftovers || {}).includes('container c1'), JSON.stringify(x.r));
+  x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }],
+    left: [{ ok: false, found: ['process 7'], removed: [], remaining: ['process 7'] }] });
+  ok('leftovers that could not be removed after the tester -> stop, no review', x.r.status === 'stopped' && !x.trace.includes('review') && /process 7/.test(x.r.why), JSON.stringify(x.r));
+  x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D0], left: [null] });
+  ok('leftovers check without a result -> stop (not a silent ok)', x.r.status === 'stopped' && /leftovers[^"]*no result/.test(x.r.why), JSON.stringify(x.r));
+  x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D0],
+    left: [{ ok: true, found: [], removed: [], remaining: [] }, { ok: false, found: ['slot heavy.1.lock'], removed: [], remaining: ['slot heavy.1.lock'] }] });
+  ok('leftovers remaining at the end of the task -> stopped with them', x.r.status === 'stopped' && /heavy\.1\.lock/.test(x.r.why), JSON.stringify(x.r));
+  x = await run({ pre: [{ ok: false, problems: ['no brief'], blockingQuestions: [] }] });
+  ok('stopped at the preconditions -> no leftovers check (nothing started)', !x.prompts.some((p) => p.role === 'left'), x.full);
+
   // Security reviewer (t.security): after the reviewer, with its own post-check; done only if both are done.
   const TS = Object.assign({}, T, { security: true });
   const D = { verdict: 'done', docsOnly: false, summary: '' };
   x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D], sec: [D] }, TS);
-  ok('security: review>sec, both post-checks -> done', x.r.status === 'done' && x.full === 'pre>prog>test>diff:x:tester>review>diff:x:reviewer>sec>diff:x:reviewer', x.full);
+  ok('security: review>sec, both post-checks -> done', x.r.status === 'done' && x.full === 'pre>prog>test>diff:x:tester>left:x:tester>review>diff:x:reviewer>sec>diff:x:reviewer>left:x:end', x.full);
   ok('security reviewer reads the threat model from the config', x.prompts.some((p) => p.role === 'sec' && p.prompt.includes('/w/ACCESS.md')));
   x = await run({ pre: [PRE], prog: [PROG, PROG], test: [{ verdict: 'green', summary: '' }, { verdict: 'green', summary: '' }],
     review: [D, D], sec: [{ verdict: 'rejected', docsOnly: false, summary: 'leak' }, D] }, TS);
@@ -134,7 +157,7 @@ async function run(script, task = T, extra = {}) {
   x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D] }, Object.assign({}, T, { stack: 'k-test' }));
   const tp = x.prompts.find((p) => p.role === 'test').prompt;
   ok('tester prompt: own stack torn down with images and volumes (docker compose -p <stack> down -v --rmi all)', tp.includes('docker compose -p k-test down -v --rmi all'), tp);
-  ok('every role prompt: the owner\'s stack images are never removed, nor other images or the build cache', x.prompts.filter((p) => p.role !== 'diff').every((p) => /[Nn]ever remove[^.]*owner's stack[^.]*other images[^.]*build cache/.test(p.prompt)));
+  ok('every role prompt: the owner\'s stack images are never removed, nor other images or the build cache', x.prompts.filter((p) => !['diff', 'left'].includes(p.role)).every((p) => /[Nn]ever remove[^.]*owner's stack[^.]*other images[^.]*build cache/.test(p.prompt)));
   // One source of role rules: markers in rules/multi-agent.md <-> RULE_LIST <-> the prompt of every role.
   const rules = fs.readFileSync(path.join(ROOT, 'rules', 'multi-agent.md'), 'utf8');
   const marked = [...rules.matchAll(/<!-- role:([\w-]+) -->/g)].map((m) => m[1]);
@@ -148,11 +171,11 @@ async function run(script, task = T, extra = {}) {
   x = await run({ pre: [PRE], prog: [PROG, PROG, PROG], test: Array(3).fill({ verdict: 'green', summary: '' }), analyst: [AN, AN],
     review: [{ verdict: 'rejected', docsOnly: false, summary: '' }, { verdict: 'rejected', docsOnly: false, summary: '' }, { verdict: 'done', docsOnly: false, summary: '' }] },
     Object.assign({}, T, { analystFirst: true }));
-  const roles = new Set(x.prompts.filter((p) => p.role !== 'diff').map((p) => p.role));
+  const roles = new Set(x.prompts.filter((p) => !['diff', 'left'].includes(p.role)).map((p) => p.role));
   const xs = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D], sec: [D] }, TS);
   const secLack = xs.prompts.filter((p) => p.role === 'sec').flatMap((p) => ruleList.filter((r) => !p.prompt.includes(r[1])).map((r) => p.label + ':' + r[0]));
   ok('the security reviewer prompt carries every rule', xs.prompts.some((p) => p.role === 'sec') && !secLack.length, secLack.join(','));
-  const lacking = x.prompts.filter((p) => p.role !== 'diff').flatMap((p) => ruleList.filter((r) => !p.prompt.includes(r[1])).map((r) => p.label + ':' + r[0]));
+  const lacking = x.prompts.filter((p) => !['diff', 'left'].includes(p.role)).flatMap((p) => ruleList.filter((r) => !p.prompt.includes(r[1])).map((r) => p.label + ':' + r[0]));
   ok('the prompt of every role (pre, analyst, prog, test, review) carries every rule', roles.size === 5 && !lacking.length, [...roles].join(',') + ' ' + lacking.join(','));
 
   done();
