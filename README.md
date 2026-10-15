@@ -123,6 +123,7 @@ read.
 | `scripts/wt-setup.sh` | creates a task worktree and clones (not symlinks) git-ignored data into it |
 | `scripts/wt-remove-check.js` | before a worktree or data directory is removed: prints its ignored data with sizes, the path named in code and the symbolic links that lead into it; removes nothing |
 | `scripts/role-diff-check.js` | git post-check of the tester and reviewers |
+| `scripts/role-leftovers-check.js` | post-check after the tester and at the end of a task: Docker resources of the task's stack (by the compose project label), processes in its worktree, slots they hold; `--fix` removes only those, never the owner's stack |
 | `scripts/chain-cost.js` | cost of a chain run per task from the agent transcripts |
 | `scripts/git-hooks/` | `pre-push` (protected branches and tags) and `pre-commit` (cloud conflict copies, extra checks) |
 | `scripts/config.js` | finds, validates and resolves the project config |
@@ -251,6 +252,10 @@ Each task ends `done` or `stopped` with the reason, the open questions, a propos
   reach: a hook on Edit/Write would miss `sed -i`, `python -c`, a heredoc or a `git checkout`, while the post-check
   sees the result. The tester may change only paths matching `testerWritable` (guards and fixtures); the reviewers
   nothing in the worktree (their reports live in `sharedDir`).
+- **Leftovers**: after the tester and at the end of the task, `role-leftovers-check.js --fix` removes what the task left
+  running - containers, networks, volumes and images labelled with its compose project (`stack`), processes whose cwd
+  or argv lies in its worktree, the memory slots they hold - and names them in the result and in `<task>/leftovers.md`.
+  It never touches the owner's stack (`ownerStackReadOnly`) or another task; what it cannot remove stops the task.
 - Every role prompt carries the marked rules of `rules/multi-agent.md`: wait at most 270 s at a time, hand over past
   ~200k of context, open questions go to the coordinator, living specs change with the behaviour, stage by path,
   never push.

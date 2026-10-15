@@ -55,7 +55,7 @@ const bg = (cwd, ...cmd) => parseInt(execFileSync('sh', ['-c', 'cd "$1" || exit 
 const alive = (pid) => { const r = spawnSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' }); return r.status === 0 && r.stdout.trim() && !r.stdout.trim().startsWith('Z'); };
 const pids = [];
 try {
-  fs.writeFileSync(state, JSON.stringify(STATE0));
+  fs.writeFileSync(state, JSON.stringify(STATE0)); fs.writeFileSync(calls, '');
   const pCwd = bg(wt, 'sleep', '300'); pids.push(pCwd);
   const pArg = bg(other, process.execPath, '-e', 'setTimeout(() => {}, 300000)', path.join(wt, 'x.js')); pids.push(pArg);
   const pTmp = bg(tmp, 'sleep', '301'); pids.push(pTmp);

@@ -28,6 +28,7 @@ const ANSWER = {
   review: { verdict: 'done', docsOnly: false, summary: '' },
   sec: { verdict: 'done', docsOnly: false, summary: '' },
   diff: { ok: true, offending: [] },
+  left: { ok: true, found: [], removed: [], remaining: [] },
 };
 (async () => {
   const calls = [];

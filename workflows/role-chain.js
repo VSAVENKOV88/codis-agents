@@ -49,7 +49,7 @@ const RULE_LIST = (t) => [
   ['pauses', 'Pauses: never wait longer than 270 s at a time - run anything long through Bash run_in_background and wait with Monitor in slices; an agent with no output for 10 minutes is killed.'],
   ['context', 'Context: past ~200k finish the current stage, write the report with "Next step: ..." and stop - a fresh agent continues.'],
   ['slots', `Heavy work goes through memory slots: ${SCRIPTS}/heavy.sh <cmd>, ${SCRIPTS}/medium.sh <cmd>, full guard run ${SCRIPTS}/guards-all.sh ${t.gdir}.`],
-  ['docker', `Docker: ${CFG.ownerStackReadOnly ? `the owner's stack ${CFG.ownerStackReadOnly}` : 'the owner\'s stack'} is read-only (docker cp out is fine); never write into its containers; only a tester runs its own stack, and only when the brief asks, then removes it with its images and volumes (docker compose -p <stack> down -v --rmi all). Never remove the owner's stack or its images; other images and the build cache are not yours to clean.`],
+  ['docker', `Docker: ${CFG.ownerStackReadOnly ? `the owner's stack ${CFG.ownerStackReadOnly}` : 'the owner\'s stack'} is read-only (docker cp out is fine); never write into its containers; only a tester runs its own stack, and only when the brief asks, then removes it with its images and volumes (docker compose -p <stack> down -v --rmi all). Never remove the owner's stack or its images; other images and the build cache are not yours to clean. A post-check after you removes what the task left (its stack, processes in its worktree, the slots they hold) and reports it.`],
   ['specs', 'Living specs (UX specs, state models, gap lists) change in the same commit as the behaviour they describe.'],
   ['push', `Do not push, do not merge into ${PROTECTED}, do not create tags.`],
   ['gitadd', 'git add only by path (never -A or .): synced folders spawn conflict copies "name 2.ext".'],
@@ -103,6 +103,25 @@ If the command fails without JSON - ok=false, error = the error text.`,
 const diffFail = (role, d) => !d ? `the ${role} post-check returned no result`
   : !d.ok ? `the ${role} changed what the role may not: ${(d.offending || []).join(', ') || d.error || '?'}` : ''
 
+// Leftovers post-check: Docker resources of the task's stack (by label), processes in its worktree, the slots they hold.
+// --fix removes only those; what was removed goes into the task result and <dir>/leftovers.md, what remains stops it.
+const LEFT_SCHEMA = { type: 'object', properties: {
+  ok: { type: 'boolean' }, found: { type: 'array', items: { type: 'string' } }, removed: { type: 'array', items: { type: 'string' } },
+  remaining: { type: 'array', items: { type: 'string' } }, error: { type: 'string' },
+}, required: ['ok', 'found', 'removed', 'remaining'] }
+const SLOTS_DIR = CFG.slots && CFG.slots.lockDir
+const leftCheck = (t, when) => agent(`Run one command and return its JSON output as the schema fields (change nothing else, analyse nothing):
+node ${SCRIPTS}/role-leftovers-check.js --wt ${t.wt}${t.stack ? ` --stack ${sq(t.stack)}` : ''}${CFG.ownerStackReadOnly ? ` --owner-stack ${sq(CFG.ownerStackReadOnly)}` : ''}${SLOTS_DIR ? ` --slots-dir ${sq(SLOTS_DIR)}` : ''} --fix --log ${sq(`${t.dir}/leftovers.md`)}
+If the command fails without JSON - ok=false, error = the error text, remaining = [the error text].`,
+  { label: `left:${t.key}:${when}`, phase: when === 'tester' ? 'Tester' : 'Reviewer', schema: LEFT_SCHEMA, effort: 'low', model: 'haiku', agentType: 'general-purpose' })
+// '' when nothing remains (removed ones are kept in st.leftovers), otherwise the reason to stop.
+const leftFail = (st, when, l) => {
+  if (!l) return `the leftovers post-check (${when}) returned no result`
+  if ((l.removed || []).length) st.leftovers.push(...l.removed.map((x) => `${when}: ${x}`))
+  return l.ok && !(l.remaining || []).length ? ''
+    : `leftovers the chain could not remove (${when}): ${(l.remaining || []).join(', ') || l.error || '?'}`
+}
+
 const DOCS_PATH = /(\.md$)|(^|\/)docs\//
 const stop = (t, why, extra) => Object.assign({ task: t.key, status: 'stopped', why }, extra || {})
 
@@ -143,6 +162,8 @@ async function testChecked(t, st, n) {
   if (!tr) return { fail: 'the tester returned no result' }
   const f = diffFail('tester', await diffCheck(t, 'tester', st.head))
   if (f) return { fail: f }
+  const lf = leftFail(st, 'tester', await leftCheck(t, 'tester'))
+  if (lf) return { fail: lf }
   st.head = tr.head
   return { tr }
 }
@@ -212,11 +233,19 @@ async function reviewLoop(t, st, tag) {
   return { fail: 'second review rejection', second: true, docsOnly: r2.docsOnly, review: r2.summary }
 }
 
+// After the preconditions every outcome passes the leftovers post-check; removed leftovers are named in the result.
 async function chain(t) {
-  const st = { head: '' }
+  const st = { head: '', leftovers: [] }
   const pc = await pre(t)
   if (!pc) return stop(t, 'the precondition check returned no result')
   if (!pc.ok || pc.blockingQuestions.length) return stop(t, 'preconditions', { problems: pc.problems, questions: pc.blockingQuestions })
+  const r = await work(t, st)
+  const lf = leftFail(st, 'end', await leftCheck(t, 'end'))
+  const out = lf ? (r.status === 'stopped' ? Object.assign({}, r, { why: `${r.why}; ${lf}` }) : stop(t, lf, { review: r.review })) : r
+  return st.leftovers.length ? Object.assign({}, out, { leftovers: st.leftovers }) : out
+}
+
+async function work(t, st) {
 
   if (t.analystFirst) {
     const a = await analyst(t, 'the task needs a spec or a diagnosis before code (brief: analystFirst)')
