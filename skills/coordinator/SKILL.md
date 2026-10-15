@@ -32,7 +32,9 @@ one. For whatever the owner judges by the screen, show a mockup of all states be
    acceptance in Docker at once.
 6. **Route.** `done` -> merge the branch into the integration branch yourself and resolve conflicts. After merging
    the second of parallel branches that touched the same files, run the new and touched guards of both tasks, then
-   the full guard run. `stopped` -> read the reason: questions go to the owner (and their answers into the brief), a proposed
+   the full guard run. Before removing a worktree or a data directory, show the owner the output of
+   `node "${CLAUDE_PLUGIN_ROOT}/scripts/wt-remove-check.js" <path>` (ignored data with sizes, the path in code,
+   symbolic links that lead into it) and remove only after a "yes" to that list. `stopped` -> read the reason: questions go to the owner (and their answers into the brief), a proposed
    split becomes new briefs, a second rejection goes to the analyst.
 7. **Questions.** Decide by three layers (rules, "Coordinator"): a question that follows from an accepted principle -
    decide it, write "decided by principle N" into the brief, tell the owner in one line; no principle, but the answer is
@@ -51,6 +53,9 @@ one. For whatever the owner judges by the screen, show a mockup of all states be
 - A project may grant standing permission to push process-rule changes to the plugin repository; then check the diff
   for secrets and personal paths before each push and commit as a noreply author. It never covers the product
   repository.
+- Before removing a worktree or a data directory, the owner says "yes" to the list of what goes with it: ignored data
+  with sizes and symbolic links that lead into it, from `scripts/wt-remove-check.js`. A clean `git status` does not show
+  ignored files.
 - Do not resume a multi-task run with `resumeFromRunId`; relaunch each unfinished task alone with `start`.
 - A change to process launch, permissions, Docker or the runtime version is accepted only after a smoke run in the real
   image.

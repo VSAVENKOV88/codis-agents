@@ -68,7 +68,8 @@ try {
   ok('absolute link from outside listed with its target', out.includes(path.join(dir, 'other', 'store-link')) && out.includes(path.join(wt, 'store')), out);
   ok('relative link from outside listed', out.includes(path.join(dir, 'other', 'rel-link')), out);
   ok('a link that does not lead into the path is not listed', !out.includes('unrelated-link'), out);
-  ok('a link inside the path is not listed', !out.includes('inner-link'), out);
+  const links = out.slice(out.indexOf('\n3. '));
+  ok('a link inside the path goes with it: not among the links from outside', links.length > 4 && !links.includes('inner-link'), out);
   ok('nothing removed', fs.existsSync(path.join(wt, 'store', 'corpus.bin')) && fs.readdirSync(wt).sort().join(',') === before);
 
   // A data directory outside any git repository: everything in it is listed with sizes.

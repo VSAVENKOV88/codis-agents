@@ -116,6 +116,14 @@ Larger changes run as a chain of agents, each in its own role:
   the real image (an own compose project, torn down after).
 - **Worktrees get their own copy of ignored data** (an APFS clone, `scripts/wt-setup.sh`), never a symlink to the main
   checkout: with a symlink, guards in the worktree write into the main data.
+- **Before removing a worktree or a data directory, the coordinator shows the owner what goes with it and removes only
+  after a "yes" to that list:** (a) ignored data inside, with sizes (`git status --ignored --porcelain`, `du`);
+  (b) references to the path: the path named in the project's code, and symbolic links outside it that lead into it
+  (`find -type l` + `readlink`). `scripts/wt-remove-check.js <path> [--search <dir>]...` prints both and removes nothing.
+  A clean `git status --porcelain` is not enough: it does not show ignored files. Why: a merged worktree removed after
+  a clean `git status` held the only copy of a measurement corpus in ignored files (~288 MB, an hour of the owner's
+  manual capture to restore), and the project's guards named its path as a fallback; an old copy of the repository
+  removed the same way was the target of 1809 `node_modules` symlinks elsewhere.
 
 ## Git
 
