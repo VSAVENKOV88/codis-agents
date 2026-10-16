@@ -20,7 +20,7 @@ for (const r of ROLES) {
 const SRC = fs.readFileSync(path.join(ROOT, 'workflows', 'role-chain.js'), 'utf8').replace(/^export const meta/m, 'const meta');
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 const CFG = { sharedDir: '/s', worktreeRoot: '/r', scriptsDir: '/p/scripts', protectedBranches: ['main'] };
-const T = { key: 'x', title: 'X', dir: '/d', wt: '/w', branch: 'b', gdir: 'w', accept: 'acc', security: true };
+const T = { key: 'x', title: 'X', dir: '/d', wt: '/w', branch: 'b', gdir: 'w', accept: 'acc', security: true, noAnalysis: 'n' };
 const ANSWER = {
   pre: { ok: true, problems: [], blockingQuestions: [] },
   prog: { status: 'ready', changedFiles: ['src/a.js'], commits: ['c'], head: 'P', mutations: 'm', fullRun: 'r', questions: [], summary: 's' },

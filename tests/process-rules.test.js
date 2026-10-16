@@ -9,6 +9,8 @@
 // - at most two chains with acceptance in Docker at once;
 // - a project may grant standing permission to push process-rule changes to the plugin repository, still checked for
 //   secrets and personal paths and committed as noreply; the product repository's push/merge/tag rule stays;
+// - every chain task carries exactly one of analystFirst, analysis (a reused report, named per task), noAnalysis (a
+//   written reason; for a defect skipping the diagnosis needs one);
 // - README: wt-setup.sh runs with zsh, never bash; a plugin installed mid-session needs a session restart; a Workflow
 //   scriptPath must lie in the working directory or the scratchpad.
 const fs = require('fs');
@@ -34,6 +36,10 @@ const CHECKS = [
   [[RULES, COORD], 'standing permission to push process-rule changes to the plugin repository', /standing permission to push process-rule changes to the plugin repository/],
   [[RULES, README], 'the hooks let through a standing push declared by a committed standingPush', /committed `standingPush`/],
   [[RULES, COORD], 'still checked for secrets and personal paths, noreply author', /secrets and personal paths[^.]*noreply/],
+  // Analysis marker: a reused analysis is named per task; skipping a diagnosis for a defect needs a written reason.
+  [[RULES, CHAIN, README], 'every task carries exactly one of analystFirst, analysis, noAnalysis', /exactly one of `analystFirst`, `analysis`, `noAnalysis`/],
+  [[RULES], 'a reused analysis is named per task', /reused analysis is named per task/],
+  [[RULES], 'skipping a diagnosis for a defect needs a written reason', /[Ss]kipping a diagnosis for a defect needs a written reason/],
 ];
 for (const [files, name, re] of CHECKS) for (const f of files) ok(`${f}: ${name}`, re.test(read(f)));
 

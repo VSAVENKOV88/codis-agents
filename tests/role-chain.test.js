@@ -16,7 +16,9 @@ const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
 const CFG = { sharedDir: '/s', worktreeRoot: '/r', scriptsDir: '/p/scripts', reportLanguage: 'Russian', ownerStackReadOnly: 'own', slots: { lockDir: '/slots' },
   protectedBranches: ['main'], testerWritable: ['-run\\.js$'], roleNotes: { programmer: 'rebuild the bundle' }, threatModel: 'ACCESS.md' };
-const T = { key: 'x', title: 'X', dir: '/d', wt: '/w', branch: 'b', gdir: 'w', accept: 'acc' };
+const T = { key: 'x', title: 'X', dir: '/d', wt: '/w', branch: 'b', gdir: 'w', accept: 'acc', noAnalysis: 'one-line fix' };
+// T without the analysis marker (exactly one of analystFirst, analysis, noAnalysis is required).
+const bare = (extra) => { const t = Object.assign({}, T, extra); delete t.noAnalysis; return Object.assign(t, extra); };
 const PRE = { ok: true, problems: [], blockingQuestions: [] };
 const PROG = { status: 'ready', changedFiles: ['src/a.js'], commits: ['c'], head: 'P', mutations: 'm', fullRun: 'r', questions: [], summary: 's' };
 const DOCS = Object.assign({}, PROG, { changedFiles: ['docs/GAPS.md'] });
@@ -25,7 +27,7 @@ const AN = { ready: true, cells: 10, subsystems: 1, split: [], questions: [], su
 // script: a queue of answers per role; trace - the order of calls.
 // A tester verdict without head gets head 'T'; the post-check (diff) is ok by default and not in trace (its order is in full).
 async function run(script, task = T, extra = {}) {
-  const trace = [], full = [], prompts = [];
+  const trace = [], full = [], prompts = [], logs = [];
   const q = {}; for (const [k, v] of Object.entries(script)) q[k] = v.slice();
   const agent = async (prompt, opts) => {
     const role = opts.label.split(':')[0];
@@ -40,8 +42,8 @@ async function run(script, task = T, extra = {}) {
   };
   const pipeline = async (items, fn) => Promise.all(items.map((it) => fn(it).catch(() => null)));
   const res = await new AsyncFunction('agent', 'pipeline', 'parallel', 'log', 'phase', 'args', SRC)(
-    agent, pipeline, null, () => {}, () => {}, Object.assign({ owner: 'o', config: CFG, tasks: [task] }, extra));
-  return { r: res[0], trace: trace.join('>'), full: full.join('>'), prompts };
+    agent, pipeline, null, (m) => logs.push(m), () => {}, Object.assign({ owner: 'o', config: CFG, tasks: [task] }, extra));
+  return { r: res[0], trace: trace.join('>'), full: full.join('>'), prompts, logs };
 }
 
 (async () => {
@@ -78,8 +80,47 @@ async function run(script, task = T, extra = {}) {
   x = await run({ pre: [PRE], prog: [Object.assign({}, PROG, { status: 'blocked', questions: ['q'] })] });
   ok('programmer blocked -> stop with the question, no tester', x.r.status === 'stopped' && x.trace === 'pre>prog', x.trace);
 
-  x = await run({ pre: [PRE], analyst: [Object.assign({}, AN, { cells: 40, split: ['a'] })] }, Object.assign({}, T, { analystFirst: true }));
+  x = await run({ pre: [PRE], analyst: [Object.assign({}, AN, { cells: 40, split: ['a'] })] }, bare({ analystFirst: true }));
   ok('analystFirst: split -> stop before the programmer', x.r.status === 'stopped' && x.trace === 'pre>analyst', x.trace);
+
+  // Analysis marker: every task carries exactly one of analystFirst, analysis (a reused report), noAnalysis (a reason).
+  const D1 = { verdict: 'done', docsOnly: false, summary: '' };
+  const G = { pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D1] };
+  const progOf = (x) => (x.prompts.find((p) => p.role === 'prog') || {}).prompt || '';
+  x = await run({}, bare({}));
+  ok('no analysis marker -> stopped before any agent, the question names the three fields',
+    x.r.status === 'stopped' && x.trace === '' && /preconditions/.test(x.r.why) && /analystFirst/.test(JSON.stringify(x.r.questions || []))
+      && /noAnalysis/.test(JSON.stringify(x.r.questions || [])) && /`?analysis`?/.test(JSON.stringify(x.r.questions || [])), JSON.stringify(x.r));
+  x = await run({}, bare({ analystFirst: true, noAnalysis: 'r' }));
+  ok('two analysis markers -> stopped before any agent', x.r.status === 'stopped' && x.trace === '' && /analystFirst/.test(JSON.stringify(x.r)) && /noAnalysis/.test(JSON.stringify(x.r)), JSON.stringify(x.r));
+  x = await run({}, bare({ analysis: '' }));
+  ok('an empty analysis path is no marker -> stopped', x.r.status === 'stopped' && x.trace === '', JSON.stringify(x.r));
+  x = await run({}, bare({ noAnalysis: '  ' }));
+  ok('a blank noAnalysis reason is no marker -> stopped', x.r.status === 'stopped' && x.trace === '', JSON.stringify(x.r));
+  x = await run({}, bare({ analystFirst: 'yes' }));
+  ok('analystFirst must be true, not any truthy value -> stopped', x.r.status === 'stopped' && x.trace === '', JSON.stringify(x.r));
+
+  x = await run(Object.assign({}, G, { pre: [PRE] }), bare({ analysis: '/s/old/analyst.md' }));
+  ok('analysis: no analyst agent, the chain runs to done', x.r.status === 'done' && x.trace === 'pre>prog>test>review', x.trace);
+  ok('analysis: logged "<title>: analyst reused - <path>"', x.logs.includes('X: analyst reused - /s/old/analyst.md'), x.logs.join(' | '));
+  ok('analysis: the preconditions check the file exists and is non-empty',
+    /\/s\/old\/analyst\.md/.test(x.prompts[0].prompt) && /exists and is non-empty/.test(x.prompts[0].prompt), x.prompts[0].prompt);
+  ok('analysis: the programmer prompt names it explicitly', progOf(x).includes('The analysis to follow: /s/old/analyst.md'), progOf(x));
+  ok('analysis: the result carries {mode: reused, path}', JSON.stringify(x.r.analysis) === JSON.stringify({ mode: 'reused', path: '/s/old/analyst.md' }), JSON.stringify(x.r));
+  x = await run({ pre: [{ ok: false, problems: ['/s/old/analyst.md is missing'], blockingQuestions: [] }] }, bare({ analysis: '/s/old/analyst.md' }));
+  ok('analysis: a missing file stops at the preconditions, the result still names the analysis',
+    x.r.status === 'stopped' && x.trace === 'pre' && x.r.analysis && x.r.analysis.mode === 'reused', JSON.stringify(x.r));
+
+  x = await run(G, bare({ noAnalysis: 'rename only' }));
+  ok('noAnalysis: no analyst agent, done', x.r.status === 'done' && x.trace === 'pre>prog>test>review', x.trace);
+  ok('noAnalysis: logged "<title>: no analyst - <reason>"', x.logs.includes('X: no analyst - rename only'), x.logs.join(' | '));
+  ok('noAnalysis: the programmer prompt carries the reason', progOf(x).includes('No analysis: rename only'), progOf(x));
+  ok('noAnalysis: the result carries {mode: none, reason}', JSON.stringify(x.r.analysis) === JSON.stringify({ mode: 'none', reason: 'rename only' }), JSON.stringify(x.r));
+
+  x = await run(Object.assign({}, G, { analyst: [AN] }), bare({ analystFirst: true }));
+  ok('analystFirst: analyst runs, the result carries {mode: run, path: <dir>/analyst.md}',
+    x.r.status === 'done' && x.trace === 'pre>analyst>prog>test>review' && JSON.stringify(x.r.analysis) === JSON.stringify({ mode: 'run', path: '/d/analyst.md' }), JSON.stringify(x.r));
+  ok('analystFirst: the programmer prompt names analyst.md', progOf(x).includes('The analysis to follow: /d/analyst.md'), progOf(x));
 
   // Git post-check: after every tester and reviewer, from the HEAD of the previous committing role.
   const D0 = { verdict: 'done', docsOnly: false, summary: '' };
@@ -144,7 +185,7 @@ async function run(script, task = T, extra = {}) {
   ok('agentTypePrefix "" -> every role general-purpose', x.prompts.every((p) => p.opts.agentType === 'general-purpose'));
 
   // Config and task defaults.
-  x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D] }, { key: 'k', title: 'K', wt: 'k-wt', branch: 'b', accept: 'a' });
+  x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D] }, { key: 'k', title: 'K', wt: 'k-wt', branch: 'b', accept: 'a', noAnalysis: 'n' });
   const pp = x.prompts.find((p) => p.role === 'prog').prompt;
   ok('task defaults: dir = <sharedDir>/<key>, wt under worktreeRoot, guards-all gets wt', pp.includes('/s/k/prog.md') && pp.includes('Worktree /r/k-wt') && pp.includes('/p/scripts/guards-all.sh k-wt'), pp);
   ok('project notes reach only their role', pp.includes('rebuild the bundle') && !x.prompts.find((p) => p.role === 'test').prompt.includes('rebuild the bundle'));
@@ -170,7 +211,7 @@ async function run(script, task = T, extra = {}) {
   ok('every rule (except local-*) has a marker in rules/multi-agent.md', !orphan.length, orphan.join(','));
   x = await run({ pre: [PRE], prog: [PROG, PROG, PROG], test: Array(3).fill({ verdict: 'green', summary: '' }), analyst: [AN, AN],
     review: [{ verdict: 'rejected', docsOnly: false, summary: '' }, { verdict: 'rejected', docsOnly: false, summary: '' }, { verdict: 'done', docsOnly: false, summary: '' }] },
-    Object.assign({}, T, { analystFirst: true }));
+    bare({ analystFirst: true }));
   const roles = new Set(x.prompts.filter((p) => !['diff', 'left'].includes(p.role)).map((p) => p.role));
   const xs = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D], sec: [D] }, TS);
   const secLack = xs.prompts.filter((p) => p.role === 'sec').flatMap((p) => ruleList.filter((r) => !p.prompt.includes(r[1])).map((r) => p.label + ':' + r[0]));
