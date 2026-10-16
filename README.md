@@ -226,19 +226,24 @@ If the project keeps its own hooks directory as `core.hooksPath` instead, call t
 Workflow({ name: "codis-agents:role-chain", args: {
   owner: "<the owner's request, verbatim>",
   config: /* output of: node <plugin>/scripts/config.js json */,
-  tasks: [{ key: "q2", title: "Queue retries", wt: "q2", branch: "b-q2",
+  tasks: [{ key: "q2", title: "Queue retries", wt: "q2", branch: "b-q2", analystFirst: true,
             accept: "Add -> the item builds with no tab open; log and screenshot attached" }]
 } })
 ```
 
-Optional task fields: `dir`, `gdir`, `start`, `analystFirst`, `stack` (the tester's own compose project), `security`.
+Every task carries exactly one of `analystFirst`, `analysis`, `noAnalysis`: `analystFirst: true` runs the analyst
+first; `analysis: "<path>"` reuses an existing analyst or diagnosis report (checked by the preconditions, named in the
+programmer prompt); `noAnalysis: "<reason>"` says why none is needed (for a defect, why the diagnosis is skipped). With
+none or several the task stops before any agent. The result carries `analysis: {mode: run|reused|none, path?, reason?}`.
+Optional task fields: `dir`, `gdir`, `start`, `stack` (the tester's own compose project), `security`.
 Each task ends `done` or `stopped` with the reason, the open questions, a proposed split or the review findings.
 
 ## How the chain decides
 
 - **Preconditions** first: a brief with an acceptance scenario, the worktree on its branch, no uncommitted changes, no
   unanswered question that acceptance depends on. Otherwise it stops before any code.
-- **Analyst** before the programmer when the task is marked `analystFirst`; a proposal to split stops the chain.
+- **Analyst** before the programmer when the task is marked `analystFirst`; a proposal to split stops the chain. With
+  `analysis` the phase logs the reused report, with `noAnalysis` the reason.
 - **Programmer** commits a red guard, then the code, then mutation-tests the guards after the commit and runs the full
   guard suite in a heavy slot.
 - **Tester** builds its own inventory, adds and mutation-tests guards, runs the acceptance scenario for real. Red goes

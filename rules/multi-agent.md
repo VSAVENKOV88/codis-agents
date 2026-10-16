@@ -29,6 +29,10 @@ Larger changes run as a chain of agents, each in its own role:
     session or after a compaction, in a pause between runs (an early compaction loses the owner's exact words).
 - **Analyst or diagnoser.** Goes before the programmer when the work needs a spec, or when a defect needs its cause
   found first. A diagnosis costs little and halves code rejections, so use it by default for defects.
+  - Every chain task carries exactly one of `analystFirst`, `analysis`, `noAnalysis`. A reused analysis is named per task
+    (`analysis`: the path of the earlier analyst or diagnosis report), not left in free text, so the programmer gets it
+    by name and the Analyst phase shows it. Skipping a diagnosis for a defect needs a written reason (`noAnalysis`).
+    With no marker or several the chain does not start the task: it does not guess whether a task is a defect.
   - For a feature with several dimensions the analyst first writes a matrix of cases into the brief (every dimension:
     states x events x environments). Without it each round closed one cell and broke the next.
   - **Split the task before the first programmer** if any holds: the matrix has more than ~30 cells; it spans more

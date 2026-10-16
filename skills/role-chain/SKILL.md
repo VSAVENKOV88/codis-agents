@@ -29,12 +29,18 @@ Only tasks the owner asked for in this conversation. For each task:
 | `accept` | the acceptance scenario in the real environment, copied from the brief |
 | `gdir` | optional: argument of `guards-all.sh` (default `wt`) |
 | `start` | optional: what is new for the first programmer (e.g. "continue from prog.md") |
-| `analystFirst` | optional: the brief needs a matrix or a diagnosis before code (default for defects) |
+| `analystFirst` | `true`: the brief needs a matrix or a diagnosis before code (default for defects) - the analyst runs first |
+| `analysis` | path to an existing analyst or diagnosis report the task reuses (an earlier analyst that proposed the split, a diagnoser run outside the chain); the preconditions check it exists and is non-empty, the programmer gets it by name |
+| `noAnalysis` | a short reason why no analysis is needed; for a defect, why the diagnosis is skipped. It is logged and given to the programmer |
 | `stack` | optional: docker compose project the tester may start and tear down |
 | `security` | optional: the brief marks the task as security work - a security reviewer joins |
 
-Check before starting: `BRIEF.md` exists in the task folder, the worktree is on the branch, and the brief has no
-unanswered question on which acceptance depends. If something is missing, write it into the brief as a question for
+Every task carries exactly one of `analystFirst`, `analysis`, `noAnalysis`; with none or several the workflow stops
+that task before any agent. A reused analysis is passed as `analysis`, not in free text inside `start`: the Analyst
+phase then logs `<title>: analyst reused - <path>` instead of looking skipped.
+
+Check before starting: `BRIEF.md` exists in the task folder, the worktree is on the branch, the task has its analysis
+marker (and the `analysis` file exists), and the brief has no unanswered question on which acceptance depends. If something is missing, write it into the brief as a question for
 the owner and ask, instead of starting.
 
 ## 3. Start the workflow

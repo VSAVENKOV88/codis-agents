@@ -23,7 +23,8 @@ one. For whatever the owner judges by the screen, show a mockup of all states be
 1. **Scope.** Do only what the owner asked in this conversation; say so in every brief ("the owner asked only for X").
 2. **Split.** Estimate the matrix: more than ~30 cells, more than two subsystems, an unanswered question, or a lifted
    "inactive while ..." restriction - split before any programmer, or send the analyst first. Defects get a diagnosis
-   first by default.
+   first by default; an analysis that already exists is passed as the task's `analysis` path, and a defect without a
+   diagnosis gets a written `noAnalysis` reason.
 3. **Brief.** One folder per task under `sharedDir` with `BRIEF.md` (skill `codis-agents:brief`); the owner's words
    verbatim and dated; the acceptance as a scenario in the real environment.
 4. **Worktree.** `${CLAUDE_PLUGIN_ROOT}/scripts/wt-setup.sh <name> <branch> [base]`.

@@ -1,7 +1,7 @@
 export const meta = {
   name: 'role-chain',
   description: 'Role chain over tasks in parallel: preconditions -> (analyst) -> programmer -> tester -> reviewer (+ security reviewer); fix rounds and an analyst after the second rejection',
-  whenToUse: 'Started by the codis-agents:role-chain skill, which reads .claude/codis-agents.json and passes it. args: {owner: "the owner\'s request, verbatim", config: <resolved project config>, tasks: [{key, title, wt, branch, accept, dir?, gdir?, start?, analystFirst?, stack?, security?}]}',
+  whenToUse: 'Started by the codis-agents:role-chain skill, which reads .claude/codis-agents.json and passes it. args: {owner: "the owner\'s request, verbatim", config: <resolved project config>, tasks: [{key, title, wt, branch, accept, dir?, gdir?, start?, analystFirst | analysis | noAnalysis (exactly one), stack?, security?}]}',
   phases: [
     { title: 'Preconditions', detail: 'brief, worktree, branch, open questions' },
     { title: 'Analyst', detail: 'matrix of cases or a diagnosis (before the programmer, or after the second rejection)' },
@@ -16,8 +16,11 @@ export const meta = {
 // The script reads no files: the project config and the owner's words arrive in args.
 // Task fields: key, title, wt (worktree path, or a name under config.worktreeRoot), branch, accept (the acceptance
 // scenario for the tester), dir (task folder, default <sharedDir>/<key>), gdir (argument of guards-all.sh, default wt),
-// start (what is new for the first programmer), analystFirst, stack (the tester's docker compose project),
+// start (what is new for the first programmer), stack (the tester's docker compose project),
 // security (the brief marks the task as security work - a security reviewer joins the review).
+// Analysis marker - exactly one of: analystFirst (true: the analyst runs before the programmer), analysis (path to an
+// existing analyst or diagnosis report the task reuses), noAnalysis (a short written reason why none is needed). Without
+// exactly one the task stops before any agent: the chain does not guess whether a task is a defect.
 
 const ARGS = typeof args === 'string' ? JSON.parse(args) : (args || {})
 const OWNER = ARGS.owner || ''
@@ -122,11 +125,27 @@ const leftFail = (st, when, l) => {
     : `leftovers the chain could not remove (${when}): ${(l.remaining || []).join(', ') || l.error || '?'}`
 }
 
+// The analysis marker of a task: {mode: 'run'|'reused'|'none', path?, reason?}, or {error} when not exactly one is given.
+const nonBlank = (v) => typeof v === 'string' && v.trim() !== ''
+function analysisOf(t) {
+  const given = [['analystFirst', t.analystFirst !== undefined && t.analystFirst !== false],
+    ['analysis', t.analysis !== undefined], ['noAnalysis', t.noAnalysis !== undefined]].filter((g) => g[1]).map((g) => g[0])
+  const bad = given.length !== 1 ? `${given.length ? 'several' : 'no'} analysis markers${given.length ? ` (${given.join(', ')})` : ''}`
+    : given[0] === 'analystFirst' && t.analystFirst !== true ? 'analystFirst must be true'
+    : given[0] === 'analysis' && !nonBlank(t.analysis) ? 'analysis must be a non-empty path'
+    : given[0] === 'noAnalysis' && !nonBlank(t.noAnalysis) ? 'noAnalysis must be a non-empty reason' : ''
+  if (bad) return { error: `${bad}: the task must carry exactly one of \`analystFirst\` (true: the analyst runs first), \`analysis\` (path to an existing analyst or diagnosis report to reuse), \`noAnalysis\` (why no analysis is needed; for a defect, why the diagnosis is skipped)` }
+  if (given[0] === 'analystFirst') return { mode: 'run', path: `${t.dir}/analyst.md` }
+  if (given[0] === 'analysis') return { mode: 'reused', path: t.analysis.trim() }
+  return { mode: 'none', reason: t.noAnalysis.trim() }
+}
+const analysisLine = (a) => (a.mode === 'none' ? `No analysis: ${a.reason}` : `The analysis to follow: ${a.path}`)
+
 const DOCS_PATH = /(\.md$)|(^|\/)docs\//
 const stop = (t, why, extra) => Object.assign({ task: t.key, status: 'stopped', why }, extra || {})
 
 const pre = (t) => agent(`You check PRECONDITIONS (read only, change nothing). ${RULES(t)}
-Check: ${t.dir}/BRIEF.md exists and contains an acceptance scenario in the real environment; ${t.wt} exists and is on branch ${t.branch}; there are no uncommitted changes (except untracked build output or probes); the brief has no unanswered questions to the owner on which acceptance depends. ok=false if any of this fails.`,
+Check: ${t.dir}/BRIEF.md exists and contains an acceptance scenario in the real environment;${t.an.mode === 'reused' ? ` the reused analysis ${t.an.path} exists and is non-empty;` : ''} ${t.wt} exists and is on branch ${t.branch}; there are no uncommitted changes (except untracked build output or probes); the brief has no unanswered questions to the owner on which acceptance depends. ok=false if any of this fails.`,
   { label: `pre:${t.key}`, phase: 'Preconditions', schema: PRE_SCHEMA, effort: 'low', agentType: 'general-purpose' })
 
 const analyst = (t, why) => agent(`You are the ANALYST/DIAGNOSER (read code only; you write only ${t.dir}/analyst.md). ${RULES(t)}
@@ -135,6 +154,7 @@ Write a matrix of cases (every dimension: states x events x environments) or fin
   { label: `analyst:${t.key}`, phase: 'Analyst', schema: ANALYST_SCHEMA, agentType: roleType('analyst') })
 
 const prog = (t, task, n) => agent(`You are the PROGRAMMER. ${RULES(t)} Report: ${t.dir}/prog.md (round ${n}).
+${analysisLine(t.an)}
 ${task}
 Order: red guard -> commit -> code -> commit -> mutations AFTER the commit (table in prog.md) -> full run ${SCRIPTS}/guards-all.sh ${t.gdir} in the background -> analysis of new reds. status=blocked if you cannot go on without the owner's answer.${note('programmer')}`,
   { label: `prog:${t.key}#${n}`, phase: 'Programmer', schema: PROG_SCHEMA, agentType: roleType('programmer') })
@@ -234,24 +254,29 @@ async function reviewLoop(t, st, tag) {
 }
 
 // After the preconditions every outcome passes the leftovers post-check; removed leftovers are named in the result.
-async function chain(t) {
+// The analysis marker is checked before any agent; from then on every result carries it (analysis).
+async function chain(t0) {
+  const an = analysisOf(t0)
+  if (an.error) return stop(t0, 'preconditions', { problems: [an.error], questions: [an.error] })
+  const t = Object.assign({}, t0, { an })
+  const withAn = (r) => Object.assign({}, r, { analysis: an })
   const st = { head: '', leftovers: [] }
   const pc = await pre(t)
-  if (!pc) return stop(t, 'the precondition check returned no result')
-  if (!pc.ok || pc.blockingQuestions.length) return stop(t, 'preconditions', { problems: pc.problems, questions: pc.blockingQuestions })
+  if (!pc) return withAn(stop(t, 'the precondition check returned no result'))
+  if (!pc.ok || pc.blockingQuestions.length) return withAn(stop(t, 'preconditions', { problems: pc.problems, questions: pc.blockingQuestions }))
   const r = await work(t, st)
   const lf = leftFail(st, 'end', await leftCheck(t, 'end'))
   const out = lf ? (r.status === 'stopped' ? Object.assign({}, r, { why: `${r.why}; ${lf}` }) : stop(t, lf, { review: r.review })) : r
-  return st.leftovers.length ? Object.assign({}, out, { leftovers: st.leftovers }) : out
+  return withAn(st.leftovers.length ? Object.assign({}, out, { leftovers: st.leftovers }) : out)
 }
 
 async function work(t, st) {
 
-  if (t.analystFirst) {
+  if (t.an.mode === 'run') {
     const a = await analyst(t, 'the task needs a spec or a diagnosis before code (brief: analystFirst)')
     if (!a) return stop(t, 'the analyst returned no result')
     if (!a.ready || a.split.length || a.questions.length) return stop(t, 'analyst: split the task or an answer is needed', { split: a.split, questions: a.questions, analyst: a.summary })
-  }
+  } else log(t.an.mode === 'reused' ? `${t.title}: analyst reused - ${t.an.path}` : `${t.title}: no analyst - ${t.an.reason}`)
 
   const b = await buildAndTest(t, st, t.start || 'Start with red guards for the cells of the brief (and analyst.md, if any).', '', 3)
   if (b.fail) return stop(t, b.fail, b)
