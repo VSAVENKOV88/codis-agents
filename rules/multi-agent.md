@@ -79,7 +79,9 @@ Larger changes run as a chain of agents, each in its own role:
   guards plus mutations, and runs the full suite only after its own commits.
 - After the tester and after each reviewer, a git post-check (`scripts/role-diff-check.js`) compares the worktree with
   the HEAD of the previous committing role: the tester may change only guards and their fixtures, a reviewer nothing.
-  A violation stops the chain.
+  A violation stops the chain. A post-check that fails (or returns nothing) is repeated once by the default model and
+  the second answer decides: a cheap agent sometimes reports a failure without running the script, while the script
+  itself gives the same answer twice.
 - **Do not resume a multi-task workflow run with `resumeFromRunId`.** Cached agent results replay by call order; with
   tasks in parallel the order differs, so results land in the wrong task (after a pause one task's programmer HEAD
   became another task's base, and the post-check stopped both chains on files their testers never touched). Relaunch

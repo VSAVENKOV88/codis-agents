@@ -261,6 +261,9 @@ Each task ends `done` or `stopped` with the reason, the open questions, a propos
   running - containers, networks, volumes and images labelled with its compose project (`stack`), processes whose cwd
   or argv lies in its worktree, the memory slots they hold - and names them in the result and in `<task>/leftovers.md`.
   It never touches the owner's stack (`ownerStackReadOnly`) or another task; what it cannot remove stops the task.
+- A failed post-check (ok=false or no result) is repeated once by the default model (label `...#retry`, logged) and the
+  second answer decides: the cheap agent that runs it sometimes answers without running the script, and the scripts
+  are deterministic, so a real violation or real leftovers still stop the task.
 - Every role prompt carries the marked rules of `rules/multi-agent.md`: wait at most 270 s at a time, hand over past
   ~200k of context, open questions go to the coordinator, living specs change with the behaviour, stage by path,
   never push.

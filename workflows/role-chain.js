@@ -98,11 +98,23 @@ const REVIEW_SCHEMA = { type: 'object', properties: {
 }, required: ['verdict', 'docsOnly', 'summary'] }
 
 // Post-check of a role by git (not a hook: a hook cannot see python -c, a heredoc, a checkout).
+// A post-check agent runs one deterministic script. A cheap agent sometimes returns ok=false without running it, so a
+// failed check (ok=false or no result) is repeated once by the default model (label <label>#retry) and the second
+// answer decides: the script gives the same answer again, so a real violation or real leftovers still stop the task.
+const checkOpts = (label, phase, schema, retry) => Object.assign({ label: retry ? `${label}#retry` : label, phase, schema, effort: 'low', agentType: 'general-purpose' },
+  retry ? {} : { model: 'haiku' })
+async function checkTwice(t, what, passed, run) {
+  const first = await run(false)
+  if (passed(first)) return { res: first }
+  log(`${t.title}: ${what} post-check ${first ? 'failed' : 'returned no result'} - repeated once by the default model`)
+  return { first, res: await run(true) }
+}
 const ALLOW = (CFG.testerWritable || []).map((r) => ` --allow ${sq(r)}`).join('')
-const diffCheck = (t, role, since) => agent(`Run one command and return its JSON output as the schema fields (change nothing, analyse nothing):
+const diffCheck1 = (t, role, since, retry) => agent(`Run one command and return its JSON output as the schema fields (change nothing, analyse nothing):
 node ${SCRIPTS}/role-diff-check.js --wt ${t.wt} --since ${since} --role ${role}${role === 'tester' ? ALLOW : ''}
 If the command fails without JSON - ok=false, error = the error text.`,
-  { label: `diff:${t.key}:${role}`, phase: role === 'tester' ? 'Tester' : 'Reviewer', schema: DIFF_SCHEMA, effort: 'low', model: 'haiku', agentType: 'general-purpose' })
+  checkOpts(`diff:${t.key}:${role}`, role === 'tester' ? 'Tester' : 'Reviewer', DIFF_SCHEMA, retry))
+const diffCheck = async (t, role, since) => (await checkTwice(t, role, (d) => !!(d && d.ok), (retry) => diffCheck1(t, role, since, retry))).res
 const diffFail = (role, d) => !d ? `the ${role} post-check returned no result`
   : !d.ok ? `the ${role} changed what the role may not: ${(d.offending || []).join(', ') || d.error || '?'}` : ''
 
@@ -113,15 +125,22 @@ const LEFT_SCHEMA = { type: 'object', properties: {
   remaining: { type: 'array', items: { type: 'string' } }, error: { type: 'string' },
 }, required: ['ok', 'found', 'removed', 'remaining'] }
 const SLOTS_DIR = CFG.slots && CFG.slots.lockDir
-const leftCheck = (t, when) => agent(`Run one command and return its JSON output as the schema fields (change nothing else, analyse nothing):
+const leftCheck1 = (t, when, retry) => agent(`Run one command and return its JSON output as the schema fields (change nothing else, analyse nothing):
 node ${SCRIPTS}/role-leftovers-check.js --wt ${t.wt}${t.stack ? ` --stack ${sq(t.stack)}` : ''}${CFG.ownerStackReadOnly ? ` --owner-stack ${sq(CFG.ownerStackReadOnly)}` : ''}${SLOTS_DIR ? ` --slots-dir ${sq(SLOTS_DIR)}` : ''} --fix --log ${sq(`${t.dir}/leftovers.md`)}
 If the command fails without JSON - ok=false, error = the error text, remaining = [the error text].`,
-  { label: `left:${t.key}:${when}`, phase: when === 'tester' ? 'Tester' : 'Reviewer', schema: LEFT_SCHEMA, effort: 'low', model: 'haiku', agentType: 'general-purpose' })
+  checkOpts(`left:${t.key}:${when}`, when === 'tester' ? 'Tester' : 'Reviewer', LEFT_SCHEMA, retry))
+const leftPassed = (l) => !!(l && l.ok && !(l.remaining || []).length)
+// What a failed first attempt reports as removed was removed (--fix ran before the failure), so it is kept as well.
+const leftCheck = async (t, when) => {
+  const { first, res } = await checkTwice(t, `leftovers (${when})`, leftPassed, (retry) => leftCheck1(t, when, retry))
+  const early = ((first && first.removed) || []).filter((x) => !((res && res.removed) || []).includes(x))
+  return res && early.length ? Object.assign({}, res, { removed: early.concat(res.removed || []) }) : res
+}
 // '' when nothing remains (removed ones are kept in st.leftovers), otherwise the reason to stop.
 const leftFail = (st, when, l) => {
   if (!l) return `the leftovers post-check (${when}) returned no result`
   if ((l.removed || []).length) st.leftovers.push(...l.removed.map((x) => `${when}: ${x}`))
-  return l.ok && !(l.remaining || []).length ? ''
+  return leftPassed(l) ? ''
     : `leftovers the chain could not remove (${when}): ${(l.remaining || []).join(', ') || l.error || '?'}`
 }
 
