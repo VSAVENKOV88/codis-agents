@@ -132,14 +132,14 @@ async function run(script, task = T, extra = {}) {
   ok('post-check runs the plugin script with the tester allow-list from the config',
     dp[0].prompt.includes("node /p/scripts/role-diff-check.js --wt /w ") && dp[0].prompt.includes("--allow '-run\\.js$'") && !dp[1].prompt.includes('--allow'), dp[0].prompt);
 
-  x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], diff: [{ ok: false, offending: ['src/a.ts'] }] });
+  x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], diff: [{ ok: false, offending: ['src/a.ts'] }, { ok: false, offending: ['src/a.ts'] }] });
   ok('tester changed product code -> stop, no review', x.r.status === 'stopped' && !x.trace.includes('review') && /src\/a\.ts/.test(x.r.why), JSON.stringify(x.r));
 
   x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [{ verdict: 'done', docsOnly: false, summary: '' }],
-    diff: [{ ok: true, offending: [] }, { ok: false, offending: ['src/b.ts'] }] });
+    diff: [{ ok: true, offending: [] }, { ok: false, offending: ['src/b.ts'] }, { ok: false, offending: ['src/b.ts'] }] });
   ok('reviewer changed code -> not done', x.r.status === 'stopped' && /src\/b\.ts/.test(x.r.why), JSON.stringify(x.r));
 
-  x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [{ verdict: 'done', docsOnly: false, summary: '' }], diff: [null] });
+  x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [{ verdict: 'done', docsOnly: false, summary: '' }], diff: [null, null] });
   ok('post-check without a result -> stop (not a silent ok)', x.r.status === 'stopped' && /returned no result/.test(x.r.why) && !x.trace.includes('review'), JSON.stringify(x.r));
 
   // Leftovers post-check (scripts/role-leftovers-check.js --fix): after every tester and at the end of the task.
@@ -153,15 +153,47 @@ async function run(script, task = T, extra = {}) {
     left: [{ ok: true, found: ['container c1'], removed: ['container c1'], remaining: [] }] });
   ok('leftovers removed after the tester -> the chain goes on, the result names them', x.r.status === 'done' && x.trace.includes('review') && JSON.stringify(x.r.leftovers || {}).includes('container c1'), JSON.stringify(x.r));
   x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }],
-    left: [{ ok: false, found: ['process 7'], removed: [], remaining: ['process 7'] }] });
+    left: [{ ok: false, found: ['process 7'], removed: [], remaining: ['process 7'] }, { ok: false, found: ['process 7'], removed: [], remaining: ['process 7'] }] });
   ok('leftovers that could not be removed after the tester -> stop, no review', x.r.status === 'stopped' && !x.trace.includes('review') && /process 7/.test(x.r.why), JSON.stringify(x.r));
-  x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D0], left: [null] });
+  x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D0], left: [null, null] });
   ok('leftovers check without a result -> stop (not a silent ok)', x.r.status === 'stopped' && /leftovers[^"]*no result/.test(x.r.why), JSON.stringify(x.r));
   x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D0],
-    left: [{ ok: true, found: [], removed: [], remaining: [] }, { ok: false, found: ['slot heavy.1.lock'], removed: [], remaining: ['slot heavy.1.lock'] }] });
+    left: [{ ok: true, found: [], removed: [], remaining: [] }, { ok: false, found: ['slot heavy.1.lock'], removed: [], remaining: ['slot heavy.1.lock'] },
+      { ok: false, found: ['slot heavy.1.lock'], removed: [], remaining: ['slot heavy.1.lock'] }] });
   ok('leftovers remaining at the end of the task -> stopped with them', x.r.status === 'stopped' && /heavy\.1\.lock/.test(x.r.why), JSON.stringify(x.r));
   x = await run({ pre: [{ ok: false, problems: ['no brief'], blockingQuestions: [] }] });
   ok('stopped at the preconditions -> no leftovers check (nothing started)', !x.prompts.some((p) => p.role === 'left'), x.full);
+
+  // A failed post-check (ok=false or no result) is repeated once by the default model, labelled #retry: a cheap agent
+  // sometimes returns ok=false without running the command. The scripts are deterministic: the second answer decides.
+  const NOTRUN = { ok: false, offending: [], error: 'the command was not run' };
+  const LNOTRUN = { ok: false, found: [], removed: [], remaining: ['the command was not run'], error: 'the command was not run' };
+  const LOK = { ok: true, found: [], removed: [], remaining: [] };
+  const retries = (x) => x.prompts.filter((p) => /#retry$/.test(p.label));
+  x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D0], diff: [NOTRUN, { ok: true, offending: [] }] });
+  ok('diff post-check: ok=false then ok=true on the repeat -> the chain goes on to done', x.r.status === 'done' && x.trace === 'pre>prog>test>review', JSON.stringify(x.r));
+  ok('diff post-check repeat: label #retry, same command, default model',
+    x.full === 'pre>prog>test>diff:x:tester>diff:x:tester#retry>left:x:tester>review>diff:x:reviewer>left:x:end'
+      && retries(x).length === 1 && retries(x)[0].opts.model === undefined && retries(x)[0].prompt === x.prompts.find((p) => p.label === 'diff:x:tester').prompt, x.full);
+  ok('diff post-check repeat is logged', x.logs.some((m) => /X: .*tester.*post-check.*repeat/i.test(m)), x.logs.join(' | '));
+  x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D0], diff: [null, { ok: true, offending: [] }] });
+  ok('diff post-check: no result then ok=true -> done', x.r.status === 'done', JSON.stringify(x.r));
+  x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D0], diff: [{ ok: true, offending: [] }, NOTRUN, { ok: true, offending: [] }] });
+  ok('reviewer post-check: ok=false then ok=true -> done', x.r.status === 'done' && retries(x).length === 1 && retries(x)[0].label === 'diff:x:reviewer#retry', x.full);
+  x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], diff: [NOTRUN, { ok: false, offending: ['src/c.ts'] }] });
+  ok('diff post-check failing twice -> stop with the second answer, no review', x.r.status === 'stopped' && !x.trace.includes('review') && /src\/c\.ts/.test(x.r.why), JSON.stringify(x.r));
+  x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D0], left: [LNOTRUN, LOK] });
+  ok('leftovers post-check: ok=false then ok=true on the repeat -> the chain goes on to done', x.r.status === 'done' && x.trace === 'pre>prog>test>review', JSON.stringify(x.r));
+  ok('leftovers post-check repeat: label #retry, same command, default model',
+    x.full === 'pre>prog>test>diff:x:tester>left:x:tester>left:x:tester#retry>review>diff:x:reviewer>left:x:end'
+      && retries(x).length === 1 && retries(x)[0].opts.model === undefined && retries(x)[0].prompt === x.prompts.find((p) => p.label === 'left:x:tester').prompt, x.full);
+  ok('leftovers post-check repeat is logged', x.logs.some((m) => /X: .*leftovers.*post-check.*repeat/i.test(m)), x.logs.join(' | '));
+  x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D0], left: [LOK, null, LOK] });
+  ok('leftovers at the end: no result then ok=true -> done', x.r.status === 'done' && retries(x).length === 1 && retries(x)[0].label === 'left:x:end#retry', x.full);
+  x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], left: [LNOTRUN, { ok: false, found: ['process 9'], removed: [], remaining: ['process 9'] }] });
+  ok('leftovers post-check failing twice -> stop with the second answer, no review', x.r.status === 'stopped' && !x.trace.includes('review') && /process 9/.test(x.r.why), JSON.stringify(x.r));
+  x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D0] });
+  ok('passing post-checks are not repeated', !retries(x).length, x.full);
 
   // Security reviewer (t.security): after the reviewer, with its own post-check; done only if both are done.
   const TS = Object.assign({}, T, { security: true });
