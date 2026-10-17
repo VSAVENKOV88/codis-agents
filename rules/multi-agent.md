@@ -140,5 +140,16 @@ Larger changes run as a chain of agents, each in its own role:
   for secrets and personal paths before the push and commits as a noreply author. The permission does not extend to
   the product repository: its protected branches, merges into them and tags still need an explicit request.
   The hooks let it through only from the plugin repository's own committed `standingPush` (its HEAD, no force, tags never, its hygiene test green).
+- **A long branch does not stay local: CI sees it from the start.**
+  - An arc's branch gets a draft pull request into the protected branch when the arc starts, and the coordinator pushes
+    it after every merged task, so CI runs on each step. A project may grant standing permission to push working
+    branches (never protected ones, never tags, never force); without it the coordinator asks the owner for the push at
+    each merge.
+  - A red CI on the branch counts like a new red in the full guard run: the task and the seam are not accepted until it
+    is green or its red is explained in the backlog.
+  - An arc is merged into the protected branch when it closes, not carried into the next arc.
+  - Why: an arc branch of 1038 commits (one architecture change, a polishing arc and the start of the next one) never
+    went through CI; at the merge CI showed 40 new reds that the local runs never could: a browser engine CI did not
+    install, and differences of the Linux runner.
 - Every fix gets a guard, and the guard is mutation-tested **after** committing: break the code, see red,
   `git checkout` the file, see green. Mutating before the commit loses the fix silently.
