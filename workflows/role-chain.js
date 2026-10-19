@@ -125,7 +125,10 @@ const LEFT_SCHEMA = { type: 'object', properties: {
   remaining: { type: 'array', items: { type: 'string' } }, error: { type: 'string' },
 }, required: ['ok', 'found', 'removed', 'remaining'] }
 const SLOTS_DIR = CFG.slots && CFG.slots.lockDir
-const leftCheck1 = (t, when, retry) => agent(`Run one command and return its JSON output as the schema fields (change nothing else, analyse nothing):
+// A post-check agent sees only this text: without the context below it took --fix for a destructive step nobody asked
+// for and refused to run it (two refusals in one task, 2026-10-19), which stopped a task that had nothing left over.
+const leftCheck1 = (t, when, retry) => agent(`This is the leftovers post-check of the codis-agents process the project owner set up (rule "Docker" in rules/multi-agent.md): after the tester and at the end of every task it removes what this task itself left behind. --fix touches only Docker resources labelled with this task's own compose project, processes whose cwd or argv lie inside this task's worktree, and the slots they hold; the owner's stack is excluded by --owner-stack and is never touched. Running it is the expected step, not a decision for you to make.
+Run one command and return its JSON output as the schema fields (change nothing else, analyse nothing):
 node ${SCRIPTS}/role-leftovers-check.js --wt ${t.wt}${t.stack ? ` --stack ${sq(t.stack)}` : ''}${CFG.ownerStackReadOnly ? ` --owner-stack ${sq(CFG.ownerStackReadOnly)}` : ''}${SLOTS_DIR ? ` --slots-dir ${sq(SLOTS_DIR)}` : ''} --fix --log ${sq(`${t.dir}/leftovers.md`)}
 If the command fails without JSON - ok=false, error = the error text, remaining = [the error text].`,
   checkOpts(`left:${t.key}:${when}`, when === 'tester' ? 'Tester' : 'Reviewer', LEFT_SCHEMA, retry))
