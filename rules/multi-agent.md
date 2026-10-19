@@ -78,6 +78,12 @@ Larger changes run as a chain of agents, each in its own role:
 ## Order and shortcuts
 
 - If the tester finds red, skip the review and send the task straight back to the programmer.
+- **A red from the environment goes to the coordinator, not to the programmer.** The tester tells a red of the product
+  from a red of the environment (a full run cut off before its tally, no memory slot, disk or swap exhausted, Docker
+  down) and gives the latter its own verdict, `environment`, with the cause and its evidence; the workflow stops the
+  task with that cause, and the coordinator frees the machine and relaunches it. The preconditions check free disk and
+  swap headroom (`scripts/env-check.js`, floors in the project config `preconditions`: by default 10 GB of disk and
+  4 GB of swap). Why: programmer rounds "without changes" after such reds cost about 3.3M tokens in one window.
 - On rejection: a fix round, then a second review. A second rejection for a code defect sends the task to the analyst
   (cases, cause) inside the same run, then one more full round; a third rejection goes to the coordinator. A question
   of scope goes to the owner.

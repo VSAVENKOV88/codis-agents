@@ -57,6 +57,26 @@ async function run(script, task = T, extra = {}) {
   x = await run({ pre: [PRE], prog: [PROG, PROG], test: [{ verdict: 'red', summary: '' }, { verdict: 'green', summary: '' }], review: [{ verdict: 'done', docsOnly: false, summary: '' }] });
   ok('red tester -> programmer without review', x.r.status === 'done' && x.trace === 'pre>prog>test>prog>test>review', x.trace);
 
+  // A red from the environment (cut-off full run, no slot, disk, swap, Docker) stops for the coordinator, no programmer.
+  x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'environment', environment: 'full run killed at 40 %, disk 100 %', summary: 's' }] });
+  ok('tester environment -> stopped with the cause, no second programmer, no review',
+    x.r.status === 'stopped' && x.trace === 'pre>prog>test' && /environment/.test(x.r.why) && /disk 100 %/.test(x.r.why) && x.r.environment === 'full run killed at 40 %, disk 100 %', JSON.stringify(x.r));
+  ok('tester environment: the post-checks still ran (cleanup)', x.full === 'pre>prog>test>diff:x:tester>left:x:tester>left:x:end', x.full);
+  x = await run({ pre: [PRE], prog: [PROG, PROG], test: [{ verdict: 'green', summary: '' }, { verdict: 'environment', environment: 'docker daemon down', summary: '' }],
+    review: [{ verdict: 'rejected', docsOnly: false, summary: 'r' }] });
+  ok('tester environment after the review fix -> stopped with the cause, no second review',
+    x.r.status === 'stopped' && x.trace === 'pre>prog>test>review>prog>test' && /docker daemon down/.test(x.r.why), JSON.stringify(x.r));
+  const tp0 = x.prompts.find((p) => p.role === 'test');
+  ok('tester prompt: the environment verdict, its causes and env-check with the floors',
+    /environment - red that the product did not cause/.test(tp0.prompt) && tp0.prompt.includes("node /p/scripts/env-check.js --path '/w' --min-disk-gb 10 --min-swap-gb 4")
+      && (tp0.opts.schema.properties.verdict.enum || []).includes('environment'), tp0.prompt);
+  ok('preconditions run env-check on the worktree and the task folder with the default floors',
+    x.prompts[0].prompt.includes("node /p/scripts/env-check.js --path '/w' --path '/d' --min-disk-gb 10 --min-swap-gb 4"), x.prompts[0].prompt);
+  x = await run({ pre: [{ ok: false, problems: ['disk /w: 2 GB free, below 10 GB'], blockingQuestions: [] }] }, T,
+    { config: Object.assign({}, CFG, { preconditions: { minFreeDiskGB: 25, minSwapGB: 6 } }) });
+  ok('preconditions: floors from config.preconditions; a full disk stops before the programmer',
+    x.prompts[0].prompt.includes('--min-disk-gb 25 --min-swap-gb 6') && x.r.status === 'stopped' && x.trace === 'pre' && /2 GB free/.test(JSON.stringify(x.r.problems)), JSON.stringify(x.r));
+
   x = await run({ pre: [PRE], prog: [PROG, PROG, PROG], test: [{ verdict: 'red' }, { verdict: 'red' }, { verdict: 'red', summary: '' }].map((v) => Object.assign({ summary: '' }, v)) });
   ok('three red testers -> stop, no review', x.r.status === 'stopped' && !x.trace.includes('review'), x.trace);
 

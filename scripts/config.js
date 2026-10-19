@@ -41,6 +41,7 @@ const SPEC = {
   threatModel: ['string', ''],
   gitHooks: ['object', null],
   standingPush: ['object', null],
+  preconditions: ['object', null],
   $schema: ['string', ''],
 };
 const REQUIRED = ['repoDir', 'worktreeRoot', 'sharedDir'];
@@ -52,6 +53,8 @@ const WT_SPEC = { scan: ['string[]', []], skip: ['string[]', []], link: ['string
 const PROBE_SPEC = { file: ['string', undefined], contains: ['string', undefined] };
 const HOOKS_SPEC = { blockICloudCopies: ['boolean', false], preCommit: ['string[]', []] };
 const STANDING_SPEC = { branches: ['string[]', []], check: ['string', ''] };
+// Environment floors of the preconditions (scripts/env-check.js documents why these defaults).
+const PRE_SPEC = { minFreeDiskGB: ['number', 10], minSwapGB: ['number', 4] };
 const ROLES = ['analyst', 'programmer', 'tester', 'reviewer', 'security-reviewer'];
 
 const expand = (p) => (typeof p === 'string' && p ? p.replace(/^~(?=$|\/)/, os.homedir()).replace(/\$\{HOME\}|\$HOME\b/g, os.homedir()) : p);
@@ -89,6 +92,8 @@ function resolve(raw) {
   }
   c.worktreeSetup = level(WT_SPEC, c.worktreeSetup, 'worktreeSetup.', errors);
   c.gitHooks = level(HOOKS_SPEC, c.gitHooks, 'gitHooks.', errors);
+  c.preconditions = level(PRE_SPEC, c.preconditions, 'preconditions.', errors);
+  for (const k of Object.keys(PRE_SPEC)) if (!(c.preconditions[k] >= 0)) errors.push(`preconditions.${k}: expected a number >= 0`);
   if (c.guardAdaptiveProbe) {
     c.guardAdaptiveProbe = level(PROBE_SPEC, c.guardAdaptiveProbe, 'guardAdaptiveProbe.', errors);
     if (!c.guardAdaptiveProbe.file || !c.guardAdaptiveProbe.contains) errors.push('guardAdaptiveProbe: file and contains are required');
@@ -158,7 +163,7 @@ function shellLines(c) {
   return Object.entries(v).map(([k, x]) => (x === '' ? `[[ -v ${k} ]] || ${k}=''` : `: \${${k}:=${q(x)}}`)).join('\n');
 }
 
-module.exports = { find, load, resolve, shellLines, SPEC, SLOT_SPEC, WT_SPEC, PROBE_SPEC, HOOKS_SPEC, STANDING_SPEC, ROLES, expand };
+module.exports = { find, load, resolve, shellLines, SPEC, SLOT_SPEC, WT_SPEC, PROBE_SPEC, HOOKS_SPEC, STANDING_SPEC, PRE_SPEC, ROLES, expand };
 
 if (require.main === module) {
   const [cmd, ...rest] = process.argv.slice(2);
@@ -191,6 +196,6 @@ module.exports.loadOrDefaults = function loadOrDefaults(cwd, env) {
   const errors = [];
   return Object.assign(level(SPEC, {}, '', errors), {
     slots: level(SLOT_SPEC, {}, '', errors), worktreeSetup: level(WT_SPEC, {}, '', errors),
-    gitHooks: level(HOOKS_SPEC, {}, '', errors), roleNotes: {}, configPath: null,
+    gitHooks: level(HOOKS_SPEC, {}, '', errors), preconditions: level(PRE_SPEC, {}, '', errors), roleNotes: {}, configPath: null,
   });
 };

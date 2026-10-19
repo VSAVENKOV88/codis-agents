@@ -62,7 +62,9 @@ role agents are unavailable).
 
 ## 4. After the run
 
-- Each task returns `done` or `stopped` with the reason, questions, proposed split or review findings. Relay them to the
+- Each task returns `done` or `stopped` with the reason, questions, proposed split or review findings. A stop with
+  `environment` is a red the product did not cause (a cut-off full run, no slot, disk or swap, Docker): free the
+  machine and relaunch the task with `start` pointing to its report, without a programmer round. Relay them to the
   owner; write the owner's answers into the brief yourself (verbatim, dated) before the next run.
 - Cost: `node "${CLAUDE_PLUGIN_ROOT}/scripts/chain-cost.js" <directory with the run's agent transcripts>` prints the
   input-equivalent cost per task and flags tasks above twice `medianTaskIE`; put the lines into the report to the owner.

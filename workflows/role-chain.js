@@ -48,6 +48,8 @@ const specsOf = (t) => (t.spec === undefined ? [] : [].concat(t.spec))
 const TASKS = TASKS_IN.map((t) => Object.assign({}, t, {
   dir: t.dir || `${CFG.sharedDir}/${t.key}`, wt: abs(t.wt), gdir: t.gdir || t.wt, specs: specsOf(t),
 }))
+// Environment floors of the preconditions (config preconditions; the defaults are explained in scripts/env-check.js).
+const ENV = Object.assign({ minFreeDiskGB: 10, minSwapGB: 4 }, CFG.preconditions || {})
 const sq = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`
 
 // Rules that reach a role only through its prompt (rules/multi-agent.md: the pause and 200k rules worked once they
@@ -92,7 +94,8 @@ const PROG_SCHEMA = { type: 'object', properties: {
   summary: { type: 'string' },
 }, required: ['status', 'changedFiles', 'commits', 'head', 'mutations', 'fullRun', 'questions', 'summary'] }
 const TEST_SCHEMA = { type: 'object', properties: {
-  verdict: { type: 'string', enum: ['green', 'red'] },
+  verdict: { type: 'string', enum: ['green', 'red', 'environment'], description: 'environment - red caused by the environment, not by the product: the task stops for the coordinator' },
+  environment: { type: 'string', description: 'with verdict environment: the cause and its evidence (a cut-off full run, no slot, disk or swap, Docker down)' },
   head: { type: 'string', description: 'git rev-parse HEAD of the worktree after your commits' },
   summary: { type: 'string', description: 'acceptance numbers per profile/environment, own guards and mutations, red with file:line' },
 }, required: ['verdict', 'head', 'summary'] }
@@ -196,7 +199,7 @@ const preAnalysis = (t) => (t.an.mode === 'reused'
     ? ` the noAnalysis reason "${t.an.reason}" says why this task needs no matrix of its own (a tail, a one-line fix, a rename); "the arc specification covers it" is not such a reason;`
     : '')
 const pre = (t) => agent(`You check PRECONDITIONS (read only, change nothing). ${RULES(t)}
-Check: ${t.dir}/BRIEF.md exists and contains an acceptance scenario in the real environment;${preAnalysis(t)}${t.specs.length ? ` the arc specification ${t.specs.join(', ')} exists;` : ''} ${t.wt} exists and is on branch ${t.branch}; there are no uncommitted changes (except untracked build output or probes); the brief has no unanswered questions to the owner on which acceptance depends. ok=false if any of this fails.`,
+Check: ${t.dir}/BRIEF.md exists and contains an acceptance scenario in the real environment;${preAnalysis(t)}${t.specs.length ? ` the arc specification ${t.specs.join(', ')} exists;` : ''} ${t.wt} exists and is on branch ${t.branch}; there are no uncommitted changes (except untracked build output or probes); the brief has no unanswered questions to the owner on which acceptance depends; the environment has room: run node ${SCRIPTS}/env-check.js --path ${sq(t.wt)} --path ${sq(t.dir)} --min-disk-gb ${ENV.minFreeDiskGB} --min-swap-gb ${ENV.minSwapGB} (free disk and swap headroom) and copy its problems. ok=false if any of this fails.`,
   { label: `pre:${t.key}`, phase: 'Preconditions', schema: PRE_SCHEMA, effort: 'low', agentType: 'general-purpose' })
 
 const analyst = (t, why) => agent(`You are the ANALYST/DIAGNOSER (read code only; you write only ${t.dir}/analyst.md). ${RULES(t)}
@@ -215,7 +218,8 @@ const test = (t, n) => agent(`You are the TESTER. You do not change product code
 2. Your own guards for what is not covered -> commit -> mutations after the commit.
 3. Acceptance in the real environment: ${t.accept}${t.stack ? ` Your own stack: docker compose -p ${t.stack}; afterwards remove it with its images and volumes: docker compose -p ${t.stack} down -v --rmi all.` : ''} Evidence (logs, numbers, screenshots) goes into ${t.dir} with the prefix test-.
 4. Do not repeat the programmer's full run: new and touched guards and mutations; a full run only after your own commits.
-green - only if the brief's acceptance is met in full.${note('tester')}`,
+green - only if the brief's acceptance is met in full. red - the product fails a guard or the acceptance.
+environment - red that the product did not cause, so a programmer has nothing to fix: your or the programmer's full run cut off before its tally (killed, timed out, out of memory), no memory slot within your time, disk or swap exhausted (node ${SCRIPTS}/env-check.js --path ${sq(t.wt)} --min-disk-gb ${ENV.minFreeDiskGB} --min-swap-gb ${ENV.minSwapGB}), Docker or your stack down for a reason outside the task's code. Put the cause and its evidence into environment; the task stops for the coordinator. Never use it for a red that the product causes.${note('tester')}`,
   { label: `test:${t.key}#${n}`, phase: 'Tester', schema: TEST_SCHEMA, agentType: roleType('tester') })
 
 const review = (t, n, scope) => agent(`You are the REVIEWER (read only; you may rerun guards). ${RULES(t)} Report: ${t.dir}/review.md (round ${n}).
@@ -257,6 +261,11 @@ async function reviewChecked(t, st, n, scope) {
   } }
 }
 
+// A red from the environment goes to the coordinator, not to a programmer: a programmer round "without changes" cost
+// about 3.3M tokens in one window (cut-off full runs, a full disk, no heavy slot).
+const envStop = (round, tr) => ({ fail: `tester ${round}: red from the environment, not the product - ${tr.environment || tr.summary || '?'}`,
+  environment: tr.environment || tr.summary || '', test: tr.summary })
+
 async function buildAndTest(t, st, firstTask, tag, maxRounds) {
   let p = await prog(t, firstTask, `${tag}1`)
   if (!p) return { fail: 'the programmer returned no result' }
@@ -268,6 +277,7 @@ async function buildAndTest(t, st, firstTask, tag, maxRounds) {
     const tr = x.tr
     log(`${t.title}: tester ${tag}${r} - ${tr.verdict}`)
     if (tr.verdict === 'green') return { ok: tr }
+    if (tr.verdict === 'environment') return envStop(`${tag}${r}`, tr)
     if (r === maxRounds) return { fail: `${maxRounds} red tester rounds`, test: tr.summary }
     p = await prog(t, `Tester round ${tag}${r} - red. Fix according to ${t.dir}/test.md:\n${tr.summary}`, `${tag}${r + 1}`)
     if (!p) return { fail: 'the programmer returned no result' }
@@ -294,6 +304,7 @@ async function reviewLoop(t, st, tag) {
     const xt = await testChecked(t, st, `${tag}after-review`)
     if (xt.fail) return xt
     const tr = xt.tr
+    if (tr.verdict === 'environment') return Object.assign(envStop(`${tag}after-review`, tr), { review: r1.summary })
     if (tr.verdict !== 'green') return { fail: 'tester after the review fix - red', test: tr.summary, review: r1.summary }
   }
   const x2 = await reviewChecked(t, st, `${tag}2`, docsOnly ? 'only the diff of the fix after review 1' : '')

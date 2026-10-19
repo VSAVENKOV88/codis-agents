@@ -13,6 +13,7 @@ const ROOT = path.join(__dirname, '..');
 const example = JSON.parse(fs.readFileSync(path.join(ROOT, 'examples', 'codis-agents.example.json'), 'utf8'));
 const schema = JSON.parse(fs.readFileSync(path.join(ROOT, 'schemas', 'codis-agents.schema.json'), 'utf8'));
 
+const bad0 = (raw, re, name) => { const x = C.resolve(raw); ok(name, x.errors.some((e) => re.test(e)), x.errors.join('; ')); };
 let r = C.resolve(example);
 ok('example config validates', r.errors.length === 0, r.errors.join('; '));
 ok('~ expanded in paths', r.config.repoDir === path.join(os.homedir(), 'dev/my-app') && r.config.slots.lockDir.startsWith(os.homedir()), r.config.repoDir);
@@ -23,6 +24,10 @@ ok('schema worktreeSetup keys = config.js', same(Object.keys(schema.properties.w
 ok('schema gitHooks keys = config.js', same(Object.keys(schema.properties.gitHooks.properties), Object.keys(C.HOOKS_SPEC)));
 ok('schema standingPush keys = config.js', schema.properties.standingPush && same(Object.keys(schema.properties.standingPush.properties), Object.keys(C.STANDING_SPEC || {})));
 ok('schema standingPush says it is only for the process-rules repository', schema.properties.standingPush && /only for the repository of process rules/.test(schema.properties.standingPush.description));
+ok('schema preconditions keys = config.js', schema.properties.preconditions && same(Object.keys(schema.properties.preconditions.properties), Object.keys(C.PRE_SPEC || {})));
+ok('preconditions defaults: 10 GB of disk, 4 GB of swap', (() => { const x = C.resolve({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s' }).config.preconditions; return x.minFreeDiskGB === 10 && x.minSwapGB === 4; })());
+bad0({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s', preconditions: { minFreeDiskGB: -1 } }, /preconditions\.minFreeDiskGB: expected a number >= 0/, 'negative disk floor - error');
+bad0({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s', preconditions: { minSwap: 1 } }, /preconditions\.minSwap: unknown key/, 'unknown preconditions key - error');
 ok('schema roleNotes keys = roles', same(Object.keys(schema.properties.roleNotes.properties), C.ROLES));
 ok('schema required = config.js required', same(schema.required, ['repoDir', 'worktreeRoot', 'sharedDir']));
 

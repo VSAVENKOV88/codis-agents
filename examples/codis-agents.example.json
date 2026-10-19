@@ -23,5 +23,6 @@
     "tester": "Visual checks run in both Chromium and WebKit."
   },
   "threatModel": "ACCESS.md",
-  "gitHooks": { "blockICloudCopies": true, "preCommit": [] }
+  "gitHooks": { "blockICloudCopies": true, "preCommit": [] },
+  "preconditions": { "minFreeDiskGB": 10, "minSwapGB": 4 }
 }

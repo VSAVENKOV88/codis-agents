@@ -125,6 +125,7 @@ read.
 | `scripts/role-diff-check.js` | git post-check of the tester and reviewers |
 | `scripts/role-leftovers-check.js` | post-check after the tester and at the end of a task: Docker resources of the task's stack (by the compose project label), processes in its worktree, slots they hold; `--fix` removes only those, never the owner's stack |
 | `scripts/chain-cost.js` | cost of a chain run per task from the agent transcripts |
+| `scripts/env-check.js` | free disk and swap headroom for the preconditions, floors from `preconditions` in the config |
 | `scripts/git-hooks/` | `pre-push` (protected branches and tags) and `pre-commit` (cloud conflict copies, extra checks) |
 | `scripts/config.js` | finds, validates and resolves the project config |
 | `examples/`, `schemas/` | an example project config and its JSON schema |
@@ -185,6 +186,7 @@ node <plugin>/scripts/config.js check
 | `threatModel` | path (in the worktree) of the threat model the security reviewer reads |
 | `standingPush` | only for the repository of process rules: `branches` its HEAD may be pushed to without `ALLOW_PROTECTED_PUSH=1`, and a `check` that must pass first; the hooks honour only the committed `standingPush` of the repository that pushes, never forced, never tags |
 | `gitHooks` | `blockICloudCopies` and `preCommit` (extra shell commands) for `scripts/git-hooks/pre-commit` |
+| `preconditions` | `minFreeDiskGB` (default 10: an image build or a full guard run writes several GB) and `minSwapGB` (default 4: four slots of ~1 GB) - floors of free disk on the worktree and task folder volumes and of swap headroom, checked by `scripts/env-check.js` before a task starts |
 
 Recommended in the project's `CLAUDE.md`, so the coordinator session follows the rules:
 
@@ -244,13 +246,16 @@ Each task ends `done` or `stopped` with the reason, the open questions, a propos
 ## How the chain decides
 
 - **Preconditions** first: a brief with an acceptance scenario, the worktree on its branch, no uncommitted changes, no
-  unanswered question that acceptance depends on. Otherwise it stops before any code.
+  unanswered question that acceptance depends on, free disk and swap headroom above the floors of `preconditions`
+  (`scripts/env-check.js`). Otherwise it stops before any code.
 - **Analyst** before the programmer when the task is marked `analystFirst`; a proposal to split stops the chain. With
   `analysis` the phase logs the reused report, with `noAnalysis` the reason.
 - **Programmer** commits a red guard, then the code, then mutation-tests the guards after the commit and runs the full
   guard suite in a heavy slot.
 - **Tester** builds its own inventory, adds and mutation-tests guards, runs the acceptance scenario for real. Red goes
-  straight back to the programmer (up to three rounds), without a review.
+  straight back to the programmer (up to three rounds), without a review. A red from the environment (a cut-off full
+  run, no slot, disk or swap exhausted, Docker down) is the verdict `environment`: the task stops with its cause for the
+  coordinator, not for a programmer.
 - **Reviewer** reads only and tries to refute. With `security: true` a security reviewer follows; done needs both.
 - **Rejection**: a fix round, then a second review. A rejection only for docs - confirmed by the changed paths - skips
   the tester. A second rejection for code brings the analyst into the same run for one more round; after that the

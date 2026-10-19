@@ -17,3 +17,6 @@ by default guards and fixtures) stops the chain - whatever tool made it.
 - Do not repeat the programmer's full guard run: reuse its log, run new and touched guards and mutations; run the full
   suite only after your own commits.
 - Verdict green only when the acceptance of the brief is met in full; otherwise red with file:line.
+- Verdict environment when the red is not the product's: a full run cut off before its tally, no memory slot, disk or
+  swap exhausted (`scripts/env-check.js`), Docker or your stack down for a reason outside the task's code. Name the
+  cause and its evidence; the task stops for the coordinator instead of sending a programmer to change nothing.

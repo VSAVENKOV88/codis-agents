@@ -45,6 +45,9 @@ const CHECKS = [
   [[RULES, CHAIN, README], 'the arc specification is not the task\'s analysis: it goes into `spec`', /arc specification[^.]*(goes into|into the separate field) `spec`/],
   [[RULES], 'a feature gets its own analysis', /[Aa] feature gets its own analysis; the arc specification does not replace it/],
   [[RULES, CHAIN], '"the arc specification covers it" is not a noAnalysis reason', /"[Tt]he arc specification covers\s+it" is not/],
+  // A red from the environment goes to the coordinator; the preconditions check disk and swap (owner 2026-10-19).
+  [[RULES, README], 'a red from the environment is its own tester verdict that stops for the coordinator', /verdict,? `environment`[^.]*(stops the task|the task stops)/],
+  [[RULES, README], 'the preconditions check free disk and swap from the config', /`preconditions`[^.]*(10 GB|minFreeDiskGB)|(disk and swap|swap headroom)[^.]*`preconditions`/],
 ];
 for (const [files, name, re] of CHECKS) for (const f of files) ok(`${f}: ${name}`, re.test(read(f)));
 
