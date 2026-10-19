@@ -33,6 +33,14 @@ Larger changes run as a chain of agents, each in its own role:
     (`analysis`: the path of the earlier analyst or diagnosis report), not left in free text, so the programmer gets it
     by name and the Analyst phase shows it. Skipping a diagnosis for a defect needs a written reason (`noAnalysis`).
     With no marker or several the chain does not start the task: it does not guess whether a task is a defect.
+  - **A feature gets its own analysis; the arc specification does not replace it.** `analysis` names a matrix of cases
+    or a diagnosis of this task: an absolute path inside the task's folder, or inside the folder of the feature it was
+    split from (task field `feature`). The arc specification goes into the separate field `spec`: every role gets it as
+    context, and an `analysis` equal to it or outside those folders stops the task before any agent. A task without its
+    own analysis is either `analystFirst` or a tail with `noAnalysis` and a named reason ("the arc specification covers
+    it" is not one; the preconditions refuse it). Why: tasks that had only the arc specification had 44 % red testers
+    and 2.4 programmer rounds, tasks with their own analysis 24 % and 1.65: the specification describes the surface, not
+    the matrix of the task.
   - For a feature with several dimensions the analyst first writes a matrix of cases into the brief (every dimension:
     states x events x environments). Without it each round closed one cell and broke the next.
   - **Split the task before the first programmer** if any holds: the matrix has more than ~30 cells; it spans more

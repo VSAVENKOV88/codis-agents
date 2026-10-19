@@ -235,7 +235,10 @@ Every task carries exactly one of `analystFirst`, `analysis`, `noAnalysis`: `ana
 first; `analysis: "<path>"` reuses an existing analyst or diagnosis report (checked by the preconditions, named in the
 programmer prompt); `noAnalysis: "<reason>"` says why none is needed (for a defect, why the diagnosis is skipped). With
 none or several the task stops before any agent. The result carries `analysis: {mode: run|reused|none, path?, reason?}`.
-Optional task fields: `dir`, `gdir`, `start`, `stack` (the tester's own compose project), `security`.
+A feature gets its own analysis: `analysis` must lie in the task's folder or in the folder of its `feature`, and the arc
+specification goes into `spec` (context for every role), never into `analysis`.
+Optional task fields: `dir`, `gdir`, `start`, `feature` (the feature this task was split from), `spec` (the arc
+specification), `stack` (the tester's own compose project), `security`.
 Each task ends `done` or `stopped` with the reason, the open questions, a proposed split or the review findings.
 
 ## How the chain decides

@@ -10,7 +10,8 @@
 // - a project may grant standing permission to push process-rule changes to the plugin repository, still checked for
 //   secrets and personal paths and committed as noreply; the product repository's push/merge/tag rule stays;
 // - every chain task carries exactly one of analystFirst, analysis (a reused report, named per task), noAnalysis (a
-//   written reason; for a defect skipping the diagnosis needs one);
+//   written reason; for a defect skipping the diagnosis needs one); a feature gets its own analysis, the arc
+//   specification goes into `spec`;
 // - README: wt-setup.sh runs with zsh, never bash; a plugin installed mid-session needs a session restart; a Workflow
 //   scriptPath must lie in the working directory or the scratchpad.
 const fs = require('fs');
@@ -40,6 +41,10 @@ const CHECKS = [
   [[RULES, CHAIN, README], 'every task carries exactly one of analystFirst, analysis, noAnalysis', /exactly one of `analystFirst`, `analysis`, `noAnalysis`/],
   [[RULES], 'a reused analysis is named per task', /reused analysis is named per task/],
   [[RULES], 'skipping a diagnosis for a defect needs a written reason', /[Ss]kipping a diagnosis for a defect needs a written reason/],
+  // A feature gets its own analysis: the arc specification goes into `spec`, not into `analysis` (owner 2026-10-19).
+  [[RULES, CHAIN, README], 'the arc specification is not the task\'s analysis: it goes into `spec`', /arc specification[^.]*(goes into|into the separate field) `spec`/],
+  [[RULES], 'a feature gets its own analysis', /[Aa] feature gets its own analysis; the arc specification does not replace it/],
+  [[RULES, CHAIN], '"the arc specification covers it" is not a noAnalysis reason', /"[Tt]he arc specification covers\s+it" is not/],
 ];
 for (const [files, name, re] of CHECKS) for (const f of files) ok(`${f}: ${name}`, re.test(read(f)));
 

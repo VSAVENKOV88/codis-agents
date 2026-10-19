@@ -39,8 +39,9 @@ Matrix of cases (if more than one dimension): states x events x environments, ea
 - Acceptance is a scenario, not a feature name. The reviewer checks the scenario, not the wording.
 - Split before the first programmer if the matrix has more than ~30 cells, spans more than two subsystems, depends on
   an unanswered question, or lifts an "inactive while ..." restriction. For a defect, set the analyst first. The chain
-  task carries exactly one of `analystFirst`, `analysis` (the path of an analysis it reuses) or `noAnalysis` (a written
-  reason; for a defect, why the diagnosis is skipped).
+  task carries exactly one of `analystFirst`, `analysis` (the path of an analysis of this task it reuses) or `noAnalysis`
+  (a written reason; for a defect, why the diagnosis is skipped). The arc specification is not the task's analysis: it
+  goes into `spec`.
 - Mark security work (accounts, login, connectors, OAuth, access passes, host rollout) so the chain adds the security
   reviewer (`security: true`).
 - When several branches run in parallel, hand out ranges of any shared numbering (issue ids, version notes) in their

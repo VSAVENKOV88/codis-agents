@@ -100,16 +100,44 @@ async function run(script, task = T, extra = {}) {
   x = await run({}, bare({ analystFirst: 'yes' }));
   ok('analystFirst must be true, not any truthy value -> stopped', x.r.status === 'stopped' && x.trace === '', JSON.stringify(x.r));
 
-  x = await run(Object.assign({}, G, { pre: [PRE] }), bare({ analysis: '/s/old/analyst.md' }));
+  x = await run(Object.assign({}, G, { pre: [PRE] }), bare({ analysis: '/s/old/analyst.md', feature: 'old' }));
   ok('analysis: no analyst agent, the chain runs to done', x.r.status === 'done' && x.trace === 'pre>prog>test>review', x.trace);
   ok('analysis: logged "<title>: analyst reused - <path>"', x.logs.includes('X: analyst reused - /s/old/analyst.md'), x.logs.join(' | '));
   ok('analysis: the preconditions check the file exists and is non-empty',
-    /\/s\/old\/analyst\.md/.test(x.prompts[0].prompt) && /exists and is non-empty/.test(x.prompts[0].prompt), x.prompts[0].prompt);
+    /\/s\/old\/analyst\.md/.test(x.prompts[0].prompt) && /exists, is non-empty/.test(x.prompts[0].prompt), x.prompts[0].prompt);
   ok('analysis: the programmer prompt names it explicitly', progOf(x).includes('The analysis to follow: /s/old/analyst.md'), progOf(x));
   ok('analysis: the result carries {mode: reused, path}', JSON.stringify(x.r.analysis) === JSON.stringify({ mode: 'reused', path: '/s/old/analyst.md' }), JSON.stringify(x.r));
-  x = await run({ pre: [{ ok: false, problems: ['/s/old/analyst.md is missing'], blockingQuestions: [] }] }, bare({ analysis: '/s/old/analyst.md' }));
+  x = await run({ pre: [{ ok: false, problems: ['/s/old/analyst.md is missing'], blockingQuestions: [] }] }, bare({ analysis: '/s/old/analyst.md', feature: 'old' }));
   ok('analysis: a missing file stops at the preconditions, the result still names the analysis',
     x.r.status === 'stopped' && x.trace === 'pre' && x.r.analysis && x.r.analysis.mode === 'reused', JSON.stringify(x.r));
+
+  // A feature gets its own analysis: analysis lies in the task's folder or its feature's folder; the arc spec is `spec`.
+  const SPEC = '/s/arc/spec.md';
+  for (const [name, t] of [['outside the task and feature folders', { analysis: SPEC }],
+    ['equal to the arc specification', { analysis: '/d/spec.md', spec: ['/d/spec.md'] }],
+    ['a relative path', { analysis: 'd/analyst.md' }], ['a path with ..', { analysis: '/d/../s/arc/spec.md' }],
+    ['in another task\'s folder without feature', { analysis: '/s/old/analyst.md' }],
+    ['feature in a folder that is only a prefix', { analysis: '/s/oldx/analyst.md', feature: 'old' }]]) {
+    x = await run({}, bare(t));
+    ok(`analysis ${name} -> stopped before any agent, the question names spec`, x.r.status === 'stopped' && x.trace === '' && /`spec`/.test(JSON.stringify(x.r.questions || [])), JSON.stringify(x.r));
+  }
+  x = await run({}, bare({ noAnalysis: 'tail', feature: ' ' }));
+  ok('a blank feature -> stopped before any agent', x.r.status === 'stopped' && x.trace === '' && /feature/.test(x.r.problems[0]), JSON.stringify(x.r));
+  x = await run({}, bare({ noAnalysis: 'tail', spec: ['/s/a.md', ''] }));
+  ok('a blank spec path -> stopped before any agent', x.r.status === 'stopped' && x.trace === '' && /spec/.test(x.r.problems[0]), JSON.stringify(x.r));
+  x = await run(G, bare({ analysis: '/d/diagnosis.md', spec: SPEC }));
+  ok('analysis inside the task folder with a separate spec -> done', x.r.status === 'done' && x.trace === 'pre>prog>test>review' && x.r.analysis.path === '/d/diagnosis.md', JSON.stringify(x.r));
+  ok('spec: every role prompt names the arc specification as context, not the analysis',
+    x.prompts.filter((p) => !['diff', 'left'].includes(p.role)).every((p) => p.prompt.includes(`Arc specification (context of the surface; it is not this task's analysis): ${SPEC}.`)), x.full);
+  ok('spec: the preconditions check it exists', x.prompts[0].prompt.includes(`the arc specification ${SPEC} exists`), x.prompts[0].prompt);
+  ok('analysis: the preconditions check it is a matrix or diagnosis of this task, not an arc specification',
+    /\/d\/diagnosis\.md exists, is non-empty and is a matrix of cases or a diagnosis written for this task[^;]*not a specification of the whole arc/.test(x.prompts[0].prompt), x.prompts[0].prompt);
+  x = await run(G, bare({ analysis: '/s/q3/analyst.md', feature: 'q3' }));
+  ok('analysis in the folder of the feature -> done', x.r.status === 'done' && x.r.analysis.path === '/s/q3/analyst.md', JSON.stringify(x.r));
+  x = await run(G, bare({ noAnalysis: 'tail: a renamed label' }));
+  ok('noAnalysis: the preconditions refuse "the arc specification covers it" as a reason',
+    /noAnalysis reason "tail: a renamed label".*"the arc specification covers it" is not such a reason/.test(x.prompts[0].prompt), x.prompts[0].prompt);
+  ok('without spec no arc specification line', !x.prompts.some((p) => /Arc specification/.test(p.prompt)));
 
   x = await run(G, bare({ noAnalysis: 'rename only' }));
   ok('noAnalysis: no analyst agent, done', x.r.status === 'done' && x.trace === 'pre>prog>test>review', x.trace);

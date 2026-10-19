@@ -1,7 +1,7 @@
 export const meta = {
   name: 'role-chain',
   description: 'Role chain over tasks in parallel: preconditions -> (analyst) -> programmer -> tester -> reviewer (+ security reviewer); fix rounds and an analyst after the second rejection',
-  whenToUse: 'Started by the codis-agents:role-chain skill, which reads .claude/codis-agents.json and passes it. args: {owner: "the owner\'s request, verbatim", config: <resolved project config>, tasks: [{key, title, wt, branch, accept, dir?, gdir?, start?, analystFirst | analysis | noAnalysis (exactly one), stack?, security?}]}',
+  whenToUse: 'Started by the codis-agents:role-chain skill, which reads .claude/codis-agents.json and passes it. args: {owner: "the owner\'s request, verbatim", config: <resolved project config>, tasks: [{key, title, wt, branch, accept, dir?, gdir?, start?, analystFirst | analysis | noAnalysis (exactly one), feature?, spec?, stack?, security?}]}',
   phases: [
     { title: 'Preconditions', detail: 'brief, worktree, branch, open questions' },
     { title: 'Analyst', detail: 'matrix of cases or a diagnosis (before the programmer, or after the second rejection)' },
@@ -17,10 +17,17 @@ export const meta = {
 // Task fields: key, title, wt (worktree path, or a name under config.worktreeRoot), branch, accept (the acceptance
 // scenario for the tester), dir (task folder, default <sharedDir>/<key>), gdir (argument of guards-all.sh, default wt),
 // start (what is new for the first programmer), stack (the tester's docker compose project),
-// security (the brief marks the task as security work - a security reviewer joins the review).
-// Analysis marker - exactly one of: analystFirst (true: the analyst runs before the programmer), analysis (path to an
-// existing analyst or diagnosis report the task reuses), noAnalysis (a short written reason why none is needed). Without
-// exactly one the task stops before any agent: the chain does not guess whether a task is a defect.
+// security (the brief marks the task as security work - a security reviewer joins the review),
+// feature (key of the feature this task is a part of, when the feature was split: its folder <sharedDir>/<feature>
+// holds the analysis of the whole feature), spec (path or paths of the arc specification: context for every role,
+// never the task's analysis).
+// Analysis marker - exactly one of: analystFirst (true: the analyst runs before the programmer), analysis (absolute path
+// of an existing analyst or diagnosis report of THIS task - inside its folder dir, or inside the folder of its feature),
+// noAnalysis (a short written reason why none is needed: a tail, a one-line fix). Without exactly one the task stops
+// before any agent: the chain does not guess whether a task is a defect. An arc specification is not an analysis
+// (tasks that had only the arc spec: 44 % red testers and 2.4 programmer rounds, against 24 % and 1.65 with their own
+// analysis): it goes into spec, and an analysis path outside the task's or feature's folder, or equal to a spec path,
+// stops the task.
 
 const ARGS = typeof args === 'string' ? JSON.parse(args) : (args || {})
 const OWNER = ARGS.owner || ''
@@ -37,8 +44,9 @@ const PROTECTED = (CFG.protectedBranches || ['main']).join(', ')
 const PREFIX = ARGS.agentTypePrefix === undefined ? 'codis-agents:' : ARGS.agentTypePrefix
 const roleType = (role) => (PREFIX ? PREFIX + role : 'general-purpose')
 const abs = (p) => (p.startsWith('/') ? p : `${CFG.worktreeRoot}/${p}`)
+const specsOf = (t) => (t.spec === undefined ? [] : [].concat(t.spec))
 const TASKS = TASKS_IN.map((t) => Object.assign({}, t, {
-  dir: t.dir || `${CFG.sharedDir}/${t.key}`, wt: abs(t.wt), gdir: t.gdir || t.wt,
+  dir: t.dir || `${CFG.sharedDir}/${t.key}`, wt: abs(t.wt), gdir: t.gdir || t.wt, specs: specsOf(t),
 }))
 const sq = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`
 
@@ -46,7 +54,7 @@ const sq = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`
 // were in the prompt). The id matches the marker <!-- role:<id> --> of a line in rules/multi-agent.md; local-* exist
 // only in the chain. tests/role-chain.test.js fails when a marked line has no rule or a role prompt lacks one.
 const RULE_LIST = (t) => [
-  ['local-task', `Task "${t.title}". Brief: ${t.dir}/BRIEF.md (read all of it and the sections it refers to). Worktree ${t.wt}, branch ${t.branch}.`],
+  ['local-task', `Task "${t.title}". Brief: ${t.dir}/BRIEF.md (read all of it and the sections it refers to). Worktree ${t.wt}, branch ${t.branch}.${t.specs.length ? ` Arc specification (context of the surface; it is not this task's analysis): ${t.specs.join(', ')}.` : ''}`],
   ['scope', `The owner asked: "${OWNER}". Do only the task "${t.title}"; refuse neighbouring tasks and do not touch other worktrees.`],
   ['decisions', 'Only the coordinator writes the owner\'s decisions. An open question goes into your own report as a line "❓ coordinator: ..."; do not decide it yourself.'],
   ['pauses', 'Pauses: never wait longer than 270 s at a time - run anything long through Bash run_in_background and wait with Monitor in slices; an agent with no output for 10 minutes is killed.'],
@@ -149,16 +157,30 @@ const leftFail = (st, when, l) => {
 
 // The analysis marker of a task: {mode: 'run'|'reused'|'none', path?, reason?}, or {error} when not exactly one is given.
 const nonBlank = (v) => typeof v === 'string' && v.trim() !== ''
+const MARKERS = 'the task must carry exactly one of `analystFirst` (true: the analyst runs first), `analysis` (absolute path of an existing analyst or diagnosis report of this task, inside its folder or the folder of its `feature`), `noAnalysis` (why no analysis is needed: a tail, a one-line fix; for a defect, why the diagnosis is skipped); an arc specification goes into `spec`, it is not an analysis'
+// The folders an analysis of this task may live in: its own, and the folder of the feature it was split from.
+const ownFolders = (t) => [t.dir].concat(nonBlank(t.feature) ? [`${CFG.sharedDir}/${t.feature.trim()}`] : [])
+  .map((d) => d.replace(/\/+$/, '') + '/')
 function analysisOf(t) {
+  if (t.feature !== undefined && !nonBlank(t.feature)) return { error: 'feature must be a non-empty task key' }
+  if (t.specs.some((p) => !nonBlank(p))) return { error: 'spec must be a non-empty path or a list of them' }
   const given = [['analystFirst', t.analystFirst !== undefined && t.analystFirst !== false],
     ['analysis', t.analysis !== undefined], ['noAnalysis', t.noAnalysis !== undefined]].filter((g) => g[1]).map((g) => g[0])
   const bad = given.length !== 1 ? `${given.length ? 'several' : 'no'} analysis markers${given.length ? ` (${given.join(', ')})` : ''}`
     : given[0] === 'analystFirst' && t.analystFirst !== true ? 'analystFirst must be true'
     : given[0] === 'analysis' && !nonBlank(t.analysis) ? 'analysis must be a non-empty path'
     : given[0] === 'noAnalysis' && !nonBlank(t.noAnalysis) ? 'noAnalysis must be a non-empty reason' : ''
-  if (bad) return { error: `${bad}: the task must carry exactly one of \`analystFirst\` (true: the analyst runs first), \`analysis\` (path to an existing analyst or diagnosis report to reuse), \`noAnalysis\` (why no analysis is needed; for a defect, why the diagnosis is skipped)` }
+  if (bad) return { error: `${bad}: ${MARKERS}` }
   if (given[0] === 'analystFirst') return { mode: 'run', path: `${t.dir}/analyst.md` }
-  if (given[0] === 'analysis') return { mode: 'reused', path: t.analysis.trim() }
+  if (given[0] === 'analysis') {
+    const p = t.analysis.trim()
+    const where = ownFolders(t)
+    if (t.specs.map((x) => x.trim()).includes(p)) return { error: `analysis ${p} is the arc specification of this task (spec): ${MARKERS}` }
+    if (!p.startsWith('/') || /(^|\/)\.\.?(\/|$)/.test(p) || !where.some((d) => p.startsWith(d))) {
+      return { error: `analysis ${p} is not an absolute path inside ${where.join(' or ')}: ${MARKERS}` }
+    }
+    return { mode: 'reused', path: p }
+  }
   return { mode: 'none', reason: t.noAnalysis.trim() }
 }
 const analysisLine = (a) => (a.mode === 'none' ? `No analysis: ${a.reason}` : `The analysis to follow: ${a.path}`)
@@ -166,8 +188,15 @@ const analysisLine = (a) => (a.mode === 'none' ? `No analysis: ${a.reason}` : `T
 const DOCS_PATH = /(\.md$)|(^|\/)docs\//
 const stop = (t, why, extra) => Object.assign({ task: t.key, status: 'stopped', why }, extra || {})
 
+// What the preconditions check about the task's own analysis: an arc specification passed as the task's analysis, or a
+// noAnalysis reason that only points to it, is not an analysis of the task (rules: "Analyst or diagnoser").
+const preAnalysis = (t) => (t.an.mode === 'reused'
+  ? ` the reused analysis ${t.an.path} exists, is non-empty and is a matrix of cases or a diagnosis written for this task (or for the feature it was split from), not a specification of the whole arc;`
+  : t.an.mode === 'none'
+    ? ` the noAnalysis reason "${t.an.reason}" says why this task needs no matrix of its own (a tail, a one-line fix, a rename); "the arc specification covers it" is not such a reason;`
+    : '')
 const pre = (t) => agent(`You check PRECONDITIONS (read only, change nothing). ${RULES(t)}
-Check: ${t.dir}/BRIEF.md exists and contains an acceptance scenario in the real environment;${t.an.mode === 'reused' ? ` the reused analysis ${t.an.path} exists and is non-empty;` : ''} ${t.wt} exists and is on branch ${t.branch}; there are no uncommitted changes (except untracked build output or probes); the brief has no unanswered questions to the owner on which acceptance depends. ok=false if any of this fails.`,
+Check: ${t.dir}/BRIEF.md exists and contains an acceptance scenario in the real environment;${preAnalysis(t)}${t.specs.length ? ` the arc specification ${t.specs.join(', ')} exists;` : ''} ${t.wt} exists and is on branch ${t.branch}; there are no uncommitted changes (except untracked build output or probes); the brief has no unanswered questions to the owner on which acceptance depends. ok=false if any of this fails.`,
   { label: `pre:${t.key}`, phase: 'Preconditions', schema: PRE_SCHEMA, effort: 'low', agentType: 'general-purpose' })
 
 const analyst = (t, why) => agent(`You are the ANALYST/DIAGNOSER (read code only; you write only ${t.dir}/analyst.md). ${RULES(t)}

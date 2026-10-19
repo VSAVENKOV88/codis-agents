@@ -30,14 +30,18 @@ Only tasks the owner asked for in this conversation. For each task:
 | `gdir` | optional: argument of `guards-all.sh` (default `wt`) |
 | `start` | optional: what is new for the first programmer (e.g. "continue from prog.md") |
 | `analystFirst` | `true`: the brief needs a matrix or a diagnosis before code (default for defects) - the analyst runs first |
-| `analysis` | path to an existing analyst or diagnosis report the task reuses (an earlier analyst that proposed the split, a diagnoser run outside the chain); the preconditions check it exists and is non-empty, the programmer gets it by name |
-| `noAnalysis` | a short reason why no analysis is needed; for a defect, why the diagnosis is skipped. It is logged and given to the programmer |
+| `analysis` | absolute path of an existing analyst or diagnosis report of this task (an earlier analyst that proposed the split, a diagnoser run outside the chain - put its report into the task folder); it must lie in the task folder or in the folder of its `feature`, never be the arc specification; the preconditions check it exists, is non-empty and is a matrix or diagnosis of this task; the programmer gets it by name |
+| `noAnalysis` | a short reason why no analysis is needed: a tail, a one-line fix; for a defect, why the diagnosis is skipped. "The arc specification covers it" is not a reason. It is logged and given to the programmer |
+| `feature` | optional: key of the feature this task is a part of (the task was split from it); its folder `<sharedDir>/<feature>/` may hold the analysis, and `chain-cost.js` sums the parts by it |
+| `spec` | optional: path or list of paths of the arc specification (and its `PRINCIPLES.md`); every role gets it as context; it is not the task's analysis |
 | `stack` | optional: docker compose project the tester may start and tear down |
 | `security` | optional: the brief marks the task as security work - a security reviewer joins |
 
 Every task carries exactly one of `analystFirst`, `analysis`, `noAnalysis`; with none or several the workflow stops
 that task before any agent. A reused analysis is passed as `analysis`, not in free text inside `start`: the Analyst
-phase then logs `<title>: analyst reused - <path>` instead of looking skipped.
+phase then logs `<title>: analyst reused - <path>` instead of looking skipped. A feature gets its own analysis: the arc
+specification goes into `spec`, not into `analysis` (an `analysis` equal to a `spec` path or outside the task's or the
+feature's folder stops the task).
 
 Check before starting: `BRIEF.md` exists in the task folder, the worktree is on the branch, the task has its analysis
 marker (and the `analysis` file exists), and the brief has no unanswered question on which acceptance depends. If something is missing, write it into the brief as a question for
