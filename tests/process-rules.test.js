@@ -48,6 +48,9 @@ const CHECKS = [
   // A red from the environment goes to the coordinator; the preconditions check disk and swap (owner 2026-10-19).
   [[RULES, README], 'a red from the environment is its own tester verdict that stops for the coordinator', /verdict,? `environment`[^.]*(stops the task|the task stops)/],
   [[RULES, README], 'the preconditions check free disk and swap from the config', /`preconditions`[^.]*(10 GB|minFreeDiskGB)|(disk and swap|swap headroom)[^.]*`preconditions`/],
+  // A docs-only rejection: programmer -> second review of the diff, without the tester (owner 2026-10-19).
+  [[RULES, README], 'a docs-only fix outside docs and guards is confirmed by the second review (fixBehaviourUnchanged)', /second review[^.]*changes no behaviour[^.]*`fixBehaviourUnchanged`/],
+  [[RULES, README], 'only an unconfirmed fix gets a tester round', /only an unconfirmed fix gets a tester round/],
 ];
 for (const [files, name, re] of CHECKS) for (const f of files) ok(`${f}: ${name}`, re.test(read(f)));
 

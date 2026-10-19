@@ -87,8 +87,12 @@ Larger changes run as a chain of agents, each in its own role:
 - On rejection: a fix round, then a second review. A second rejection for a code defect sends the task to the analyst
   (cases, cause) inside the same run, then one more full round; a third rejection goes to the coordinator. A question
   of scope goes to the owner.
-- A rejection only for docs or guard wording is fixed by the programmer and re-reviewed on that diff only, without a
-  tester round. The workflow checks the claim against the changed paths.
+- A rejection only for docs, guard wording or comments is fixed by the programmer and re-reviewed on that diff only,
+  without a tester round. The workflow checks the claim: a fix that touches only docs and the guard files the tester
+  may change (`testerWritable`) goes straight to the second review; a fix that touches other files (a comment in
+  product code) goes to the second review too, which must confirm on the diff that it changes no behaviour
+  (`fixBehaviourUnchanged`); only an unconfirmed fix gets a tester round. Why: when only `.md` and `docs/` counted,
+  4 of 5 such rejections still went through the tester for a stale comment in a `.js` or `.html` file.
 - The tester does not repeat the programmer's full guard run: it reuses the programmer's log, runs the new and touched
   guards plus mutations, and runs the full suite only after its own commits.
 - After the tester and after each reviewer, a git post-check (`scripts/role-diff-check.js`) compares the worktree with

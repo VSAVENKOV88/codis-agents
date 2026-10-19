@@ -2,7 +2,8 @@
 'use strict';
 // Logic of workflows/role-chain.js: the script runs with fake agent()/pipeline()/log() and scripted role verdicts; the
 // test checks the order of roles and the outcome (rules/multi-agent.md: a red tester goes back to the programmer
-// without a review; a rejection for docs (confirmed by changedFiles) gets a second review without the tester; a second
+// without a review; a rejection for docs gets a second review of the diff without the tester (docs and guard paths, or
+// the review confirms fixBehaviourUnchanged); a tester red from the environment stops the task; a second
 // rejection for code brings the analyst into the same run; preconditions or open questions stop before the
 // programmer; git post-check of tester and reviewer from the HEAD of the previous role; lines of
 // rules/multi-agent.md marked <!-- role:<id> --> are in RULE_LIST and in the prompt of every role).
@@ -86,7 +87,43 @@ async function run(script, task = T, extra = {}) {
 
   x = await run({ pre: [PRE], prog: [PROG, PROG], test: [{ verdict: 'green', summary: '' }, { verdict: 'green', summary: '' }],
     review: [{ verdict: 'rejected', docsOnly: true, summary: '' }, { verdict: 'done', docsOnly: false, summary: '' }] });
-  ok('rejection "for docs" but the fix touches code -> tester before the second review', x.r.status === 'done' && x.trace === 'pre>prog>test>review>prog>test>review', x.trace);
+  ok('rejection "for docs", the fix touches code and the review does not confirm "no behaviour" -> tester after the second review',
+    x.r.status === 'done' && x.trace === 'pre>prog>test>review>prog>review>test', x.trace);
+
+  // A rejection for docs only: programmer -> second review of the diff, without the tester (4 of 5 went through the
+  // tester because a comment in a .js/.html file or a guard file did not count as docs).
+  const DOCS_REJ = { verdict: 'rejected', docsOnly: true, summary: 'stale comment' };
+  const D1 = { verdict: 'done', docsOnly: false, summary: '' }, D = D1;
+  const fixOf = (files, head) => Object.assign({}, PROG, { changedFiles: files, head: head || 'P2' });
+  x = await run({ pre: [PRE], prog: [PROG, fixOf(['server/x-run.js', 'docs/GAPS.md'])], test: [{ verdict: 'green', summary: '' }], review: [DOCS_REJ, D1] });
+  ok('docs rejection, the fix touches only guard files and docs -> second review without the tester', x.r.status === 'done' && x.trace === 'pre>prog>test>review>prog>review', x.trace);
+  const rv2 = x.prompts.filter((p) => p.role === 'review')[1].prompt;
+  ok('docs rejection: the second review reads only the diff of the fix, from the HEAD before it', /only the diff of the fix after review 1 \(git diff T\.\.P2\)/.test(rv2) && !/fixBehaviourUnchanged/.test(rv2), rv2);
+  ok('docs rejection: the programmer is told to change no behaviour', /rejected for docs only: [^.]*change no behaviour/.test(x.prompts.filter((p) => p.role === 'prog')[1].prompt));
+  x = await run({ pre: [PRE], prog: [PROG, fixOf(['plugin/ui.html', 'ACCESS.md'])], test: [{ verdict: 'green', summary: '' }],
+    review: [DOCS_REJ, Object.assign({}, D1, { fixBehaviourUnchanged: true })] });
+  ok('docs rejection, a comment in product code, the review confirms no behaviour change -> done without the tester', x.r.status === 'done' && x.trace === 'pre>prog>test>review>prog>review', x.trace);
+  ok('docs rejection outside docs: the second review is asked to confirm fixBehaviourUnchanged for the named files',
+    /fixBehaviourUnchanged=true only if[^\n]*/.test(x.prompts.filter((p) => p.role === 'review')[1].prompt) && x.prompts.filter((p) => p.role === 'review')[1].prompt.includes('(plugin/ui.html)')
+      && x.prompts.filter((p) => p.role === 'review')[1].opts.schema.properties.fixBehaviourUnchanged, x.prompts.filter((p) => p.role === 'review')[1].prompt);
+  x = await run({ pre: [PRE], prog: [PROG, fixOf(['src/a.js'])], test: [{ verdict: 'green', summary: '' }, { verdict: 'red', summary: 'broke' }],
+    review: [DOCS_REJ, Object.assign({}, D1, { fixBehaviourUnchanged: false })] });
+  ok('docs rejection, the review says the fix changes behaviour -> tester; red -> stopped', x.r.status === 'stopped' && x.trace === 'pre>prog>test>review>prog>review>test' && /tester after the review fix/.test(x.r.why), JSON.stringify(x.r));
+  ok('docs rejection with a code fix is logged', x.logs.some((m) => /did not confirm it changes no behaviour - tester round/.test(m)), x.logs.join(' | '));
+  x = await run({ pre: [PRE], prog: [PROG, fixOf([])], test: [{ verdict: 'green', summary: '' }, { verdict: 'green', summary: '' }], review: [DOCS_REJ, D1] });
+  ok('docs rejection, the programmer reports no changed files and the review does not confirm -> tester', x.r.status === 'done' && x.trace === 'pre>prog>test>review>prog>review>test', x.trace);
+  x = await run({ pre: [PRE], prog: [PROG, fixOf(['src/a.js'])], test: [{ verdict: 'green', summary: '' }], review: [DOCS_REJ, { verdict: 'rejected', docsOnly: true, summary: 'again' }] });
+  ok('docs rejection twice -> stopped for the coordinator, no analyst, no tester', x.r.status === 'stopped' && x.trace === 'pre>prog>test>review>prog>review', x.trace);
+  const TSD = Object.assign({}, T, { security: true });
+  x = await run({ pre: [PRE], prog: [PROG, fixOf(['src/a.js'])], test: [{ verdict: 'green', summary: '' }, { verdict: 'green', summary: '' }],
+    review: [D1, Object.assign({}, D1, { fixBehaviourUnchanged: true })], sec: [DOCS_REJ, D1] }, TSD);
+  ok('security: a docs rejection needs both reviewers to confirm no behaviour change, else the tester runs', x.r.status === 'done' && x.trace === 'pre>prog>test>review>sec>prog>review>sec>test', x.trace);
+  x = await run({ pre: [PRE], prog: [PROG, fixOf(['src/a.js'])], test: [{ verdict: 'green', summary: '' }, { verdict: 'green', summary: '' }],
+    review: [D1, D1], sec: [DOCS_REJ, Object.assign({}, D1, { fixBehaviourUnchanged: true })] }, TSD);
+  ok('security: only the security reviewer confirms -> the tester runs', x.r.status === 'done' && x.trace === 'pre>prog>test>review>sec>prog>review>sec>test', x.trace);
+  x = await run({ pre: [PRE], prog: [PROG, fixOf(['src/a.js'])], test: [{ verdict: 'green', summary: '' }],
+    review: [D1, Object.assign({}, D1, { fixBehaviourUnchanged: true })], sec: [DOCS_REJ, Object.assign({}, D1, { fixBehaviourUnchanged: true })] }, TSD);
+  ok('security: both confirm -> done without the tester', x.r.status === 'done' && x.trace === 'pre>prog>test>review>sec>prog>review>sec', x.trace);
 
   x = await run({ pre: [PRE], prog: [PROG, PROG, PROG], test: Array(3).fill({ verdict: 'green', summary: '' }), analyst: [AN],
     review: [{ verdict: 'rejected', docsOnly: false, summary: '' }, { verdict: 'rejected', docsOnly: false, summary: '' }, { verdict: 'done', docsOnly: false, summary: '' }] });
@@ -104,7 +141,6 @@ async function run(script, task = T, extra = {}) {
   ok('analystFirst: split -> stop before the programmer', x.r.status === 'stopped' && x.trace === 'pre>analyst', x.trace);
 
   // Analysis marker: every task carries exactly one of analystFirst, analysis (a reused report), noAnalysis (a reason).
-  const D1 = { verdict: 'done', docsOnly: false, summary: '' };
   const G = { pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D1] };
   const progOf = (x) => (x.prompts.find((p) => p.role === 'prog') || {}).prompt || '';
   x = await run({}, bare({}));
@@ -245,7 +281,6 @@ async function run(script, task = T, extra = {}) {
 
   // Security reviewer (t.security): after the reviewer, with its own post-check; done only if both are done.
   const TS = Object.assign({}, T, { security: true });
-  const D = { verdict: 'done', docsOnly: false, summary: '' };
   x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D], sec: [D] }, TS);
   ok('security: review>sec, both post-checks -> done', x.r.status === 'done' && x.full === 'pre>prog>test>diff:x:tester>left:x:tester>review>diff:x:reviewer>sec>diff:x:reviewer>left:x:end', x.full);
   ok('security reviewer reads the threat model from the config', x.prompts.some((p) => p.role === 'sec' && p.prompt.includes('/w/ACCESS.md')));

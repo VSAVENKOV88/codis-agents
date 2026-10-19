@@ -14,3 +14,5 @@ the change.
 - Check the tester's evidence against the brief's acceptance scenario; do not rerun the scenario yourself.
 - Verdict "done" or "rejected", every finding with file:line. Mark docsOnly only when every finding concerns docs,
   guard wording or comments.
+- When the scope asks for fixBehaviourUnchanged (a fix "for docs" that touches product files), set it true only if the
+  diff of the fix changes comments, wording or docs alone; otherwise false, and the tester runs before done.

@@ -257,8 +257,9 @@ Each task ends `done` or `stopped` with the reason, the open questions, a propos
   run, no slot, disk or swap exhausted, Docker down) is the verdict `environment`: the task stops with its cause for the
   coordinator, not for a programmer.
 - **Reviewer** reads only and tries to refute. With `security: true` a security reviewer follows; done needs both.
-- **Rejection**: a fix round, then a second review. A rejection only for docs - confirmed by the changed paths - skips
-  the tester. A second rejection for code brings the analyst into the same run for one more round; after that the
+- **Rejection**: a fix round, then a second review. A rejection only for docs, guard wording or comments skips the
+  tester: the second review reads the diff of the fix; when the fix touches files outside docs and guards, that review
+  confirms it changes no behaviour (`fixBehaviourUnchanged`), and only an unconfirmed fix gets a tester round. A second rejection for code brings the analyst into the same run for one more round; after that the
   coordinator decides.
 - **Post-checks**: after the tester and each reviewer, `role-diff-check.js` compares the worktree with the previous
   role's HEAD; any change a role may not make stops the chain. This, not a tool list, keeps product code out of their

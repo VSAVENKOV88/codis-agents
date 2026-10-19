@@ -105,6 +105,7 @@ const DIFF_SCHEMA = { type: 'object', properties: {
 const REVIEW_SCHEMA = { type: 'object', properties: {
   verdict: { type: 'string', enum: ['done', 'rejected'] },
   docsOnly: { type: 'boolean', description: 'rejected only for docs, guard wording, comments' },
+  fixBehaviourUnchanged: { type: 'boolean', description: 'only when the scope asks: the diff of the fix changes comments, wording or docs alone, no behaviour' },
   summary: { type: 'string', description: 'findings with file:line' },
 }, required: ['verdict', 'docsOnly', 'summary'] }
 
@@ -188,7 +189,13 @@ function analysisOf(t) {
 }
 const analysisLine = (a) => (a.mode === 'none' ? `No analysis: ${a.reason}` : `The analysis to follow: ${a.path}`)
 
+// Paths a fix "for docs" may touch without a tester round: docs, and guards and fixtures (guard wording; the paths the
+// tester may change, config testerWritable). A fix touching anything else - a comment in product code - is confirmed
+// by the second review on the diff of the fix (fixBehaviourUnchanged), not by a tester round. Before 2026-10-19 only
+// .md and docs/ counted, so a stale comment in a .js or .html file sent 4 of 5 such rejections through the tester.
 const DOCS_PATH = /(\.md$)|(^|\/)docs\//
+const GUARD_PATHS = (CFG.testerWritable || []).map((r) => new RegExp(r))
+const docsOrGuard = (f) => DOCS_PATH.test(f) || GUARD_PATHS.some((re) => re.test(f))
 const stop = (t, why, extra) => Object.assign({ task: t.key, status: 'stopped', why }, extra || {})
 
 // What the preconditions check about the task's own analysis: an arc specification passed as the task's analysis, or a
@@ -227,7 +234,7 @@ Read BRIEF.md, analyst.md (if any), prog.md, test.md, git log/diff of branch ${t
   { label: `review:${t.key}#${n}`, phase: 'Reviewer', schema: REVIEW_SCHEMA, agentType: roleType('reviewer') })
 
 const secReview = (t, n, scope) => agent(`You are the SECURITY REVIEWER (read only; you may rerun guards). ${RULES(t)} Report: ${t.dir}/review-sec.md (round ${n}).
-The brief marks the task as security work. Read BRIEF.md, ${CFG.threatModel ? `the threat model ${t.wt}/${CFG.threatModel}, ` : ''}git diff of branch ${t.branch} for the task${scope ? ' - ' + scope : ''}, test.md. Look with an attacker's eyes: access by a guest and by another owner, swapped ids, malformed input, secrets (model keys, passes) leaking into responses, logs, postMessage, UI; does the tester have refusal guards for every input, and are they mutation-tested. Verdict with file:line; docsOnly - only if the findings concern docs alone.${note('security-reviewer')}`,
+The brief marks the task as security work. Read BRIEF.md, ${CFG.threatModel ? `the threat model ${t.wt}/${CFG.threatModel}, ` : ''}git diff of branch ${t.branch} for the task${scope ? ' - ' + scope : ''}, test.md. Look with an attacker's eyes: access by a guest and by another owner, swapped ids, malformed input, secrets (model keys, passes) leaking into responses, logs, postMessage, UI; does the tester have refusal guards for every input, and are they mutation-tested. Verdict with file:line; docsOnly - only if the findings concern docs, guard wording or comments alone.${note('security-reviewer')}`,
   { label: `sec:${t.key}#${n}`, phase: 'Reviewer', schema: REVIEW_SCHEMA, agentType: roleType('security-reviewer') })
 
 // Programmer -> tester (red -> programmer again, without review), up to maxRounds tester rounds.
@@ -257,6 +264,7 @@ async function reviewChecked(t, st, n, scope) {
   return { rv: {
     verdict: bad.length ? 'rejected' : 'done',
     docsOnly: bad.length > 0 && bad.every((v) => v.docsOnly),
+    fixBehaviourUnchanged: rv.fixBehaviourUnchanged === true && sv.fixBehaviourUnchanged === true,
     summary: `Reviewer (${rv.verdict}): ${rv.summary}\nSecurity (${sv.verdict}, ${t.dir}/review-sec.md): ${sv.summary}`,
   } }
 }
@@ -286,33 +294,49 @@ async function buildAndTest(t, st, firstTask, tag, maxRounds) {
   }
 }
 
-// Review; rejection -> fix; rejection for docs only (confirmed by the changed paths) -> second review of that diff only,
-// otherwise tester and second review.
+// Review; rejection -> fix. A rejection for docs only goes programmer -> second review of the diff of the fix, without a
+// tester: when the fix touches only docs and guard files, by the changed paths; when it touches other files (a comment
+// in product code), the second review confirms fixBehaviourUnchanged, and only an unconfirmed fix gets a tester round.
+// A rejection for code: tester, then the second review.
 async function reviewLoop(t, st, tag) {
   const x1 = await reviewChecked(t, st, `${tag}1`)
   if (x1.fail) return x1
   const r1 = x1.rv
   log(`${t.title}: review ${tag}1 - ${r1.verdict}`)
   if (r1.verdict === 'done') return { ok: r1 }
-  const p = await prog(t, `Review ${tag}1 - rejected. Fix according to ${t.dir}/review.md:\n${r1.summary}`, `${tag}r`)
+  const p = await prog(t, `Review ${tag}1 - rejected${r1.docsOnly ? ' for docs only: fix the docs, guard wording or comments it names and change no behaviour' : ''}. Fix according to ${t.dir}/review.md:\n${r1.summary}`, `${tag}r`)
   if (!p) return { fail: 'the programmer returned no result' }
   if (p.status === 'blocked') return { fail: 'programmer: an answer is needed', questions: p.questions }
+  const before = st.head
   st.head = p.head
-  const docsOnly = r1.docsOnly && p.changedFiles.length > 0 && p.changedFiles.every((f) => DOCS_PATH.test(f))
-  if (r1.docsOnly && !docsOnly) log(`${t.title}: rejected "for docs", but the fix touches code - full round`)
-  if (!docsOnly) {
+  const testAfter = async () => {
     const xt = await testChecked(t, st, `${tag}after-review`)
     if (xt.fail) return xt
     const tr = xt.tr
     if (tr.verdict === 'environment') return Object.assign(envStop(`${tag}after-review`, tr), { review: r1.summary })
     if (tr.verdict !== 'green') return { fail: 'tester after the review fix - red', test: tr.summary, review: r1.summary }
+    return {}
   }
-  const x2 = await reviewChecked(t, st, `${tag}2`, docsOnly ? 'only the diff of the fix after review 1' : '')
+  const changed = p.changedFiles || []
+  const byPaths = r1.docsOnly && changed.length > 0 && changed.every(docsOrGuard)
+  const other = changed.filter((f) => !docsOrGuard(f))
+  if (!r1.docsOnly) {
+    const xt = await testAfter()
+    if (xt.fail) return xt
+  }
+  const scope = !r1.docsOnly ? ''
+    : `only the diff of the fix after review 1 (git diff ${before}..${p.head})${byPaths ? '' : `; it touches files outside docs and guards (${other.join(', ') || 'none reported'}): set fixBehaviourUnchanged=true only if that diff changes comments, wording or docs alone and no behaviour`}`
+  const x2 = await reviewChecked(t, st, `${tag}2`, scope)
   if (x2.fail) return x2
   const r2 = x2.rv
   log(`${t.title}: review ${tag}2 - ${r2.verdict}`)
-  if (r2.verdict === 'done') return { ok: r2 }
-  return { fail: 'second review rejection', second: true, docsOnly: r2.docsOnly, review: r2.summary }
+  if (r2.verdict !== 'done') return { fail: 'second review rejection', second: true, docsOnly: r2.docsOnly, review: r2.summary }
+  if (r1.docsOnly && !byPaths && r2.fixBehaviourUnchanged !== true) {
+    log(`${t.title}: rejected "for docs", the fix touches ${other.join(', ') || 'unreported files'} and the review did not confirm it changes no behaviour - tester round`)
+    const xt = await testAfter()
+    if (xt.fail) return xt
+  }
+  return { ok: r2 }
 }
 
 // After the preconditions every outcome passes the leftovers post-check; removed leftovers are named in the result.
