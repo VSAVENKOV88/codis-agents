@@ -345,7 +345,7 @@ async function chain(t0) {
   const an = analysisOf(t0)
   if (an.error) return stop(t0, 'preconditions', { problems: [an.error], questions: [an.error] })
   const t = Object.assign({}, t0, { an })
-  const withAn = (r) => Object.assign({}, r, { analysis: an })
+  const withAn = (r) => Object.assign({}, r, { analysis: an }, nonBlank(t0.feature) ? { feature: t0.feature.trim() } : {})
   const st = { head: '', leftovers: [] }
   const pc = await pre(t)
   if (!pc) return withAn(stop(t, 'the precondition check returned no result'))

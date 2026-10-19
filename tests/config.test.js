@@ -26,6 +26,8 @@ ok('schema standingPush keys = config.js', schema.properties.standingPush && sam
 ok('schema standingPush says it is only for the process-rules repository', schema.properties.standingPush && /only for the repository of process rules/.test(schema.properties.standingPush.description));
 ok('schema preconditions keys = config.js', schema.properties.preconditions && same(Object.keys(schema.properties.preconditions.properties), Object.keys(C.PRE_SPEC || {})));
 ok('preconditions defaults: 10 GB of disk, 4 GB of swap', (() => { const x = C.resolve({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s' }).config.preconditions; return x.minFreeDiskGB === 10 && x.minSwapGB === 4; })());
+bad0({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s', featureIELimit: 0 }, /featureIELimit: expected a positive number/, 'featureIELimit 0 - error');
+ok('featureIELimit defaults to null (3 x medianTaskIE in chain-cost)', C.resolve({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s' }).config.featureIELimit === null);
 bad0({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s', preconditions: { minFreeDiskGB: -1 } }, /preconditions\.minFreeDiskGB: expected a number >= 0/, 'negative disk floor - error');
 bad0({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s', preconditions: { minSwap: 1 } }, /preconditions\.minSwap: unknown key/, 'unknown preconditions key - error');
 ok('schema roleNotes keys = roles', same(Object.keys(schema.properties.roleNotes.properties), C.ROLES));

@@ -36,6 +36,7 @@ const SPEC = {
   protectedTagPattern: ['string', '^v'],
   ownerStackReadOnly: ['string', ''],
   medianTaskIE: ['number', 5e6],
+  featureIELimit: ['number', null],
   testerWritable: ['string[]', ['-run\\.(js|mjs|cjs)$', '(^|/)(__)?fixtures(__)?/']],
   roleNotes: ['object', null],
   threatModel: ['string', ''],
@@ -93,6 +94,7 @@ function resolve(raw) {
   c.worktreeSetup = level(WT_SPEC, c.worktreeSetup, 'worktreeSetup.', errors);
   c.gitHooks = level(HOOKS_SPEC, c.gitHooks, 'gitHooks.', errors);
   c.preconditions = level(PRE_SPEC, c.preconditions, 'preconditions.', errors);
+  if (c.featureIELimit !== null && !(c.featureIELimit > 0)) errors.push('featureIELimit: expected a positive number (or leave it out for 3 x medianTaskIE)');
   for (const k of Object.keys(PRE_SPEC)) if (!(c.preconditions[k] >= 0)) errors.push(`preconditions.${k}: expected a number >= 0`);
   if (c.guardAdaptiveProbe) {
     c.guardAdaptiveProbe = level(PROBE_SPEC, c.guardAdaptiveProbe, 'guardAdaptiveProbe.', errors);

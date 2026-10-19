@@ -51,6 +51,9 @@ const CHECKS = [
   // A docs-only rejection: programmer -> second review of the diff, without the tester (owner 2026-10-19).
   [[RULES, README], 'a docs-only fix outside docs and guards is confirmed by the second review (fixBehaviourUnchanged)', /second review[^.]*changes no behaviour[^.]*`fixBehaviourUnchanged`/],
   [[RULES, README], 'only an unconfirmed fix gets a tester round', /only an unconfirmed fix gets a tester round/],
+  // Cost per feature: parts summed by an explicit `feature`, flagged above featureIELimit (owner 2026-10-19).
+  [[RULES, CHAIN, README], 'chain-cost sums the parts of a feature and flags it above featureIELimit', /`featureIELimit`[^\n]{0,200}3 x `medianTaskIE`|sums[^.]*`feature`[^.]*`featureIELimit`/],
+  [[RULES], 'the feature is named explicitly, never guessed from a key prefix', /named\s+explicitly, never guessed from a common key prefix/],
 ];
 for (const [files, name, re] of CHECKS) for (const f of files) ok(`${f}: ${name}`, re.test(read(f)));
 

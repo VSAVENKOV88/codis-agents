@@ -124,6 +124,10 @@ Larger changes run as a chain of agents, each in its own role:
 - Size the task so one programmer can finish it (see "Split the task") rather than relying on the handover.
 - After a run, `scripts/chain-cost.js` computes the cost of each task from the transcripts and flags tasks above twice
   the median (`medianTaskIE`); the next similar task is split.
+- **Cost is also counted per feature.** The parts of a split feature carry the same task field `feature` (named
+  explicitly, never guessed from a common key prefix); `chain-cost.js` sums them across all the runs it is given and
+  flags the feature above `featureIELimit` (default 3 x `medianTaskIE`, about 15M), next to the flag per part. Why:
+  parts stayed under their own flag (above 10M only 4 of 62) while whole features cost 8-30M.
 
 ## Machine and environment
 

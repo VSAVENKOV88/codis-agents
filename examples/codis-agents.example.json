@@ -17,6 +17,7 @@
   "protectedTagPattern": "^v",
   "ownerStackReadOnly": "my-app",
   "medianTaskIE": 5000000,
+  "featureIELimit": 15000000,
   "testerWritable": ["-run\\.(js|mjs|cjs)$", "(^|/)(__)?fixtures(__)?/"],
   "roleNotes": {
     "programmer": "After changing client/src, rebuild client/bundle.js: a guard compares it with the sources.",

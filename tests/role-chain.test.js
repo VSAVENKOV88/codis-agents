@@ -188,8 +188,9 @@ async function run(script, task = T, extra = {}) {
   ok('spec: the preconditions check it exists', x.prompts[0].prompt.includes(`the arc specification ${SPEC} exists`), x.prompts[0].prompt);
   ok('analysis: the preconditions check it is a matrix or diagnosis of this task, not an arc specification',
     /\/d\/diagnosis\.md exists, is non-empty and is a matrix of cases or a diagnosis written for this task[^;]*not a specification of the whole arc/.test(x.prompts[0].prompt), x.prompts[0].prompt);
-  x = await run(G, bare({ analysis: '/s/q3/analyst.md', feature: 'q3' }));
+  x = await run(G, bare({ analysis: '/s/q3/analyst.md', feature: ' q3 ' }));
   ok('analysis in the folder of the feature -> done', x.r.status === 'done' && x.r.analysis.path === '/s/q3/analyst.md', JSON.stringify(x.r));
+  ok('the result carries the feature (chain-cost sums parts by it)', x.r.feature === 'q3', JSON.stringify(x.r));
   x = await run(G, bare({ noAnalysis: 'tail: a renamed label' }));
   ok('noAnalysis: the preconditions refuse "the arc specification covers it" as a reason',
     /noAnalysis reason "tail: a renamed label".*"the arc specification covers it" is not such a reason/.test(x.prompts[0].prompt), x.prompts[0].prompt);
