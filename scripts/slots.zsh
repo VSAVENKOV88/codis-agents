@@ -29,6 +29,19 @@
 # All thresholds and sources come from the environment, so tests/slots-check.sh can check them on a fake machine.
 #
 # Settings: environment first, then the project config (.claude/codis-agents.json, key "slots"), then the defaults.
+#
+# JOURNAL: every slot hold appends ONE line to SLOT_JOURNAL (default <SLOTS_DIR>/journal.tsv; empty - off), so that the
+# time agents spend queueing for a slot can be told apart from the time the heavy jobs themselves take
+# (scripts/slot-journal.js sums it up). Tab-separated, one record per hold, written when the hold ends:
+#   v1  request  acquire  release  class  slot  kind  pid  rc  worktree  command
+#   request/acquire/release - epoch seconds with milliseconds (acquire "-": never got the slot, e.g. killed while
+#   waiting); class medium|heavy|exclusive; slot - its number (exclusive: "-"); kind single|full; pid of the waiter;
+#   rc - exit code; worktree - the nearest directory with .git above the working directory (else the directory);
+#   command - at most 6 words, each cut to 40 characters, words with "=" (environment, --key=value) masked as "name=*".
+# queue wait = acquire - request, hold = release - acquire. A retry with the same ticket (SLOT_RETRY_RC) is a new record
+# whose request is the previous release. The line goes out in one write(2) on an O_APPEND file (atomic between
+# writers); any error of the write is ignored - the journal never stops or fails a slot. SLOT_LABEL=<text> replaces the
+# command shown (wrappers such as guards-all.sh name the real job).
 
 zmodload zsh/system zsh/datetime
 _SLOTS_HERE=${${(%):-%x}:A:h}
@@ -50,9 +63,37 @@ unset _slot_cfg
 : ${GUARDS_JOBS_SHARED:=3}         # ... while at least one more heavy slot is busy
 : ${GUARDS_EXCLUSIVE_LOCK:=$SLOTS_DIR/exclusive.lock}
 # Exported so that child shells (which source this file again, possibly from another directory) agree.
-export GUARDS_EXCLUSIVE_LOCK SLOTS_DIR SLOT_LEGACY_LOCK SLOT_MEDIUM_N SLOT_HEAVY_N SLOT_TOTAL_MAX GUARDS_JOBS_ALONE GUARDS_JOBS_SHARED
+[[ -v SLOT_JOURNAL ]] || SLOT_JOURNAL=$SLOTS_DIR/journal.tsv
+export GUARDS_EXCLUSIVE_LOCK SLOTS_DIR SLOT_JOURNAL SLOT_LEGACY_LOCK SLOT_MEDIUM_N SLOT_HEAVY_N SLOT_TOTAL_MAX GUARDS_JOBS_ALONE GUARDS_JOBS_SHARED
 mkdir -p "$SLOTS_DIR"
 _SLOT_HEAVY_MAX=$(( SLOT_HEAVY_N + 1 ))
+
+# -- Journal ---------------------------------------------------------------------------------------------------------
+# _slot_wt -> the nearest directory with .git (a file in linked worktrees) above $PWD, else $PWD; no processes forked.
+_slot_wt() { local d=$PWD; while [[ $d != / && -n $d ]]; do [[ -e $d/.git ]] && { print -r -- $d; return }; d=${d:h}; done; print -r -- $PWD }
+# _slot_cmd <words...> -> a short, secret-free command line for the journal.
+_slot_cmd() {
+  local w out=() n=0
+  for w; do
+    (( ++n > 6 )) && { out+=('...'); break }
+    w=${w//[$'\t\n\r']/ }
+    [[ $w == *=* ]] && w="${w%%=*}=*"
+    (( ${#w} > 40 )) && w="${w[1,39]}~"
+    out+=("$w")
+  done
+  print -r -- "${(j: :)out}"
+}
+# _slot_journal <request> <acquire> <release> <class> <slot> <kind> <rc> <command words...> - one line, errors ignored.
+_slot_journal() {
+  [[ -n $SLOT_JOURNAL ]] || return 0
+  local req=$1 acq=$2 rel=$3 class=$4 slot=$5 kind=$6 rc=$7 cmd; shift 7
+  cmd=${SLOT_LABEL:+$(_slot_cmd ${=SLOT_LABEL})}; [[ -n $cmd ]] || cmd=$(_slot_cmd "$@")
+  local line="v1"$'\t'$req$'\t'$acq$'\t'$rel$'\t'$class$'\t'$slot$'\t'$kind$'\t'$sysparams[pid]$'\t'$rc$'\t'"${$(_slot_wt)//[$'\t\n']/ }"$'\t'$cmd
+  { syswrite -- "$line"$'\n' >> $SLOT_JOURNAL } 2>/dev/null
+  return 0
+}
+# Epoch seconds with milliseconds; no printf (it writes "," under a locale with a decimal comma).
+_slot_now() { local t=${EPOCHREALTIME/,/.}; print -r -- ${t%%.*}.${${t#*.}[1,3]} }
 
 # lockf -t 0 ... true: 0 - free (taken and released at once), 75 - busy.
 _slot_busy() { [[ -n $1 && -e $1 ]] || return 1; /usr/bin/lockf -k -t 0 "$1" true >/dev/null 2>&1; [[ $? -eq 75 ]] }
@@ -206,7 +247,7 @@ _slot_admit() {
 slot_run() {
   local class=$1; shift
   local got=$(mktemp -t slotgot) slot fd holder rc why t0=$EPOCHSECONDS said=0
-  local kind=${SLOT_KIND:-single} retry=${SLOT_RETRY_RC:-} qnum= qf= pos=0 m h o
+  local kind=${SLOT_KIND:-single} retry=${SLOT_RETRY_RC:-} qnum= qf= pos=0 m h o treq=$(_slot_now) tacq= jslot= jcmd=( "$@" )
   [[ $class == (medium|heavy) ]] || { print -u2 "slot_run: class must be medium|heavy, not \"$class\""; return 64; }
   : > $SLOTS_DIR/admit.lock; mkdir -p $SLOTS_DIR/queue
   # The trap is set before the holder starts: a signal between the command start and `wait` would otherwise kill only
@@ -214,7 +255,7 @@ slot_run() {
   # command tree: collect the descendants first (while the holder lives they are its children), then TERM from the
   # leaves up to the holder. Killing the holder first sent its children to launchd and they ran on outside the slot.
   local killed=0
-  trap 'killed=1; if [[ -n $holder ]]; then _slot_kill_tree $holder; else [[ -n $qf ]] && rm -f $qf; rm -f $got; exit 143; fi' INT TERM HUP
+  trap 'killed=1; if [[ -n $holder ]]; then _slot_kill_tree $holder; else [[ -n $qf ]] && rm -f $qf; rm -f $got; _slot_journal $treq - $(_slot_now) $class - $kind 143 "${jcmd[@]}"; exit 143; fi' INT TERM HUP
   : > $SLOTS_DIR/queue.lock
   _slot_q_take "" $class $kind && { qf=$SLOT_QF; qnum=$(( 10#${qf:t} )); }   # the number is given on arrival
   while true; do
@@ -240,10 +281,12 @@ slot_run() {
         fi
         if [[ -n $slot ]]; then
           : > $got
-          SLOT_KIND= SLOT_RETRY_RC= SLOT_PATH=$slot /usr/bin/lockf -k -t 0 $slot zsh -c 'print -r -- $$ > "$1"; shift; exec "$@"' slot-holder $got "$@" 0<&0 &   # kind/retry are not for the children
+          SLOT_KIND= SLOT_RETRY_RC= SLOT_LABEL= SLOT_PATH=$slot /usr/bin/lockf -k -t 0 $slot zsh -c 'zmodload zsh/datetime; t=${EPOCHREALTIME/,/.}; print -r -- $$ ${t%%.*}.${${t#*.}[1,3]} > "$1"; shift; exec "$@"' slot-holder $got "$@" 0<&0 &   # kind/retry are not for the children
           holder=$!
           while [[ ! -s $got ]] && kill -0 $holder 2>/dev/null; do sleep 0.1; done
           if [[ -s $got ]]; then
+            tacq=${${=$(<$got)}[2]}; [[ -n $tacq ]] || tacq=$(_slot_now)   # the holder's own start time
+            jslot=${${slot:t:r}##*.}
             print -r -- "$class $$ $(date '+%F %T') $*" > $slot.who
             rm -f $slot.jobs $slot.limit $slot.limit.active   # numbers of the previous holder (slot_guard_plan) are not inherited
             rm -f $qf; qf=                                     # ticket used - the next in the queue is now first
@@ -264,6 +307,8 @@ slot_run() {
     wait $holder; rc=$?
     (( killed )) && { wait $holder 2>/dev/null; rc=143; }
     holder=
+    _slot_journal $treq $tacq $(_slot_now) $class $jslot $kind $rc "${jcmd[@]}"
+    treq=$(_slot_now)
     [[ -n $retry ]] && (( rc == retry && ! killed )) || break
     # back to the queue with the same number at once: during a pause without a ticket a late waiter would slip past
     _slot_q_take "$qnum" $class $kind && qf=$SLOT_QF
@@ -360,11 +405,15 @@ slot_guard_plan() {
 # while holding a heavy slot). Attempts every SLOT_SAY s; a marker file tells "lock not given" (75 from lockf) apart
 # from the command's own exit code.
 slot_exclusive_run() {
-  local m=$(mktemp -t exclgot) rc t0=$EPOCHSECONDS; rm -f $m
+  local m=$(mktemp -t exclgot) rc t0=$EPOCHSECONDS treq=$(_slot_now) tacq; rm -f $m
   while true; do
-    /usr/bin/lockf -k -t ${SLOT_SAY%.*} "$GUARDS_EXCLUSIVE_LOCK" zsh -c 'touch "$1"; shift; exec "$@"' excl $m "$@" 0<&0
+    /usr/bin/lockf -k -t ${SLOT_SAY%.*} "$GUARDS_EXCLUSIVE_LOCK" zsh -c 'zmodload zsh/datetime; t=${EPOCHREALTIME/,/.}; print -r -- ${t%%.*}.${${t#*.}[1,3]} > "$1"; shift; exec "$@"' excl $m "$@" 0<&0
     rc=$?
-    [[ -e $m ]] && { rm -f $m; return $rc }
+    if [[ -e $m ]]; then
+      tacq=$(<$m); rm -f $m
+      _slot_journal $treq ${tacq:--} $(_slot_now) exclusive - single $rc "$@"
+      return $rc
+    fi
     (( rc == 75 )) || return $rc
     print -r -- "waiting for the exclusive lock ($(( EPOCHSECONDS - t0 )) s): $GUARDS_EXCLUSIVE_LOCK is held by another exclusive guard"
   done

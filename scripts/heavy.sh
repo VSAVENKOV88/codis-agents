@@ -5,5 +5,5 @@
 # loud ("waiting for the exclusive lock ..." at least every SLOT_SAY s).
 # usage: heavy.sh <command...>
 source "${0:A:h}/slots.zsh"
-if slot_is_exclusive_guard "$@"; then slot_run heavy zsh -c 'source "$1"; shift; slot_exclusive_run "$@"' heavy-excl "${0:A:h}/slots.zsh" "$@"
+if slot_is_exclusive_guard "$@"; then SLOT_LABEL="$*" slot_run heavy zsh -c 'source "$1"; shift; slot_exclusive_run "$@"' heavy-excl "${0:A:h}/slots.zsh" "$@"
 else slot_run heavy "$@"; fi
