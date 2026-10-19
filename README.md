@@ -119,6 +119,7 @@ read.
 | `rules/multi-agent.md` | the process rules; lines marked `<!-- role:<id> -->` go into every role prompt |
 | `hooks/hooks.json` | PreToolUse on Bash: refuses `git add -A` / `git add .` and pushes to protected branches or of protected tags |
 | `scripts/slots.zsh`, `heavy.sh`, `medium.sh` | memory slots for heavy and medium jobs, with a FIFO queue |
+| `scripts/slot-journal.js` | summary of the slot journal: queue wait and hold per class and per worktree |
 | `scripts/guards-all.sh` | a full guard run of one worktree in a heavy slot, with a shared worker budget |
 | `scripts/wt-setup.sh` | creates a task worktree and clones (not symlinks) git-ignored data into it |
 | `scripts/wt-remove-check.js` | before a worktree or data directory is removed: prints its ignored data with sizes, the path named in code and the symbolic links that lead into it; removes nothing |
@@ -283,6 +284,12 @@ Heavy work runs through `scripts/heavy.sh <cmd>` and `scripts/medium.sh <cmd>` (
 The thresholds are measurements from a 16 GB machine; every one can be overridden from the environment (see the top of
 `scripts/slots.zsh`).
 
+Every slot hold appends one line to the slot journal, `<slots.lockDir>/journal.tsv` (`SLOT_JOURNAL` overrides it, empty
+turns it off): request, acquire and release times, class, slot, kind, pid, exit code, worktree and a short command with
+`name=value` words masked. A failed write is ignored and never stops a slot. `node scripts/slot-journal.js [--since 2d]
+[--until <time>] [--json]` sums it up: queue wait (acquire - request) and hold (release - acquire), total and median,
+per class and per worktree, and the share of the queue in the agents' waiting.
+
 ## Tests
 
 ```sh
@@ -291,7 +298,7 @@ npm test            # or: node tests/run.js [filter]
 
 The suite checks the chain logic with fake agents (every routing case, the post-checks, the rule markers against
 `RULE_LIST` and every role prompt), the post-check and cost scripts, the config, the hooks, the worktree setup, the
-slots on a fake machine (classes, the extra slot, swap, queue order, worker budget), that the repository holds no
+slots on a fake machine (classes, the extra slot, swap, queue order, worker budget, the slot journal and its summary), that the repository holds no
 Cyrillic text, home paths or e-mail addresses, and that a run without zsh skips the zsh tests visibly instead of failing.
 
 ## License

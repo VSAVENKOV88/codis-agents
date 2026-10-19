@@ -33,7 +33,7 @@ RCF=$(mktemp -t guardsrc)
 trap 'rm -f $RCF' EXIT
 while true; do
   : > $RCF
-  SLOT_KIND=full SLOT_RETRY_RC=75 slot_run heavy zsh -c '
+  SLOT_KIND=full SLOT_RETRY_RC=75 SLOT_LABEL="guards-all $NAME" slot_run heavy zsh -c '
     source "$1"; WT="$2"; OUT="$3"; CMD="$4"; mode="$5"; RCF="$6"
     cd "$WT" || exit 1
     t0=$EPOCHSECONDS said=0

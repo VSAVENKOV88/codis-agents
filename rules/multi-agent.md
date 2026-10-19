@@ -110,6 +110,10 @@ Larger changes run as a chain of agents, each in its own role:
 ## Machine and environment
 
 - **Heavy work goes through memory slots, not one shared lock.** Light (read-only agents, guards without a bundler, browser or tsc): no slot. Medium (<= 0.85 GB: tsc, a plugin build, one bundler build without a browser): `scripts/medium.sh <cmd>`. Heavy (~1 GB+: browser and bundler guards, full guard runs, measurements, docker image builds and test stacks): `scripts/heavy.sh <cmd>` and `scripts/guards-all.sh <worktree>`. <!-- role:slots -->
+- **Every slot hold is journaled**, so the queue for a slot can be told from the job itself: one line per hold in
+  `<lockDir>/journal.tsv` (request, acquire, release, class, slot, pid, worktree, short command, exit code; a failed
+  write never stops the slot). `scripts/slot-journal.js --since <2d>` gives queue wait and hold, total and median, per
+  class and per worktree.
 - A full guard run picks its worker count from what else holds heavy slots: all full runs together never exceed the
   budget (`slots.jobsAlone`).
 - Guards that share a resource (a fixed port, a shared temp dir or corpus file, a docker project) carry
