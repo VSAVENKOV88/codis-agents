@@ -65,7 +65,11 @@ ok 'A4. ... its slot says "fixed 6" to the neighbours while it runs' 'grep -q "^
 : > $T/run.log; hjob n1; waitlong 'started n1'
 $H/guards-all.sh --force xp > $T/a5.out 2>&1 & GA=$!
 waitlong 'grep -q "whole budget" $T/a5.out || ! kill -0 $GA 2>/dev/null'
-ok 'A5. a heavy neighbour holds a slot: the run waits and says why ("whole budget")' '! grep -q "^start xp" $T/run.log && grep -q "waiting.*whole budget of 6" $T/a5.out' "$(cat $T/a5.out; cat $T/run.log)"
+ok 'A5. a heavy neighbour holds a slot: the run waits in the queue, not admitted, and says why ("whole budget")' '! grep -q "^start xp" $T/run.log && grep -q "waiting for slot heavy, position 1 .*whole budget of 6" $T/a5.out' "$(cat $T/a5.out; cat $T/run.log)"
+# ... and should it be admitted all the same (the budget taken between admission and start), its plan is 0, "fixed 0"
+pl=$(zsh -c 'source "$1" || exit 9; slot_guard_plan $SLOTS_DIR/heavy.3.lock whole start; print -r -- "$(<$SLOTS_DIR/heavy.3.lock.jobs)"' _ $H/slots.zsh 2>&1)
+ok 'A5. ... slot_guard_plan whole next to a neighbour: 0 workers, "fixed 0" for the others' '[[ $pl == "0 0"$'"'"'\n'"'"'"fixed 0" ]]' "$pl"
+rm -f $SLOTS_DIR/heavy.3.lock.jobs
 touch $T/rel.n1; waitlong '[[ -e $T/n1.end ]]'; wait $GA; rc=$?
 ok 'A5. ... the neighbour ended: the run started after it and exits 0' '(( rc == 0 )) && grep -q "^start xp fixed 6 " $T/run.log' "$rc $(cat $T/a5.out)"
 
