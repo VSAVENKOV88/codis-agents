@@ -92,7 +92,11 @@ ok '3. long word cut to 40 characters, at most 6 words' '[[ $F[11] == *" aaaaaaa
 
 # 4. a journal that cannot be written
 mkdir -p $T/jdir; : > $T/ro.tsv; chmod 444 $T/ro.tsv
-for jj in $T/jdir $T/missing/dir/j.tsv $T/ro.tsv; do
+UNW=( $T/jdir $T/missing/dir/j.tsv $T/ro.tsv )
+# writable <path>... - the ones this user could append a line to (a directory never; a new file if its directory is writable)
+writable() { local f; for f; do [[ -d $f ]] && continue; if [[ -e $f ]]; then [[ -w $f ]]; else [[ -d ${f:h} && -w ${f:h} ]]; fi && print -rn -- "$f "; done }
+ok '4. every journal of this case is one this user cannot write' '[[ -z $(writable $UNW) ]]' "writable: $(writable $UNW)"
+for jj in $UNW; do
   t0=$EPOCHREALTIME
   SLOT_JOURNAL=$jj "$H/medium.sh" zsh -c 'print -r -- ran; exit 4' > $T/4.out 2> $T/4.err; rc=$?
   ok "4. [$jj] the command ran and its code came back (4)" '(( rc == 4 )) && [[ $(<$T/4.out) == ran ]]' "$rc $(<$T/4.out) $(<$T/4.err)"
