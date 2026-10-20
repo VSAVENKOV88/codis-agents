@@ -14,7 +14,10 @@
 #           runs; 7. no flock(2) utility - an exclusive guard is refused with one line and code 72; 8. the flock(1) form
 #           (-o -w <s> -E 75) waits out loud while lockf(1) holds the lock, then runs; 9. no lockf in the slot holder or
 #           the busy probe, and no slot test skips for a missing lockf; 10. (macOS) an old lockf(1) holder of a slot
-#           counts as busy for the new probe.
+#           counts as busy for the new probe; 11. a slot lock this user cannot open for writing (left by sudo, or by
+#           root in a container over a shared slot directory) - a slot file, admit.lock, the slot directory itself - is
+#           a refusal: one line naming the path, code 77, within seconds, the command never runs (zsystem flock reads a
+#           failed open as "busy", so the job waited forever).
 H=${SLOTS_H:-${0:A:h:h}/scripts}
 zmodload zsh/datetime zsh/system
 T=$(mktemp -d "${${TMPDIR:-/tmp}%/}/slots-locks.XXXXXX"); T=${T:A}
@@ -178,6 +181,18 @@ if [[ -x /usr/bin/lockf ]]; then
   ok '10. an old lockf(1) holder of heavy.1 is seen busy: the new holder took heavy.2' '(( rc == 0 )) && [[ $(<$T/10.slot) == */heavy.2.lock ]]' "$rc $(<$T/10.slot) $(tail -2 $T/10.out)"
   touch $T/rel.old10
 fi
+
+# 11. a lock file of the slot directory this user cannot open for writing: one refusal line naming it, code 77, the
+#     command never runs (before: the probe read "permission denied" as busy and the job waited forever)
+for c11 in medium.1.lock admit.lock queue.lock dir; do
+  d=$T/s11-${c11%%.*}; mkdir -p $d; rm -f $T/11.ran
+  if [[ $c11 == dir ]]; then bad=$d; chmod 555 $d; else bad=$d/$c11; : > $bad; chmod 444 $bad; fi
+  if [[ -w $bad ]]; then print -r -- "  note 11. $c11: this user writes a read-only file (root) - nothing to refuse"; chmod 755 $d; continue; fi
+  SLOTS_DIR=$d SLOT_MEDIUM_N=1 tm 10 "$H/medium.sh" zsh -c 'touch '$T'/11.ran' > $T/11.out 2> $T/11.err; rc=$?
+  chmod 755 $d; [[ -f $bad ]] && chmod 644 $bad
+  ok "11. $c11 not writable: medium.sh refused with code 77 within 10 s, the command did not run" '(( rc == 77 )) && [[ ! -e $T/11.ran ]]' "$rc $(tail -2 $T/11.out; tail -2 $T/11.err)"
+  ok "11. $c11 not writable: one line on stderr naming $bad" '[[ $(wc -l < $T/11.err | tr -d " ") == 1 ]] && grep -qF -- "$bad " $T/11.err' "$(tail -3 $T/11.err)"
+done
 
 print -r -- "
 $pass passed, $fail failed"
