@@ -469,14 +469,15 @@ slot_jobs_budget() {
 # slot_guard_plan <my slot> <fixed|whole|adaptive> <start|run> -> "workers_for_me adaptive_neighbours"
 # Under the admission lock: two newcomers do not count the same remainder. Writes my share for the neighbours:
 # fixed -> "fixed N"; whole (a runner without {jobs}) -> "fixed GUARDS_JOBS_ALONE" when the whole budget is mine, else
-# "fixed 0" and 0 (wait); adaptive -> "adaptive" and the limit in <slot>.limit (at start only when N >= 1; mid-run at least
+# "fixed 0" and "0 0" (wait outside the slot); adaptive -> "adaptive" and the limit in <slot>.limit (at start only when N >= 1; mid-run at least
 # 1: the runner reads 0 as "no limit"). No lock within 30 s - 0 (wait), nothing written.
 slot_guard_plan() {
   local me=$1 mode=$2 phase=$3 fd n=0 ad=0 sc
   if zsystem flock -t 30 -f fd $SLOTS_DIR/admit.lock 2>/dev/null; then
     sc=( $(_slot_heavy_scan $me) )
     n=$(slot_jobs_budget $sc[1] $sc[2] $(( sc[3] + sc[5] ))); ad=$sc[4]
-    [[ $mode == whole ]] && (( n < GUARDS_JOBS_ALONE )) && n=0
+    # whole: an adaptive neighbour sheds only to its share, never to 0, so waiting in the slot cannot help - "0 0"
+    [[ $mode == whole ]] && { (( n < GUARDS_JOBS_ALONE )) && n=0; ad=0 }
     if [[ $mode == (fixed|whole) ]]; then print -r -- "fixed $n" > $me.jobs
     else
       print -r -- adaptive > $me.jobs
