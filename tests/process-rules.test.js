@@ -86,7 +86,7 @@ const wf = fs.readFileSync(path.join(ROOT, 'workflows', 'role-chain.js'), 'utf8'
 ok('RULE_LIST specs: same commit as the behaviour', /\['specs', [^\n]*same commit as the behaviour/.test(wf));
 
 ok('rules: the one-run line is marked role:onerun', /[Oo]ne full guard run per task[^\n]*<!-- role:onerun -->/.test(rules));
-ok('RULE_LIST onerun: the workflow runs the full run, roles run selected guards', /\['onerun', [^\n]*guards-select\.js/.test(wf));
+ok('RULE_LIST onerun: the workflow runs the full run, roles run selected guards', /\['onerun',[\s\S]{0,800}guards-select\.js/.test(wf));
 ok('rules: the rerun line is marked role:rerun', /flaky[^\n]*<!-- role:rerun -->/.test(rules));
 ok('RULE_LIST rerun: guards-all reruns alone, flaky to the report for the backlog', /\['rerun', [^\n]*guards-all\.sh reruns each one alone[^\n]*Flaky guards[^\n]*backlog/.test(wf));
 // Docker cleanup (owner 2026-10-14, after old test stacks filled the disk): the role:docker line reaches every role.

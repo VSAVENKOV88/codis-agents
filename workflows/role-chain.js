@@ -1,11 +1,12 @@
 export const meta = {
   name: 'role-chain',
   description: 'Role chain over tasks in parallel: preconditions -> (analyst) -> programmer -> tester -> reviewer (+ security reviewer); fix rounds and an analyst after the second rejection',
-  whenToUse: 'Started by the codis-agents:role-chain skill, which reads .claude/codis-agents.json and passes it. args: {owner: "the owner\'s request, verbatim", config: <resolved project config>, tasks: [{key, title, wt, branch, accept, dir?, gdir?, start?, analystFirst | analysis | noAnalysis (exactly one), feature?, spec?, useCases?, useCasesFirst?, stack?, security?}]}',
+  whenToUse: 'Started by the codis-agents:role-chain skill, which reads .claude/codis-agents.json and passes it. args: {owner: "the owner\'s request, verbatim", config: <resolved project config>, tasks: [{key, title, wt, branch, accept, dir?, gdir?, start?, analystFirst | analysis | noAnalysis (exactly one), feature?, spec?, useCases?, useCasesFirst?, stack?, security?, base?, mode?}]}',
   phases: [
     { title: 'Preconditions', detail: 'brief, worktree, branch, open questions' },
     { title: 'Analyst', detail: 'matrix of cases or a diagnosis (before the programmer, or after the second rejection)' },
-    { title: 'Programmer', detail: 'red guard -> code -> mutations -> full guard run' },
+    { title: 'Programmer', detail: 'red guard -> code -> mutations -> selected guards (or the full guard run without guardSubsetCommand)' },
+    { title: 'Full run', detail: 'one full guard run on the programmer\'s last HEAD, run by the workflow as a wait step' },
     { title: 'Tester', detail: 'independent inventory, own guards, acceptance in the real environment' },
     { title: 'Reviewer', detail: 'read only, tries to refute' },
   ],
@@ -35,6 +36,8 @@ export const meta = {
 // use-cases-review; after the review with the owner the coordinator relaunches it with useCases and analystFirst.
 // Why: questions were born during the task, not before it (one task: ~40 questions to the coordinator on the way and
 // 8 programmer rounds, almost all from one flow nobody had written down).
+// base (the branch or commit the task started from: scripts/guards-select.js diffs against its merge-base),
+// mode ("full", the default, or "light": one programmer-checker, the full run step, one reviewer - see work()).
 
 const ARGS = typeof args === 'string' ? JSON.parse(args) : (args || {})
 const OWNER = ARGS.owner || ''
@@ -58,6 +61,13 @@ const TASKS = TASKS_IN.map((t) => Object.assign({}, t, {
 // Environment floors of the preconditions (config preconditions; the defaults are explained in scripts/env-check.js).
 const ENV = Object.assign({ minFreeDiskGB: 10, minSwapGB: 4 }, CFG.preconditions || {})
 const sq = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`
+// One full guard run per task (rules: "One full guard run per task"): with guardSubsetCommand in the project config the
+// programmer runs only the selected guards and the workflow runs ONE full run after its last commit; without the key
+// the programmer runs the full run itself, as before.
+const ONE_RUN = typeof CFG.guardSubsetCommand === 'string' && CFG.guardSubsetCommand.trim() !== ''
+const baseArg = (t) => (nonBlankS(t.base) ? sq(t.base.trim()) : '<the branch or commit this task started from>')
+const selectCmd = (t) => `node ${SCRIPTS}/guards-select.js --wt ${sq(t.wt)} --base ${baseArg(t)} --command`
+function nonBlankS(v) { return typeof v === 'string' && v.trim() !== '' }
 
 // Rules that reach a role only through its prompt (rules/multi-agent.md: the pause and 200k rules worked once they
 // were in the prompt). The id matches the marker <!-- role:<id> --> of a line in rules/multi-agent.md; local-* exist
@@ -70,6 +80,9 @@ const RULE_LIST = (t) => [
   ['context', 'Context: past ~200k finish the current stage, write the report with "Next step: ..." and stop - a fresh agent continues.'],
   ['slots', `Heavy work goes through memory slots: ${SCRIPTS}/heavy.sh <cmd>, ${SCRIPTS}/medium.sh <cmd>, full guard run ${SCRIPTS}/guards-all.sh ${t.gdir}.`],
   ['rerun', `New reds of a full run: ${SCRIPTS}/guards-all.sh reruns each one alone in the same slot. Red again alone - a new red (a regression); green alone - flaky: not a regression, name it in your report under "Flaky guards" for the coordinator, who puts it into the project backlog. A full run on the same HEAD with a clean tracked tree that ended green is reused ("reused, HEAD <sha>"); --force runs again.`],
+  ['onerun', ONE_RUN
+    ? `One full guard run per task: the workflow runs ${SCRIPTS}/guards-all.sh ${t.gdir} once after the programmer's last commit (a wait step) and hands its log to the next role; no role runs the full suite itself. Roles run their new guards and the selection printed by ${selectCmd(t)} (changed guards, guards that import a changed file or name it, the project's guardAlways), in a heavy slot: ${SCRIPTS}/heavy.sh zsh -c '<printed command>'; exit 3 - nothing selected, run your new guards directly.`
+    : `One full guard run per task: the project config has no guardSubsetCommand, so the programmer runs the full run (${SCRIPTS}/guards-all.sh ${t.gdir}) and the tester reuses its log; ${SCRIPTS}/guards-select.js --wt ${sq(t.wt)} --base ${baseArg(t)} lists the guards a change touches.`],
   ['docker', `Docker: ${CFG.ownerStackReadOnly ? `the owner's stack ${CFG.ownerStackReadOnly}` : 'the owner\'s stack'} is read-only (docker cp out is fine); never write into its containers; only a tester runs its own stack, and only when the brief asks, then removes it with its images and volumes (docker compose -p <stack> down -v --rmi all). Never remove the owner's stack or its images; other images and the build cache are not yours to clean. A post-check after you removes what the task left (its stack, processes in its worktree, the slots they hold) and reports it.`],
   ['stand', CFG.stand && CFG.stand.project
     ? `Shared stand: acceptance in Docker goes to the project's stand ${CFG.stand.project} by ticket (${SCRIPTS}/stand.sh take|deploy|release|status), not to a stack of your own, unless the task's commits change its image files (${SCRIPTS}/stand.sh image-diff, exit 1 -> own stack as before). The take process is the holder: keep it running in the background until release. Never bring the stand up or down, never release another worktree's ticket.`
@@ -101,12 +114,13 @@ const USECASES_SCHEMA = { type: 'object', properties: {
   summary: { type: 'string' },
 }, required: ['ready', 'useCases', 'questions', 'summary'] }
 const PROG_SCHEMA = { type: 'object', properties: {
-  status: { type: 'string', enum: ['ready', 'blocked'], description: 'blocked - an answer of the coordinator or owner is needed' },
+  status: { type: 'string', enum: ['ready', 'blocked', 'environment'], description: 'blocked - an answer of the coordinator or owner is needed; environment - the red of the full run is the environment\'s (cut off before its tally, no slot, disk or swap), not the product\'s: the task stops for the coordinator' },
   changedFiles: { type: 'array', items: { type: 'string' }, description: 'paths changed in this round (git diff --name-only from the start of the round)' },
   commits: { type: 'array', items: { type: 'string' } },
   head: { type: 'string', description: 'git rev-parse HEAD of the worktree after your commits' },
   mutations: { type: 'string', description: 'table: mutant -> guard result -> after checkout' },
-  fullRun: { type: 'string', description: 'result of the full guard run: N green, N new red (repeated alone), N flaky (green alone), N known red' },
+  fullRun: { type: 'string', description: 'result of the full guard run (or, when the workflow runs it, of the selected guards): N green, N new red (repeated alone), N flaky (green alone), N known red' },
+  acceptance: { type: 'string', description: 'light mode only: the acceptance scenario run by you - result and where its evidence is (test.md, test-* files)' },
   questions: { type: 'array', items: { type: 'string' } },
   summary: { type: 'string' },
 }, required: ['status', 'changedFiles', 'commits', 'head', 'mutations', 'fullRun', 'questions', 'summary'] }
@@ -176,6 +190,46 @@ const leftFail = (st, when, l) => {
     : `leftovers the chain could not remove (${when}): ${(l.remaining || []).join(', ') || l.error || '?'}`
 }
 
+// The full run step (ONE_RUN). A long deterministic step runs between role agents: a cheap service agent starts it with
+// scripts/wait-step.js and waits with blocking calls of at most 270 s (its context is tiny, so a wake-up costs almost
+// nothing; under the cache lifetime and the 10-minute silence limit); the next role gets the log as a file. A step
+// without a numeric exit code is repeated once by the default model with --reuse, which attaches to the run or keeps its
+// result instead of starting it twice. A numeric exit code means the step ran, whatever its outcome: a red run goes to
+// the programmer with its log (in the wait steps experiment a red run whose agent wrote a description into error was
+// taken for "could not run" and stopped the task, e2g2 2026-10-19). Only a step that could not run stops the task.
+// Why one run (measurement 2026-10-10..20): 3.9 full runs per task, about 81 minutes, 37 % of a task's calendar; about
+// 80 % of their new reds were the environment or flaky guards.
+const RUN_SCHEMA = { type: 'object', properties: {
+  done: { type: 'boolean' }, rc: { type: ['number', 'null'] }, seconds: { type: 'number' }, log: { type: 'string' },
+  tail: { type: 'string' }, error: { type: 'string' },
+}, required: ['done', 'rc', 'log'] }
+const gname = (t) => String(t.gdir).replace(/\/+$/, '').split('/').pop()
+const runStep1 = (t, step, cmd, retry) => {
+  const id = `${t.dir}/wait-${step}`
+  return agent(`This is a wait step of the codis-agents process the project owner set up: a long deterministic command runs in the background and you only wait for it, so that the role agents do not. Running it is the expected step, not a decision for you to make; change nothing, analyse nothing.
+1. Run once: node ${SCRIPTS}/wait-step.js start --id ${sq(id)} --cwd ${sq(t.wt)}${retry ? ' --reuse' : ''} -- ${sq(cmd)}
+2. Run: node ${SCRIPTS}/wait-step.js wait --id ${sq(id)} --max 270
+   (Bash with timeout 300000 ms; it blocks up to 270 s and prints JSON). While the JSON says "done":false, run the same command 2 again, nothing else in between. Never run the command of step 1 twice.
+3. When it says "done":true, return its fields (done, rc, seconds, log, tail, error) exactly as printed - do not describe or judge the result.
+If a command fails without JSON - done=false, rc=null, log=${sq(id + '.log')}, error = the error text.`,
+  checkOpts(`run:${t.key}:${step}`, 'Full run', RUN_SCHEMA, retry))
+}
+const ranStep = (r) => !!(r && typeof r.rc === 'number')
+const runStep = async (t, step, cmd) => (await checkTwice(t, `wait step ${step}`, ranStep, (retry) => runStep1(t, step, cmd, retry))).res
+// '' when the step ran (any numeric exit code), otherwise why it could not: that goes to the coordinator.
+const runFail = (step, r) => (!r ? `the wait step ${step} returned no result`
+  : !ranStep(r) ? `the wait step ${step} could not run: ${r.error || 'no exit code'} (log ${r.log})` : '')
+// Full run of the worktree; the log of guards-all.sh is copied next to the step log, since the next run overwrites it.
+const fullStep = async (t, n) => {
+  const step = `full-${n}`
+  const copy = `${t.dir}/wait-${step}.guards.txt`
+  const r = await runStep(t, step, `${SCRIPTS}/guards-all.sh ${sq(t.gdir)}; rc=$?; cp ${sq(`${CFG.sharedDir}/guards-${gname(t)}.txt`)} ${sq(copy)} 2>/dev/null; exit $rc`)
+  const f = runFail(step, r)
+  return f ? { fail: f } : Object.assign({}, r, { guards: copy })
+}
+const fullLine = (r) => (r ? `exit ${r.rc}; summary ${r.log}, full log ${r.guards}` : 'none on this HEAD')
+const MAX_FULL_FIX = 2
+
 // The analysis marker of a task: {mode: 'run'|'reused'|'none', path?, reason?}, or {error} when not exactly one is given.
 const nonBlank = (v) => typeof v === 'string' && v.trim() !== ''
 const MARKERS = 'the task must carry exactly one of `analystFirst` (true: the analyst runs first), `analysis` (absolute path of an existing analyst or diagnosis report of this task, inside its folder or the folder of its `feature`), `noAnalysis` (why no analysis is needed: a tail, a one-line fix; for a defect, why the diagnosis is skipped); an arc specification goes into `spec`, it is not an analysis'
@@ -221,6 +275,15 @@ function useCasesOf(t) {
   if (!p.startsWith('/') || /(^|\/)\.\.?(\/|$)/.test(p) || !where.some((d) => p.startsWith(d))) return { error: `useCases ${p} is not an absolute path inside ${where.join(' or ')}` }
   return { path: p }
 }
+// The mode of a task: {light} or {error}. Light (rules: "Light mode for small tasks"): up to ~100 lines of product, one
+// subsystem, no attack surface, no acceptance in a Docker stack - so security work and a task stack are refused here.
+function modeOf(t) {
+  if (t.mode === undefined || t.mode === 'full') return { light: false }
+  if (t.mode !== 'light') return { error: `mode must be "full" (the default) or "light", not ${JSON.stringify(t.mode)}` }
+  if (t.security) return { error: 'mode light is not for security work (security): run it in the full mode with a tester and a security reviewer' }
+  if (t.stack) return { error: 'mode light has no acceptance in a Docker stack (stack): run it in the full mode with a tester' }
+  return { light: true }
+}
 const analysisLine = (a) => (a.mode === 'none' ? `No analysis: ${a.reason}` : `The analysis to follow: ${a.path}`)
 
 // Paths a fix "for docs" may touch without a tester round: docs, and guards and fixtures (guard wording; the paths the
@@ -262,25 +325,36 @@ Write the use cases of the feature before any matrix of cases or spec. One secti
 End the file with "Open questions to the owner": one numbered list, each question with your recommendation; put the same list into questions. ready=true when every use case has all sections. Do not write a matrix of cases and do not answer the questions yourself: the task stops here, and the coordinator reviews the use cases with the owner.${note('analyst')}`,
   { label: `usecases:${t.key}`, phase: 'Analyst', schema: USECASES_SCHEMA, agentType: roleType('analyst') })
 
-const prog = (t, task, n) => agent(`You are the PROGRAMMER. ${RULES(t)} Report: ${t.dir}/prog.md (round ${n}).
+// What the programmer runs after the mutations: the selection (ONE_RUN, the workflow runs the full run after it) or the
+// full run itself.
+const guardsPart = (t) => (ONE_RUN
+  ? `selected guards: ${selectCmd(t)} prints the command (exit 3: nothing selected - run your new guards directly), run it with ${SCRIPTS}/heavy.sh zsh -c '<printed command>' -> stop: do NOT run the full guard run yourself - after you return, the workflow runs ${SCRIPTS}/guards-all.sh ${t.gdir} once on your HEAD and hands you the log only if it is red (fullRun = the selected guards' result)`
+  : `full run ${SCRIPTS}/guards-all.sh ${t.gdir} in the background -> analysis of new reds that repeated alone (flaky ones go into prog.md for the backlog)`)
+const prog = (t, task, n) => (t.light ? progLight(t, task, n) : agent(`You are the PROGRAMMER. ${RULES(t)} Report: ${t.dir}/prog.md (round ${n}).
 ${analysisLine(t.an)}
 ${task}
-Order: red guard -> commit -> code -> commit -> mutations AFTER the commit (table in prog.md) -> full run ${SCRIPTS}/guards-all.sh ${t.gdir} in the background -> analysis of new reds that repeated alone (flaky ones go into prog.md for the backlog). status=blocked if you cannot go on without the owner's answer.${note('programmer')}`,
+Order: red guard -> commit -> code -> commit -> mutations AFTER the commit (table in prog.md) -> ${guardsPart(t)}. status=blocked if you cannot go on without the owner's answer.${note('programmer')}`,
+  { label: `prog:${t.key}#${n}`, phase: 'Programmer', schema: PROG_SCHEMA, agentType: roleType('programmer') }))
+// Light mode: one programmer-checker does the programmer's work and the tester's acceptance; the reviewer follows.
+const progLight = (t, task, n) => agent(`You are the PROGRAMMER-CHECKER of a task in the light mode: there is no tester role, so you also run the acceptance. ${RULES(t)} Reports: ${t.dir}/prog.md (round ${n}) and ${t.dir}/test.md (your acceptance, round ${n}; keep earlier rounds).
+${analysisLine(t.an)}
+${task}
+Order: red guard -> commit -> code -> commit -> mutations AFTER the commit (table in prog.md) -> ${guardsPart(t)} -> your own acceptance in the real environment: ${t.accept} Evidence (logs, numbers, screenshots) goes into ${t.dir}/test.md and files with the prefix test-; put the result and where its evidence is into acceptance. status=ready only when the acceptance is met; status=blocked if you cannot go on without the owner's answer.${note('programmer')}`,
   { label: `prog:${t.key}#${n}`, phase: 'Programmer', schema: PROG_SCHEMA, agentType: roleType('programmer') })
 
 // Acceptance on the project's shared stand (config stand, scripts/stand.sh): image-diff decides whether it fits.
 const standSteps = (t) => (CFG.stand && CFG.stand.project ? ` On the project's shared stand ${CFG.stand.project}: (a) ${SCRIPTS}/stand.sh image-diff --wt ${sq(t.wt)} --base <the commit this task branched from> - exit 0: the stand fits, exit 1: the task changes the stand's image files and needs ${t.stack ? 'its own stack (below)' : 'its own stack: write "❓ coordinator: own stack needed, image files changed" into test.md and give the verdict environment'}; (b) ${SCRIPTS}/stand.sh take --wt ${sq(t.wt)} with run_in_background - it waits in the queue ("position N") and then holds the ticket while it runs: wait (Monitor, slices of at most 270 s) for its line "ticket taken by"; (c) ${SCRIPTS}/stand.sh deploy ${sq(t.wt)} (your committed HEAD; it runs in a medium slot); (d) the scenario against the stand; (e) ${SCRIPTS}/stand.sh release --wt ${sq(t.wt)} as soon as the evidence is saved, also after a red (the next tester waits for it). A take refused with "not up" or "reset failed" is an environment red for the coordinator.` : '')
-const test = (t, n) => agent(`You are the TESTER. You do not change product code. ${RULES(t)} Report: ${t.dir}/test.md (round ${n}; keep earlier rounds).
+const test = (t, n, st) => agent(`You are the TESTER. You do not change product code. ${RULES(t)} Report: ${t.dir}/test.md (round ${n}; keep earlier rounds).
 1. An independent inventory before reading the diff (inputs, places, cells) - compare it with the programmer's coverage.
 2. Your own guards for what is not covered -> commit -> mutations after the commit.
 3. Acceptance in the real environment: ${t.accept}${standSteps(t)}${t.stack ? ` ${CFG.stand && CFG.stand.project ? 'Only when the stand does not fit, your' : 'Your'} own stack: docker compose -p ${t.stack}; afterwards remove it with its images and volumes: docker compose -p ${t.stack} down -v --rmi all.` : ''} Evidence (logs, numbers, screenshots) goes into ${t.dir} with the prefix test-.${t.uc ? ` Build the acceptance along the flows of the use cases (the main flow, every alternative flow, all errors): ${t.uc}.` : ''}
-4. Do not repeat the programmer's full run: new and touched guards and mutations; a full run only after your own commits.
+4. ${ONE_RUN ? `Do NOT run the full guard run: the workflow ran it once on the programmer's HEAD (${fullLine(st && st.full)}); reuse its log. Run your new and touched guards and mutations; if you commit guards, run them and the selection (${selectCmd(t)}), not the full suite.` : "Do not repeat the programmer's full run: new and touched guards and mutations; a full run only after your own commits."}
 green - only if the brief's acceptance is met in full. red - the product fails a guard or the acceptance.
 environment - red that the product did not cause, so a programmer has nothing to fix: your or the programmer's full run cut off before its tally (killed, timed out, out of memory), no memory slot within your time, disk or swap exhausted (node ${SCRIPTS}/env-check.js --path ${sq(t.wt)} --min-disk-gb ${ENV.minFreeDiskGB} --min-swap-gb ${ENV.minSwapGB}), Docker or your stack down for a reason outside the task's code. Put the cause and its evidence into environment; the task stops for the coordinator. Never use it for a red that the product causes.${note('tester')}`,
   { label: `test:${t.key}#${n}`, phase: 'Tester', schema: TEST_SCHEMA, agentType: roleType('tester') })
 
 const review = (t, n, scope) => agent(`You are the REVIEWER (read only; you may rerun guards). ${RULES(t)} Report: ${t.dir}/review.md (round ${n}).
-Read BRIEF.md, analyst.md (if any), prog.md, test.md, git log/diff of branch ${t.branch} for the task${scope ? ' - ' + scope : ''}. Try to refute "done": cells of the matrix,${t.uc ? ` the alternative flows and errors of the use cases ${t.uc} (closed, not only the main flow),` : ''} guesses instead of data (thresholds, name lists), guards without mutations, the tester's evidence against the acceptance scenario (do not rerun the scenario). Verdict with file:line.${note('reviewer')}`,
+Read BRIEF.md, analyst.md (if any), prog.md, test.md, git log/diff of branch ${t.branch} for the task${scope ? ' - ' + scope : ''}. Try to refute "done": cells of the matrix,${t.uc ? ` the alternative flows and errors of the use cases ${t.uc} (closed, not only the main flow),` : ''} guesses instead of data (thresholds, name lists), guards without mutations, the tester's evidence against the acceptance scenario (do not rerun the scenario).${t.light ? ` This task runs in the light mode: there is no tester role; the programmer-checker ran the acceptance - check its evidence in ${t.dir}/test.md against the acceptance scenario and its mutation table in prog.md.` : ''} Verdict with file:line.${note('reviewer')}`,
   { label: `review:${t.key}#${n}`, phase: 'Reviewer', schema: REVIEW_SCHEMA, agentType: roleType('reviewer') })
 
 const secReview = (t, n, scope) => agent(`You are the SECURITY REVIEWER (read only; you may rerun guards). ${RULES(t)} Report: ${t.dir}/review-sec.md (round ${n}).
@@ -290,7 +364,7 @@ The brief marks the task as security work. Read BRIEF.md, ${CFG.threatModel ? `t
 // Programmer -> tester (red -> programmer again, without review), up to maxRounds tester rounds.
 // st.head - HEAD after the last committing role; the next role's post-check starts from it.
 async function testChecked(t, st, n) {
-  const tr = await test(t, n)
+  const tr = await test(t, n, st)
   if (!tr) return { fail: 'the tester returned no result' }
   const f = diffFail('tester', await diffCheck(t, 'tester', st.head))
   if (f) return { fail: f }
@@ -324,11 +398,44 @@ async function reviewChecked(t, st, n, scope) {
 const envStop = (round, tr) => ({ fail: `tester ${round}: red from the environment, not the product - ${tr.environment || tr.summary || '?'}`,
   environment: tr.environment || tr.summary || '', test: tr.summary })
 
-async function buildAndTest(t, st, firstTask, tag, maxRounds) {
-  let p = await prog(t, firstTask, `${tag}1`)
+const envProg = (n, p) => ({ fail: `programmer ${n}: red from the environment, not the product - ${p.summary || '?'}`, environment: p.summary || '' })
+const docsOrGuardOnly = (p) => (p.changedFiles || []).length > 0 && p.changedFiles.every(docsOrGuard)
+
+// A programmer round. With ONE_RUN the full run follows it on the new HEAD: red -> a programmer round with the log
+// (fix and commit, or explain and change nothing), then the run again, at most MAX_FULL_FIX rounds. No new run on a
+// HEAD whose full run is done (st.fullAt), and none after a fix of docs and guard files only once a full run was done:
+// the product did not change and the programmer ran the touched guards.
+async function progStep(t, st, task, n) {
+  const p = await prog(t, task, n)
   if (!p) return { fail: 'the programmer returned no result' }
   if (p.status === 'blocked') return { fail: 'programmer: an answer is needed', questions: p.questions }
+  if (p.status === 'environment') return envProg(n, p)
   st.head = p.head
+  if (!ONE_RUN) return { p }
+  if (st.fullAt && docsOrGuardOnly(p)) { log(`${t.title}: round ${n} changed only docs and guard files - no full run`); return { p } }
+  let merged = p, tag = n
+  for (let k = 0; ; k++) {
+    if (st.fullAt && st.head === st.fullAt) { log(`${t.title}: the full run on ${st.head} is done - not repeated`); return { p: merged } }
+    const full = await fullStep(t, tag)
+    if (full.fail) return full
+    st.full = full; st.fullAt = st.head
+    log(`${t.title}: full run after programmer ${tag} - exit ${full.rc}`)
+    if (full.rc === 0) return { p: merged }
+    if (k === MAX_FULL_FIX) return { fail: `the full guard run is still red after ${k} programmer rounds with its log (exit ${full.rc}, ${full.log})`, full: fullLine(full) }
+    const p2 = await prog(t, `The full guard run the workflow ran on your HEAD after round ${tag} exited ${full.rc}: summary ${full.log}, full log ${full.guards}. Analyse every new red that repeated alone: fix what your change caused (commit, mutations after the commit, the selected guards); a known red or a flaky guard - explain it in prog.md and change nothing; a red from the environment (the run cut off before its tally, no slot, disk or swap) - status=environment with the evidence. Do not run the full run yourself: if you commit, the workflow runs it again.\n${full.tail || ''}`, `${tag}f`)
+    if (!p2) return { fail: 'the programmer returned no result' }
+    if (p2.status === 'blocked') return { fail: 'programmer: an answer is needed', questions: p2.questions }
+    if (p2.status === 'environment') return envProg(`${tag}f`, p2)
+    merged = Object.assign({}, p2, { changedFiles: (merged.changedFiles || []).concat((p2.changedFiles || []).filter((f) => !(merged.changedFiles || []).includes(f))) })
+    tag = `${tag}f`
+    if (p2.head === st.head) { log(`${t.title}: the red of the full run explained without a commit - the next role gets its log`); return { p: merged } }
+    st.head = p2.head
+  }
+}
+
+async function buildAndTest(t, st, firstTask, tag, maxRounds) {
+  const s1 = await progStep(t, st, firstTask, `${tag}1`)
+  if (s1.fail) return s1
   for (let r = 1; r <= maxRounds; r++) {
     const x = await testChecked(t, st, `${tag}${r}`)
     if (x.fail) return x
@@ -337,10 +444,8 @@ async function buildAndTest(t, st, firstTask, tag, maxRounds) {
     if (tr.verdict === 'green') return { ok: tr }
     if (tr.verdict === 'environment') return envStop(`${tag}${r}`, tr)
     if (r === maxRounds) return { fail: `${maxRounds} red tester rounds`, test: tr.summary }
-    p = await prog(t, `Tester round ${tag}${r} - red. Fix according to ${t.dir}/test.md:\n${tr.summary}`, `${tag}${r + 1}`)
-    if (!p) return { fail: 'the programmer returned no result' }
-    if (p.status === 'blocked') return { fail: 'programmer: an answer is needed', questions: p.questions }
-    st.head = p.head
+    const s = await progStep(t, st, `Tester round ${tag}${r} - red. Fix according to ${t.dir}/test.md:\n${tr.summary}`, `${tag}${r + 1}`)
+    if (s.fail) return s
   }
 }
 
@@ -354,11 +459,10 @@ async function reviewLoop(t, st, tag) {
   const r1 = x1.rv
   log(`${t.title}: review ${tag}1 - ${r1.verdict}`)
   if (r1.verdict === 'done') return { ok: r1 }
-  const p = await prog(t, `Review ${tag}1 - rejected${r1.docsOnly ? ' for docs only: fix the docs, guard wording or comments it names and change no behaviour' : ''}. Fix according to ${t.dir}/review.md:\n${r1.summary}`, `${tag}r`)
-  if (!p) return { fail: 'the programmer returned no result' }
-  if (p.status === 'blocked') return { fail: 'programmer: an answer is needed', questions: p.questions }
   const before = st.head
-  st.head = p.head
+  const sp = await progStep(t, st, `Review ${tag}1 - rejected${r1.docsOnly ? ' for docs only: fix the docs, guard wording or comments it names and change no behaviour' : ''}. Fix according to ${t.dir}/review.md:\n${r1.summary}`, `${tag}r`)
+  if (sp.fail) return sp
+  const p = sp.p
   const testAfter = async () => {
     const xt = await testChecked(t, st, `${tag}after-review`)
     if (xt.fail) return xt
@@ -396,8 +500,10 @@ async function chain(t0) {
   if (an.error) return stop(t0, 'preconditions', { problems: [an.error], questions: [an.error] })
   const uc = useCasesOf(t0)
   if (uc.error) return stop(t0, 'preconditions', { problems: [uc.error], questions: [uc.error] })
-  const t = Object.assign({}, t0, { an, uc: uc.first ? '' : uc.path || '', ucFirst: uc.first ? uc.path : '' })
-  const withAn = (r) => Object.assign({}, r, { analysis: an }, nonBlank(t0.feature) ? { feature: t0.feature.trim() } : {},
+  const md = modeOf(t0)
+  if (md.error) return stop(t0, 'preconditions', { problems: [md.error], questions: [md.error] })
+  const t = Object.assign({}, t0, { an, uc: uc.first ? '' : uc.path || '', ucFirst: uc.first ? uc.path : '', light: md.light })
+  const withAn = (r) => Object.assign({}, r, { analysis: an }, nonBlank(t0.feature) ? { feature: t0.feature.trim() } : {}, md.light ? { mode: 'light' } : {},
     uc.path && !r.useCases ? { useCases: uc.path } : {})
   const st = { head: '', leftovers: [] }
   const pc = await pre(t)
@@ -424,6 +530,7 @@ async function work(t, st) {
     if (!a.ready || a.split.length || a.questions.length) return stop(t, 'analyst: split the task or an answer is needed', { split: a.split, questions: a.questions, analyst: a.summary })
   } else log(t.an.mode === 'reused' ? `${t.title}: analyst reused - ${t.an.path}` : `${t.title}: no analyst - ${t.an.reason}`)
 
+  if (t.light) return light(t, st)
   const b = await buildAndTest(t, st, t.start || 'Start with red guards for the cells of the brief (and analyst.md, if any).', '', 3)
   if (b.fail) return stop(t, b.fail, b)
   const rv = await reviewLoop(t, st, '')
@@ -439,6 +546,29 @@ async function work(t, st) {
   const rv2 = await reviewLoop(t, st, 'A')
   if (rv2.ok) return { task: t.key, status: 'done', review: rv2.ok.summary }
   return stop(t, `after the analyst: ${rv2.fail}`, rv2)
+}
+
+// Light mode (owner 2026-10-20): programmer-checker -> the full run step -> reviewer; no tester role, so no tester
+// post-checks (the reviewer's git post-check and the leftovers check at the end run as usual). A rejection -> one
+// programmer round (and the full run if it committed) -> the second review; a second rejection goes to the coordinator
+// with the proposal to relaunch in the full mode. Why: tasks of up to 100 lines of product took 2-2.6 h through the
+// chain against about 0.6 h in one session (measurement 2026-10-20).
+async function light(t, st) {
+  const s1 = await progStep(t, st, t.start || 'Start with red guards for the cells of the brief (and analyst.md, if any).', '1')
+  if (s1.fail) return stop(t, s1.fail, s1)
+  const x1 = await reviewChecked(t, st, '1')
+  if (x1.fail) return stop(t, x1.fail, x1)
+  log(`${t.title}: review 1 (light) - ${x1.rv.verdict}`)
+  if (x1.rv.verdict === 'done') return { task: t.key, status: 'done', review: x1.rv.summary }
+  const before = st.head
+  const s2 = await progStep(t, st, `Review 1 - rejected${x1.rv.docsOnly ? ' for docs only: fix the docs, guard wording or comments it names and change no behaviour' : ''}. Fix according to ${t.dir}/review.md, and run the acceptance again if the fix touches what it checks:\n${x1.rv.summary}`, 'r')
+  if (s2.fail) return stop(t, s2.fail, Object.assign({}, s2, { review: x1.rv.summary }))
+  const x2 = await reviewChecked(t, st, '2', `the fix after review 1 (git diff ${before}..${st.head}) and whether review 1 is answered`)
+  if (x2.fail) return stop(t, x2.fail, x2)
+  log(`${t.title}: review 2 (light) - ${x2.rv.verdict}`)
+  if (x2.rv.verdict === 'done') return { task: t.key, status: 'done', review: x2.rv.summary }
+  return stop(t, 'second review rejection in the light mode: the coordinator relaunches the task in the full mode (drop mode "light": tester, analyst after a second rejection)',
+    { second: true, docsOnly: x2.rv.docsOnly, review: x2.rv.summary })
 }
 
 const results = await pipeline(TASKS, (t) => chain(t))

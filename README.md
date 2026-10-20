@@ -122,6 +122,8 @@ read.
 | `scripts/stand.sh`, `stand.js` | the ticket of the project's shared stand (queue, holder, reset at issue and release) and its commands from the config |
 | `scripts/slot-journal.js` | summary of the slot journal: queue wait and hold per class and per worktree |
 | `scripts/guards-all.sh` | a full guard run of one worktree in a heavy slot, with a shared worker budget; new reds rerun alone (`guardRerun`); a run on the same HEAD with a clean tracked tree that ended with exit 0 is not repeated ("reused, HEAD <sha>" and the saved summary; `--force` runs anyway) |
+| `scripts/guards-select.js` | the guards a programmer runs instead of the full suite: changed guards, guards that import a changed file or name it, `guardAlways`; `--command` fills `guardSubsetCommand` |
+| `scripts/wait-step.js` | a long deterministic step (the one full guard run of a task) run detached by the workflow between role agents; `wait` blocks at most 270 s and reports JSON |
 | `scripts/wt-setup.sh` | creates a task worktree and clones (not symlinks) git-ignored data into it |
 | `scripts/wt-remove-check.js` | before a worktree or data directory is removed: prints its ignored data with sizes, the path named in code and the symbolic links that lead into it; removes nothing |
 | `scripts/role-diff-check.js` | git post-check of the tester and reviewers |
@@ -178,6 +180,9 @@ node <plugin>/scripts/config.js check
 | `guardCommand` | the full guard run, executed with zsh in the worktree; placeholders `{wt}`, `{jobs}` and optionally `{limitFile}` (a file the runner re-reads for an adaptive worker limit) |
 | `guardCommandLegacy`, `guardAdaptiveProbe` | for branches whose runner has no adaptive limit: if `<wt>/<probe.file>` lacks `<probe.contains>`, the legacy command runs with a fixed worker count |
 | `guardRerun` | rerun of new reds one by one after a red full run, in the same slot (`scripts/guards-result.js`): `command` runs one guard (`{wt}`, `{name}`), `newRedPattern` takes the names of new reds from the log (group 1), optional `tallyPattern` (no tally - a cut-off run - nothing reruns) and `maxReruns` (default 10). Red again alone - a new red, the runner's exit code stays; green alone - flaky, listed for the project backlog, not a regression; only flaky - exit 0. Without the key nothing reruns |
+| `guardFiles` | globs of the project's guard files for `scripts/guards-select.js` (default `*-run.js`, `*-run.mjs`, `*-run.cjs` at any depth) |
+| `guardAlways` | guards always in the programmer's selection: a guard whose path contains an entry (scanners of the diff such as secrets or semgrep) |
+| `guardSubsetCommand` | runs the selected guards (zsh; `{wt}`, `{onlyArgs}` = `--only <guard>` per guard). When set: one full guard run per task, run by the workflow after the programmer's last commit, and the programmer runs only the selection; without it the programmer runs the full run itself |
 | `worktreeSetup` | `scan` directories whose ignored data is copied into a new worktree; `skip` and `link` globs (everything else is an APFS clone) |
 | `slots` | `medium`, `heavy`, `total`, `lockDir`, `legacyLock`, `jobsAlone`, `jobsShared` |
 | `reportLanguage` | language of role reports (prompts stay in English) |
@@ -247,7 +252,9 @@ specification goes into `spec` (context for every role), never into `analysis`.
 Optional task fields: `dir`, `gdir`, `start`, `feature` (the feature this task was split from), `spec` (the arc
 specification), `useCases` (the feature's `use-cases.md`: actor, trigger, main and alternative flows, errors, out of
 scope - context for every role, cited by the matrix, the tester's acceptance follows its flows), `useCasesFirst`,
-`stack` (the tester's own compose project), `security`. For a feature, `useCasesFirst: true` with `analystFirst` has the
+`stack` (the tester's own compose project), `security`, `base` (the branch or commit the task started from, for
+`guards-select.js`), `mode` (`mode: "light"` for a small task: one programmer-checker, the full run, one reviewer - see
+below). For a feature, `useCasesFirst: true` with `analystFirst` has the
 analyst write only the use cases with their open questions and stops the task with status `use-cases-review`; after
 the review with the owner the coordinator relaunches it with `useCases` and `analystFirst`.
 Each task ends `done`, `use-cases-review` or `stopped` with the reason, the open questions, a proposed split or the
@@ -262,7 +269,17 @@ review findings.
   `analysis` the phase logs the reused report, with `noAnalysis` the reason. With `useCasesFirst` it writes only the
   use cases and the task stops for the owner's review.
 - **Programmer** commits a red guard, then the code, then mutation-tests the guards after the commit and runs the full
-  guard suite in a heavy slot.
+  guard suite in a heavy slot - or, with `guardSubsetCommand` in the config, only its new guards and the guards that
+  import a changed file or name it, plus `guardAlways` (`scripts/guards-select.js`).
+- **One full guard run per task, run by the workflow after the programmer's last commit** (with `guardSubsetCommand`):
+  a cheap agent starts `guards-all.sh` through `scripts/wait-step.js` and waits in slices of at most 270 s; red goes back
+  to the programmer with its log (at most two rounds, then the coordinator), green goes to the tester, who reuses the
+  log. A HEAD whose full run is done, or a fix of docs and guards only, is not run again. A step without an exit code
+  stops the task for the coordinator; a red run is a step that ran.
+- **Light mode** (`mode: "light"`, chosen by the coordinator for up to ~100 lines of product in one subsystem, off the
+  attack surface, without a Docker acceptance): one programmer-checker (red guard, code, mutations, its own acceptance
+  with evidence in `test.md`) -> the one full run -> one reviewer; no tester role. A second rejection stops the task for
+  the coordinator with the proposal to relaunch it in the full mode.
 - **Tester** builds its own inventory, adds and mutation-tests guards, runs the acceptance scenario for real. Red goes
   straight back to the programmer (up to three rounds), without a review. A red from the environment (a cut-off full
   run, no slot, disk or swap exhausted, Docker down) is the verdict `environment`: the task stops with its cause for the

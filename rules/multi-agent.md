@@ -109,8 +109,14 @@ Larger changes run as a chain of agents, each in its own role:
   product code) goes to the second review too, which must confirm on the diff that it changes no behaviour
   (`fixBehaviourUnchanged`); only an unconfirmed fix gets a tester round. Why: when only `.md` and `docs/` counted,
   4 of 5 such rejections still went through the tester for a stale comment in a `.js` or `.html` file.
-- The tester does not repeat the programmer's full guard run: it reuses the programmer's log, runs the new and touched
-  guards plus mutations, and runs the full suite only after its own commits.
+- **One full guard run per task, run by the workflow after the programmer's last commit.** With `guardSubsetCommand` in the project config the programmer runs only its new guards and the selection of `scripts/guards-select.js` (changed guards, guards that import a changed file or name it, plus the project's `guardAlways`, such as scanners of the diff), never the full suite; the workflow then runs `guards-all.sh` once on its HEAD as a wait step (`scripts/wait-step.js`, a cheap agent waiting in slices of at most 270 s while no role waits). Red (after the rerun of new reds) - a programmer round with the log, then the full run again; green - the tester, who reuses that log, runs its own guards, mutations and, after its commits, their selection, not the full suite. A HEAD whose full run is done is not run again. Without the key the programmer runs the full run itself and the tester reuses its log. <!-- role:onerun -->
+  Why (measurement 2026-10-10..20, 73 tasks): 3.9 full runs per task took about 81 min, 37 % of a task's calendar
+  (up to 64 %); about 80 % of their new reds were the environment, flaky guards or an expectedly red new guard; real
+  findings in other guards came in 26 % of tasks (6-7 product regressions, 12 stale guards). Selection by imports alone
+  caught 1 of 6 of those regressions, by imports plus the names of the changed files all of them; the one full run
+  catches the rest before acceptance.
+- **Light mode for small tasks** (task field `mode: "light"`). For a task of up to ~100 lines of product in one subsystem, not on the attack surface (no security work, no routes or access classes) and whose acceptance needs no Docker stack, the coordinator may choose it, and the owner may overturn it: preconditions -> one programmer-checker (brief, red guard, code, mutations after the commit, its own acceptance with evidence in `test.md`) -> the same one full run -> one reviewer, who only reads. No tester role and no tester post-check; the reviewer's git post-check and the leftovers check run as usual. A rejection -> a programmer round -> the second review; a second rejection goes to the coordinator with the proposal to relaunch the task in the full mode.
+  Why: tasks of up to 100 lines of product took 2-2.6 h through the chain against about 0.6 h in one session.
 - After the tester and after each reviewer, a git post-check (`scripts/role-diff-check.js`) compares the worktree with
   the HEAD of the previous committing role: the tester may change only guards and their fixtures, a reviewer nothing.
   A violation stops the chain. A post-check that fails (or returns nothing) is repeated once by the default model and
@@ -122,7 +128,9 @@ Larger changes run as a chain of agents, each in its own role:
   each unfinished task alone, with `start` pointing to its report and the step it stopped at.
 - **Check the seam of parallel branches.** After merging the second of parallel branches that touched the same files,
   the coordinator runs the new and touched guards of both tasks, then the full guard run. Each branch was green alone;
-  after such a merge one guard gave six red from the seam alone.
+  after such a merge one guard gave six red from the seam alone. After any other merge the coordinator runs a full
+  guard run only at a seam: when the merged branch and another branch merged since the last full run touched the same
+  files; otherwise the CI of the branch decides (each task already had its one full run).
 
 ## Task folder and reports
 

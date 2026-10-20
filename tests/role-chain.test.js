@@ -392,9 +392,9 @@ async function run(script, task = T, extra = {}) {
     rp && rp.opts.model === 'haiku' && rp.opts.agentType === 'general-purpose' && rp.prompt.includes("node /p/scripts/wait-step.js start --id '/d/wait-full-1' --cwd '/w'")
       && rp.prompt.includes('/p/scripts/guards-all.sh') && rp.prompt.includes('wait-step.js wait') && /--max 270/.test(rp.prompt), rp && rp.prompt);
   ok('programmer prompt (one run): selected guards through guards-select.js, no full run of its own',
-    /guards-select\.js --wt '\/w' --base [^ ]+ --command/.test(pOf(x, 'prog')) && /do NOT run the full guard run/.test(pOf(x, 'prog')) && !/full run \/p\/scripts\/guards-all\.sh w in the background/.test(pOf(x, 'prog')), pOf(x, 'prog'));
+    /guards-select\.js --wt '\/w' --base .+? --command/.test(pOf(x, 'prog')) && /do NOT run the full guard run/.test(pOf(x, 'prog')) && !/full run \/p\/scripts\/guards-all\.sh w in the background/.test(pOf(x, 'prog')), pOf(x, 'prog'));
   ok('tester prompt (one run): reuses the workflow full run log, runs no full run itself',
-    pOf(x, 'test').includes('exit 0; summary /d/wait.log') && /do NOT run the full guard run/.test(pOf(x, 'test')) && !/a full run only after your own commits/.test(pOf(x, 'test')), pOf(x, 'test'));
+    pOf(x, 'test').includes('exit 0; summary /d/wait.log') && /do NOT run the full guard run/i.test(pOf(x, 'test')) && !/a full run only after your own commits/.test(pOf(x, 'test')), pOf(x, 'test'));
   ok('the task base reaches guards-select when given', /--base 'origin-x'/.test(pOf(await run(G1(), Object.assign({}, T, { base: 'origin-x' }), { config: ONE }), 'prog')));
   x = await run(G1());
   ok('without guardSubsetCommand: no full run step, the programmer runs the full run itself as before',
