@@ -103,7 +103,7 @@ function judge(words, ctx) {
       // The destination is a tag push only when the source is that tag (no source given, a delete, or a source that
       // resolves to refs/tags/): git push origin HEAD:build-1 creates refs/heads/build-1 on the remote even when a
       // local tag build-1 exists, so it stays a branch push.
-      const srcRef = !src || src === d ? 'refs/tags/' + d
+      const srcRef = !src ? 'refs/tags/' + d
         : (g('rev-parse', '--symbolic-full-name', src).stdout || '').trim();
       knownTag = isTag && srcRef.startsWith('refs/tags/');
     }
