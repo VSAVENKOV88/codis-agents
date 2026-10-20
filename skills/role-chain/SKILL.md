@@ -34,6 +34,8 @@ Only tasks the owner asked for in this conversation. For each task:
 | `noAnalysis` | a short reason why no analysis is needed: a tail, a one-line fix; for a defect, why the diagnosis is skipped. "The arc specification covers it" is not a reason. It is logged and given to the programmer |
 | `feature` | optional: key of the feature this task is a part of (the task was split from it); its folder `<sharedDir>/<feature>/` may hold the analysis, and `chain-cost.js` sums the parts by it |
 | `spec` | optional: path or list of paths of the arc specification (and its `PRINCIPLES.md`); every role gets it as context; it is not the task's analysis |
+| `useCases` | optional: absolute path of the feature's `use-cases.md` (in the task folder or the folder of its `feature`, never the arc specification); every role gets it as context, the preconditions check it has no open questions left, the analyst's matrix cites it, the tester builds acceptance along its flows, the reviewer checks its alternative flows and errors |
+| `useCasesFirst` | optional: `true` together with `analystFirst` for a feature whose use cases are not written yet - the analyst writes only `<dir>/use-cases.md` with its open questions and the task stops with status `use-cases-review`; review them with the owner, then relaunch with `useCases` and `analystFirst` |
 | `stack` | optional: docker compose project the tester may start and tear down |
 | `security` | optional: the brief marks the task as security work - a security reviewer joins |
 

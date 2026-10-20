@@ -207,6 +207,50 @@ async function run(script, task = T, extra = {}) {
     x.r.status === 'done' && x.trace === 'pre>analyst>prog>test>review' && JSON.stringify(x.r.analysis) === JSON.stringify({ mode: 'run', path: '/d/analyst.md' }), JSON.stringify(x.r));
   ok('analystFirst: the programmer prompt names analyst.md', progOf(x).includes('The analysis to follow: /d/analyst.md'), progOf(x));
 
+  // Use cases before the feature (owner 2026-10-20: "use cases ... pilot on e2g3"): useCasesFirst -> the analyst writes
+  // only use-cases.md and the task stops for the review with the owner; useCases -> every role gets the path as context.
+  const UC = { ready: true, useCases: 4, questions: ['Q1: who may resend?'], summary: 'u' };
+  const roleP = (x, r) => (x.prompts.find((p) => p.role === r) || {}).prompt || '';
+  x = await run({ pre: [PRE], usecases: [UC] }, bare({ analystFirst: true, useCasesFirst: true }));
+  ok('useCasesFirst: pre > use cases analyst only, then stopped for the owner review (no matrix, no programmer)',
+    x.r.status === 'use-cases-review' && x.trace === 'pre>usecases' && /review the use cases with the owner/i.test(x.r.why), JSON.stringify(x.r));
+  ok('useCasesFirst: the result names the file, its questions and how to relaunch',
+    x.r.useCases === '/d/use-cases.md' && JSON.stringify(x.r.questions) === JSON.stringify(UC.questions) && /useCases[^.]*analystFirst/.test(x.r.why), JSON.stringify(x.r));
+  const ucp = roleP(x, 'usecases');
+  ok('useCasesFirst: the analyst writes only <dir>/use-cases.md from the template (actor, trigger, main flow, alternative flows, errors, out of scope)',
+    /you write only \/d\/use-cases\.md/.test(ucp) && ['actor', 'trigger', 'main flow', 'alternative flows', 'errors', 'out of scope'].every((w) => ucp.toLowerCase().includes(w)) && !/matrix of cases \(every dimension/.test(ucp), ucp);
+  ok('useCasesFirst: the analyst runs as the analyst agent, in the Analyst phase', (x.prompts.find((p) => p.role === 'usecases') || { opts: {} }).opts.agentType === 'codis-agents:analyst'
+    && x.prompts.find((p) => p.role === 'usecases').opts.phase === 'Analyst');
+  ok('useCasesFirst: the leftovers post-check still runs at the end', x.full === 'pre>usecases>left:x:end', x.full);
+  x = await run({ pre: [PRE], usecases: [null] }, bare({ analystFirst: true, useCasesFirst: true }));
+  ok('useCasesFirst: no result -> stopped', x.r.status === 'stopped' && /returned no result/.test(x.r.why), JSON.stringify(x.r));
+  x = await run({ pre: [PRE], usecases: [Object.assign({}, UC, { ready: false })] }, bare({ analystFirst: true, useCasesFirst: true }));
+  ok('useCasesFirst: not ready -> stopped, not offered for review', x.r.status === 'stopped' && x.trace === 'pre>usecases', JSON.stringify(x.r));
+  for (const [name, t] of [['without analystFirst', { noAnalysis: 'tail', useCasesFirst: true }], ['with analysis', { analysis: '/d/a.md', useCasesFirst: true }],
+    ['not true', { analystFirst: true, useCasesFirst: 'yes' }], ['together with useCases', { analystFirst: true, useCasesFirst: true, useCases: '/d/use-cases.md' }]]) {
+    x = await run({}, bare(t));
+    ok(`useCasesFirst ${name} -> stopped before any agent`, x.r.status === 'stopped' && x.trace === '' && /useCases/.test(JSON.stringify(x.r.problems)), JSON.stringify(x.r));
+  }
+  for (const [name, t] of [['relative', { useCases: 'd/use-cases.md' }], ['with ..', { useCases: '/d/../s/u.md' }], ['outside the task and feature folders', { useCases: '/s/arc/use-cases.md' }],
+    ['blank', { useCases: ' ' }], ['equal to the arc specification', { useCases: '/d/spec.md', spec: ['/d/spec.md'] }]]) {
+    x = await run({}, bare(Object.assign({ analystFirst: true }, t)));
+    ok(`useCases ${name} -> stopped before any agent`, x.r.status === 'stopped' && x.trace === '' && /useCases/.test(JSON.stringify(x.r.problems)), JSON.stringify(x.r));
+  }
+  const UCP = '/s/feat/use-cases.md';
+  x = await run(Object.assign({}, G, { analyst: [AN] }), bare({ analystFirst: true, useCases: UCP, feature: 'feat' }));
+  ok('useCases in the feature folder + analystFirst -> analyst (matrix) > prog > test > review, done', x.r.status === 'done' && x.trace === 'pre>analyst>prog>test>review' && x.r.useCases === UCP, JSON.stringify(x.r));
+  ok('useCases: every role prompt names the use cases as context',
+    x.prompts.filter((p) => !['diff', 'left'].includes(p.role)).every((p) => p.prompt.includes(`Use cases of the feature (actors, flows, alternative flows, errors): ${UCP}.`)), x.full);
+  ok('useCases: the preconditions check the file exists and has no open questions to the owner', new RegExp(`the use cases ${UCP} exist[^;]*no open questions`).test(roleP(x, 'pre')), roleP(x, 'pre'));
+  ok('useCases: every cell of the analyst matrix cites its use case', /every cell cites its use case/.test(roleP(x, 'analyst')), roleP(x, 'analyst'));
+  ok('useCases: the tester builds the acceptance along the flows', /acceptance along the flows of the use cases[^.]*main[^.]*alternative[^.]*errors/.test(roleP(x, 'test')), roleP(x, 'test'));
+  ok('useCases: the reviewer checks alternative flows and errors are closed', /alternative flows and errors of the use cases/.test(roleP(x, 'review')), roleP(x, 'review'));
+  x = await run(G, bare({ noAnalysis: 'tail' }));
+  ok('without useCases no use cases line in any prompt', !x.prompts.some((p) => /Use cases of the feature|use cases/.test(p.prompt)), x.full);
+  // The analyst agent carries the template.
+  const ag = fs.readFileSync(path.join(ROOT, 'agents', 'analyst.md'), 'utf8');
+  ok('agents/analyst.md: the use case template and "before the matrix"', /use-cases\.md/.test(ag) && ['Actor', 'Trigger', 'Main flow', 'Alternative flows', 'Errors', 'Out of scope'].every((w) => ag.includes(w)) && /before the matrix/.test(ag));
+
   // Git post-check: after every tester and reviewer, from the HEAD of the previous committing role.
   const D0 = { verdict: 'done', docsOnly: false, summary: '' };
   x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [{ verdict: 'done', docsOnly: false, summary: '' }] });

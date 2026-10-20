@@ -41,6 +41,19 @@ Larger changes run as a chain of agents, each in its own role:
     it" is not one; the preconditions refuse it). Why: tasks that had only the arc specification had 44 % red testers
     and 2.4 programmer rounds, tasks with their own analysis 24 % and 1.65: the specification describes the surface, not
     the matrix of the task.
+  - **Use cases before the matrix, for a feature** (not a defect, not a tail). The analyst's first step is the use
+    cases, `use-cases.md` in the folder of the task or of the feature: for every use case the actor, trigger, main flow,
+    alternative flows, errors, out of scope. The open questions of the use cases go to the owner as one list and are
+    settled with the owner before the matrix of cases; every cell of the matrix then cites its use case. Every role gets
+    the use cases as context (task field `useCases`, a path inside the task's or feature's folder, like `analysis`); the
+    tester builds the acceptance along the flows (main, alternative, errors), the reviewer checks that the alternative
+    flows and errors are closed too, not only the main flow. In the chain: `useCasesFirst` (`true`, with `analystFirst`):
+    the analyst writes only the use cases with their questions and the task stops with status `use-cases-review`;
+    after the review with the owner the coordinator relaunches it with `useCases` set to that path and `analystFirst`
+    (the matrix on the use cases).
+    Why: questions were born during the task instead of before it - in one task about 40 questions to the coordinator on
+    the way and 8 programmer rounds, almost all from one flow nobody had written down (an AI edited the code, then a
+    person sent the result back).
   - For a feature with several dimensions the analyst first writes a matrix of cases into the brief (every dimension:
     states x events x environments). Without it each round closed one cell and broke the next.
   - **Split the task before the first programmer** if any holds: the matrix has more than ~30 cells; it spans more
@@ -84,6 +97,9 @@ Larger changes run as a chain of agents, each in its own role:
   task with that cause, and the coordinator frees the machine and relaunches it. The preconditions check free disk and
   swap headroom (`scripts/env-check.js`, floors in the project config `preconditions`: by default 10 GB of disk and
   4 GB of swap). Why: programmer rounds "without changes" after such reds cost about 3.3M tokens in one window.
+- **A new red is first rerun alone.** After a red full run `guards-all.sh` reruns each new red by itself in the same slot (project config `guardRerun`): red again alone - a new red, a regression for the programmer; green alone - flaky, red only under load: not a regression and not sent to the programmer as one, but named in the role's report and written into the project backlog by the coordinator. A full run on the same HEAD with a clean tracked tree that ended without a repeated new red is not run again: `guards-all.sh` prints "reused, HEAD <sha>" with the saved summary (`--force` runs anyway). <!-- role:rerun -->
+  Why: 6 of 17 full runs ended red only from guards unstable under load, and each cost a programmer round or a stopped
+  task.
 - On rejection: a fix round, then a second review. A second rejection for a code defect sends the task to the analyst
   (cases, cause) inside the same run, then one more full round; a third rejection goes to the coordinator. A question
   of scope goes to the owner.

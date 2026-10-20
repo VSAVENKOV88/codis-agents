@@ -6,6 +6,12 @@
   "guardCommand": "cd {wt}/server && npm run guards -- --all --concurrency {jobs} --concurrency-file {limitFile}",
   "guardCommandLegacy": "cd {wt}/server && npm run guards -- --all --concurrency {jobs}",
   "guardAdaptiveProbe": { "file": "server/tools/guards.js", "contains": "--concurrency-file" },
+  "guardRerun": {
+    "command": "cd {wt}/server && npm run guards -- --all --only {name}",
+    "newRedPattern": "^FAIL (\\S+) ",
+    "tallyPattern": "^TOTAL: ",
+    "maxReruns": 10
+  },
   "worktreeSetup": {
     "scan": ["server", "client"],
     "skip": ["*.DS_Store"],

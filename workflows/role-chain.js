@@ -1,7 +1,7 @@
 export const meta = {
   name: 'role-chain',
   description: 'Role chain over tasks in parallel: preconditions -> (analyst) -> programmer -> tester -> reviewer (+ security reviewer); fix rounds and an analyst after the second rejection',
-  whenToUse: 'Started by the codis-agents:role-chain skill, which reads .claude/codis-agents.json and passes it. args: {owner: "the owner\'s request, verbatim", config: <resolved project config>, tasks: [{key, title, wt, branch, accept, dir?, gdir?, start?, analystFirst | analysis | noAnalysis (exactly one), feature?, spec?, stack?, security?}]}',
+  whenToUse: 'Started by the codis-agents:role-chain skill, which reads .claude/codis-agents.json and passes it. args: {owner: "the owner\'s request, verbatim", config: <resolved project config>, tasks: [{key, title, wt, branch, accept, dir?, gdir?, start?, analystFirst | analysis | noAnalysis (exactly one), feature?, spec?, useCases?, useCasesFirst?, stack?, security?}]}',
   phases: [
     { title: 'Preconditions', detail: 'brief, worktree, branch, open questions' },
     { title: 'Analyst', detail: 'matrix of cases or a diagnosis (before the programmer, or after the second rejection)' },
@@ -28,6 +28,13 @@ export const meta = {
 // (tasks that had only the arc spec: 44 % red testers and 2.4 programmer rounds, against 24 % and 1.65 with their own
 // analysis): it goes into spec, and an analysis path outside the task's or feature's folder, or equal to a spec path,
 // stops the task.
+// Use cases (rules: "Use cases before the matrix"): useCases - absolute path of the feature's use-cases.md, inside the
+// task's or the feature's folder like analysis; every role gets it as context, the analyst's matrix cites it, the tester
+// builds acceptance along its flows, the reviewer checks its alternative flows and errors. useCasesFirst (true, with
+// analystFirst): the analyst writes only <dir>/use-cases.md with its open questions and the task stops with status
+// use-cases-review; after the review with the owner the coordinator relaunches it with useCases and analystFirst.
+// Why: questions were born during the task, not before it (one task: ~40 questions to the coordinator on the way and
+// 8 programmer rounds, almost all from one flow nobody had written down).
 
 const ARGS = typeof args === 'string' ? JSON.parse(args) : (args || {})
 const OWNER = ARGS.owner || ''
@@ -56,12 +63,13 @@ const sq = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`
 // were in the prompt). The id matches the marker <!-- role:<id> --> of a line in rules/multi-agent.md; local-* exist
 // only in the chain. tests/role-chain.test.js fails when a marked line has no rule or a role prompt lacks one.
 const RULE_LIST = (t) => [
-  ['local-task', `Task "${t.title}". Brief: ${t.dir}/BRIEF.md (read all of it and the sections it refers to). Worktree ${t.wt}, branch ${t.branch}.${t.specs.length ? ` Arc specification (context of the surface; it is not this task's analysis): ${t.specs.join(', ')}.` : ''}`],
+  ['local-task', `Task "${t.title}". Brief: ${t.dir}/BRIEF.md (read all of it and the sections it refers to). Worktree ${t.wt}, branch ${t.branch}.${t.specs.length ? ` Arc specification (context of the surface; it is not this task's analysis): ${t.specs.join(', ')}.` : ''}${t.uc ? ` Use cases of the feature (actors, flows, alternative flows, errors): ${t.uc}.` : ''}`],
   ['scope', `The owner asked: "${OWNER}". Do only the task "${t.title}"; refuse neighbouring tasks and do not touch other worktrees.`],
   ['decisions', 'Only the coordinator writes the owner\'s decisions. An open question goes into your own report as a line "❓ coordinator: ..."; do not decide it yourself.'],
   ['pauses', 'Pauses: never wait longer than 270 s at a time - run anything long through Bash run_in_background and wait with Monitor in slices; an agent with no output for 10 minutes is killed.'],
   ['context', 'Context: past ~200k finish the current stage, write the report with "Next step: ..." and stop - a fresh agent continues.'],
   ['slots', `Heavy work goes through memory slots: ${SCRIPTS}/heavy.sh <cmd>, ${SCRIPTS}/medium.sh <cmd>, full guard run ${SCRIPTS}/guards-all.sh ${t.gdir}.`],
+  ['rerun', `New reds of a full run: ${SCRIPTS}/guards-all.sh reruns each one alone in the same slot. Red again alone - a new red (a regression); green alone - flaky: not a regression, name it in your report under "Flaky guards" for the coordinator, who puts it into the project backlog. A full run on the same HEAD with a clean tracked tree that ended green is reused ("reused, HEAD <sha>"); --force runs again.`],
   ['docker', `Docker: ${CFG.ownerStackReadOnly ? `the owner's stack ${CFG.ownerStackReadOnly}` : 'the owner\'s stack'} is read-only (docker cp out is fine); never write into its containers; only a tester runs its own stack, and only when the brief asks, then removes it with its images and volumes (docker compose -p <stack> down -v --rmi all). Never remove the owner's stack or its images; other images and the build cache are not yours to clean. A post-check after you removes what the task left (its stack, processes in its worktree, the slots they hold) and reports it.`],
   ['specs', 'Living specs (UX specs, state models, gap lists) change in the same commit as the behaviour they describe.'],
   ['push', `Do not push, do not merge into ${PROTECTED}, do not create tags.`],
@@ -83,13 +91,19 @@ const ANALYST_SCHEMA = { type: 'object', properties: {
   questions: { type: 'array', items: { type: 'string' } },
   summary: { type: 'string' },
 }, required: ['ready', 'cells', 'subsystems', 'split', 'questions', 'summary'] }
+const USECASES_SCHEMA = { type: 'object', properties: {
+  ready: { type: 'boolean', description: 'use-cases.md is written: every use case has all sections of the template' },
+  useCases: { type: 'number', description: 'number of use cases' },
+  questions: { type: 'array', items: { type: 'string' }, description: 'open questions to the owner, each with a recommendation (the same list ends use-cases.md)' },
+  summary: { type: 'string' },
+}, required: ['ready', 'useCases', 'questions', 'summary'] }
 const PROG_SCHEMA = { type: 'object', properties: {
   status: { type: 'string', enum: ['ready', 'blocked'], description: 'blocked - an answer of the coordinator or owner is needed' },
   changedFiles: { type: 'array', items: { type: 'string' }, description: 'paths changed in this round (git diff --name-only from the start of the round)' },
   commits: { type: 'array', items: { type: 'string' } },
   head: { type: 'string', description: 'git rev-parse HEAD of the worktree after your commits' },
   mutations: { type: 'string', description: 'table: mutant -> guard result -> after checkout' },
-  fullRun: { type: 'string', description: 'result of the full guard run: N green, N new red, N known red' },
+  fullRun: { type: 'string', description: 'result of the full guard run: N green, N new red (repeated alone), N flaky (green alone), N known red' },
   questions: { type: 'array', items: { type: 'string' } },
   summary: { type: 'string' },
 }, required: ['status', 'changedFiles', 'commits', 'head', 'mutations', 'fullRun', 'questions', 'summary'] }
@@ -187,6 +201,23 @@ function analysisOf(t) {
   }
   return { mode: 'none', reason: t.noAnalysis.trim() }
 }
+// The use cases of a task: {path?, first?} or {error}. A path lies where an analysis may (the task's or feature's folder).
+function useCasesOf(t) {
+  if (t.useCasesFirst !== undefined) {
+    if (t.useCasesFirst !== true) return { error: 'useCasesFirst must be true' }
+    if (t.useCases !== undefined) return { error: 'useCasesFirst with useCases: the use cases are written already - drop useCasesFirst' }
+    // analysisOf has already checked exactly one marker, so without analysis and noAnalysis it is analystFirst: true.
+    if (t.analysis !== undefined || t.noAnalysis !== undefined) return { error: 'useCasesFirst goes with analystFirst alone: the analyst writes the use cases first' }
+    return { first: true, path: `${t.dir}/use-cases.md` }
+  }
+  if (t.useCases === undefined) return {}
+  const p = nonBlank(t.useCases) ? t.useCases.trim() : ''
+  const where = ownFolders(t)
+  if (!p) return { error: 'useCases must be a non-empty path' }
+  if (t.specs.map((x) => x.trim()).includes(p)) return { error: `useCases ${p} is the arc specification of this task (spec)` }
+  if (!p.startsWith('/') || /(^|\/)\.\.?(\/|$)/.test(p) || !where.some((d) => p.startsWith(d))) return { error: `useCases ${p} is not an absolute path inside ${where.join(' or ')}` }
+  return { path: p }
+}
 const analysisLine = (a) => (a.mode === 'none' ? `No analysis: ${a.reason}` : `The analysis to follow: ${a.path}`)
 
 // Paths a fix "for docs" may touch without a tester round: docs, and guards and fixtures (guard wording; the paths the
@@ -206,31 +237,45 @@ const preAnalysis = (t) => (t.an.mode === 'reused'
     ? ` the noAnalysis reason "${t.an.reason}" says why this task needs no matrix of its own (a tail, a one-line fix, a rename); "the arc specification covers it" is not such a reason;`
     : '')
 const pre = (t) => agent(`You check PRECONDITIONS (read only, change nothing). ${RULES(t)}
-Check: ${t.dir}/BRIEF.md exists and contains an acceptance scenario in the real environment;${preAnalysis(t)}${t.specs.length ? ` the arc specification ${t.specs.join(', ')} exists;` : ''} ${t.wt} exists and is on branch ${t.branch}; there are no uncommitted changes (except untracked build output or probes); the brief has no unanswered questions to the owner on which acceptance depends; the environment has room: run node ${SCRIPTS}/env-check.js --path ${sq(t.wt)} --path ${sq(t.dir)} --min-disk-gb ${ENV.minFreeDiskGB} --min-swap-gb ${ENV.minSwapGB} (free disk and swap headroom) and copy its problems. ok=false if any of this fails.`,
+Check: ${t.dir}/BRIEF.md exists and contains an acceptance scenario in the real environment;${preAnalysis(t)}${t.uc ? ` the use cases ${t.uc} exist, are non-empty and have no open questions to the owner left unanswered (they were reviewed with the owner);` : ''}${t.specs.length ? ` the arc specification ${t.specs.join(', ')} exists;` : ''} ${t.wt} exists and is on branch ${t.branch}; there are no uncommitted changes (except untracked build output or probes); the brief has no unanswered questions to the owner on which acceptance depends; the environment has room: run node ${SCRIPTS}/env-check.js --path ${sq(t.wt)} --path ${sq(t.dir)} --min-disk-gb ${ENV.minFreeDiskGB} --min-swap-gb ${ENV.minSwapGB} (free disk and swap headroom) and copy its problems. ok=false if any of this fails.`,
   { label: `pre:${t.key}`, phase: 'Preconditions', schema: PRE_SCHEMA, effort: 'low', agentType: 'general-purpose' })
 
 const analyst = (t, why) => agent(`You are the ANALYST/DIAGNOSER (read code only; you write only ${t.dir}/analyst.md). ${RULES(t)}
 Reason: ${why}
-Write a matrix of cases (every dimension: states x events x environments) or find the cause of the defect with file:line. Count the cells and subsystems. If by the rule "Split the task" the task must be split, propose subtasks and do not declare ready. Every cell has an expected result and a basis (the brief, documentation, an experiment); no thresholds or name lists.${note('analyst')}`,
+Write a matrix of cases (every dimension: states x events x environments) or find the cause of the defect with file:line. Count the cells and subsystems. If by the rule "Split the task" the task must be split, propose subtasks and do not declare ready. Every cell has an expected result and a basis (the brief, documentation, an experiment); no thresholds or name lists.${t.uc ? ` Build the matrix on the use cases ${t.uc}: every cell cites its use case (UC-n and the flow step); a flow without cells is a gap.` : ''}${note('analyst')}`,
   { label: `analyst:${t.key}`, phase: 'Analyst', schema: ANALYST_SCHEMA, agentType: roleType('analyst') })
+
+// First step of a feature with useCasesFirst: the use cases alone, then the task stops for the review with the owner.
+const ucAnalyst = (t, p) => agent(`You are the ANALYST, first step of a feature: USE CASES (read the brief and the code; you write only ${p}). ${RULES(t)}
+Write the use cases of the feature before any matrix of cases or spec. One section per use case:
+## UC-<n>. <name>
+- Actor: who acts (a person in a role, the system, another service).
+- Trigger: what starts it.
+- Preconditions: what holds before it starts.
+- Main flow: numbered steps, the actor and the system in turn.
+- Alternative flows: <n>a, <n>b, ... - each branches from a step of the main flow and says where it rejoins or ends (also the flows where a person and an AI or another actor hand work back and forth).
+- Errors: what can fail at each step and what the actor sees then.
+- Out of scope: what this use case deliberately does not cover.
+End the file with "Open questions to the owner": one numbered list, each question with your recommendation; put the same list into questions. ready=true when every use case has all sections. Do not write a matrix of cases and do not answer the questions yourself: the task stops here, and the coordinator reviews the use cases with the owner.${note('analyst')}`,
+  { label: `usecases:${t.key}`, phase: 'Analyst', schema: USECASES_SCHEMA, agentType: roleType('analyst') })
 
 const prog = (t, task, n) => agent(`You are the PROGRAMMER. ${RULES(t)} Report: ${t.dir}/prog.md (round ${n}).
 ${analysisLine(t.an)}
 ${task}
-Order: red guard -> commit -> code -> commit -> mutations AFTER the commit (table in prog.md) -> full run ${SCRIPTS}/guards-all.sh ${t.gdir} in the background -> analysis of new reds. status=blocked if you cannot go on without the owner's answer.${note('programmer')}`,
+Order: red guard -> commit -> code -> commit -> mutations AFTER the commit (table in prog.md) -> full run ${SCRIPTS}/guards-all.sh ${t.gdir} in the background -> analysis of new reds that repeated alone (flaky ones go into prog.md for the backlog). status=blocked if you cannot go on without the owner's answer.${note('programmer')}`,
   { label: `prog:${t.key}#${n}`, phase: 'Programmer', schema: PROG_SCHEMA, agentType: roleType('programmer') })
 
 const test = (t, n) => agent(`You are the TESTER. You do not change product code. ${RULES(t)} Report: ${t.dir}/test.md (round ${n}; keep earlier rounds).
 1. An independent inventory before reading the diff (inputs, places, cells) - compare it with the programmer's coverage.
 2. Your own guards for what is not covered -> commit -> mutations after the commit.
-3. Acceptance in the real environment: ${t.accept}${t.stack ? ` Your own stack: docker compose -p ${t.stack}; afterwards remove it with its images and volumes: docker compose -p ${t.stack} down -v --rmi all.` : ''} Evidence (logs, numbers, screenshots) goes into ${t.dir} with the prefix test-.
+3. Acceptance in the real environment: ${t.accept}${t.stack ? ` Your own stack: docker compose -p ${t.stack}; afterwards remove it with its images and volumes: docker compose -p ${t.stack} down -v --rmi all.` : ''} Evidence (logs, numbers, screenshots) goes into ${t.dir} with the prefix test-.${t.uc ? ` Build the acceptance along the flows of the use cases (the main flow, every alternative flow, all errors): ${t.uc}.` : ''}
 4. Do not repeat the programmer's full run: new and touched guards and mutations; a full run only after your own commits.
 green - only if the brief's acceptance is met in full. red - the product fails a guard or the acceptance.
 environment - red that the product did not cause, so a programmer has nothing to fix: your or the programmer's full run cut off before its tally (killed, timed out, out of memory), no memory slot within your time, disk or swap exhausted (node ${SCRIPTS}/env-check.js --path ${sq(t.wt)} --min-disk-gb ${ENV.minFreeDiskGB} --min-swap-gb ${ENV.minSwapGB}), Docker or your stack down for a reason outside the task's code. Put the cause and its evidence into environment; the task stops for the coordinator. Never use it for a red that the product causes.${note('tester')}`,
   { label: `test:${t.key}#${n}`, phase: 'Tester', schema: TEST_SCHEMA, agentType: roleType('tester') })
 
 const review = (t, n, scope) => agent(`You are the REVIEWER (read only; you may rerun guards). ${RULES(t)} Report: ${t.dir}/review.md (round ${n}).
-Read BRIEF.md, analyst.md (if any), prog.md, test.md, git log/diff of branch ${t.branch} for the task${scope ? ' - ' + scope : ''}. Try to refute "done": cells of the matrix, guesses instead of data (thresholds, name lists), guards without mutations, the tester's evidence against the acceptance scenario (do not rerun the scenario). Verdict with file:line.${note('reviewer')}`,
+Read BRIEF.md, analyst.md (if any), prog.md, test.md, git log/diff of branch ${t.branch} for the task${scope ? ' - ' + scope : ''}. Try to refute "done": cells of the matrix,${t.uc ? ` the alternative flows and errors of the use cases ${t.uc} (closed, not only the main flow),` : ''} guesses instead of data (thresholds, name lists), guards without mutations, the tester's evidence against the acceptance scenario (do not rerun the scenario). Verdict with file:line.${note('reviewer')}`,
   { label: `review:${t.key}#${n}`, phase: 'Reviewer', schema: REVIEW_SCHEMA, agentType: roleType('reviewer') })
 
 const secReview = (t, n, scope) => agent(`You are the SECURITY REVIEWER (read only; you may rerun guards). ${RULES(t)} Report: ${t.dir}/review-sec.md (round ${n}).
@@ -344,8 +389,11 @@ async function reviewLoop(t, st, tag) {
 async function chain(t0) {
   const an = analysisOf(t0)
   if (an.error) return stop(t0, 'preconditions', { problems: [an.error], questions: [an.error] })
-  const t = Object.assign({}, t0, { an })
-  const withAn = (r) => Object.assign({}, r, { analysis: an }, nonBlank(t0.feature) ? { feature: t0.feature.trim() } : {})
+  const uc = useCasesOf(t0)
+  if (uc.error) return stop(t0, 'preconditions', { problems: [uc.error], questions: [uc.error] })
+  const t = Object.assign({}, t0, { an, uc: uc.first ? '' : uc.path || '', ucFirst: uc.first ? uc.path : '' })
+  const withAn = (r) => Object.assign({}, r, { analysis: an }, nonBlank(t0.feature) ? { feature: t0.feature.trim() } : {},
+    uc.path && !r.useCases ? { useCases: uc.path } : {})
   const st = { head: '', leftovers: [] }
   const pc = await pre(t)
   if (!pc) return withAn(stop(t, 'the precondition check returned no result'))
@@ -358,6 +406,13 @@ async function chain(t0) {
 
 async function work(t, st) {
 
+  if (t.ucFirst) {
+    const u = await ucAnalyst(t, t.ucFirst)
+    if (!u) return stop(t, 'the use cases analyst returned no result')
+    if (!u.ready) return stop(t, 'use cases analyst: the use cases are not ready', { questions: u.questions, analyst: u.summary })
+    return { task: t.key, status: 'use-cases-review', useCases: t.ucFirst, questions: u.questions, analyst: u.summary,
+      why: `use cases written: review the use cases with the owner (their open questions as one list), then relaunch the task with the useCases field set to this file and analystFirst - the matrix of cases is built on them` }
+  }
   if (t.an.mode === 'run') {
     const a = await analyst(t, 'the task needs a spec or a diagnosis before code (brief: analystFirst)')
     if (!a) return stop(t, 'the analyst returned no result')
