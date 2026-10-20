@@ -2,12 +2,15 @@
 # Slot rules (classes, the extra heavy slot, the shared ceiling, swap, legacy lock, exit codes, exclusive guards,
 # signals, the worker budget of full guard runs) on a TEMPORARY slot directory and a fake machine - the real machine
 # is not loaded (the commands are sleeps). Exit code 0 - everything holds.
-#   usage: tests/slots-check.test.sh   (macOS: needs /usr/bin/lockf)
-[[ -x /usr/bin/lockf ]] || { print -r -- "skip: /usr/bin/lockf not found (the slot scripts are macOS-only)"; exit 0; }
+#   usage: tests/slots-check.test.sh   (zsh; the exclusive-lock case needs lockf(1) or flock(1), as slots.zsh does)
 H=${0:A:h:h}/scripts
 zmodload zsh/datetime
-T=$(mktemp -d -t slots-check)
+T=$(mktemp -d "${${TMPDIR:-/tmp}%/}/slots-check.XXXXXX")
 export SLOTS_DIR=$T/slots SLOT_LEGACY_LOCK=$T/guards.lock SLOT_POLL=0.3 SLOT_SAY=1 SLOT_THIRD_WINDOW=1 SLOT_HIST_GAP=2
+# Run inside an outer slot (heavy.sh node tests/run.js) the outer slots.zsh has exported its own lock, journal and
+# counts: without this the test would wait on (and write to) the real ones.
+# The thresholds are dropped too (README: SLOT_SWAP_MIN_MB=0 on Linux): the cases rely on the defaults on the fake machine.
+unset GUARDS_EXCLUSIVE_LOCK SLOT_JOURNAL SLOT_MEDIUM_N SLOT_HEAVY_N SLOT_TOTAL_MAX GUARDS_JOBS_ALONE GUARDS_JOBS_SHARED SLOT_EXCL_TOOLS SLOT_PATH SLOT_LABEL SLOT_KIND SLOT_RETRY_RC SLOT_SWAP_MIN_MB SLOT_THIRD_FREE_PCT SLOT_THIRD_SWAP_GROW_MB
 # Project config of the test: worktrees under $T/wts with a fake runner; the adaptive runner is recognised by a probe.
 mkdir -p $T/wts $T/shared
 print -r -- '{"repoDir": "'$T'/main", "worktreeRoot": "'$T'/wts", "sharedDir": "'$T'/shared",
@@ -66,6 +69,8 @@ waitlong 'started h1 && started h2'
 ok '1. two heavy at once' '[[ $(running) -eq 2 ]]' "running: $(running)"
 hjob heavy.sh h3
 newline h3 'waiting for slot heavy' 1          # two waiting lines (SLOT_SAY=1) - it has been refused repeatedly
+# the first lines may say "memory history still accumulating" (the window): wait for the line with the reason
+waitlong 'grep -q "free 20%" $T/h3.out'
 ok '1. the third heavy at 20 % free memory < 50 % did not start' '! started h3'
 ok '1. the third prints "waiting for slot heavy" again and again' '(( $(lines h3 "waiting for slot heavy") >= 2 ))' "$(cat $T/h3.out)"
 ok '1. the waiting line gives the reason (free %)' 'grep -q "free 20%" $T/h3.out' "$(tail -1 $T/h3.out)"
@@ -100,12 +105,15 @@ rel s1; clean
 
 # 5. legacy: a held legacy lock is one heavy slot
 setm free 20
-/usr/bin/lockf -k $SLOT_LEGACY_LOCK zsh -c 'touch '$T'/legacy.held; while [[ ! -e '$T'/rel.legacy ]]; do sleep 0.1; done' & L=$!
+# held as the older setup holds it: lockf(1) on macOS (fcntl probes see flock(2) locks there); elsewhere zsystem flock
+lc=( zsh -c 'touch '$T'/legacy.held; while [[ ! -e '$T'/rel.legacy ]]; do sleep 0.1; done' )
+if [[ -x /usr/bin/lockf ]]; then /usr/bin/lockf -k $SLOT_LEGACY_LOCK "${lc[@]}" & L=$!
+else : >> $SLOT_LEGACY_LOCK; zsh -c 'zmodload zsh/system; zsystem flock -f _l "$1" || exit 9; shift; "$@"' _ $SLOT_LEGACY_LOCK "${lc[@]}" & L=$!; fi
 waitlong '[[ -e $T/legacy.held ]]'
 hjob heavy.sh g1
 waitlong 'started g1'
 hjob heavy.sh g2
-newline g2 'waiting for slot heavy' 0
+newline g2 'waiting for slot heavy.*free 20%' 0   # the first refusals may still say "history accumulating"
 ok '5. legacy lock + one new = two heavy; the third (low memory) waits' 'started g1 && ! started g2 && grep -q "free 20%" $T/g2.out' "$(cat $T/g2.out)"
 rel legacy g1; waitlong 'started g2'; rel g2; clean
 
@@ -114,7 +122,9 @@ $H/heavy.sh zsh -c 'exit 7' >/dev/null 2>&1; rc=$?
 ok '6. heavy.sh returns the command exit code (7)' '[[ $rc -eq 7 ]]' "code $rc"
 mkdir -p $T/g; print -r -- '// guards:exclusive — check
 require("fs").writeFileSync("'$T'/x.ran", "1")' > $T/g/x-run.js
-/usr/bin/lockf -k $SLOTS_DIR/exclusive.lock zsh -c 'touch '$T'/excl.held; while [[ ! -e '$T'/rel.excl ]]; do sleep 0.1; done' & XL=$!
+# the project runner holds the exclusive lock with a flock(2) utility: lockf(1) on macOS, flock(1) on Linux
+xc=( zsh -c 'touch '$T'/excl.held; while [[ ! -e '$T'/rel.excl ]]; do sleep 0.1; done' )
+if [[ -x /usr/bin/lockf ]]; then /usr/bin/lockf -k $SLOTS_DIR/exclusive.lock "${xc[@]}" & else flock -o $SLOTS_DIR/exclusive.lock "${xc[@]}" & fi; XL=$!
 waitlong '[[ -e $T/excl.held ]]'
 $H/heavy.sh node $T/g/x-run.js > $T/x.out 2>&1 & XP=$!
 newline x 'waiting for the exclusive lock' 0
@@ -175,7 +185,7 @@ for p in $alive; do kill $p 2>/dev/null; done
 setm free 70; export SLOT_THIRD_WINDOW=1
 source $H/slots.zsh
 B=slot_jobs_budget
-# a stub holder: lockf and its sleep (inherits the lock) - stop both, or an orphan holds the slot
+# a stub holder: a zsh holding the slot file with zsystem flock (as the slot holder does) and its sleep - stop both
 kt() { local p; for p; do pkill -P $p 2>/dev/null; kill $p 2>/dev/null; done }
 ok '10. budget: no other heavy -> 6' '[[ $($B 0 0 0) == 6 ]]'
 ok '10. budget: the neighbour is a single heavy job -> 3' '[[ $($B 1 0 0) == 3 ]]'
@@ -184,7 +194,7 @@ ok '10. budget: the neighbour is a full run with 3 -> 3' '[[ $($B 1 1 3) == 3 ]]
 ok '10. budget: two full neighbours (3 + 1) -> at most 6/3 = 2 and the remaining 2' '[[ $($B 2 2 4) == 2 ]]'
 H1=$SLOTS_DIR/heavy.1.lock H2=$SLOTS_DIR/heavy.2.lock
 : > $H1; : > $H2
-stub() { rm -f $1.held; /usr/bin/lockf -k $1 zsh -c 'touch "$1.held"; exec sleep 60' _ $1 & }   # holds lock file $1
+stub() { rm -f $1.held; : >> $1; zsh -c 'zmodload zsh/system; zsystem flock -f _l "$1" || exit 9; touch "$1.held"; sleep 60' _ $1 & }   # holds lock file $1
 stub $H1; MY=$!; stub $H2; OT=$!; waitlong '[[ -e $H1.held && -e $H2.held ]]'
 print 'fixed 6' > $H2.jobs
 ok '10. neighbour "fixed 6" -> me 0, adaptive neighbours 0 (wait outside the slot); my share "fixed 0"' '[[ "$(slot_guard_plan $H1 fixed start)" == "0 0" && "$(<$H1.jobs)" == "fixed 0" ]]' "$(slot_guard_plan $H1 fixed start); $(<$H1.jobs)"

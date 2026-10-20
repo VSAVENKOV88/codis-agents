@@ -41,8 +41,20 @@ const STAND = {
 const cfgOf = (stand, extra = {}) => Object.assign({ repoDir: path.join(T, 'main'), worktreeRoot: path.join(T, 'wts'), sharedDir: path.join(T, 'shared'), slots: { lockDir: SL } }, stand ? { stand } : {}, extra);
 const CFG = path.join(T, 'cfg.json');
 fs.writeFileSync(CFG, JSON.stringify(cfgOf(STAND)));
-const env = Object.assign({}, process.env, { CODIS_AGENTS_CONFIG: CFG, HOME: path.join(T, 'home'), SLOT_POLL: '0.2', SLOT_SAY: '1' });
-for (const k of ['SLOTS_DIR', 'SLOT_JOURNAL', 'SLOT_LEGACY_LOCK', 'CLAUDE_PROJECT_DIR']) delete env[k];
+// Fake machine for the medium slot of deploy (free 20 %, plenty of swap): the slot must not wait on the real box
+// (Linux has no sysctl vm.swapusage - "swap: capacity 0 MB").
+const BIN = path.join(T, 'bin');
+fs.mkdirSync(BIN);
+const fake = (f, body) => { fs.writeFileSync(path.join(BIN, f), '#!/bin/zsh\n' + body + '\n'); fs.chmodSync(path.join(BIN, f), 0o755); };
+fake('sysctl', '[[ $1 == -n && $2 == vm.swapusage ]] || exec /usr/sbin/sysctl "$@"\nprint -r -- "total = 30000,00M  used = 1000,00M  free = 20000,00M  (encrypted)"');
+fake('memory_pressure', 'print -r -- "System-wide memory free percentage: 20%"');
+fake('vm_stat', 'print -r -- "Mach Virtual Memory Statistics: (page size of 16384 bytes)"\nprint -r -- "Swapouts:                                   0."');
+fake('df', 'print -r -- "Filesystem 1M-blocks Used Available Capacity Mounted"\nprint -r -- "/dev/disk3s6 100000 0 0 0% /System/Volumes/VM"');
+const env = Object.assign({}, process.env, { CODIS_AGENTS_CONFIG: CFG, HOME: path.join(T, 'home'), PATH: BIN + path.delimiter + process.env.PATH, SLOT_POLL: '0.2', SLOT_SAY: '1', SLOT_THIRD_WINDOW: '1', SLOT_HIST_GAP: '2' });
+// run inside an outer slot, the outer slots.zsh has exported its own lock, journal and counts; thresholds set outside
+// (SLOT_SWAP_MIN_MB=0 on Linux) are dropped too
+for (const k of ['SLOTS_DIR', 'SLOT_JOURNAL', 'SLOT_LEGACY_LOCK', 'CLAUDE_PROJECT_DIR', 'GUARDS_EXCLUSIVE_LOCK', 'SLOT_MEDIUM_N', 'SLOT_HEAVY_N', 'SLOT_TOTAL_MAX', 'GUARDS_JOBS_ALONE', 'GUARDS_JOBS_SHARED', 'SLOT_EXCL_TOOLS', 'SLOT_PATH',
+  'SLOT_LABEL', 'SLOT_KIND', 'SLOT_RETRY_RC', 'SLOT_SWAP_MIN_MB', 'SLOT_THIRD_FREE_PCT', 'SLOT_THIRD_SWAP_GROW_MB']) delete env[k];
 
 const procs = [];
 function take(dir, args = [], e = {}) {
