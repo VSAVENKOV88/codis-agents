@@ -8,6 +8,8 @@
 // Round 2: tags in every form while unknown, the hook process exits 0 with deny on a tag, and a branch push named like
 // an existing tag (HEAD:build-1 creates refs/heads/build-1) is still a branch push. Round 3: a delete of a bare name
 // that is a local tag may delete a remote branch of that name - refused while unknown; tag sources stay tag pushes.
+// Round 4: other delete spellings (+:x, -fd, refs/heads/, no local ref, mixed), --delete refs/tags/ as a tag delete,
+// the known-branch delete unchanged, and the real pre-push on the delete.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -84,6 +86,14 @@ try {
   }
   ok('unknown: a delete of refs/tags/build-1 is a tag delete - allowed', bash('git push origin :refs/tags/build-1', norem, unk) === null, String(bash('git push origin :refs/tags/build-1', norem, unk)));
   ok('unknown: src tag v1.0 to dst build-1 (an existing tag) stays a tag push - allowed', bash('git push origin v1.0:build-1', norem, unk) === null, String(bash('git push origin v1.0:build-1', norem, unk)));
+  // Round 4 (tester): every other spelling of a bare-name delete is refused while unknown; only an explicit
+  // refs/tags/ delete is a tag delete, and it is judged by protectedTagPattern.
+  for (const c of ['git push origin +:build-1', 'git push -fd origin build-1', 'git push origin --delete refs/heads/build-1',
+    'git push origin --delete gone', 'git push origin --delete build-1 refs/tags/build-1', 'git push origin :v1.0']) {
+    ok(`unknown: "${c}" refused with the reason`, unknownRe.test(bash(c, norem, unk) || ''), String(bash(c, norem, unk)));
+  }
+  ok('unknown: --delete refs/tags/build-1 is a tag delete - allowed', bash('git push origin --delete refs/tags/build-1', norem, unk) === null, String(bash('git push origin --delete refs/tags/build-1', norem, unk)));
+  ok('unknown: --delete refs/tags/v1.0 refused as a protected tag', /tag v1.0 is refused/.test(bash('git push origin --delete refs/tags/v1.0', norem, unk) || ''), String(bash('git push origin --delete refs/tags/v1.0', norem, unk)));
   {
     const hp = spawnSync('node', [path.join(ROOT, 'scripts', 'hooks', 'guard-bash.js')], { cwd: norem, encoding: 'utf8',
       input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'git push origin v1.0' }, cwd: norem }), env: Object.assign({}, env, { CODIS_AGENTS_CONFIG: unk }) });
@@ -92,6 +102,12 @@ try {
   const keyed = cfgFile('keyed', { repoDir: norem, defaultBranch: 'master' });
   ok('no remote + defaultBranch master: hook protects master, lets b-t1 through',
     /master is protected/.test(bash('git push origin master', norem, keyed) || '') && bash('git push origin b-t1', norem, keyed) === null);
+  // Round 4 (tester): with the branch known the delete of a bare tag name is judged as before (the fix touches only
+  // the unknown case): an unprotected name goes through, the default branch and a protected tag are refused.
+  ok('known master: --delete build-1 and :build-1 go through', bash('git push origin --delete build-1', norem, keyed) === null && bash('git push origin :build-1', norem, keyed) === null,
+    String(bash('git push origin --delete build-1', norem, keyed)) + ' / ' + String(bash('git push origin :build-1', norem, keyed)));
+  ok('known master: --delete master refused as protected', /master is protected/.test(bash('git push origin --delete master', norem, keyed) || ''), String(bash('git push origin --delete master', norem, keyed)));
+  ok('known master: --delete v1.0 refused as a protected tag', /tag v1.0 is refused/.test(bash('git push origin --delete v1.0', norem, keyed) || ''), String(bash('git push origin --delete v1.0', norem, keyed)));
   r = cli(['check', keyed]);
   ok('no remote + defaultBranch master: check ok without the note', r.status === 0 && !/note:/.test(r.stderr), r.stderr);
 
@@ -126,6 +142,12 @@ try {
   p = spawnSync('git', ['-C', norem, 'push', 'origin', 'HEAD:build-1'], { encoding: 'utf8', env });
   ok('no origin/HEAD: real git push origin HEAD:build-1 (a new branch named like a tag) refused by pre-push', p.status !== 0 && unknownRe.test(p.stderr)
     && git(origin, 'show-ref', '--verify', '--quiet', 'refs/heads/build-1').status !== 0, p.stderr);
+  // Round 4 (tester): the second layer on the same delete - origin holds a branch build-1, norem a tag build-1;
+  // a real git push origin --delete build-1 is refused by pre-push and the remote branch stays.
+  git(seed, 'push', '-q', origin, 'master:refs/heads/build-1');
+  p = spawnSync('git', ['-C', norem, 'push', 'origin', '--delete', 'build-1'], { encoding: 'utf8', env });
+  ok('no origin/HEAD: real git push origin --delete build-1 refused by pre-push, remote branch build-1 kept', p.status !== 0 && unknownRe.test(p.stderr)
+    && git(origin, 'show-ref', '--verify', '--quiet', 'refs/heads/build-1').status === 0, p.stderr);
   git(proj, 'worktree', 'remove', '--force', lw);
 } finally {
   fs.rmSync(dir, { recursive: true, force: true });
