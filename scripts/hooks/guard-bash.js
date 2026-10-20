@@ -100,7 +100,12 @@ function judge(words, ctx) {
       const isTag = g('show-ref', '--verify', '--quiet', 'refs/tags/' + d).status === 0;
       const isBranch = g('show-ref', '--verify', '--quiet', 'refs/heads/' + d).status === 0;
       if (isTag || !isBranch) tag = d;
-      knownTag = isTag;
+      // The destination is a tag push only when the source is that tag (no source given, a delete, or a source that
+      // resolves to refs/tags/): git push origin HEAD:build-1 creates refs/heads/build-1 on the remote even when a
+      // local tag build-1 exists, so it stays a branch push.
+      const srcRef = !src || src === d ? 'refs/tags/' + d
+        : (g('rev-parse', '--symbolic-full-name', src).stdout || '').trim();
+      knownTag = isTag && srcRef.startsWith('refs/tags/');
     }
     if (branch && !knownTag && !cfg.protectedBranches) return `\`git push\` of ${branch} is refused: protected branches unknown - ${cfg.defaultBranchUnknown} (ALLOW_PROTECTED_PUSH=1 only on the owner's explicit word).`;
     // Unknown branches refuse every branch push above; a known tag gets past it and is judged as a tag below, so here
