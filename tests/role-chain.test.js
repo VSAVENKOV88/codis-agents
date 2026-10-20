@@ -26,16 +26,18 @@ const DOCS = Object.assign({}, PROG, { changedFiles: ['docs/GAPS.md'] });
 const AN = { ready: true, cells: 10, subsystems: 1, split: [], questions: [], summary: 'a' };
 
 // script: a queue of answers per role; trace - the order of calls.
-// A tester verdict without head gets head 'T'; the post-check (diff) is ok by default and not in trace (its order is in full).
+// A tester verdict without head gets head 'T'; the post-check (diff), the leftovers check and the wait step of the full
+// guard run (run, green by default) are not in trace (their order is in full).
 async function run(script, task = T, extra = {}) {
   const trace = [], full = [], prompts = [], logs = [];
   const q = {}; for (const [k, v] of Object.entries(script)) q[k] = v.slice();
   const agent = async (prompt, opts) => {
     const role = opts.label.split(':')[0];
     prompts.push({ role, label: opts.label, prompt, opts });
-    full.push(role === 'diff' || role === 'left' ? opts.label : role);
+    full.push(role === 'diff' || role === 'left' || role === 'run' ? opts.label : role);
     if (role === 'diff') return q.diff && q.diff.length ? q.diff.shift() : { ok: true, offending: [] };
     if (role === 'left') return q.left && q.left.length ? q.left.shift() : { ok: true, found: [], removed: [], remaining: [] };
+    if (role === 'run') { const v = q.run && q.run.length ? q.run.shift() : { done: true, rc: 0, seconds: 1, log: '/d/wait.log', tail: 'all green' }; return v; }
     trace.push(role);
     if (!q[role] || !q[role].length) throw new Error('extra call ' + role + ' after ' + trace.join('>'));
     const v = q[role].shift();
@@ -372,6 +374,94 @@ async function run(script, task = T, extra = {}) {
   ok('tester prompt with a stand and a stack: own stack only when the stand does not fit', /Only when the stand does not fit, your own stack: docker compose -p k-test/.test(tst2), tst2);
   ok('tester prompt without a stand: no stand steps', !/stand\.sh/.test(tp));
   ok('every role prompt with a stand names it in the stand rule', xst.prompts.filter((p) => !['diff', 'left'].includes(p.role)).every((p) => /Shared stand: acceptance in Docker goes to the project's stand p-dev/.test(p.prompt)));
+  // One full guard run per task (owner 2026-10-20: "yes, we make both changes"): with guardSubsetCommand in the config
+  // the programmer runs only the selected guards (scripts/guards-select.js), the workflow runs ONE full run on its last
+  // HEAD as a wait step (scripts/wait-step.js, a cheap agent), a red run goes back to the programmer with its log, the
+  // tester reuses the log and runs no full run. Without the key the chain is as before (the programmer's own full run).
+  const ONE = Object.assign({}, CFG, { guardSubsetCommand: 'cd {wt}/server && npm run guards -- --all {onlyArgs}' });
+  const G1 = () => ({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D] });
+  const RUN_RED = { done: true, rc: 1, seconds: 900, log: '/d/wait-full-1.log', tail: 'FAIL x-run.js' };
+  const RUN_OK = { done: true, rc: 0, seconds: 900, log: '/d/wait-full-1f.log', tail: 'ok' };
+  const runsOf = (x) => x.prompts.filter((p) => p.role === 'run');
+  const pOf = (x, role, i = 0) => (x.prompts.filter((p) => p.role === role)[i] || {}).prompt || '';
+  x = await run(G1(), T, { config: ONE });
+  ok('one run: pre > prog > the full run step > tester > review, done',
+    x.r.status === 'done' && x.full === 'pre>prog>run:x:full-1>test>diff:x:tester>left:x:tester>review>diff:x:reviewer>left:x:end', x.full);
+  const rp = runsOf(x)[0];
+  ok('the full run step: a cheap agent runs wait-step.js start with guards-all.sh on the worktree, then waits in slices of at most 270 s',
+    rp && rp.opts.model === 'haiku' && rp.opts.agentType === 'general-purpose' && rp.prompt.includes("node /p/scripts/wait-step.js start --id '/d/wait-full-1' --cwd '/w'")
+      && rp.prompt.includes('/p/scripts/guards-all.sh') && rp.prompt.includes('wait-step.js wait') && /--max 270/.test(rp.prompt), rp && rp.prompt);
+  ok('programmer prompt (one run): selected guards through guards-select.js, no full run of its own',
+    /guards-select\.js --wt '\/w' --base [^ ]+ --command/.test(pOf(x, 'prog')) && /do NOT run the full guard run/.test(pOf(x, 'prog')) && !/full run \/p\/scripts\/guards-all\.sh w in the background/.test(pOf(x, 'prog')), pOf(x, 'prog'));
+  ok('tester prompt (one run): reuses the workflow full run log, runs no full run itself',
+    pOf(x, 'test').includes('exit 0; summary /d/wait.log') && /do NOT run the full guard run/.test(pOf(x, 'test')) && !/a full run only after your own commits/.test(pOf(x, 'test')), pOf(x, 'test'));
+  ok('the task base reaches guards-select when given', /--base 'origin-x'/.test(pOf(await run(G1(), Object.assign({}, T, { base: 'origin-x' }), { config: ONE }), 'prog')));
+  x = await run(G1());
+  ok('without guardSubsetCommand: no full run step, the programmer runs the full run itself as before',
+    !runsOf(x).length && /full run \/p\/scripts\/guards-all\.sh w in the background/.test(pOf(x, 'prog')) && /a full run only after your own commits/.test(pOf(x, 'test')), x.full);
+
+  x = await run({ pre: [PRE], prog: [PROG, Object.assign({}, PROG, { head: 'P2' })], run: [RUN_RED, RUN_OK], test: [{ verdict: 'green', summary: '' }], review: [D] }, T, { config: ONE });
+  ok('a red full run -> a programmer round with its log -> the full run again -> tester',
+    x.r.status === 'done' && x.full === 'pre>prog>run:x:full-1>prog>run:x:full-1f>test>diff:x:tester>left:x:tester>review>diff:x:reviewer>left:x:end', x.full);
+  ok('the fix round gets the exit code, the summary and the copied full log', /exited 1/.test(pOf(x, 'prog', 1)) && pOf(x, 'prog', 1).includes('/d/wait-full-1.log') && pOf(x, 'prog', 1).includes('/d/wait-full-1.guards.txt'), pOf(x, 'prog', 1));
+  ok('the tester post-check starts from the HEAD of the fix', / --since P2 --role tester/.test(pOf(x, 'diff')), pOf(x, 'diff'));
+  x = await run({ pre: [PRE], prog: [PROG, PROG], run: [RUN_RED], test: [{ verdict: 'green', summary: '' }], review: [D] }, T, { config: ONE });
+  ok('a red full run the programmer explains without a commit -> no second run, the tester gets the red log',
+    x.r.status === 'done' && x.full === 'pre>prog>run:x:full-1>prog>test>diff:x:tester>left:x:tester>review>diff:x:reviewer>left:x:end' && /exit 1/.test(pOf(x, 'test')), x.full);
+  x = await run({ pre: [PRE], prog: [PROG, Object.assign({}, PROG, { head: 'P2' }), Object.assign({}, PROG, { head: 'P3' })], run: [RUN_RED, RUN_RED, RUN_RED] }, T, { config: ONE });
+  ok('the full run still red after two fix rounds -> stopped for the coordinator, no tester',
+    x.r.status === 'stopped' && !x.trace.includes('test') && /full guard run.*red/.test(x.r.why) && runsOf(x).length === 3, JSON.stringify(x.r) + ' ' + x.full);
+  x = await run({ pre: [PRE], prog: [PROG, Object.assign({}, PROG, { status: 'environment', questions: [], summary: 'the run was cut off at 40 %' })], run: [RUN_RED] }, T, { config: ONE });
+  ok('the programmer names the red of the full run an environment red -> stopped for the coordinator, no tester',
+    x.r.status === 'stopped' && !x.trace.includes('test') && /environment/.test(x.r.why) && /cut off at 40 %/.test(x.r.why), JSON.stringify(x.r));
+  ok('programmer schema: status environment exists', (x.prompts.find((p) => p.role === 'prog').opts.schema.properties.status.enum || []).includes('environment'));
+
+  // "Could not run" only without a numeric exit code (a red run is a step that ran; e2g2, 2026-10-19).
+  x = await run({ pre: [PRE], prog: [PROG, PROG], run: [Object.assign({}, RUN_RED, { error: 'two guards failed' })], test: [{ verdict: 'green', summary: '' }], review: [D] }, T, { config: ONE });
+  ok('a red run whose agent wrote an error text is still a step that ran: its log goes to the programmer', x.r.status === 'done' && x.trace === 'pre>prog>prog>test>review', x.full);
+  x = await run(Object.assign(G1(), { run: [{ done: false, rc: null, log: '/d/wait-full-1.log', error: 'no JSON' }, RUN_OK] }), T, { config: ONE });
+  ok('a step without an exit code is repeated once by the default model with --reuse; ok on the repeat -> the chain goes on',
+    x.r.status === 'done' && runsOf(x).length === 2 && runsOf(x)[1].label === 'run:x:full-1#retry' && runsOf(x)[1].opts.model === undefined && /--reuse/.test(runsOf(x)[1].prompt) && !/--reuse/.test(runsOf(x)[0].prompt), x.full);
+  x = await run({ pre: [PRE], prog: [PROG], run: [{ done: true, rc: null, log: '/d/l', error: 'the process ended without an exit code' }, { done: true, rc: null, log: '/d/l', error: 'the process ended without an exit code' }] }, T, { config: ONE });
+  ok('no exit code twice -> stopped for the coordinator (could not run), no programmer round', x.r.status === 'stopped' && /could not run/.test(x.r.why) && x.trace === 'pre>prog', JSON.stringify(x.r));
+
+  x = await run({ pre: [PRE], prog: [PROG, PROG], test: [{ verdict: 'green', summary: '' }, { verdict: 'green', summary: '' }], review: [{ verdict: 'rejected', docsOnly: false, summary: 'r' }, D] }, T, { config: ONE });
+  ok('a review fix on the HEAD whose full run is done (no new commit) -> no second full run', runsOf(x).length === 1 && x.r.status === 'done', x.full);
+  x = await run({ pre: [PRE], prog: [PROG, Object.assign({}, PROG, { head: 'P2' })], test: [{ verdict: 'green', summary: '' }, { verdict: 'green', summary: '' }], review: [{ verdict: 'rejected', docsOnly: false, summary: 'r' }, D] }, T, { config: ONE });
+  ok('a review fix for code with a new commit -> one full run on it before the tester', runsOf(x).length === 2 && x.full.includes('review>diff:x:reviewer>prog>run:x:full-r>test'), x.full);
+  x = await run({ pre: [PRE], prog: [PROG, Object.assign({}, DOCS, { head: 'P2' })], test: [{ verdict: 'green', summary: '' }], review: [DOCS_REJ, D] }, T, { config: ONE });
+  ok('a docs-only fix (docs and guard files) -> no full run, second review', runsOf(x).length === 1 && x.r.status === 'done' && x.trace === 'pre>prog>test>review>prog>review', x.full);
+  x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', head: 'T2', summary: '' }], review: [D] }, T, { config: ONE });
+  ok('the tester commits guards -> no full run after the tester', runsOf(x).length === 1, x.full);
+
+  // Light mode (owner 2026-10-20): one programmer-checker, the full run step, one reviewer; no tester role.
+  const L = Object.assign({}, T, { mode: 'light' });
+  x = await run({ pre: [PRE], prog: [PROG], review: [D] }, L, { config: ONE });
+  ok('light: pre > programmer-checker > full run > review > done, no tester and no tester post-checks',
+    x.r.status === 'done' && x.full === 'pre>prog>run:x:full-1>review>diff:x:reviewer>left:x:end' && x.r.mode === 'light', x.full + ' ' + JSON.stringify(x.r));
+  const lp0 = pOf(x, 'prog');
+  ok('light: the programmer-checker prompt - red guard, code, mutations after the commit, own acceptance with evidence in test.md',
+    /PROGRAMMER-CHECKER/.test(lp0) && /red guard/.test(lp0) && /mutations AFTER the commit/.test(lp0) && lp0.includes('/d/test.md') && lp0.includes('acc') && /evidence/.test(lp0), lp0);
+  ok('light: the reviewer is told there is no tester role and checks the evidence in test.md', /light mode/.test(pOf(x, 'review')) && pOf(x, 'review').includes('test.md'), pOf(x, 'review'));
+  ok('light: the reviewer post-check starts from the programmer HEAD', / --since P --role reviewer/.test(pOf(x, 'diff')), pOf(x, 'diff'));
+  x = await run({ pre: [PRE], prog: [PROG, Object.assign({}, PROG, { head: 'P2' })], review: [{ verdict: 'rejected', docsOnly: false, summary: 'r' }, D] }, L, { config: ONE });
+  ok('light: rejection -> programmer round -> full run -> second review -> done',
+    x.r.status === 'done' && x.full === 'pre>prog>run:x:full-1>review>diff:x:reviewer>prog>run:x:full-r>review>diff:x:reviewer>left:x:end', x.full);
+  x = await run({ pre: [PRE], prog: [PROG, Object.assign({}, PROG, { head: 'P2' })], review: [{ verdict: 'rejected', docsOnly: false, summary: 'r1' }, { verdict: 'rejected', docsOnly: false, summary: 'r2' }] }, L, { config: ONE });
+  ok('light: second rejection -> stopped for the coordinator with the proposal to relaunch in the full mode, no analyst',
+    x.r.status === 'stopped' && !x.trace.includes('analyst') && /full mode/.test(x.r.why) && /r2/.test(x.r.review || ''), JSON.stringify(x.r));
+  x = await run({ pre: [PRE], prog: [PROG, Object.assign({}, PROG, { head: 'P2' })], run: [RUN_RED, RUN_OK], review: [D] }, L, { config: ONE });
+  ok('light: a red full run -> programmer round with the log -> full run -> review', x.r.status === 'done' && x.full === 'pre>prog>run:x:full-1>prog>run:x:full-1f>review>diff:x:reviewer>left:x:end', x.full);
+  x = await run({ pre: [PRE], prog: [PROG], review: [D] }, L);
+  ok('light without guardSubsetCommand: no run step, the programmer-checker runs the full run itself',
+    x.r.status === 'done' && !runsOf(x).length && /full run \/p\/scripts\/guards-all\.sh w in the background/.test(pOf(x, 'prog')), x.full);
+  for (const [name, t] of [['an unknown mode', { mode: 'fast' }], ['light with security', { mode: 'light', security: true }], ['light with a stack', { mode: 'light', stack: 'k-test' }]]) {
+    x = await run({}, Object.assign({}, T, t), { config: ONE });
+    ok(`${name} -> stopped before any agent`, x.r.status === 'stopped' && x.trace === '' && /mode/.test(JSON.stringify(x.r.problems)), JSON.stringify(x.r));
+  }
+  x = await run(G1(), Object.assign({}, T, { mode: 'full' }), { config: ONE });
+  ok('mode full is the default chain', x.r.status === 'done' && x.trace === 'pre>prog>test>review', x.trace);
+
   // One source of role rules: markers in rules/multi-agent.md <-> RULE_LIST <-> the prompt of every role.
   const rules = fs.readFileSync(path.join(ROOT, 'rules', 'multi-agent.md'), 'utf8');
   const marked = [...rules.matchAll(/<!-- role:([\w-]+) -->/g)].map((m) => m[1]);
