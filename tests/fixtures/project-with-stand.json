@@ -1,0 +1,40 @@
+{
+  "repoDir": "~/dev/acme",
+  "worktreeRoot": "~/acme-wt",
+  "sharedDir": "~/acme-wt/_shared",
+  "guardCommand": "cd {wt}/server && npm run guards -- --all --concurrency {jobs} --concurrency-file {limitFile}",
+  "guardCommandLegacy": "cd {wt}/server && npm run guards -- --all --concurrency {jobs}",
+  "guardAdaptiveProbe": { "file": "server/tools/guards.js", "contains": "--concurrency-file" },
+  "worktreeSetup": {
+    "scan": ["server", "plugin"],
+    "skip": ["*.DS_Store"],
+    "link": ["*/node_modules", "*/dist"]
+  },
+  "slots": { "medium": 2, "heavy": 2, "total": 4, "lockDir": "~/acme-wt/_shared/slots", "legacyLock": "~/acme-wt/_shared/guards.lock", "jobsAlone": 6, "jobsShared": 3 },
+  "reportLanguage": "Russian",
+  "protectedBranches": ["main"],
+  "protectedTagPattern": "^v",
+  "ownerStackReadOnly": "acme-owner",
+  "medianTaskIE": 5000000,
+  "testerWritable": ["-run\\.(js|mjs|cjs)$", "(^|/)(__)?fixtures(__)?/"],
+  "roleNotes": {
+    "analyst": "No heuristics.",
+    "programmer": "Rebuild the plugin bundle after a source change.",
+    "tester": "Browser checks run in Chromium and WebKit.",
+    "reviewer": "Look for heuristics and guards without mutations.",
+    "security-reviewer": "Threat model: ACCESS.md."
+  },
+  "threatModel": "ACCESS.md",
+  "gitHooks": { "blockICloudCopies": true, "preCommit": ["node .githooks/pre-commit.js"] },
+  "stand": {
+    "project": "acme-dev",
+    "ports": [3101, 3102],
+    "up": "{repo}/scripts/stand/up.sh {project} {port}",
+    "deploy": "{repo}/scripts/stand/deploy.sh {project} {wt}",
+    "reset": "{repo}/scripts/stand/reset.sh {project}",
+    "status": "{repo}/scripts/stand/status.sh {project}",
+    "down": "{repo}/scripts/stand/down.sh {project}",
+    "imageFiles": ["server/Dockerfile*", "server/.dockerignore", "server/package*.json", "server/builder/template/package*.json", "docker-compose*.yml"],
+    "memLimitMB": 3072
+  }
+}

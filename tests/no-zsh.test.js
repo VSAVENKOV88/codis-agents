@@ -10,7 +10,7 @@ const { spawnSync } = require('child_process');
 const { ok, done } = require('./lib');
 
 const ROOT = path.join(__dirname, '..');
-const ZSH_TESTS = ['config.test.js', 'wt-setup.test.js', 'slots-check.test.sh', 'slots-fifo.test.sh', 'slots-journal.test.sh'];
+const ZSH_TESTS = ['config.test.js', 'wt-setup.test.js', 'slots-check.test.sh', 'slots-fifo.test.sh', 'slots-journal.test.sh', 'stand.test.js'];
 const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'no-zsh-')));
 const isExe = (f) => { try { fs.accessSync(f, fs.constants.X_OK); return fs.statSync(f).isFile(); } catch { return false; } };
 try {

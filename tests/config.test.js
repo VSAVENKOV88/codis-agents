@@ -30,6 +30,28 @@ bad0({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s', featureIELimit: 0 }, 
 ok('featureIELimit defaults to null (3 x medianTaskIE in chain-cost)', C.resolve({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s' }).config.featureIELimit === null);
 bad0({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s', preconditions: { minFreeDiskGB: -1 } }, /preconditions\.minFreeDiskGB: expected a number >= 0/, 'negative disk floor - error');
 bad0({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s', preconditions: { minSwap: 1 } }, /preconditions\.minSwap: unknown key/, 'unknown preconditions key - error');
+// The shared stand of a project (scripts/stand.sh): a section of command templates the plugin only calls.
+ok('schema stand keys = config.js', schema.properties.stand && same(Object.keys(schema.properties.stand.properties), Object.keys(C.STAND_SPEC || {})));
+ok('schema stand required = config.js', schema.properties.stand && same(schema.properties.stand.required || [], C.STAND_REQUIRED || []));
+const STAND = { project: 'p-dev', ports: [3101], up: 'up {project}', deploy: 'deploy {project} {wt}', reset: 'reset {project}', status: 'status {project}', down: 'down {project}', imageFiles: ['Dockerfile*'], memLimitMB: 3072 };
+const withStand = (s) => ({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s', stand: s });
+r = C.resolve(withStand(STAND));
+ok('stand section validates', r.errors.length === 0 && r.config.stand.project === 'p-dev' && r.config.stand.ports.join() === '3101', r.errors.join('; '));
+ok('no stand section -> stand is null', C.resolve({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s' }).config.stand === null);
+bad0(withStand(Object.assign({}, STAND, { bogus: 1 })), /stand\.bogus: unknown key/, 'unknown stand key - error');
+bad0(withStand(Object.assign({}, STAND, { deploy: 'deploy {project}' })), /stand\.deploy: must contain \{wt\}/, 'stand deploy without {wt} - error');
+bad0(withStand(Object.assign({}, STAND, { status: undefined })), /stand\.status: required/, 'stand without status - error');
+bad0(withStand(Object.assign({}, STAND, { project: undefined })), /stand\.project: required/, 'stand without project - error');
+bad0(withStand(Object.assign({}, STAND, { project: 'Bad Name' })), /stand\.project: /, 'stand project not a compose project name - error');
+bad0(withStand(Object.assign({}, STAND, { ports: [0] })), /stand\.ports: /, 'stand port 0 - error');
+bad0(withStand(Object.assign({}, STAND, { memLimitMB: -1 })), /stand\.memLimitMB: /, 'negative stand memory limit - error');
+// The stand may not be the owner's own stack: roles reset and redeploy it.
+bad0(Object.assign(withStand(STAND), { ownerStackReadOnly: 'p-dev' }), /stand\.project: .*owner's stack/, 'stand project = the owner\'s stack - error');
+// A project's real config shape (all its sections, plus stand) passes check from the command line (B11).
+const fixture = path.join(ROOT, 'tests', 'fixtures', 'project-with-stand.json');
+const chk = spawnSync('node', [path.join(ROOT, 'scripts', 'config.js'), 'check', fixture], { encoding: 'utf8' });
+ok('a project config with a stand section passes config.js check', chk.status === 0, chk.stdout + chk.stderr);
+ok('the example config has a stand section', !!example.stand && C.resolve(example).config.stand.project === example.stand.project);
 ok('schema roleNotes keys = roles', same(Object.keys(schema.properties.roleNotes.properties), C.ROLES));
 ok('schema required = config.js required', same(schema.required, ['repoDir', 'worktreeRoot', 'sharedDir']));
 
