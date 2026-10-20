@@ -57,7 +57,7 @@ ok('schema required = config.js required', same(schema.required, ['repoDir', 'wo
 
 r = C.resolve({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s' });
 ok('minimal config: defaults', r.errors.length === 0 && r.config.slots.medium === 2 && r.config.slots.heavy === 2 && r.config.slots.total === 4
-  && r.config.reportLanguage === 'English' && r.config.protectedBranches.join() === 'main', r.errors.join('; '));
+  && r.config.reportLanguage === 'English' && r.config.protectedBranches === null && r.config.defaultBranch === '', r.errors.join('; '));
 const bad = (raw, re, name) => { const x = C.resolve(raw); ok(name, x.errors.some((e) => re.test(e)), x.errors.join('; ')); };
 bad({ worktreeRoot: '/w', sharedDir: '/s' }, /repoDir: required/, 'missing repoDir - error');
 bad({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s', slotz: {} }, /slotz: unknown key/, 'unknown key (typo) - error');

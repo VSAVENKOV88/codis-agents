@@ -130,7 +130,7 @@ try {
   ok('ALLOW_PROTECTED_PUSH=1 - main allowed', push(['refs/heads/main'], { ALLOW_PROTECTED_PUSH: '1' }).status === 0);
   fs.rmSync(path.join(repo, '.claude'), { recursive: true });
   ok('no config - defaults: main refused', push(['refs/heads/main']).status === 1);
-  ok('no config - defaults: release allowed', push(['refs/heads/release']).status === 0);
+  ok('no config, no origin/HEAD - any branch refused (fail closed), with the reason', push(['refs/heads/release']).status === 1 && /protected branches unknown/.test(push(['refs/heads/release']).stderr));
 
   console.log('3. git pre-commit');
   const commit = () => spawnSync(path.join(ROOT, 'scripts', 'git-hooks', 'pre-commit'), [], { cwd: repo, encoding: 'utf8', env });

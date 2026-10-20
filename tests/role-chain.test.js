@@ -392,5 +392,17 @@ async function run(script, task = T, extra = {}) {
   const lacking = x.prompts.filter((p) => !['diff', 'left'].includes(p.role)).flatMap((p) => ruleList.filter((r) => !p.prompt.includes(r[1])).map((r) => p.label + ':' + r[0]));
   ok('the prompt of every role (pre, analyst, prog, test, review) carries every rule', roles.size === 5 && !lacking.length, [...roles].join(',') + ' ' + lacking.join(','));
 
+  // B8: the push rule names the project's protected branches (derived from git by config.js), never a literal main.
+  const pushLine = async (cfg) => {
+    const y = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D] }, T, { config: Object.assign({}, CFG, cfg) });
+    const pp = y.prompts.find((p) => p.role === 'prog');
+    return ((pp && pp.prompt) || '').split('\n').find((l) => /^Do not push/.test(l)) || '';
+  };
+  let pl = await pushLine({ protectedBranches: ['master'] });
+  ok('B8 protectedBranches [master] -> "do not merge into master", no main', /do not merge into master\b/.test(pl) && !/\bmain\b/.test(pl), pl);
+  pl = await pushLine({ protectedBranches: null, defaultBranch: null, defaultBranchUnknown: 'refs/remotes/origin/HEAD is not set' });
+  ok('B8 protected branches unknown -> no main, the rule says every branch push is refused and why', !/\bmain\b/.test(pl)
+    && /unknown/.test(pl) && /origin\/HEAD is not set/.test(pl), pl);
+
   done();
 })().catch((e) => { console.log('  FAIL crashed: ' + e.stack); process.exit(1); });
