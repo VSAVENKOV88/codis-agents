@@ -137,13 +137,16 @@ const COMPOSE_FILES = ['compose.yaml', 'compose.yml', 'docker-compose.yaml', 'do
 // pytest reads tox.ini and setup.cfg with iniconfig (IniConfig(path): no inline comment or section whitespace
 // stripping), whose _parseline takes a line as a section header when its first character is '[': it cuts the line at
 // '#' and then at ';', strips trailing whitespace and needs ']' at the end; the name is what lies between, unstripped.
-// Lines are split as Python's str.splitlines, after an optional UTF-8 BOM.
+// Lines are split as Python's str.splitlines, after an optional UTF-8 BOM. Trailing whitespace is what Python's
+// str.rstrip strips (str.isspace): unlike String#trimEnd it takes U+001F and keeps U+FEFF.
+const PY_TRAILING_SPACE = /[\t\n\v\f\r\x1c-\x1f \x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+$/;
+const pyRstrip = (s) => s.replace(PY_TRAILING_SPACE, '');
 function hasSection(text, name) {
   if (text === null) return false;
   return text.replace(/^\uFEFF/, '').split(/\r\n|[\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029]/).some((raw) => {
-    let l = raw.trimEnd();
+    let l = pyRstrip(raw);
     if (l[0] !== '[') return false;
-    for (const c of '#;') l = l.split(c)[0].trimEnd();
+    for (const c of '#;') l = pyRstrip(l.split(c)[0]);
     return l.endsWith(']') && l.slice(1, -1) === name;
   });
 }
