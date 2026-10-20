@@ -134,8 +134,18 @@ const KINDS = [
 const COMPOSE_FILES = ['compose.yaml', 'compose.yml', 'docker-compose.yaml', 'docker-compose.yml',
   'compose.override.yaml', 'compose.override.yml', 'docker-compose.override.yaml', 'docker-compose.override.yml'];
 
-function hasSection(text, header) {
-  return text !== null && text.split(/\r?\n/).some((l) => l.trim() === header);
+// pytest reads tox.ini and setup.cfg with iniconfig (IniConfig(path): no inline comment or section whitespace
+// stripping), whose _parseline takes a line as a section header when its first character is '[': it cuts the line at
+// '#' and then at ';', strips trailing whitespace and needs ']' at the end; the name is what lies between, unstripped.
+// Lines are split as Python's str.splitlines, after an optional UTF-8 BOM.
+function hasSection(text, name) {
+  if (text === null) return false;
+  return text.replace(/^\uFEFF/, '').split(/\r\n|[\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029]/).some((raw) => {
+    let l = raw.trimEnd();
+    if (l[0] !== '[') return false;
+    for (const c of '#;') l = l.split(c)[0].trimEnd();
+    return l.endsWith(']') && l.slice(1, -1) === name;
+  });
 }
 
 // pyproject.toml configures pytest with [tool.pytest.ini_options] (even empty) or a [tool.pytest] table that is not
@@ -163,8 +173,8 @@ function pytestConfig(root, dir) {
   const f = (n) => path.join(root, dir, n);
   for (const n of ['pytest.toml', '.pytest.toml', 'pytest.ini', '.pytest.ini']) if (isFile(f(n))) return n;
   if (pyprojectPytest(readText(f('pyproject.toml')))) return 'pyproject.toml';
-  if (hasSection(readText(f('tox.ini')), '[pytest]')) return 'tox.ini';
-  if (hasSection(readText(f('setup.cfg')), '[tool:pytest]')) return 'setup.cfg';
+  if (hasSection(readText(f('tox.ini')), 'pytest')) return 'tox.ini';
+  if (hasSection(readText(f('setup.cfg')), 'tool:pytest')) return 'setup.cfg';
   return null;
 }
 
