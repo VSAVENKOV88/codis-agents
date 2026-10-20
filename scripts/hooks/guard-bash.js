@@ -4,7 +4,8 @@
 //  * `git add -A` / `--all` / `.` / `:/` - stage files by path (cloud-synced folders spawn conflict copies, and a
 //    blanket add sweeps in scratch files of other agents);
 //  * `git push` to a protected branch, of a protected tag, or `--all` / `--mirror` / `--tags` / `--follow-tags`
-//    (project config "protectedBranches", "protectedTagPattern") unless ALLOW_PROTECTED_PUSH=1 is set, inline or in
+//    (project config "protectedBranches", "protectedTagPattern"; without protectedBranches the default branch of the
+//    repository that pushes - config.js; when that is unknown, every branch push: closed, not open) unless ALLOW_PROTECTED_PUSH=1 is set, inline or in
 //    the environment, on the owner's explicit word, or - for a branch only - when the pushing repository itself declares a
 //    standing push in its committed config (scripts/standing-push.js: HEAD only, no force or delete, check green).
 // Active only in projects that have .claude/codis-agents.json: the plugin is opt-in per project.
@@ -89,7 +90,7 @@ function judge(words, ctx) {
   const pending = [];
   for (let [src, d, forced] of specs) {
     if (d === 'HEAD' || d === '@') d = current();
-    let tag = null, branch = null;
+    let tag = null, branch = null, knownTag = false;
     if (d.startsWith('refs/tags/')) tag = d.slice(10);
     else if (d.startsWith('refs/heads/')) branch = d.slice(11);
     else {
@@ -99,8 +100,22 @@ function judge(words, ctx) {
       const isTag = g('show-ref', '--verify', '--quiet', 'refs/tags/' + d).status === 0;
       const isBranch = g('show-ref', '--verify', '--quiet', 'refs/heads/' + d).status === 0;
       if (isTag || !isBranch) tag = d;
+      // The destination is a tag push only when the source resolves to refs/tags/ (git push origin build-1 takes
+      // the name as its own source): git push origin HEAD:build-1 creates refs/heads/build-1 on the remote even
+      // when a local tag build-1 exists, so it stays a branch push. A delete of a bare name is never a known tag:
+      // git deletes whatever the remote holds under that name (git push origin --delete build-1 removes a remote
+      // branch build-1 although a local tag build-1 exists), so only an explicit :refs/tags/<name> deletes a tag.
+      const srcRef = src ? (g('rev-parse', '--symbolic-full-name', src).stdout || '').trim() : '';
+      knownTag = isTag && srcRef.startsWith('refs/tags/');
     }
-    if (branch && cfg.protectedBranches.includes(branch) && tag === null) {
+    // The refspec ":" (or "+:") is a matching push: its destination is empty, yet git pushes every branch present on
+    // both sides under the same name, the default branch too. While the branches are unknown it is a branch push.
+    if (d === '' && !cfg.protectedBranches) return `\`git push\` of the matching refspec ":" is refused: it pushes every matching branch and protected branches unknown - ${cfg.defaultBranchUnknown} (ALLOW_PROTECTED_PUSH=1 only on the owner's explicit word).`;
+    if (branch && !knownTag && !cfg.protectedBranches) return `\`git push\` of ${branch} is refused: protected branches unknown - ${cfg.defaultBranchUnknown} (ALLOW_PROTECTED_PUSH=1 only on the owner's explicit word).`;
+    // Unknown branches refuse every branch push above; a known tag gets past it and is judged as a tag below, so here
+    // no branch counts as protected (a crash would exit 1, which Claude Code treats as non-blocking: fail open).
+    const protectedBranches = cfg.protectedBranches || [];
+    if (branch && protectedBranches.includes(branch) && tag === null) {
       if (st === undefined) st = standingPush.standing(dir);
       if (st && st.branches.includes(branch)) {
         if (forced || !src) return `\`git push\` to ${branch} is refused: a standing push never forces or deletes (ALLOW_PROTECTED_PUSH=1 only on the owner's explicit word).`;
@@ -109,7 +124,7 @@ function judge(words, ctx) {
         continue;
       }
     }
-    if (branch && cfg.protectedBranches.includes(branch)) return `\`git push\` to ${branch} is refused: ${branch} is protected. Work on a branch; pushing or merging into ${branch} is the owner's call (ALLOW_PROTECTED_PUSH=1 only on the owner's explicit word).`;
+    if (branch && protectedBranches.includes(branch)) return `\`git push\` to ${branch} is refused: ${branch} is protected. Work on a branch; pushing or merging into ${branch} is the owner's call (ALLOW_PROTECTED_PUSH=1 only on the owner's explicit word).`;
     if (tag !== null && tagRe.test(tag)) return `\`git push\` of tag ${tag} is refused: it may deploy to production (ALLOW_PROTECTED_PUSH=1 only on the owner's explicit word).`;
   }
   return pending.length ? standingPush.verify(st) : null;
@@ -123,7 +138,8 @@ function decide(input, env = process.env) {
     if (!cache.has(dir)) {
       let file = null;
       try { file = find(dir, env); } catch { /* no config */ }
-      cache.set(dir, file ? load(file).config : null);
+      // The branches come from the repository that pushes (dir), not from the session's project.
+      cache.set(dir, file ? load(file, { branchDir: dir }).config : null);
     }
     return cache.get(dir);
   };

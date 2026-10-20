@@ -27,7 +27,7 @@ try {
   const cfg = path.join(dir, 'cfg.json');
   fs.writeFileSync(cfg, JSON.stringify({ repoDir: main, worktreeRoot: path.join(dir, 'wts'), sharedDir: dir,
     worktreeSetup: { scan: ['app'], skip: ['*.DS_Store'], link: ['*/node_modules'] } }));
-  const r = spawnSync('zsh', [path.join(ROOT, 'scripts', 'wt-setup.sh'), 't1', 'b-t1'], { encoding: 'utf8', env: Object.assign({}, process.env, { CODIS_AGENTS_CONFIG: cfg }) });
+  const r = spawnSync('zsh', [path.join(ROOT, 'scripts', 'wt-setup.sh'), 't1', 'b-t1', 'main'], { encoding: 'utf8', env: Object.assign({}, process.env, { CODIS_AGENTS_CONFIG: cfg }) });
   const wt = path.join(dir, 'wts', 't1');
   ok('worktree created and reported', r.status === 0 && r.stdout.includes('ready ' + wt), r.stdout + r.stderr);
   ok('on the new branch', spawnSync('git', ['-C', wt, 'rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf8' }).stdout.trim() === 'b-t1');
@@ -56,7 +56,7 @@ if [ -n "$shift_done" ]; then
 fi
 exec '${realCp}' "$@"
 `, { mode: 0o755 });
-  const r2 = spawnSync('zsh', [path.join(ROOT, 'scripts', 'wt-setup.sh'), 't2', 'b-t2'],
+  const r2 = spawnSync('zsh', [path.join(ROOT, 'scripts', 'wt-setup.sh'), 't2', 'b-t2', 'main'],
     { encoding: 'utf8', env: Object.assign({}, process.env, { CODIS_AGENTS_CONFIG: cfg, PATH: fake + path.delimiter + process.env.PATH }) });
   const wt2 = path.join(dir, 'wts', 't2');
   const calls = fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n') : [];

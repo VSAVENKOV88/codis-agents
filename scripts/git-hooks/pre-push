@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 'use strict';
 // Refuses a push to a protected branch or of a protected tag (project config "protectedBranches",
-// "protectedTagPattern"; a release tag may deploy to production). Only ALLOW_PROTECTED_PUSH=1, set on the owner's
+// "protectedTagPattern"; a release tag may deploy to production). Without protectedBranches the default branch of this
+// repository is protected (config.js: defaultBranch, else origin/HEAD); when that is unknown, every branch push is
+// refused - closed, not open. Only ALLOW_PROTECTED_PUSH=1, set on the owner's
 // explicit word, lets it through - or, for a branch only, a standing push declared in the committed config of this
 // repository (scripts/standing-push.js: HEAD only, no deletion, check green; tags never).
 // Install once for all worktrees: git config core.hooksPath <plugin>/scripts/git-hooks
@@ -19,7 +21,9 @@ process.stdin.on('end', () => {
   for (const line of input.split('\n')) {
     const [, lsha, rref] = line.trim().split(/\s+/);
     if (!rref) continue;
-    if (rref.startsWith('refs/heads/') && cfg.protectedBranches.includes(rref.slice(11))) {
+    if (rref.startsWith('refs/heads/') && !cfg.protectedBranches) {
+      console.error(`pre-push: push to ${rref.slice(11)} is blocked: protected branches unknown - ${cfg.defaultBranchUnknown}`); bad = 1;
+    } else if (rref.startsWith('refs/heads/') && cfg.protectedBranches.includes(rref.slice(11))) {
       if (st === undefined) st = standingPush.standing(process.cwd());
       if (st && st.branches.includes(rref.slice(11)) && lsha === st.head) { pending++; continue; }
       console.error(`pre-push: push to ${rref.slice(11)} is blocked (ALLOW_PROTECTED_PUSH=1 only on the owner's word)`); bad = 1;

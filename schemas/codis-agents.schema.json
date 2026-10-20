@@ -50,7 +50,8 @@
       }
     },
     "reportLanguage": { "type": "string", "description": "Language of role reports (prompts stay in English)." },
-    "protectedBranches": { "type": "array", "items": { "type": "string" }, "description": "Branches nobody pushes to without ALLOW_PROTECTED_PUSH=1." },
+    "defaultBranch": { "type": "string", "description": "The default branch: the base of new worktrees and, without protectedBranches, the protected one. Leave it out to take it from git (where refs/remotes/origin/HEAD points); set it when the remote is not origin." },
+    "protectedBranches": { "type": "array", "items": { "type": "string" }, "description": "Branches nobody pushes to without ALLOW_PROTECTED_PUSH=1. Default: [defaultBranch]; when the default branch is unknown, the hooks refuse every branch push." },
     "protectedTagPattern": { "type": "string", "description": "Regular expression for tag names that must not be pushed without ALLOW_PROTECTED_PUSH=1 (e.g. release tags that deploy)." },
     "ownerStackReadOnly": { "type": "string", "description": "Docker Compose project of the owner: roles may only read from it." },
     "medianTaskIE": { "type": "number", "description": "Median input-equivalent tokens of an accepted task; chain-cost flags tasks above twice this." },
