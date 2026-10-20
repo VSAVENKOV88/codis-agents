@@ -52,6 +52,8 @@ stop() { local p i; for p; do for i in $(_tree $p); do kill $i 2>/dev/null; done
 tm() { local s=$1 i p; shift; "$@" & p=$!; BG+=$p
   for i in {1..$(( s * 10 ))}; do kill -0 $p 2>/dev/null || break; sleep 0.1; done
   kill -0 $p 2>/dev/null && { stop $p; wait $p 2>/dev/null; return 124; }; wait $p }
+# bwait <pid> - waits for a background job at most 10 s, then stops its tree: code 124
+bwait() { waitfor "! kill -0 $1 2>/dev/null" 100; kill -0 $1 2>/dev/null && { stop $1; wait $1 2>/dev/null; return 124; }; wait $1 }
 trap 'touch $T/rel.ALL 2>/dev/null; stop $BG; rm -rf $T' EXIT
 # busy <file> - an fcntl probe from its own process (the type the slot holder takes): 0 - busy
 busy() { [[ -e $1 ]] || return 1; ( zsystem flock -t 0 -f _f $1 ) 2>/dev/null; (( $? == 1 )) }
@@ -71,7 +73,7 @@ waitfor '[[ -s $T/1.slot ]]'
 pp=$(<$T/1.ppid 2>/dev/null); comm=$(ps -o comm= -p ${pp:-0} 2>/dev/null); comm=${${comm## #}:t}
 ok '1. the command is a child of a zsh holder (not of lockf, not exec-ed in place of the holder)' '[[ $comm == zsh ]]' "parent ${pp}: '$comm'"
 ok '1. the slot file is held while the command runs' 'busy $(<$T/1.slot)' "$(<$T/1.slot)"
-touch $T/rel.1; wait $P; rc=$?
+touch $T/rel.1; bwait $P; rc=$?
 ok '1. the command exit code passes through the holder (7)' '(( rc == 7 ))' "$rc $(<$T/1.out)"
 ok '1. after the command the slot is free' '! busy $(<$T/1.slot)'
 
@@ -80,7 +82,7 @@ ok '1. after the command the slot is free' '! busy $(<$T/1.slot)'
   while [[ ! -e '$T'/rel.2 && ! -e '$T'/rel.ALL ]]; do sleep 0.05; done' > $T/2.out 2>&1 & P=$!; BG+=$P
 waitfor '[[ -s $T/2.slot ]]'
 ok '2. the command opened and closed its slot file - the slot is still held' 'busy $(<$T/2.slot)' "$(<$T/2.out)"
-touch $T/rel.2; wait $P
+touch $T/rel.2; bwait $P
 
 # 3. kill -9 of the holder: the slot is free, the command left behind does not hold it
 "$H/heavy.sh" zsh -c 'print -r -- $PPID > '$T'/3.ppid; print -r -- $$ > '$T'/3.cmd; print -r -- $SLOT_PATH > '$T'/3.slot
@@ -88,7 +90,7 @@ touch $T/rel.2; wait $P
 waitfor '[[ -s $T/3.slot ]]'
 s3=$(<$T/3.slot); c3=$(<$T/3.cmd)
 ok '3. (setup) the slot is held' 'busy $s3'
-kill -9 $(<$T/3.ppid); wait $P 2>/dev/null
+kill -9 $(<$T/3.ppid); bwait $P 2>/dev/null
 waitfor '! busy $s3' 30
 ok '3. kill -9 of the holder - the slot is free' '! busy $s3'
 ok '3. ... while the command it left behind is still alive (it does not hold the slot)' 'kill -0 $c3 2>/dev/null'
@@ -102,7 +104,7 @@ waitfor 'grep -qs "was taken first" $T/4.out' 50
 sleep 0.5
 ok '4. the holder lost the race: slot_run says "was taken first" and does NOT run the command' 'grep -q "slot .*heavy.1.lock was taken first" $T/4.out && [[ ! -s $T/4.ran ]]' "ran: $(<$T/4.ran); $(tail -2 $T/4.out)"
 touch $T/rel.r4
-waitfor '! kill -0 $P 2>/dev/null' 100; wait $P; rc=$?
+bwait $P; rc=$?
 ok '4. ... the lock released - the command ran exactly once (exit 0)' '(( rc == 0 )) && [[ $(<$T/4.ran) == ran ]]' "$rc ran: $(<$T/4.ran)"
 
 # 5. GNU mktemp: a template needs at least three X's at its end ("mktemp -t slotgot" fails there)
@@ -152,7 +154,7 @@ rm -f $T/5.excl; xhold $SLOTS_DIR/exclusive.lock x8; waitfor '[[ -e $T/x8.held ]
 SLOT_EXCL_TOOLS="$T/none/lockf $FL" "$H/heavy.sh" node $T/g/x-run.js > $T/8.out 2>&1 & P=$!; BG+=$P
 waitfor 'grep -q "waiting for the exclusive lock" $T/8.out' 100
 ok '8. flock(1) form: waits out loud while the runner holds the lock, the guard has not run' 'grep -q "waiting for the exclusive lock" $T/8.out && [[ ! -e $T/5.excl ]]' "$(tail -3 $T/8.out)"
-touch $T/rel.x8; waitfor '! kill -0 $P 2>/dev/null' 100; wait $P; rc=$?
+touch $T/rel.x8; bwait $P; rc=$?
 ok '8. ... and runs once the lock is free (exit 0)' '(( rc == 0 )) && [[ -e $T/5.excl ]]' "$rc $(tail -3 $T/8.out)"
 [[ -x /usr/bin/lockf ]] && ok '8. ... called as flock -o -w <SLOT_SAY> -E 75 <lock> <command>' '[[ $(head -1 $T/flock.args) == "-o -w 1 -E 75 $SLOTS_DIR/exclusive.lock "* ]]' "$(head -1 $T/flock.args)"
 
