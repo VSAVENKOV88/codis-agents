@@ -403,6 +403,9 @@ async function run(script, task = T, extra = {}) {
   pl = await pushLine({ protectedBranches: null, defaultBranch: null, defaultBranchUnknown: 'refs/remotes/origin/HEAD is not set' });
   ok('B8 protected branches unknown -> no main, the rule says every branch push is refused and why', !/\bmain\b/.test(pl)
     && /unknown/.test(pl) && /origin\/HEAD is not set/.test(pl), pl);
+  pl = await pushLine({ protectedBranches: [], defaultBranch: 'master', defaultBranchUnknown: '' });
+  ok('B8 explicit protectedBranches [] -> no branch is protected, the rule does not claim every branch push is refused',
+    !/unknown|refuse every branch push/.test(pl) && /no branch is protected/.test(pl) && /do not create tags/.test(pl), pl);
 
   done();
 })().catch((e) => { console.log('  FAIL crashed: ' + e.stack); process.exit(1); });
