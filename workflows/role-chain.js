@@ -47,7 +47,9 @@ for (const k of ['sharedDir', 'worktreeRoot', 'scriptsDir']) {
 const SCRIPTS = CFG.scriptsDir
 const LANG = CFG.reportLanguage || 'English'
 const NOTES = CFG.roleNotes || {}
-const PROTECTED = (CFG.protectedBranches || ['main']).join(', ')
+// Protected branches come from config.js json (explicit, else the default branch from git); unknown -> the hooks refuse
+// every branch push, and the rule says so instead of naming a branch.
+const PROTECTED = Array.isArray(CFG.protectedBranches) && CFG.protectedBranches.length ? CFG.protectedBranches.join(', ') : null
 const PREFIX = ARGS.agentTypePrefix === undefined ? 'codis-agents:' : ARGS.agentTypePrefix
 const roleType = (role) => (PREFIX ? PREFIX + role : 'general-purpose')
 const abs = (p) => (p.startsWith('/') ? p : `${CFG.worktreeRoot}/${p}`)
@@ -75,7 +77,8 @@ const RULE_LIST = (t) => [
     ? `Shared stand: acceptance in Docker goes to the project's stand ${CFG.stand.project} by ticket (${SCRIPTS}/stand.sh take|deploy|release|status), not to a stack of your own, unless the task's commits change its image files (${SCRIPTS}/stand.sh image-diff, exit 1 -> own stack as before). The take process is the holder: keep it running in the background until release. Never bring the stand up or down, never release another worktree's ticket.`
     : 'Shared stand: the project config has none (no section stand), so acceptance in Docker uses a stack of the task.'],
   ['specs', 'Living specs (UX specs, state models, gap lists) change in the same commit as the behaviour they describe.'],
-  ['push', `Do not push, do not merge into ${PROTECTED}, do not create tags.`],
+  ['push', PROTECTED ? `Do not push, do not merge into ${PROTECTED}, do not create tags.`
+    : `Do not push, do not merge into the default branch, do not create tags (protected branches unknown, so the hooks refuse every branch push${CFG.defaultBranchUnknown ? ': ' + CFG.defaultBranchUnknown : ''}).`],
   ['gitadd', 'git add only by path (never -A or .): synced folders spawn conflict copies "name 2.ext".'],
   ['report', `Write your role report as you go, in the task folder, in ${LANG}; if it already exists, continue from it and git log, not from scratch. Its last line is "Next step: ...".`],
 ]

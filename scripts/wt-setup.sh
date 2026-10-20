@@ -7,17 +7,25 @@
 #   APFS clone (cp -c), then the GNU form (cp -r --reflink=auto: a reflink where the file system has one, a plain copy
 #   otherwise), then a plain cp -R. A refused attempt may leave a partial target; it is removed before the next one, or
 #   cp would copy into it as a nested directory.
-# usage: wt-setup.sh <name> <branch> [base=main]
+# The base is the third argument, else the project's default branch (config.js default-branch: key defaultBranch, else
+# origin/HEAD); when that is unknown, exit 78 with the reason and nothing is created.
+# usage: wt-setup.sh <name> <branch> [base=the default branch]
 set -e
 H=${0:A:h}
-[[ -n $1 && -n $2 ]] || { print -u2 "usage: wt-setup.sh <name> <branch> [base=main]"; exit 64; }
+[[ -n $1 && -n $2 ]] || { print -u2 "usage: wt-setup.sh <name> <branch> [base=the default branch]"; exit 64; }
 cfg() { node "$H/config.js" get "$1" }
 MAIN=$(cfg repoDir); ROOT=$(cfg worktreeRoot)
+base=$3
+if [[ -z $base ]]; then
+  rc=0; base=$(node "$H/config.js" default-branch) || rc=$?
+  (( rc == 78 )) && { print -u2 -r -- "wt-setup.sh: no worktree created - $base; or pass the base branch as the third argument"; exit 78 }
+  (( rc == 0 )) || exit $rc
+fi
 WT=$ROOT/$1
 scan=( ${(f)"$(node -e 'for (const x of JSON.parse(process.argv[1])) console.log(x)' "$(cfg worktreeSetup.scan)")"} )
 skip=( ${(f)"$(node -e 'for (const x of JSON.parse(process.argv[1])) console.log(x)' "$(cfg worktreeSetup.skip)")"} )
 link=( ${(f)"$(node -e 'for (const x of JSON.parse(process.argv[1])) console.log(x)' "$(cfg worktreeSetup.link)")"} )
-git -C "$MAIN" worktree add "$WT" -b "$2" "${3:-main}"
+git -C "$MAIN" worktree add "$WT" -b "$2" "$base"
 matches() { local p=$1 g; shift; for g in "$@"; do [[ -n $g && $p == ${~g} ]] && return 0; done; return 1 }
 clone() {
   cp -cR "$1" "$2" 2>/dev/null && return

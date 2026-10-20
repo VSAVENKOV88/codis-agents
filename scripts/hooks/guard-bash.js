@@ -4,7 +4,8 @@
 //  * `git add -A` / `--all` / `.` / `:/` - stage files by path (cloud-synced folders spawn conflict copies, and a
 //    blanket add sweeps in scratch files of other agents);
 //  * `git push` to a protected branch, of a protected tag, or `--all` / `--mirror` / `--tags` / `--follow-tags`
-//    (project config "protectedBranches", "protectedTagPattern") unless ALLOW_PROTECTED_PUSH=1 is set, inline or in
+//    (project config "protectedBranches", "protectedTagPattern"; without protectedBranches the default branch of the
+//    repository that pushes - config.js; when that is unknown, every branch push: closed, not open) unless ALLOW_PROTECTED_PUSH=1 is set, inline or in
 //    the environment, on the owner's explicit word, or - for a branch only - when the pushing repository itself declares a
 //    standing push in its committed config (scripts/standing-push.js: HEAD only, no force or delete, check green).
 // Active only in projects that have .claude/codis-agents.json: the plugin is opt-in per project.
@@ -89,7 +90,7 @@ function judge(words, ctx) {
   const pending = [];
   for (let [src, d, forced] of specs) {
     if (d === 'HEAD' || d === '@') d = current();
-    let tag = null, branch = null;
+    let tag = null, branch = null, knownTag = false;
     if (d.startsWith('refs/tags/')) tag = d.slice(10);
     else if (d.startsWith('refs/heads/')) branch = d.slice(11);
     else {
@@ -99,7 +100,9 @@ function judge(words, ctx) {
       const isTag = g('show-ref', '--verify', '--quiet', 'refs/tags/' + d).status === 0;
       const isBranch = g('show-ref', '--verify', '--quiet', 'refs/heads/' + d).status === 0;
       if (isTag || !isBranch) tag = d;
+      knownTag = isTag;
     }
+    if (branch && !knownTag && !cfg.protectedBranches) return `\`git push\` of ${branch} is refused: protected branches unknown - ${cfg.defaultBranchUnknown} (ALLOW_PROTECTED_PUSH=1 only on the owner's explicit word).`;
     if (branch && cfg.protectedBranches.includes(branch) && tag === null) {
       if (st === undefined) st = standingPush.standing(dir);
       if (st && st.branches.includes(branch)) {
@@ -123,7 +126,8 @@ function decide(input, env = process.env) {
     if (!cache.has(dir)) {
       let file = null;
       try { file = find(dir, env); } catch { /* no config */ }
-      cache.set(dir, file ? load(file).config : null);
+      // The branches come from the repository that pushes (dir), not from the session's project.
+      cache.set(dir, file ? load(file, { branchDir: dir }).config : null);
     }
     return cache.get(dir);
   };

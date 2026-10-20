@@ -13,6 +13,8 @@
 //        config.js json [file]          -> resolved config as JSON (defaults applied, ~ expanded, plugin paths added)
 //        config.js shell [file]         -> zsh lines `: ${VAR:=value}` for the slot scripts (environment wins)
 //        config.js get <key.path> [file]
+//        config.js default-branch [file] -> the default branch (exit 0); when it cannot be derived, the reason with the
+//                                         fix on stdout and exit 78 (scripts/wt-setup.sh prints it)
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -33,7 +35,10 @@ const SPEC = {
   worktreeSetup: ['object', null],
   slots: ['object', null],
   reportLanguage: ['string', 'English'],
-  protectedBranches: ['string[]', ['main']],
+  // The default branch: this key, else what refs/remotes/origin/HEAD of the repository points to (branches() below).
+  defaultBranch: ['string', ''],
+  // Without the key: [defaultBranch]; null when that is unknown - the hooks then refuse every branch push.
+  protectedBranches: ['string[]', null],
   protectedTagPattern: ['string', '^v'],
   ownerStackReadOnly: ['string', ''],
   medianTaskIE: ['number', 5e6],
@@ -164,6 +169,33 @@ function resolve(raw) {
   return { config: c, errors };
 }
 
+// The default branch of a git repository is where refs/remotes/origin/HEAD points: git clone sets it, git remote
+// set-head origin --auto sets it again (git-clone(1), git-remote(1)). Only the remote "origin" is read - the name git
+// clone gives; a project with another remote sets defaultBranch. No list of usual names: not derivable stays unknown.
+function originHead(dir) {
+  const r = spawnSync('git', ['-C', dir, 'symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'], { encoding: 'utf8' });
+  const s = r.status === 0 ? r.stdout.trim() : '';
+  return s.startsWith('origin/') && s.length > 7 ? s.slice(7) : null;
+}
+
+// Fills defaultBranch, protectedBranches and defaultBranchUnknown (the reason with the fix, '' when known) of a
+// resolved config from its explicit keys, else from the git repository dir.
+function branches(c, dir) {
+  const def = c.defaultBranch || (dir ? originHead(dir) : null);
+  const why = def ? '' : `the default branch is unknown: no defaultBranch in the config and refs/remotes/origin/HEAD is not set in ${dir || '(no repository)'} - set defaultBranch (or protectedBranches) in the config, or run git remote set-head origin --auto`;
+  const prot = c.protectedBranches || (def ? [def] : null);
+  return Object.assign(c, { defaultBranch: def || null, protectedBranches: prot, defaultBranchUnknown: why });
+}
+
+// The repository the branches are derived from: opts.branchDir (the hooks pass the repository that pushes), else
+// repoDir - a relative repoDir is relative to the project root, the parent of .claude/.
+function branchDirOf(c, file, opts) {
+  if (opts && opts.branchDir) return opts.branchDir;
+  if (!c.repoDir) return null;
+  const base = path.basename(path.dirname(file)) === '.claude' ? path.dirname(path.dirname(file)) : process.cwd();
+  return path.resolve(base, c.repoDir);
+}
+
 function gitMainRoot(dir) {
   const r = spawnSync('git', ['-C', dir, 'rev-parse', '--path-format=absolute', '--git-common-dir'], { encoding: 'utf8' });
   if (r.status !== 0) return null;
@@ -187,11 +219,14 @@ function find(cwd = process.cwd(), env = process.env) {
   return null;
 }
 
-function load(file) {
+function load(file, opts) {
   let raw;
   try { raw = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { return { config: null, errors: [`${file}: ${e.message}`] }; }
   const r = resolve(raw);
-  if (r.config) Object.assign(r.config, { configPath: path.resolve(file), pluginRoot: PLUGIN_ROOT, scriptsDir: path.join(PLUGIN_ROOT, 'scripts') });
+  if (r.config) {
+    Object.assign(r.config, { configPath: path.resolve(file), pluginRoot: PLUGIN_ROOT, scriptsDir: path.join(PLUGIN_ROOT, 'scripts') });
+    branches(r.config, branchDirOf(r.config, path.resolve(file), opts));
+  }
   return r;
 }
 
@@ -206,7 +241,7 @@ function shellLines(c) {
   return Object.entries(v).map(([k, x]) => (x === '' ? `[[ -v ${k} ]] || ${k}=''` : `: \${${k}:=${q(x)}}`)).join('\n');
 }
 
-module.exports = { find, load, resolve, shellLines, SPEC, SLOT_SPEC, RERUN_SPEC, STAND_SPEC, STAND_REQUIRED, WT_SPEC, PROBE_SPEC, HOOKS_SPEC, STANDING_SPEC, PRE_SPEC, ROLES, expand };
+module.exports = { find, load, resolve, branches, shellLines, SPEC, SLOT_SPEC, RERUN_SPEC, STAND_SPEC, STAND_REQUIRED, WT_SPEC, PROBE_SPEC, HOOKS_SPEC, STANDING_SPEC, PRE_SPEC, ROLES, expand };
 
 if (require.main === module) {
   const [cmd, ...rest] = process.argv.slice(2);
@@ -217,28 +252,34 @@ if (require.main === module) {
   const { config, errors } = load(file);
   if (cmd === 'check') {
     for (const e of errors) console.error('codis-agents config: ' + e);
+    // Not an error: the slots and the rest work; the hooks refuse every branch push and wt-setup.sh needs a base.
+    if (config && !config.protectedBranches) console.error(`codis-agents config: note: ${config.defaultBranchUnknown}; until then the hooks refuse every branch push`);
     if (!errors.length) console.log(`ok ${file}`);
     process.exit(errors.length ? 1 : 0);
   }
   if (errors.length) { for (const e of errors) console.error('codis-agents config: ' + e); process.exit(1); }
   if (cmd === 'json') console.log(JSON.stringify(config, null, 2));
   else if (cmd === 'shell') console.log(shellLines(config));
+  else if (cmd === 'default-branch') {
+    console.log(config.defaultBranch || config.defaultBranchUnknown);
+    process.exit(config.defaultBranch ? 0 : 78);
+  }
   else if (cmd === 'get') {
     const v = rest[0].split('.').reduce((o, k) => (o == null ? undefined : o[k]), config);
     if (v === undefined) process.exit(1);
     console.log(typeof v === 'object' ? JSON.stringify(v) : String(v));
-  } else { console.error('usage: config.js path|check|json|shell|get <key>'); process.exit(64); }
+  } else { console.error('usage: config.js path|check|json|shell|get <key>|default-branch'); process.exit(64); }
 }
 
 // For hooks: the project config when there is one (even with validation errors, defaults fill the gaps), else the
-// defaults alone. Never throws.
+// defaults alone; the branches are derived from the repository at cwd (the one the hook runs for). Never throws.
 module.exports.loadOrDefaults = function loadOrDefaults(cwd, env) {
   let f = null;
   try { f = find(cwd, env); } catch { /* not a git repo */ }
-  if (f) { const r = load(f); if (r.config) return r.config; }
+  if (f) { const r = load(f, { branchDir: cwd }); if (r.config) return r.config; }
   const errors = [];
-  return Object.assign(level(SPEC, {}, '', errors), {
+  return branches(Object.assign(level(SPEC, {}, '', errors), {
     slots: level(SLOT_SPEC, {}, '', errors), worktreeSetup: level(WT_SPEC, {}, '', errors),
     gitHooks: level(HOOKS_SPEC, {}, '', errors), preconditions: level(PRE_SPEC, {}, '', errors), roleNotes: {}, configPath: null,
-  });
+  }), cwd);
 };
