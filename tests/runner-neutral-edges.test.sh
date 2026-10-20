@@ -97,6 +97,13 @@ ok 'legacy command without {jobs} (probe fails): counted as the whole budget, "f
 
 # -- FIFO: a single heavy job that comes later does not pass a waiting run without {jobs} ------------------------------
 : > $T/run.log
+# The window between the run's admission and its plan in the slot is short (sourcing slots.zsh there): a node that
+# reads the config 1.5 s slower inside a slot (SLOT_PATH set) makes it wide enough for n2 every time.
+mkdir -p $T/slow; real_node=${commands[node]}
+print -r -- '#!/bin/zsh
+[[ -n $SLOT_PATH && $1 == *config.js ]] && sleep 1.5
+exec '${(q)real_node}' "$@"' > $T/slow/node; chmod +x $T/slow/node
+path=( $T/slow $path )
 hjob n1; waitlong '[[ -e $T/n1.start ]]'
 $H/guards-all.sh --force xp > $T/f.out 2>&1 & GA=$!
 waitlong 'grep -q "whole budget" $T/f.out || ! kill -0 $GA 2>/dev/null'
@@ -105,6 +112,9 @@ SLOT_POLL=0.05 hjob n2; sleep 2
 ok 'a later single heavy job waits behind the queued run without {jobs} (a slot is free, but FIFO)' '[[ ! -e $T/n2.start ]] && ! grep -q "^start" $T/run.log' "$(cat $T/n2.out; cat $T/f.out)"
 touch $T/rel.n1
 waitlong 'grep -q "^start" $T/run.log || [[ -e $T/n2.start ]]'
+# n2 holds its slot until the run has either started or gone back to the queue (released at once, it would be gone
+# before the run's plan looks at its neighbours)
+waitlong 'grep -q "^start" $T/run.log || grep -q "waiting for workers outside the slot" $T/f.out || ! kill -0 $GA 2>/dev/null'
 # n2 is released whatever happened: a run bumped back to the queue waits for it (no deadlock of the test)
 touch $T/rel.n2; wait $GA; rc=$?; waitlong '[[ -e $T/n2.end ]]'
 # The order is the order of admission, from the journal (acquire time, column 3): once the run holds its slot, n2 may
