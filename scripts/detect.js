@@ -4,24 +4,31 @@
 // This is the repository part (`repo`); the machine part (memory, swap, tools) is added separately.
 // usage: detect.js [--root <dir>]   (default: the current directory; inside a repository its top level is read)
 //   prints JSON on stdout and exits 0 - also for "not a git repository" or "docker not found": those are facts, the
-//   onboarding decides what they mean; 64 on bad usage, 66 when the directory does not exist (one line on stderr).
+//   onboarding decides what they mean; 64 on bad usage, 66 when the directory does not exist, 70 on an internal error
+//   (one line on stderr).
 //
 // Output: { root: <absolute path>, repo: {git, ci, stacks, venvs, compose, ignored, existing, notes} }
 //   git      {isRepo, commits, head, defaultBranch, branches: {main, master}, tagShapes: [{shape, count, example}],
 //             remote: [{name, url}], hooksPath}; outside a repository isRepo is false and the rest null.
 //            defaultBranch is what origin/HEAD points to (set by git clone); without it null and a note - no guess,
 //            no network call. A tag shape is the tag with every run of digits replaced by N (v1.2.0 -> vN.N.N), with
-//            the count and the last tag of that shape. A password in a remote URL is replaced by *** (the output goes
+//            the count and the last tag of that shape in byte order (not the newest: v1.9.0 sorts after v1.10.0).
+//            Branch and tag names are full ref names with their refs/... prefix cut, never git's short names (those
+//            turn into heads/main or tags/main when another ref has the same name). A password in a remote URL is replaced by *** (the output goes
 //            into onboarding notes and reports).
 //   ci       [{file}] - GitHub Actions workflow files, .github/workflows/*.yml|yaml (the path GitHub documents).
 //            Which command of them runs the tests is not read here: onboarding asks.
 //   stacks   [{dir, kind, manifests, locks, runnerHint, workspaces}] per directory and kind, from the manifest names
 //            the ecosystems document: node package.json (locks package-lock.json, npm-shrinkwrap.json, yarn.lock,
 //            pnpm-lock.yaml; runnerHint {test: scripts.test verbatim}; workspaces: the npm "workspaces" field);
-//            python pyproject.toml, setup.py, setup.cfg, Pipfile (locks poetry.lock, uv.lock, pdm.lock, Pipfile.lock;
-//            runnerHint {pytestConfig}: the file pytest takes its configuration from, in the precedence of the pytest
-//            docs - pytest.ini, .pytest.ini, pyproject.toml with [tool.pytest.ini_options], tox.ini with [pytest],
-//            setup.cfg with [tool:pytest]); go go.mod, go.work (lock go.sum; runnerHint {testFiles}: *_test.go files
+//            python pyproject.toml, setup.py, setup.cfg, Pipfile and the files that only configure pytest: pytest.toml,
+//            .pytest.toml, pytest.ini, .pytest.ini (locks poetry.lock, uv.lock, pdm.lock, Pipfile.lock;
+//            runnerHint {pytestConfig}: the file pytest takes its configuration from in that directory, in the
+//            precedence of pytest 9 (_pytest/config/findpaths.py, locate_config): pytest.toml, .pytest.toml,
+//            pytest.ini, .pytest.ini (each even empty), pyproject.toml with a non-empty [tool.pytest] table or a
+//            [tool.pytest.ini_options] table, tox.ini with [pytest], setup.cfg with [tool:pytest]; the pyproject tables
+//            are found by their header lines - a pytest table written only as dotted keys under [tool] is not read.
+//            A pyproject.toml without them gives null: pytest reads no options from it); go go.mod, go.work (lock go.sum; runnerHint {testFiles}: *_test.go files
 //            of that module, without the directories the go tool ignores: testdata and names starting with . or _);
 //            rust Cargo.toml (lock Cargo.lock; runnerHint null). Facts only: no decision whether tests exist.
 //   venvs    [{dir, python}] - ignored directories with pyvenv.cfg at their top (PEP 405), python = <dir>/bin/python.
@@ -86,16 +93,18 @@ function readGit(root, notes) {
   r.isRepo = true;
   r.commits = count.code === 0 ? Number(count.out.trim()) : 0;
   if (!r.commits) notes.push('no commits yet');
-  const head = git('symbolic-ref', '-q', '--short', 'HEAD');
-  r.head = head.code === 0 ? head.out.trim() : null;
+  const strip = (out, prefix) => { const t = out.trim(); return t.startsWith(prefix) ? t.slice(prefix.length) : null; };
+  const head = git('symbolic-ref', '-q', 'HEAD');
+  r.head = head.code === 0 ? strip(head.out, 'refs/heads/') : null;
   if (r.head === null) notes.push('HEAD is detached - no current branch');
-  const oh = git('symbolic-ref', '-q', '--short', 'refs/remotes/origin/HEAD');
-  r.defaultBranch = oh.code === 0 && oh.out.trim().startsWith('origin/') ? oh.out.trim().slice('origin/'.length) : null;
+  const oh = git('symbolic-ref', '-q', 'refs/remotes/origin/HEAD');
+  r.defaultBranch = oh.code === 0 ? strip(oh.out, 'refs/remotes/origin/') : null;
   if (r.defaultBranch === null) notes.push(NO_ORIGIN_HEAD);
   const branch = (b) => git('show-ref', '--verify', '--quiet', 'refs/heads/' + b).code === 0
     || git('show-ref', '--verify', '--quiet', 'refs/remotes/origin/' + b).code === 0;
   r.branches = { main: branch('main'), master: branch('master') };
-  const tags = git('for-each-ref', '--format=%(refname:short)', 'refs/tags').out.split('\n').filter(Boolean).sort(byteSort);
+  const tags = git('for-each-ref', '--format=%(refname)', 'refs/tags').out.split('\n').filter(Boolean)
+    .map((t) => t.slice('refs/tags/'.length)).sort(byteSort);
   const shapes = new Map();
   for (const t of tags) {
     const shape = t.replace(/[0-9]+/g, 'N');
@@ -119,7 +128,7 @@ const NODE_LOCKS = ['npm-shrinkwrap.json', 'package-lock.json', 'pnpm-lock.yaml'
 const KINDS = [
   { kind: 'go', manifests: ['go.mod', 'go.work'], locks: ['go.sum'] },
   { kind: 'node', manifests: ['package.json'], locks: NODE_LOCKS },
-  { kind: 'python', manifests: ['Pipfile', 'pyproject.toml', 'setup.cfg', 'setup.py'], locks: ['Pipfile.lock', 'pdm.lock', 'poetry.lock', 'uv.lock'] },
+  { kind: 'python', manifests: ['.pytest.ini', '.pytest.toml', 'Pipfile', 'pyproject.toml', 'pytest.ini', 'pytest.toml', 'setup.cfg', 'setup.py'], locks: ['Pipfile.lock', 'pdm.lock', 'poetry.lock', 'uv.lock'] },
   { kind: 'rust', manifests: ['Cargo.toml'], locks: ['Cargo.lock'] },
 ];
 const COMPOSE_FILES = ['compose.yaml', 'compose.yml', 'docker-compose.yaml', 'docker-compose.yml',
@@ -129,11 +138,31 @@ function hasSection(text, header) {
   return text !== null && text.split(/\r?\n/).some((l) => l.trim() === header);
 }
 
+// pyproject.toml configures pytest with [tool.pytest.ini_options] (even empty) or a [tool.pytest] table that is not
+// empty: a key under its own header, or any subtable [tool.pytest.<x>] / [[tool.pytest.<x>]]. A TOML header may hold
+// spaces around the dots and a trailing comment.
+function pyprojectPytest(text) {
+  if (text === null) return false;
+  let inTable = false;
+  for (const raw of text.split(/\r?\n/)) {
+    const l = raw.replace(/#.*$/, '').trim();
+    if (!l) continue;
+    const h = /^\[\[?([^\]]*)\]\]?$/.exec(l);
+    if (h) {
+      const name = h[1].replace(/[ \t]/g, '');
+      if (name.startsWith('tool.pytest.')) return true;
+      inTable = name === 'tool.pytest';
+      continue;
+    }
+    if (inTable) return true;
+  }
+  return false;
+}
+
 function pytestConfig(root, dir) {
   const f = (n) => path.join(root, dir, n);
-  if (isFile(f('pytest.ini'))) return 'pytest.ini';
-  if (isFile(f('.pytest.ini'))) return '.pytest.ini';
-  if (hasSection(readText(f('pyproject.toml')), '[tool.pytest.ini_options]')) return 'pyproject.toml';
+  for (const n of ['pytest.toml', '.pytest.toml', 'pytest.ini', '.pytest.ini']) if (isFile(f(n))) return n;
+  if (pyprojectPytest(readText(f('pyproject.toml')))) return 'pyproject.toml';
   if (hasSection(readText(f('tox.ini')), '[pytest]')) return 'tox.ini';
   if (hasSection(readText(f('setup.cfg')), '[tool:pytest]')) return 'setup.cfg';
   return null;

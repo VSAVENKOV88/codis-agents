@@ -93,7 +93,8 @@
       "dir": "tools/café py",
       "kind": "python",
       "manifests": [
-        "pyproject.toml"
+        "pyproject.toml",
+        "pytest.ini"
       ],
       "locks": [
         "uv.lock"
