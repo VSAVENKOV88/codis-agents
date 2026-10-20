@@ -134,8 +134,10 @@ cfg $T/fx.json 'cd {wt} && pytest -n {jobs}'
 hjob n3; waitlong '[[ -e $T/n3.start ]]'
 sl=( $SLOTS_DIR/heavy.*.lock.who(Nom[1]) ); sl=${sl%.who}   # the slot n3 has just taken: its .who is the newest
 ok 'a single heavy job holds its slot with no budget record (.jobs, .whole)' '[[ -n $sl && ! -e $sl.jobs && ! -e $sl.whole ]]' "slot=$sl; $(ls $SLOTS_DIR)"
-CODIS_AGENTS_CONFIG=$T/fx.json $H/guards-all.sh --force xp > $T/fx.out 2>&1; rc=$?
-touch $T/rel.n3; waitlong '[[ -e $T/n3.end ]]'
+# in the background, bounded: given no budget it would wait for n3, which is released only after it
+CODIS_AGENTS_CONFIG=$T/fx.json $H/guards-all.sh --force xp > $T/fx.out 2>&1 & GF=$!
+for i in {1..300}; do kill -0 $GF 2>/dev/null || break; sleep 0.1; done
+touch $T/rel.n3; wait $GF; rc=$?; waitlong '[[ -e $T/n3.end ]]'
 ok '... a run with {jobs} next to it gets its share "fixed 3", exit 0' '(( rc == 0 )) && grep -q "^start wts/xp fixed 3$" $T/run.log' "$rc $(cat $T/fx.out | tail -5; cat $T/run.log)"
 
 print -r -- "TOTAL: $pass ok, $fail fail"
