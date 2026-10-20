@@ -127,6 +127,7 @@ read.
 | `scripts/role-diff-check.js` | git post-check of the tester and reviewers |
 | `scripts/role-leftovers-check.js` | post-check after the tester and at the end of a task: Docker resources of the task's stack (by the compose project label), processes in its worktree, slots they hold; `--fix` removes only those, never the owner's stack |
 | `scripts/chain-cost.js` | cost of chain runs per task from the agent transcripts, and per feature (parts summed by `feature`, across runs) |
+| `scripts/detect.js` | the facts of a repository for onboarding, read only, as JSON: git (default branch from origin/HEAD, main/master, tag shapes, remotes without passwords, hooksPath), GitHub workflow files, stacks by manifest, venvs, compose services (`docker compose config`, no daemon), ignored data with sizes, what an earlier onboarding left; the contract is in its header |
 | `scripts/env-check.js` | free disk and swap headroom for the preconditions, floors from `preconditions` in the config |
 | `scripts/git-hooks/` | `pre-push` (protected branches and tags) and `pre-commit` (cloud conflict copies, extra checks) |
 | `scripts/config.js` | finds, validates and resolves the project config |
@@ -342,7 +343,8 @@ npm test            # or: node tests/run.js [filter]
 The suite checks the chain logic with fake agents (every routing case, the post-checks, the rule markers against
 `RULE_LIST` and every role prompt), the post-check and cost scripts, the config, the hooks, the worktree setup, the
 slots on a fake machine (classes, the extra slot, swap, queue order, worker budget, the slot journal and its summary),
-the stand ticket on fake project commands, that the repository holds no
+the stand ticket on fake project commands, `detect.js` on fixture repositories built from
+`tests/fixtures/repos/` against their expected output, that the repository holds no
 Cyrillic text, home paths or e-mail addresses, and that a run without zsh skips the zsh tests visibly instead of failing.
 
 ## License

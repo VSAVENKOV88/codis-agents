@@ -5,7 +5,7 @@
     "head": "trunk",
     "defaultBranch": null,
     "branches": {
-      "main": true,
+      "main": false,
       "master": false
     },
     "tagShapes": [],

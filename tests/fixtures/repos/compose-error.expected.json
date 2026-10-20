@@ -42,7 +42,7 @@
       "files": [
         "compose.yaml"
       ],
-      "name": "b",
+      "name": null,
       "services": null
     }
   ],
