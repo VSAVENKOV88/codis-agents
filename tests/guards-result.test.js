@@ -184,7 +184,8 @@ try {
     const cfgFile = (extra) => { const f = path.join(T, 'cfg.json'); fs.writeFileSync(f, JSON.stringify(Object.assign({ repoDir: path.join(T, 'main'), worktreeRoot: wts, sharedDir: shared,
       guardCommand: 'cd {wt} && ./full.sh {jobs}', slots: { lockDir: path.join(T, 'slots'), legacyLock: path.join(T, 'guards.lock') } }, extra))); return f; };
     const env = (f) => Object.assign({}, process.env, { CODIS_AGENTS_CONFIG: f, PATH: bin + path.delimiter + process.env.PATH, SLOT_POLL: '0.2', SLOT_SAY: '1', SLOT_THIRD_WINDOW: '1', SLOT_HIST_GAP: '2' });
-    for (const k of ['SLOTS_DIR', 'SLOT_LEGACY_LOCK', 'SLOT_JOURNAL', 'SLOT_LABEL', 'SLOT_KIND', 'SLOT_RETRY_RC']) delete process.env[k];
+    // run inside an outer slot, the outer slots.zsh has exported its own lock, journal and counts
+    for (const k of ['SLOTS_DIR', 'SLOT_LEGACY_LOCK', 'SLOT_JOURNAL', 'SLOT_LABEL', 'SLOT_KIND', 'SLOT_RETRY_RC', 'GUARDS_EXCLUSIVE_LOCK', 'SLOT_MEDIUM_N', 'SLOT_HEAVY_N', 'SLOT_TOTAL_MAX', 'GUARDS_JOBS_ALONE', 'GUARDS_JOBS_SHARED', 'SLOT_EXCL_TOOLS', 'SLOT_PATH']) delete process.env[k];
     const count = (f) => { try { return fs.readFileSync(path.join(T, f), 'utf8').trim().split('\n').filter(Boolean).length; } catch { return 0; } };
     const ga = (f, ...a) => spawnSync('zsh', [path.join(ROOT, 'scripts', 'guards-all.sh'), ...a], { encoding: 'utf8', env: env(f), timeout: 120000 });
     const set = (rc, red) => { fs.writeFileSync(path.join(T, 'full.log'), LOG); fs.writeFileSync(path.join(T, 'full.rc'), String(rc)); fs.writeFileSync(path.join(T, 'red.txt'), red.map((x) => x + '\n').join(''));

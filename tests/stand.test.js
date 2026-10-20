@@ -42,7 +42,8 @@ const cfgOf = (stand, extra = {}) => Object.assign({ repoDir: path.join(T, 'main
 const CFG = path.join(T, 'cfg.json');
 fs.writeFileSync(CFG, JSON.stringify(cfgOf(STAND)));
 const env = Object.assign({}, process.env, { CODIS_AGENTS_CONFIG: CFG, HOME: path.join(T, 'home'), SLOT_POLL: '0.2', SLOT_SAY: '1' });
-for (const k of ['SLOTS_DIR', 'SLOT_JOURNAL', 'SLOT_LEGACY_LOCK', 'CLAUDE_PROJECT_DIR']) delete env[k];
+// run inside an outer slot, the outer slots.zsh has exported its own lock, journal and counts
+for (const k of ['SLOTS_DIR', 'SLOT_JOURNAL', 'SLOT_LEGACY_LOCK', 'CLAUDE_PROJECT_DIR', 'GUARDS_EXCLUSIVE_LOCK', 'SLOT_MEDIUM_N', 'SLOT_HEAVY_N', 'SLOT_TOTAL_MAX', 'GUARDS_JOBS_ALONE', 'GUARDS_JOBS_SHARED', 'SLOT_EXCL_TOOLS', 'SLOT_PATH']) delete env[k];
 
 const procs = [];
 function take(dir, args = [], e = {}) {
