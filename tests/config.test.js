@@ -64,7 +64,30 @@ bad({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s', slotz: {} }, /slotz: u
 bad({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s', slots: { heavy: '2' } }, /slots.heavy: expected number/, 'wrong type - error');
 bad({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s', slots: { heavy: 0 } }, /slots.heavy: expected a positive integer/, 'zero slots - error');
 bad({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s', guardCommand: 'npm test' }, /guardCommand: must contain \{wt\}/, 'guard command without {wt} - error');
-bad({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s', guardCommand: 'cd {wt} && npm test' }, /must contain \{jobs\}/, 'guard command without {jobs} - error');
+// {jobs} is optional (U2b-2, A1-A3): a runner that sets its own workers is counted as the whole budget by guards-all.sh.
+const B = { repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s' };
+const good = (raw, name) => { const x = C.resolve(raw); ok(name, x.errors.length === 0, x.errors.join('; ')); return x.config; };
+good(Object.assign({}, B, { guardCommand: 'cd {wt} && pytest -q -rf' }), 'A1. guardCommand with {wt} and without {jobs} - ok');
+bad(Object.assign({}, B, { guardCommand: 'pytest -q' }), /guardCommand: must contain \{wt\}/, 'A2. guardCommand without {wt} - still an error');
+good(Object.assign({}, B, { guardCommand: 'cd {wt} && run --limit-file {limitFile}', guardCommandLegacy: 'cd {wt} && pytest -q' }), 'A3. guardCommandLegacy without {jobs} - ok');
+// guardExclusive {glob, marker} (D1, D6): without the key the current default; with it both are required.
+let gx = good(Object.assign({}, B), 'D1. no guardExclusive - ok');
+ok('D1. ... default: *-run.js and *-run.mjs with the marker //', gx.guardExclusive && gx.guardExclusive.glob.join() === '*-run.js,*-run.mjs' && gx.guardExclusive.marker === '//', JSON.stringify(gx.guardExclusive));
+gx = good(Object.assign({}, B, { guardExclusive: { glob: ['test_*.py', '*_test.py'], marker: '#' } }), 'D2. guardExclusive {glob: [test_*.py, *_test.py], marker: #} - ok');
+ok('D2. ... kept as given', !!(gx && gx.guardExclusive) && gx.guardExclusive.glob.join() === 'test_*.py,*_test.py' && gx.guardExclusive.marker === '#', JSON.stringify(gx.guardExclusive));
+for (const [v, re, n] of [
+  [{ glob: 'test_*.py', marker: '#' }, /guardExclusive\.glob: expected string\[\]/, 'glob not a list'],
+  [{ glob: [], marker: '#' }, /guardExclusive\.glob: /, 'empty glob list'],
+  [{ glob: [''], marker: '#' }, /guardExclusive\.glob: /, 'empty glob'],
+  [{ glob: ['tests/test_*.py'], marker: '#' }, /guardExclusive\.glob: .*file name/, 'glob with a slash (it matches the file name)'],
+  [{ glob: ['test_*.py'], marker: '' }, /guardExclusive\.marker: /, 'empty marker'],
+  [{ glob: ['test_*.py'], marker: ' # ' }, /guardExclusive\.marker: /, 'marker with blanks'],
+  [{ glob: ['test_*.py'] }, /guardExclusive\.marker: required/, 'marker missing'],
+  [{ marker: '#' }, /guardExclusive\.glob: required/, 'glob missing'],
+  [{ glob: ['test_*.py'], marker: 1 }, /guardExclusive\.marker: expected string/, 'marker not a string'],
+  [{ glob: ['test_*.py'], marker: '#', reason: 'x' }, /guardExclusive\.reason: unknown key/, 'unknown key'],
+  ['#', /guardExclusive: expected object/, 'not an object'],
+]) bad(Object.assign({}, B, { guardExclusive: v }), re, `D6. guardExclusive ${n} - error`);
 bad({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s', guardAdaptiveProbe: { file: 'a', contains: 'b' } }, /needs guardCommandLegacy/, 'probe without a legacy command - error');
 bad({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s', roleNotes: { coder: 'x' } }, /roleNotes.coder: unknown role/, 'notes for an unknown role - error');
 bad({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s', standingPush: { branches: ['main'] } }, /standingPush: branches and check are required/, 'standingPush without a check - error');
