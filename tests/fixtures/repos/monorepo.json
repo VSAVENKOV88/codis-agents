@@ -1,0 +1,30 @@
+{
+  "files": {
+    ".gitignore": "node_modules/\n",
+    "package.json": "{\n  \"name\": \"fx-mono\",\n  \"private\": true,\n  \"workspaces\": [\n    \"packages/*\"\n  ],\n  \"scripts\": {\n    \"test\": \"npm test --workspaces\"\n  }\n}\n",
+    "package-lock.json": "{\n  \"name\": \"fx-mono\",\n  \"lockfileVersion\": 3\n}\n",
+    "packages/a/package.json": "{\n  \"name\": \"a\",\n  \"scripts\": {\n    \"test\": \"node --test\"\n  }\n}\n",
+    "packages/b/package.json": "{\n  \"name\": \"b\"\n}\n",
+    "packages/a-b/package.json": "{\n  \"name\": \"a-b\",\n  \"scripts\": {\n    \"test\": \"node --test\"\n  }\n}\n",
+    "services/api/go.mod": "module example.com/api\n\ngo 1.22\n",
+    "services/api/go.sum": "",
+    "services/api/main.go": "package main\n",
+    "services/api/main_test.go": "package main\n",
+    "services/api/h_test.go": "package main\n",
+    "tools/café py/pyproject.toml": "[project]\nname = \"tool\"\n",
+    "tools/café py/pytest.ini": "[pytest]\n",
+    "tools/café py/uv.lock": "version = 1\n",
+    ".github/workflows/ci.yaml": "on: push\njobs: {}\n",
+    ".github/workflows/README.md": "not a workflow\n",
+    "docs/read me.md": "# docs\n"
+  },
+  "git": {
+    "init": true,
+    "branch": "main",
+    "commit": true,
+    "origin": {
+      "head": "main",
+      "url": "https://example.com/org/monorepo.git"
+    }
+  }
+}

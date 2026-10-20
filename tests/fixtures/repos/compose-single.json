@@ -1,0 +1,25 @@
+{
+  "files": {
+    ".gitignore": "data/\n",
+    "Dockerfile": "FROM scratch\n",
+    "docker-compose.yml": "services:\n  app:\n    build: .\n    ports:\n      - \"${APP_PORT:-3000}:3000\"\n",
+    ".claude/codis-agents.json": "{\n  \"repoDir\": \".\"\n}\n",
+    "scripts/stand/up.sh": "#!/bin/sh\nexit 0\n",
+    "scripts/stand/down.sh": "#!/bin/sh\nexit 0\n",
+    "CLAUDE.md": "# Project\n\n@~/.claude/plugins/marketplaces/codis-agents/rules/multi-agent.md\n"
+  },
+  "ignored": {
+    "data/db.bin": {
+      "bytes": 4096
+    }
+  },
+  "git": {
+    "init": true,
+    "branch": "main",
+    "commit": true,
+    "origin": {
+      "head": "main",
+      "url": "https://example.com/org/compose-single.git"
+    }
+  }
+}

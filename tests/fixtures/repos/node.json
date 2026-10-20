@@ -1,0 +1,28 @@
+{
+  "files": {
+    ".gitignore": "node_modules/\n",
+    "package.json": "{\n  \"name\": \"fx-node\",\n  \"version\": \"1.0.0\",\n  \"scripts\": {\n    \"test\": \"node --test\"\n  }\n}\n",
+    "package-lock.json": "{\n  \"name\": \"fx-node\",\n  \"lockfileVersion\": 3\n}\n",
+    "test/a.test.js": "require('node:test');\n",
+    ".github/workflows/test.yml": "on: push\njobs: {}\n"
+  },
+  "ignored": {
+    "node_modules/m/index.js": "module.exports = 1;\n",
+    "node_modules/m/package.json": {
+      "bytes": 100
+    }
+  },
+  "git": {
+    "init": true,
+    "branch": "main",
+    "commit": true,
+    "tags": [
+      "v1.0.0",
+      "v1.1.0"
+    ],
+    "origin": {
+      "head": "main",
+      "url": "https://example.com/org/node.git"
+    }
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "git": {
+    "isRepo": true,
+    "commits": 0,
+    "head": "main",
+    "defaultBranch": null,
+    "branches": {
+      "main": false,
+      "master": false
+    },
+    "tagShapes": [],
+    "remote": [],
+    "hooksPath": null
+  },
+  "ci": [],
+  "stacks": [
+    {
+      "dir": ".",
+      "kind": "node",
+      "manifests": [
+        "package.json"
+      ],
+      "locks": [],
+      "runnerHint": {
+        "test": "node --test"
+      },
+      "workspaces": null
+    }
+  ],
+  "venvs": [],
+  "compose": [],
+  "ignored": [
+    {
+      "path": "node_modules/",
+      "bytes": 2
+    }
+  ],
+  "existing": {
+    "codisConfig": null,
+    "standScripts": [],
+    "claudeMdImport": false
+  },
+  "notes": [
+    "no commits yet",
+    "origin/HEAD not set - default branch unknown (no network call is made to find it)"
+  ]
+}

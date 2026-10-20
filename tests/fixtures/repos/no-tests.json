@@ -1,0 +1,16 @@
+{
+  "files": {
+    "README.md": "# no tests\n",
+    "src/index.js": "module.exports = {};\n",
+    "package.json": "{\n  \"name\": \"fx-no-tests\",\n  \"version\": \"1.0.0\",\n  \"scripts\": {\n    \"test\": \"echo \\\"Error: no test specified\\\" && exit 1\"\n  }\n}\n"
+  },
+  "git": {
+    "init": true,
+    "branch": "main",
+    "commit": true,
+    "origin": {
+      "head": "main",
+      "url": "https://example.com/org/no-tests.git"
+    }
+  }
+}

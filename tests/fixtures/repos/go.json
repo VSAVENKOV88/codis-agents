@@ -1,0 +1,19 @@
+{
+  "files": {
+    "go.mod": "module example.com/fx\n\ngo 1.22\n",
+    "x.go": "package fx\n",
+    "x_test.go": "package fx\n",
+    "testdata/in_test.go": "package ignored\n",
+    "_tools/t_test.go": "package ignored\n",
+    "testdata/in.txt": "data\n"
+  },
+  "git": {
+    "init": true,
+    "branch": "main",
+    "commit": true,
+    "origin": {
+      "head": "main",
+      "url": "https://example.com/org/go.git"
+    }
+  }
+}

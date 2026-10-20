@@ -1,0 +1,17 @@
+{
+  "files": {
+    "compose.yaml": "services:\n  web:\n    build:\n      context: ./web\n      dockerfile: web.Dockerfile\n    ports:\n      - \"8080:80\"\n      - target: 443\n        published: \"8443\"\n        protocol: tcp\n        host_ip: 127.0.0.1\n    healthcheck:\n      test: [\"CMD\", \"wget\", \"-q\", \"-O-\", \"http://localhost/health\"]\n      interval: 5s\n  db:\n    image: postgres:16\n  dns:\n    image: example/dns:1\n    ports:\n      - \"127.0.0.1:5353:53/udp\"\n",
+    "compose.override.yaml": "services:\n  db:\n    healthcheck:\n      test: [\"CMD-SHELL\", \"pg_isready\"]\n",
+    "docker-compose.yml": "services:\n  legacy:\n    image: example/legacy:1\n",
+    "web/web.Dockerfile": "FROM scratch\n"
+  },
+  "git": {
+    "init": true,
+    "branch": "main",
+    "commit": true,
+    "origin": {
+      "head": "main",
+      "url": "https://example.com/org/compose-multi.git"
+    }
+  }
+}

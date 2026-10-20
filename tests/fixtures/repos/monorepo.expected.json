@@ -1,0 +1,117 @@
+{
+  "git": {
+    "isRepo": true,
+    "commits": 1,
+    "head": "main",
+    "defaultBranch": "main",
+    "branches": {
+      "main": true,
+      "master": false
+    },
+    "tagShapes": [],
+    "remote": [
+      {
+        "name": "origin",
+        "url": "https://example.com/org/monorepo.git"
+      }
+    ],
+    "hooksPath": null
+  },
+  "ci": [
+    {
+      "file": ".github/workflows/ci.yaml"
+    }
+  ],
+  "stacks": [
+    {
+      "dir": ".",
+      "kind": "node",
+      "manifests": [
+        "package.json"
+      ],
+      "locks": [
+        "package-lock.json"
+      ],
+      "runnerHint": {
+        "test": "npm test --workspaces"
+      },
+      "workspaces": [
+        "packages/*"
+      ]
+    },
+    {
+      "dir": "packages/a",
+      "kind": "node",
+      "manifests": [
+        "package.json"
+      ],
+      "locks": [],
+      "runnerHint": {
+        "test": "node --test"
+      },
+      "workspaces": null
+    },
+    {
+      "dir": "packages/a-b",
+      "kind": "node",
+      "manifests": [
+        "package.json"
+      ],
+      "locks": [],
+      "runnerHint": {
+        "test": "node --test"
+      },
+      "workspaces": null
+    },
+    {
+      "dir": "packages/b",
+      "kind": "node",
+      "manifests": [
+        "package.json"
+      ],
+      "locks": [],
+      "runnerHint": {
+        "test": null
+      },
+      "workspaces": null
+    },
+    {
+      "dir": "services/api",
+      "kind": "go",
+      "manifests": [
+        "go.mod"
+      ],
+      "locks": [
+        "go.sum"
+      ],
+      "runnerHint": {
+        "testFiles": 2
+      },
+      "workspaces": null
+    },
+    {
+      "dir": "tools/café py",
+      "kind": "python",
+      "manifests": [
+        "pyproject.toml",
+        "pytest.ini"
+      ],
+      "locks": [
+        "uv.lock"
+      ],
+      "runnerHint": {
+        "pytestConfig": "pytest.ini"
+      },
+      "workspaces": null
+    }
+  ],
+  "venvs": [],
+  "compose": [],
+  "ignored": [],
+  "existing": {
+    "codisConfig": null,
+    "standScripts": [],
+    "claudeMdImport": false
+  },
+  "notes": []
+}

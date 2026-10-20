@@ -1,0 +1,61 @@
+{
+  "git": {
+    "isRepo": true,
+    "commits": 1,
+    "head": "main",
+    "defaultBranch": "main",
+    "branches": {
+      "main": true,
+      "master": false
+    },
+    "tagShapes": [
+      {
+        "shape": "vN.N.N",
+        "count": 2,
+        "example": "v1.1.0"
+      }
+    ],
+    "remote": [
+      {
+        "name": "origin",
+        "url": "https://example.com/org/node.git"
+      }
+    ],
+    "hooksPath": null
+  },
+  "ci": [
+    {
+      "file": ".github/workflows/test.yml"
+    }
+  ],
+  "stacks": [
+    {
+      "dir": ".",
+      "kind": "node",
+      "manifests": [
+        "package.json"
+      ],
+      "locks": [
+        "package-lock.json"
+      ],
+      "runnerHint": {
+        "test": "node --test"
+      },
+      "workspaces": null
+    }
+  ],
+  "venvs": [],
+  "compose": [],
+  "ignored": [
+    {
+      "path": "node_modules/",
+      "bytes": 120
+    }
+  ],
+  "existing": {
+    "codisConfig": null,
+    "standScripts": [],
+    "claudeMdImport": false
+  },
+  "notes": []
+}

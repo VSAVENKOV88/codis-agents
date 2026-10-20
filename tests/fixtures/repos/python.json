@@ -1,0 +1,21 @@
+{
+  "files": {
+    ".gitignore": ".venv/\n__pycache__/\n",
+    "pyproject.toml": "[project]\nname = \"fx-python\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\n",
+    "tests/test_a.py": "def test_a():\n    assert True\n",
+    "src/fx/__init__.py": ""
+  },
+  "ignored": {
+    ".venv/pyvenv.cfg": "home = /usr/bin\n",
+    ".venv/bin/python": "#!/bin/sh\n"
+  },
+  "git": {
+    "init": true,
+    "branch": "main",
+    "commit": true,
+    "origin": {
+      "head": "main",
+      "url": "git@example.com:org/python.git"
+    }
+  }
+}

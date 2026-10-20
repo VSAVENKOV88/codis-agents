@@ -1,0 +1,14 @@
+{
+  "files": {
+    ".gitignore": "node_modules/\n",
+    "package.json": "{\n  \"name\": \"fx-new\",\n  \"scripts\": {\n    \"test\": \"node --test\"\n  }\n}\n"
+  },
+  "ignored": {
+    "node_modules/x.js": "x\n"
+  },
+  "git": {
+    "init": true,
+    "branch": "main",
+    "commit": false
+  }
+}

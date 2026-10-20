@@ -1,0 +1,42 @@
+{
+  "git": {
+    "isRepo": true,
+    "commits": 1,
+    "head": "master",
+    "defaultBranch": "master",
+    "branches": {
+      "main": false,
+      "master": true
+    },
+    "tagShapes": [
+      {
+        "shape": "release-N-N",
+        "count": 1,
+        "example": "release-2026-10"
+      },
+      {
+        "shape": "vN.N.N",
+        "count": 1,
+        "example": "v1.2.0"
+      }
+    ],
+    "remote": [
+      {
+        "name": "origin",
+        "url": "https://user:***@example.com/org/x.git"
+      }
+    ],
+    "hooksPath": null
+  },
+  "ci": [],
+  "stacks": [],
+  "venvs": [],
+  "compose": [],
+  "ignored": [],
+  "existing": {
+    "codisConfig": null,
+    "standScripts": [],
+    "claudeMdImport": false
+  },
+  "notes": []
+}

@@ -1,0 +1,28 @@
+{
+  "git": {
+    "isRepo": true,
+    "commits": 1,
+    "head": "trunk",
+    "defaultBranch": null,
+    "branches": {
+      "main": false,
+      "master": false
+    },
+    "tagShapes": [],
+    "remote": [],
+    "hooksPath": ".githooks"
+  },
+  "ci": [],
+  "stacks": [],
+  "venvs": [],
+  "compose": [],
+  "ignored": [],
+  "existing": {
+    "codisConfig": null,
+    "standScripts": [],
+    "claudeMdImport": false
+  },
+  "notes": [
+    "origin/HEAD not set - default branch unknown (no network call is made to find it)"
+  ]
+}
