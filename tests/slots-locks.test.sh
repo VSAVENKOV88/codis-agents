@@ -17,7 +17,8 @@
 #           counts as busy for the new probe; 11. a slot lock this user cannot open for writing (left by sudo, or by
 #           root in a container over a shared slot directory) - a slot file, admit.lock, the slot directory itself - is
 #           a refusal: one line naming the path, code 77, within seconds, the command never runs (zsystem flock reads a
-#           failed open as "busy", so the job waited forever).
+#           failed open as "busy", so the job waited forever); a lock turning unwritable while the job waits is refused on
+#           the next poll.
 H=${SLOTS_H:-${0:A:h:h}/scripts}
 zmodload zsh/datetime zsh/system
 T=$(mktemp -d "${${TMPDIR:-/tmp}%/}/slots-locks.XXXXXX"); T=${T:A}
@@ -193,6 +194,17 @@ for c11 in medium.1.lock admit.lock queue.lock dir; do
   ok "11. $c11 not writable: medium.sh refused with code 77 within 10 s, the command did not run" '(( rc == 77 )) && [[ ! -e $T/11.ran ]]' "$rc $(tail -2 $T/11.out; tail -2 $T/11.err)"
   ok "11. $c11 not writable: one line on stderr naming $bad" '[[ $(wc -l < $T/11.err | tr -d " ") == 1 ]] && grep -qF -- "$bad " $T/11.err' "$(tail -3 $T/11.err)"
 done
+# 11. ... a lock that turns unwritable while the job waits (a sudo job started meanwhile) is refused on the next poll
+d=$T/s11-late; mkdir -p $d; : > $d/medium.1.lock; rm -f $T/11.ran
+fhold $d/medium.1.lock late11; waitfor '[[ -e $T/late11.held ]]'
+SLOTS_DIR=$d SLOT_MEDIUM_N=1 "$H/medium.sh" zsh -c 'touch '$T'/11.ran' > $T/11l.out 2> $T/11l.err & P=$!; BG+=$P
+waitfor 'grep -q "waiting for slot medium" $T/11l.out'; chmod 444 $d/admit.lock
+if [[ -w $d/admit.lock ]]; then print -r -- "  note 11. late: this user writes a read-only file (root) - nothing to refuse"; touch $T/rel.late11; bwait $P >/dev/null
+else
+  bwait $P; rc=$?; chmod 644 $d/admit.lock; touch $T/rel.late11
+  ok '11. admit.lock turned unwritable while waiting: refused with code 77, the command did not run' '(( rc == 77 )) && [[ ! -e $T/11.ran ]]' "$rc $(tail -2 $T/11l.out; tail -2 $T/11l.err)"
+  ok '11. ... one line on stderr naming admit.lock' '[[ $(wc -l < $T/11l.err | tr -d " ") == 1 ]] && grep -qF -- "$d/admit.lock " $T/11l.err' "$(tail -3 $T/11l.err)"
+fi
 
 print -r -- "
 $pass passed, $fail failed"
