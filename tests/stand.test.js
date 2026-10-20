@@ -45,8 +45,8 @@ const env = Object.assign({}, process.env, { CODIS_AGENTS_CONFIG: CFG, HOME: pat
 for (const k of ['SLOTS_DIR', 'SLOT_JOURNAL', 'SLOT_LEGACY_LOCK', 'CLAUDE_PROJECT_DIR']) delete env[k];
 
 const procs = [];
-function take(dir, args = []) {
-  const p = spawn('zsh', [path.join(S, 'stand.sh'), 'take', ...args], { cwd: dir, env });
+function take(dir, args = [], e = {}) {
+  const p = spawn('zsh', [path.join(S, 'stand.sh'), 'take', ...args], { cwd: dir, env: Object.assign({}, env, e) });
   p.out = ''; p.exited = null;
   p.stdout.on('data', (d) => { p.out += d; }); p.stderr.on('data', (d) => { p.out += d; });
   p.on('exit', (c, s) => { p.exited = { c, s }; });
@@ -86,7 +86,8 @@ const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { retu
     ok('take again from the holder\'s worktree: says so, exit 0, no second holder', r.status === 0 && /already holds/.test(outOf(r)), outOf(r));
 
     // B2/B3: two waiters queue by ticket.
-    const pb = take(B); await sleep(700); const pc = take(C);
+    // The earlier waiter polls slowly, the later one fast: only the queue makes the earlier one win.
+    const pb = take(B, [], { SLOT_POLL: '1.5' }); await sleep(700); const pc = take(C, [], { SLOT_POLL: '0.05' });
     ok('B2 the second waits and tells its place: "position 1 in queue"', await waitFor(() => /waiting for the stand ticket stand-test, position 1 in queue \(\d+ s\): held by /.test(pb.out)), pb.out);
     ok('B3 the third: "position 2 in queue"', await waitFor(() => /waiting for the stand ticket stand-test, position 2 in queue/.test(pc.out)), pc.out);
     await sleep(2300);
@@ -140,7 +141,8 @@ const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { retu
     await waitFor(() => /position 1 in queue/.test(pd.out));
     process.kill(pd.pid, 'SIGKILL');
     await sleep(300);
-    const pe = take(E);
+    // Started from outside its worktree with a relative --wt: only the holder's cwd ties it to the worktree.
+    const pe = take(T, ['--wt', path.relative(T, E)]);
     ok('B5 a waiter after a dead one is first in the queue', await waitFor(() => /position 1 in queue/.test(pe.out)), pe.out);
     ok('B5 ... the dead waiter\'s ticket is gone', !tickets().some((t) => t.split(' ')[1] === String(pd.pid)), tickets().join('|'));
     r = st(['release'], C);
