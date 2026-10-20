@@ -108,6 +108,9 @@ function judge(words, ctx) {
       const srcRef = src ? (g('rev-parse', '--symbolic-full-name', src).stdout || '').trim() : '';
       knownTag = isTag && srcRef.startsWith('refs/tags/');
     }
+    // The refspec ":" (or "+:") is a matching push: its destination is empty, yet git pushes every branch present on
+    // both sides under the same name, the default branch too. While the branches are unknown it is a branch push.
+    if (d === '' && !cfg.protectedBranches) return `\`git push\` of the matching refspec ":" is refused: it pushes every matching branch and protected branches unknown - ${cfg.defaultBranchUnknown} (ALLOW_PROTECTED_PUSH=1 only on the owner's explicit word).`;
     if (branch && !knownTag && !cfg.protectedBranches) return `\`git push\` of ${branch} is refused: protected branches unknown - ${cfg.defaultBranchUnknown} (ALLOW_PROTECTED_PUSH=1 only on the owner's explicit word).`;
     // Unknown branches refuse every branch push above; a known tag gets past it and is judged as a tag below, so here
     // no branch counts as protected (a crash would exit 1, which Claude Code treats as non-blocking: fail open).
