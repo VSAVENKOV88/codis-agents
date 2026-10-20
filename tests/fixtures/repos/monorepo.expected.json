@@ -52,6 +52,18 @@
       "workspaces": null
     },
     {
+      "dir": "packages/a-b",
+      "kind": "node",
+      "manifests": [
+        "package.json"
+      ],
+      "locks": [],
+      "runnerHint": {
+        "test": "node --test"
+      },
+      "workspaces": null
+    },
+    {
       "dir": "packages/b",
       "kind": "node",
       "manifests": [

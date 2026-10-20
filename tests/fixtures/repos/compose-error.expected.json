@@ -26,7 +26,15 @@
       "files": [
         "compose.yaml"
       ],
-      "name": "a",
+      "name": null,
+      "services": null
+    },
+    {
+      "dir": "b",
+      "files": [
+        "compose.yaml"
+      ],
+      "name": "b",
       "services": [
         {
           "name": "x",
@@ -36,14 +44,6 @@
           "healthcheck": null
         }
       ]
-    },
-    {
-      "dir": "b",
-      "files": [
-        "compose.yaml"
-      ],
-      "name": null,
-      "services": null
     }
   ],
   "ignored": [],
@@ -53,6 +53,6 @@
     "claudeMdImport": false
   },
   "notes": [
-    "compose config failed in b: <message>"
+    "compose config failed in a: <message>"
   ]
 }

@@ -61,8 +61,13 @@ try {
       ok(`${n}: read only - git status after equals the fixture as built`, st() === '', st());
     }
     if (n === 'compose-error') {
-      ok('compose-error: the failed file keeps the error of compose in its note',
-        j && j.repo.notes.some((x) => /^compose config failed in b: .*DETECT_FIXTURE_REQUIRED/.test(x)), j && JSON.stringify(j.repo.notes));
+      ok('compose-error: the failed file keeps the error of compose in its note, the next directory is still read',
+        j && j.repo.notes.some((x) => /^compose config failed in a: .*DETECT_FIXTURE_REQUIRED/.test(x)), j && JSON.stringify(j.repo.notes));
+    }
+    if (n === 'compose-single') {
+      // COMPOSE_* variables of the caller would select other files, project or profiles; the repository is read as it is.
+      const other = run(['--root', dir], { env: { COMPOSE_PROJECT_NAME: 'elsewhere', COMPOSE_FILE: 'missing.yml', COMPOSE_PROFILES: 'x' } });
+      ok('compose-single: COMPOSE_* variables of the environment do not change the output', other.stdout === r.stdout, other.stdout + other.stderr);
     }
     if (n === 'node' || n === 'no-commits' || n === 'not-git') {
       const again = run(['--root', dir]);

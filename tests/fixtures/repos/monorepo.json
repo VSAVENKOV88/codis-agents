@@ -5,6 +5,7 @@
     "package-lock.json": "{\n  \"name\": \"fx-mono\",\n  \"lockfileVersion\": 3\n}\n",
     "packages/a/package.json": "{\n  \"name\": \"a\",\n  \"scripts\": {\n    \"test\": \"node --test\"\n  }\n}\n",
     "packages/b/package.json": "{\n  \"name\": \"b\"\n}\n",
+    "packages/a-b/package.json": "{\n  \"name\": \"a-b\",\n  \"scripts\": {\n    \"test\": \"node --test\"\n  }\n}\n",
     "services/api/go.mod": "module example.com/api\n\ngo 1.22\n",
     "services/api/go.sum": "",
     "services/api/main.go": "package main\n",

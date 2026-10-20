@@ -1,7 +1,7 @@
 {
   "files": {
-    "a/compose.yaml": "services:\n  x:\n    image: busybox:1\n",
-    "b/compose.yaml": "services:\n  y:\n    image: \"busybox:${DETECT_FIXTURE_REQUIRED:?set DETECT_FIXTURE_REQUIRED}\"\n"
+    "b/compose.yaml": "services:\n  x:\n    image: busybox:1\n",
+    "a/compose.yaml": "services:\n  y:\n    image: \"busybox:${DETECT_FIXTURE_REQUIRED:?set DETECT_FIXTURE_REQUIRED}\"\n"
   },
   "git": {
     "init": true,
