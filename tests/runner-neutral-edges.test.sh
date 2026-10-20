@@ -105,11 +105,16 @@ SLOT_POLL=0.05 hjob n2; sleep 2
 ok 'a later single heavy job waits behind the queued run without {jobs} (a slot is free, but FIFO)' '[[ ! -e $T/n2.start ]] && ! grep -q "^start" $T/run.log' "$(cat $T/n2.out; cat $T/f.out)"
 touch $T/rel.n1
 waitlong 'grep -q "^start" $T/run.log || [[ -e $T/n2.start ]]'
-first=none; grep -q "^start" $T/run.log && first=run; [[ $first == none && -e $T/n2.start ]] && first=n2
 # n2 is released whatever happened: a run bumped back to the queue waits for it (no deadlock of the test)
 touch $T/rel.n2; wait $GA; rc=$?; waitlong '[[ -e $T/n2.end ]]'
-ok '... the first heavy job ended: the queued run starts BEFORE the single one behind it (it is not bumped back to the queue by it)' \
-  '[[ $first == run ]] && ! grep -q "exit 75\|waiting for workers outside the slot" $T/f.out' "first=$first; $(grep -v '^waiting for slot' $T/f.out | head -5; cut -f5-9 $T/journal.tsv | tail -3)"
+# The order is the order of admission, from the journal (acquire time, column 3): once the run holds its slot, n2 may
+# take the next one at once (as next to a fixed run) and start before the runner's first line, which comes only after
+# guards-result.js meta-start. Bumped back means a "whole" record with 75, and n2 acquired before the run's real start.
+wacq=$(awk -F'\t' '$7 == "whole" && $9 != 75 { print $3 }' $T/journal.tsv | tail -1)
+nacq=$(awk -F'\t' '$7 == "single" { print $3 }' $T/journal.tsv | tail -1)
+first=none; [[ -n $wacq && -n $nacq ]] && { (( wacq < nacq )) && first=run || first=n2 }
+ok '... the first heavy job ended: the queued run is admitted BEFORE the single one behind it (it is not bumped back to the queue by it)' \
+  '[[ $first == run ]] && ! awk -F"\t" "\$7 == \"whole\" && \$9 == 75 { f = 1 } END { exit !f }" $T/journal.tsv && ! grep -q "waiting for workers outside the slot" $T/f.out' "first=$first wacq=$wacq nacq=$nacq; $(grep -v '^waiting for slot' $T/f.out | head -5; cut -f3,5-9 $T/journal.tsv | tail -4)"
 ok '... and it ran with the whole budget "fixed 6", exit 0' '(( rc == 0 )) && grep -q "^start wts/xp fixed 6$" $T/run.log' "$rc $(cat $T/run.log)"
 
 print -r -- "TOTAL: $pass ok, $fail fail"
