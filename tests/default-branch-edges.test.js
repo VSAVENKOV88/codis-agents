@@ -6,7 +6,8 @@
 // a repository without a remote; a linked worktree reads origin/HEAD of its repository; a relative repoDir "." is the
 // project root; a real `git push` through core.hooksPath is refused for the default branch and let through for others.
 // Round 2: tags in every form while unknown, the hook process exits 0 with deny on a tag, and a branch push named like
-// an existing tag (HEAD:build-1 creates refs/heads/build-1) is still a branch push.
+// an existing tag (HEAD:build-1 creates refs/heads/build-1) is still a branch push. Round 3: a delete of a bare name
+// that is a local tag may delete a remote branch of that name - refused while unknown; tag sources stay tag pushes.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -75,6 +76,14 @@ try {
   for (const c of ['git push origin HEAD:build-1', 'git push origin b-t1:build-1']) {
     ok(`unknown: "${c}" is a branch push (src is a branch) - refused with the reason`, unknownRe.test(bash(c, norem, unk) || ''), String(bash(c, norem, unk)));
   }
+  // Round 3: a delete has no source, and git deletes whatever the remote holds under the name - a branch build-1 too,
+  // though a local tag build-1 exists (measured with git 2.50: "- [deleted] build-1", remote refs/heads/build-1 gone).
+  // While the branches are unknown that is a branch push the hook cannot tell from a tag delete: refuse.
+  for (const c of ['git push origin --delete build-1', 'git push origin :build-1', 'git push -d origin build-1']) {
+    ok(`unknown: "${c}" may delete a remote branch named like the local tag - refused with the reason`, unknownRe.test(bash(c, norem, unk) || ''), String(bash(c, norem, unk)));
+  }
+  ok('unknown: a delete of refs/tags/build-1 is a tag delete - allowed', bash('git push origin :refs/tags/build-1', norem, unk) === null, String(bash('git push origin :refs/tags/build-1', norem, unk)));
+  ok('unknown: src tag v1.0 to dst build-1 (an existing tag) stays a tag push - allowed', bash('git push origin v1.0:build-1', norem, unk) === null, String(bash('git push origin v1.0:build-1', norem, unk)));
   {
     const hp = spawnSync('node', [path.join(ROOT, 'scripts', 'hooks', 'guard-bash.js')], { cwd: norem, encoding: 'utf8',
       input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'git push origin v1.0' }, cwd: norem }), env: Object.assign({}, env, { CODIS_AGENTS_CONFIG: unk }) });
