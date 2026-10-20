@@ -45,7 +45,7 @@ ok() { if eval "$2"; then (( pass++ )); print -r -- "  ok   $1"; else (( fail++ 
        $3}"; fi }
 waitlong() { local i; for i in {1..900}; do eval "$1" && return 0; sleep 0.1; done; return 1 }
 hjob() { "$H/heavy.sh" zsh -c 'touch '$T'/$1.start; while [[ ! -e '$T'/rel.$1 ]]; do sleep 0.1; done; touch '$T'/$1.end' _ $1 > $T/$1.out 2>&1 & }
-trap 'touch $T/rel.{n1,n2}; rm -f $T/hold; wait 2>/dev/null; rm -rf $T' EXIT
+trap 'touch $T/rel.{n1,n2,n3}; rm -f $T/hold; wait 2>/dev/null; rm -rf $T' EXIT
 
 # -- guardExclusive through the project config ----------------------------------------------------------------------
 cfg $T/multi.json 'cd {wt} && pytest' '"guardExclusive": {"glob": ["test_*.py", "check *.py", "*_t'"'"'q.py"], "marker": "#"}'
@@ -126,6 +126,17 @@ first=none; [[ -n $wacq && -n $nacq ]] && { (( wacq < nacq )) && first=run || fi
 ok '... the first heavy job ended: the queued run is admitted BEFORE the single one behind it (it is not bumped back to the queue by it)' \
   '[[ $first == run ]] && ! awk -F"\t" "\$7 == \"whole\" && \$9 == 75 { f = 1 } END { exit !f }" $T/journal.tsv && ! grep -q "waiting for workers outside the slot" $T/f.out' "first=$first wacq=$wacq nacq=$nacq; $(grep -v '^waiting for slot' $T/f.out | head -5; cut -f3,5-9 $T/journal.tsv | tail -4)"
 ok '... and it ran with the whole budget "fixed 6", exit 0' '(( rc == 0 )) && grep -q "^start wts/xp fixed 6$" $T/run.log' "$rc $(cat $T/run.log)"
+
+# -- the reservation is for kind whole only: a single heavy job leaves no budget record, a run with {jobs} next to it
+#    gets its share -----------------------------------------------------------------------------------------------------
+cfg $T/fx.json 'cd {wt} && pytest -n {jobs}'
+: > $T/run.log; rm -f $T/rel.n3 $T/n3.start
+hjob n3; waitlong '[[ -e $T/n3.start ]]'
+sl=( $SLOTS_DIR/heavy.*.lock.who(Nom[1]) ); sl=${sl%.who}   # the slot n3 has just taken: its .who is the newest
+ok 'a single heavy job holds its slot with no budget record (.jobs, .whole)' '[[ -n $sl && ! -e $sl.jobs && ! -e $sl.whole ]]' "slot=$sl; $(ls $SLOTS_DIR)"
+CODIS_AGENTS_CONFIG=$T/fx.json $H/guards-all.sh --force xp > $T/fx.out 2>&1; rc=$?
+touch $T/rel.n3; waitlong '[[ -e $T/n3.end ]]'
+ok '... a run with {jobs} next to it gets its share "fixed 3", exit 0' '(( rc == 0 )) && grep -q "^start wts/xp fixed 3$" $T/run.log' "$rc $(cat $T/fx.out | tail -5; cat $T/run.log)"
 
 print -r -- "TOTAL: $pass ok, $fail fail"
 (( fail == 0 ))
