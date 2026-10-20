@@ -26,6 +26,9 @@
       },
       "description": "After a red full run guards-all.sh reruns each new red alone in the same slot: red again - a new red (the runner's exit code stays); green alone - flaky (listed for the project backlog, not a regression). Only flaky -> exit 0. Without this key nothing reruns."
     },
+    "guardFiles": { "type": "array", "items": { "type": "string" }, "minItems": 1, "default": ["*-run.js", "*-run.mjs", "*-run.cjs"], "description": "Globs of the project's guard files (scripts/guards-select.js). A glob without / matches the file name at any depth; with / the path from the repository root; * and ? stay within one segment, ** crosses them." },
+    "guardAlways": { "type": "array", "items": { "type": "string" }, "description": "Guards always in the programmer's selection (a guard whose repository path contains an entry), such as scanners of the diff: secrets, semgrep." },
+    "guardSubsetCommand": { "type": "string", "description": "Runs the selected guards, with zsh; placeholders {wt} (worktree) and {onlyArgs} (--only <guard> per selected guard, shell-quoted). When set, the programmer runs only the selection and the workflow runs one full run (guardCommand) after its last commit; without it the programmer runs the full run itself as before." },
     "worktreeSetup": {
       "type": "object", "additionalProperties": false,
       "properties": {
