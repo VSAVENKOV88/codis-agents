@@ -122,7 +122,7 @@ mkdir -p $T/tmp77
 d=$T/e77h; mkdir -p $d; e77 heavy.2.lock $d/heavy.2.lock $d heavy.sh SLOT_HEAVY_N=2
 d=$T/e77q; mkdir -p $d/queue; e77 'queue directory' $d/queue $d medium.sh
 d=$T/e77l; mkdir -p $d; e77 'legacy lock' $T/legacy77.lock $d medium.sh SLOT_LEGACY_LOCK=$T/legacy77.lock
-[[ $rc == skip ]] || ok 'E77. the refusal is journaled with exit code 77' '[[ -s $d/journal.tsv ]] && awk -F"\t" "{print \$0}" $d/journal.tsv | grep -q "77"' "$(cat $d/journal.tsv 2>/dev/null)"
+[[ $rc == skip ]] || ok 'E77. the refusal is journaled with exit code 77' '[[ $(cut -f9 $d/journal.tsv 2>/dev/null) == 77 ]]' "$(cat $d/journal.tsv 2>/dev/null)"
 [[ $rc == skip ]] || ok 'E77. a refusal leaves no temporary file' '[[ -z $(ls -A $T/tmp77) ]]' "$(ls -A $T/tmp77)"
 # a late refusal: the only medium slot held, a job waits with a ticket, its admit.lock turns unwritable -> 77; then the
 # lock is writable again, the holder ends: the next job takes the slot (no ticket left in front of it)
