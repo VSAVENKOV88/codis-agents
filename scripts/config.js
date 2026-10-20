@@ -30,6 +30,10 @@ const SPEC = {
   guardCommandLegacy: ['string', ''],
   guardAdaptiveProbe: ['object', null],
   guardRerun: ['object', null],
+  // One full run per task (scripts/guards-select.js): what a guard file is, which guards always run, the subset command.
+  guardFiles: ['string[]', ['*-run.js', '*-run.mjs', '*-run.cjs']],
+  guardAlways: ['string[]', []],
+  guardSubsetCommand: ['string', ''],
   worktreeSetup: ['object', null],
   slots: ['object', null],
   reportLanguage: ['string', 'English'],
@@ -160,6 +164,8 @@ function resolve(raw) {
     if (c[k] && !c[k].includes('{wt}')) errors.push(`${k}: must contain {wt} (the worktree directory)`);
     if (c[k] && !c[k].includes('{jobs}')) errors.push(`${k}: must contain {jobs} (the worker count chosen by the slot budget)`);
   }
+  if (c.guardSubsetCommand && !c.guardSubsetCommand.includes('{onlyArgs}')) errors.push('guardSubsetCommand: must contain {onlyArgs} (one --only <guard> per selected guard)');
+  if (!c.guardFiles.length) errors.push('guardFiles: expected at least one glob');
   if (c.guardCommandLegacy && c.guardCommandLegacy.includes('{limitFile}')) errors.push('guardCommandLegacy: must not contain {limitFile} (legacy runners take a fixed worker count)');
   return { config: c, errors };
 }

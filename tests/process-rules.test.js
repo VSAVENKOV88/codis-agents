@@ -63,6 +63,14 @@ const CHECKS = [
   [[RULES, README], 'a new red is first rerun alone (guardRerun)', /(new reds? (is first )?rerun alone|new reds rerun alone)[^\n]*`guardRerun`/i],
   [[RULES], 'a flaky guard is not sent to the programmer as a regression but goes into the project backlog', /flaky[^.]*not a regression and not sent to the programmer[^.]*project backlog/],
   [[RULES, README], 'a full run on the same HEAD with a clean tracked tree is reused, --force runs anyway', /same HEAD with a clean tracked tree[^\n]*reused, HEAD <sha>[^\n]*`--force`/],
+  // One full guard run per task and a light mode for small tasks (owner 2026-10-20: "yes, we make both changes").
+  [[RULES, README], 'one full guard run per task, run by the workflow after the programmer\'s last commit', /[Oo]ne full guard run per task[^.]*workflow[^.]*after the programmer's last commit/],
+  [[RULES, README], 'the programmer runs only its new guards and the selected ones: import a changed file or name it, plus guardAlways', /guards that import a changed file or name it[^.]*`guardAlways`/],
+  [[RULES], 'why: 3.9 full runs per task, 81 min, 37 % of the calendar; ~80 % of new reds from the environment', /3\.9 full runs[^.]*81 min[^.]*37 %[^\n]*80 %/],
+  [[RULES, COORD], 'after a merge a full run only at a seam of shared files, otherwise the branch CI decides', /full guard run only at a seam[^.]*same files[^.]*CI/],
+  [[RULES, CHAIN, README, COORD], 'light mode: task field mode "light"', /`mode: "light"`/],
+  [[RULES, COORD], 'light mode criteria: ~100 lines of product, one subsystem, no attack surface, no Docker acceptance', /100 lines of product[^.]*one subsystem[^.]*attack surface[^.]*Docker/],
+  [[RULES, CHAIN], 'light mode: a second rejection goes to the coordinator with the proposal of the full mode', /second rejection[^.]*coordinator[^.]*full mode/],
 ];
 for (const [files, name, re] of CHECKS) for (const f of files) ok(`${f}: ${name}`, re.test(read(f)));
 
@@ -77,6 +85,8 @@ ok('rules: living specs line is marked role:specs', /[Ll]iving specs change in t
 const wf = fs.readFileSync(path.join(ROOT, 'workflows', 'role-chain.js'), 'utf8');
 ok('RULE_LIST specs: same commit as the behaviour', /\['specs', [^\n]*same commit as the behaviour/.test(wf));
 
+ok('rules: the one-run line is marked role:onerun', /[Oo]ne full guard run per task[^\n]*<!-- role:onerun -->/.test(rules));
+ok('RULE_LIST onerun: the workflow runs the full run, roles run selected guards', /\['onerun',[\s\S]{0,800}guards-select\.js/.test(wf));
 ok('rules: the rerun line is marked role:rerun', /flaky[^\n]*<!-- role:rerun -->/.test(rules));
 ok('RULE_LIST rerun: guards-all reruns alone, flaky to the report for the backlog', /\['rerun', [^\n]*guards-all\.sh reruns each one alone[^\n]*Flaky guards[^\n]*backlog/.test(wf));
 // Docker cleanup (owner 2026-10-14, after old test stacks filled the disk): the role:docker line reaches every role.

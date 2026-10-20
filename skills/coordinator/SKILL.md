@@ -24,7 +24,7 @@ one. For whatever the owner judges by the screen, show a mockup of all states be
 2. **Split.** Estimate the matrix: more than ~30 cells, more than two subsystems, an unanswered question, or a lifted
    "inactive while ..." restriction - split before any programmer, or send the analyst first. Defects get a diagnosis
    first by default; an analysis of the task that already exists is passed as the task's `analysis` path, and a
-   defect without a diagnosis gets a written `noAnalysis` reason. A feature gets its own analysis: the arc
+   defect without a diagnosis gets a written `noAnalysis` reason. A small task - up to ~100 lines of product in one subsystem, not on the attack surface (no security work, no routes or access classes) and with an acceptance that needs no Docker stack - may run with `mode: "light"` (one programmer-checker, the one full run, one reviewer); say so in the brief, the owner may overturn it; a light task stopped after a second rejection is relaunched in the full mode. A feature gets its own analysis: the arc
    specification goes into `spec`, never into `analysis`. A feature (not a defect, not a tail) starts with its use cases:
    run it with `useCasesFirst: true` and `analystFirst`, take the `use-cases-review` result to the owner as one list of
    questions, write the answers into `use-cases.md`, then relaunch with `useCases: <path>` and `analystFirst`.
@@ -36,7 +36,7 @@ one. For whatever the owner judges by the screen, show a mockup of all states be
    acceptance in Docker at once.
 6. **Route.** `done` -> merge the branch into the integration branch yourself and resolve conflicts. After merging
    the second of parallel branches that touched the same files, run the new and touched guards of both tasks, then
-   the full guard run. Before removing a worktree or a data directory, show the owner the output of
+   the full guard run. Each task already had its one full guard run, so after any other merge run a full guard run only at a seam - when the merged branch and another branch merged since the last full run touched the same files; otherwise the CI of the branch decides. Before removing a worktree or a data directory, show the owner the output of
    `node "${CLAUDE_PLUGIN_ROOT}/scripts/wt-remove-check.js" <path>` (ignored data with sizes, the path in code,
    symbolic links that lead into it) and remove only after a "yes" to that list. `stopped` -> read the reason: questions go to the owner (and their answers into the brief), a proposed
    split becomes new briefs, a second rejection goes to the analyst.
