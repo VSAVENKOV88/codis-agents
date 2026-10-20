@@ -178,7 +178,11 @@ try {
   // Round 5 (tester): the second layer on the matching push - origin and norem both hold master (unrelated history),
   // so a real git push origin +: would force-update origin's master; pre-push refuses and master stays.
   {
+    // seed and norem commit the same a.txt with the same identity: within one second the two commits are identical
+    // (seen on Linux: "Everything up-to-date"), so give norem's master its own commit first.
+    commit(norem, 'n5.txt');
     const before = git(origin, 'rev-parse', 'refs/heads/master').stdout.trim();
+    ok('setup: norem master differs from origin master', git(norem, 'rev-parse', 'master').stdout.trim() !== before);
     p = spawnSync('git', ['-C', norem, 'push', 'origin', '+:'], { encoding: 'utf8', env });
     ok('no origin/HEAD: real git push origin +: refused by pre-push, origin master unchanged', p.status !== 0 && unknownRe.test(p.stderr)
       && git(origin, 'rev-parse', 'refs/heads/master').stdout.trim() === before, p.stderr);
