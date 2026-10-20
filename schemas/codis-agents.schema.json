@@ -16,6 +16,16 @@
       "properties": { "file": { "type": "string", "description": "Path relative to the worktree." }, "contains": { "type": "string" } },
       "description": "When set, guardCommand is used only if <wt>/<file> contains <contains>; otherwise guardCommandLegacy."
     },
+    "guardRerun": {
+      "type": "object", "additionalProperties": false, "required": ["command", "newRedPattern"],
+      "properties": {
+        "command": { "type": "string", "description": "Runs ONE guard, with zsh in the worktree; placeholders {wt} and {name} (both shell-quoted). Exit 0 - green alone." },
+        "newRedPattern": { "type": "string", "description": "Regular expression applied to every line of the full-run log (multiline); capture group 1 is the name of a NEW red guard, as {name} takes it." },
+        "tallyPattern": { "type": "string", "description": "Regular expression of the runner's final tally line. When set and absent from the log (a run cut off before its tally), nothing reruns and the runner's exit code stands." },
+        "maxReruns": { "type": "integer", "minimum": 1, "default": 10, "description": "More new reds than this: nothing reruns (a mass red is not flakiness), the runner's exit code stands." }
+      },
+      "description": "After a red full run guards-all.sh reruns each new red alone in the same slot: red again - a new red (the runner's exit code stays); green alone - flaky (listed for the project backlog, not a regression). Only flaky -> exit 0. Without this key nothing reruns."
+    },
     "worktreeSetup": {
       "type": "object", "additionalProperties": false,
       "properties": {

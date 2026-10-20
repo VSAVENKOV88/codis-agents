@@ -14,9 +14,18 @@
 # Command: project config key guardCommand, run with zsh in the worktree; placeholders {wt}, {jobs}, {limitFile}.
 # Exit code: the runner's own (the last 25 log lines are printed either way). The runner's code travels through a file,
 #   so a runner that itself exits 75 is never mistaken for "no worker budget" and retried.
-# usage: guards-all.sh <worktree>   (a name under worktreeRoot, or a path) -> log in <sharedDir>/guards-<name>.txt
+# Rerun (project config key guardRerun; scripts/guards-result.js): after a red full run, still in the same slot, every
+#   new red named in the log runs once more alone. Red again -> new red, the runner's code stays; green alone -> flaky,
+#   listed for the project backlog; only flaky -> exit 0. Without guardRerun the runner's code stands as before.
+# Reuse: HEAD, clean tracked tree, command and final code are kept next to the log (<log>.meta.json). The same HEAD,
+#   still clean, same command, final code 0 -> no new run: "reused, HEAD <sha>" and the saved summary, exit 0.
+#   --force runs anyway.
+# usage: guards-all.sh [--force] <worktree>   (a name under worktreeRoot, or a path) -> log in <sharedDir>/guards-<name>.txt
 H=${0:A:h}
-[[ -n $1 ]] || { print -u2 "usage: guards-all.sh <worktree name or path>"; exit 64; }
+FORCE=0; typeset -a POS
+for a in "$@"; do if [[ $a == --force ]]; then FORCE=1; else POS+=("$a"); fi; done
+set -- "${POS[@]}"
+[[ -n $1 ]] || { print -u2 "usage: guards-all.sh [--force] <worktree name or path>"; exit 64; }
 cfg() { node "$H/config.js" get "$1" 2>/dev/null }
 source "$H/slots.zsh"
 [[ -n $CODIS_WORKTREE_ROOT && -n $CODIS_SHARED_DIR ]] || { print -u2 "guards-all: no project config (.claude/codis-agents.json) found"; exit 78; }
@@ -29,12 +38,16 @@ CMD=$(cfg guardCommand); LEGACY=$(cfg guardCommandLegacy); PFILE=$(cfg guardAdap
 # Older branches may carry a runner without the adaptive limit: the probe decides per worktree.
 if [[ -n $PFILE ]] && ! grep -qF -- "$PTEXT" "$WT/$PFILE" 2>/dev/null; then CMD=$LEGACY; fi
 mode=fixed; [[ $CMD == *'{limitFile}'* ]] && mode=adaptive
+RERUN=$(cfg guardRerun); [[ $RERUN == null ]] && RERUN=   # config get prints null for an unset object key
+if (( ! FORCE )) && node "$H/guards-result.js" reuse "$WT" "$OUT" "$CMD" > /dev/null 2>&1; then
+  tail -40 "$OUT"; print -r -- ""; node "$H/guards-result.js" reuse "$WT" "$OUT" "$CMD"; exit 0
+fi
 RCF=$(mktemp -t guardsrc)
 trap 'rm -f $RCF' EXIT
 while true; do
   : > $RCF
   SLOT_KIND=full SLOT_RETRY_RC=75 SLOT_LABEL="guards-all $NAME" slot_run heavy zsh -c '
-    source "$1"; WT="$2"; OUT="$3"; CMD="$4"; mode="$5"; RCF="$6"
+    source "$1"; WT="$2"; OUT="$3"; CMD="$4"; mode="$5"; RCF="$6"; GR="$7"; RERUN="$8"
     cd "$WT" || exit 1
     t0=$EPOCHSECONDS said=0
     while true; do
@@ -49,6 +62,7 @@ while true; do
       fi
       sleep $SLOT_POLL
     done
+    node "$GR" meta-start "$WT" "$OUT" "$CMD"
     sub() { local c=$1; c=${c//\{wt\}/${(q)WT}}; c=${c//\{jobs\}/$2}; c=${c//\{limitFile\}/${(q)SLOT_PATH}.limit}; print -r -- $c }
     if [[ $mode == adaptive ]]; then
       print -r -- "workers at start: $n (ceiling $GUARDS_JOBS_ALONE, re-evaluated every $SLOT_POLL s; $SLOT_PATH)"
@@ -61,7 +75,9 @@ while true; do
       zsh -c "$(sub "$CMD" $n)" > "$OUT" 2>&1; print -r -- $? > "$RCF"
     fi
     rm -f "$SLOT_PATH.jobs" "$SLOT_PATH.limit" "$SLOT_PATH.limit.tmp" "$SLOT_PATH.limit.active"
-    tail -25 "$OUT"' guards-all "$H/slots.zsh" "$WT" "$OUT" "$CMD" "$mode" "$RCF"
+    tail -25 "$OUT"
+    if [[ -n $RERUN ]]; then node "$GR" rerun "$WT" "$OUT" "$(<$RCF)" "$RERUN"; print -r -- $? > "$RCF"; fi
+    node "$GR" meta-end "$WT" "$OUT" "$(<$RCF)"' guards-all "$H/slots.zsh" "$WT" "$OUT" "$CMD" "$mode" "$RCF" "$H/guards-result.js" "$RERUN"
   rc=$?
   [[ -s $RCF ]] && exit $(<$RCF)          # the runner ran: its code
   (( rc == 75 )) || exit $rc              # 75 without a run: no worker budget - queue again

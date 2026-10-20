@@ -29,6 +29,7 @@ const SPEC = {
   guardCommand: ['string', ''],
   guardCommandLegacy: ['string', ''],
   guardAdaptiveProbe: ['object', null],
+  guardRerun: ['object', null],
   worktreeSetup: ['object', null],
   slots: ['object', null],
   reportLanguage: ['string', 'English'],
@@ -51,6 +52,9 @@ const SLOT_SPEC = {
   legacyLock: ['path', ''], jobsAlone: ['number', 6], jobsShared: ['number', 3],
 };
 const WT_SPEC = { scan: ['string[]', []], skip: ['string[]', []], link: ['string[]', []] };
+// Rerun of new reds one by one after a full run (scripts/guards-result.js explains why): command ({wt}, {name}),
+// newRedPattern (per log line, group 1 = name), tallyPattern (the log reached its tally), maxReruns.
+const RERUN_SPEC = { command: ['string', undefined], newRedPattern: ['string', undefined], tallyPattern: ['string', ''], maxReruns: ['number', 10] };
 const PROBE_SPEC = { file: ['string', undefined], contains: ['string', undefined] };
 const HOOKS_SPEC = { blockICloudCopies: ['boolean', false], preCommit: ['string[]', []] };
 const STANDING_SPEC = { branches: ['string[]', []], check: ['string', ''] };
@@ -100,6 +104,18 @@ function resolve(raw) {
     c.guardAdaptiveProbe = level(PROBE_SPEC, c.guardAdaptiveProbe, 'guardAdaptiveProbe.', errors);
     if (!c.guardAdaptiveProbe.file || !c.guardAdaptiveProbe.contains) errors.push('guardAdaptiveProbe: file and contains are required');
     if (!c.guardCommandLegacy) errors.push('guardAdaptiveProbe: needs guardCommandLegacy (the command for worktrees where the probe fails)');
+  }
+  if (c.guardRerun) {
+    const g = c.guardRerun = level(RERUN_SPEC, c.guardRerun, 'guardRerun.', errors);
+    if (!g.command) errors.push('guardRerun.command: required');
+    else for (const k of ['wt', 'name']) if (!g.command.includes(`{${k}}`)) errors.push(`guardRerun.command: must contain {${k}}`);
+    if (!g.newRedPattern) errors.push('guardRerun.newRedPattern: required');
+    else {
+      try { if (new RegExp(g.newRedPattern + '|').exec('').length < 2) errors.push('guardRerun.newRedPattern: needs a capture group (the guard name)'); }
+      catch (e) { errors.push('guardRerun.newRedPattern: bad regular expression'); }
+    }
+    if (g.tallyPattern) { try { new RegExp(g.tallyPattern); } catch (e) { errors.push('guardRerun.tallyPattern: bad regular expression'); } }
+    if (!(Number.isInteger(g.maxReruns) && g.maxReruns >= 1)) errors.push('guardRerun.maxReruns: expected a positive integer');
   }
   if (c.standingPush) {
     c.standingPush = level(STANDING_SPEC, c.standingPush, 'standingPush.', errors);
@@ -165,7 +181,7 @@ function shellLines(c) {
   return Object.entries(v).map(([k, x]) => (x === '' ? `[[ -v ${k} ]] || ${k}=''` : `: \${${k}:=${q(x)}}`)).join('\n');
 }
 
-module.exports = { find, load, resolve, shellLines, SPEC, SLOT_SPEC, WT_SPEC, PROBE_SPEC, HOOKS_SPEC, STANDING_SPEC, PRE_SPEC, ROLES, expand };
+module.exports = { find, load, resolve, shellLines, SPEC, SLOT_SPEC, RERUN_SPEC, WT_SPEC, PROBE_SPEC, HOOKS_SPEC, STANDING_SPEC, PRE_SPEC, ROLES, expand };
 
 if (require.main === module) {
   const [cmd, ...rest] = process.argv.slice(2);

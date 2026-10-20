@@ -62,6 +62,7 @@ const RULE_LIST = (t) => [
   ['pauses', 'Pauses: never wait longer than 270 s at a time - run anything long through Bash run_in_background and wait with Monitor in slices; an agent with no output for 10 minutes is killed.'],
   ['context', 'Context: past ~200k finish the current stage, write the report with "Next step: ..." and stop - a fresh agent continues.'],
   ['slots', `Heavy work goes through memory slots: ${SCRIPTS}/heavy.sh <cmd>, ${SCRIPTS}/medium.sh <cmd>, full guard run ${SCRIPTS}/guards-all.sh ${t.gdir}.`],
+  ['rerun', `New reds of a full run: ${SCRIPTS}/guards-all.sh reruns each one alone in the same slot. Red again alone - a new red (a regression); green alone - flaky: not a regression, name it in your report under "Flaky guards" for the coordinator, who puts it into the project backlog. A full run on the same HEAD with a clean tracked tree that ended green is reused ("reused, HEAD <sha>"); --force runs again.`],
   ['docker', `Docker: ${CFG.ownerStackReadOnly ? `the owner's stack ${CFG.ownerStackReadOnly}` : 'the owner\'s stack'} is read-only (docker cp out is fine); never write into its containers; only a tester runs its own stack, and only when the brief asks, then removes it with its images and volumes (docker compose -p <stack> down -v --rmi all). Never remove the owner's stack or its images; other images and the build cache are not yours to clean. A post-check after you removes what the task left (its stack, processes in its worktree, the slots they hold) and reports it.`],
   ['specs', 'Living specs (UX specs, state models, gap lists) change in the same commit as the behaviour they describe.'],
   ['push', `Do not push, do not merge into ${PROTECTED}, do not create tags.`],
@@ -89,7 +90,7 @@ const PROG_SCHEMA = { type: 'object', properties: {
   commits: { type: 'array', items: { type: 'string' } },
   head: { type: 'string', description: 'git rev-parse HEAD of the worktree after your commits' },
   mutations: { type: 'string', description: 'table: mutant -> guard result -> after checkout' },
-  fullRun: { type: 'string', description: 'result of the full guard run: N green, N new red, N known red' },
+  fullRun: { type: 'string', description: 'result of the full guard run: N green, N new red (repeated alone), N flaky (green alone), N known red' },
   questions: { type: 'array', items: { type: 'string' } },
   summary: { type: 'string' },
 }, required: ['status', 'changedFiles', 'commits', 'head', 'mutations', 'fullRun', 'questions', 'summary'] }
@@ -217,7 +218,7 @@ Write a matrix of cases (every dimension: states x events x environments) or fin
 const prog = (t, task, n) => agent(`You are the PROGRAMMER. ${RULES(t)} Report: ${t.dir}/prog.md (round ${n}).
 ${analysisLine(t.an)}
 ${task}
-Order: red guard -> commit -> code -> commit -> mutations AFTER the commit (table in prog.md) -> full run ${SCRIPTS}/guards-all.sh ${t.gdir} in the background -> analysis of new reds. status=blocked if you cannot go on without the owner's answer.${note('programmer')}`,
+Order: red guard -> commit -> code -> commit -> mutations AFTER the commit (table in prog.md) -> full run ${SCRIPTS}/guards-all.sh ${t.gdir} in the background -> analysis of new reds that repeated alone (flaky ones go into prog.md for the backlog). status=blocked if you cannot go on without the owner's answer.${note('programmer')}`,
   { label: `prog:${t.key}#${n}`, phase: 'Programmer', schema: PROG_SCHEMA, agentType: roleType('programmer') })
 
 const test = (t, n) => agent(`You are the TESTER. You do not change product code. ${RULES(t)} Report: ${t.dir}/test.md (round ${n}; keep earlier rounds).

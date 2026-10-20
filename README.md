@@ -120,7 +120,7 @@ read.
 | `hooks/hooks.json` | PreToolUse on Bash: refuses `git add -A` / `git add .` and pushes to protected branches or of protected tags |
 | `scripts/slots.zsh`, `heavy.sh`, `medium.sh` | memory slots for heavy and medium jobs, with a FIFO queue |
 | `scripts/slot-journal.js` | summary of the slot journal: queue wait and hold per class and per worktree |
-| `scripts/guards-all.sh` | a full guard run of one worktree in a heavy slot, with a shared worker budget |
+| `scripts/guards-all.sh` | a full guard run of one worktree in a heavy slot, with a shared worker budget; new reds rerun alone (`guardRerun`); a run on the same HEAD with a clean tracked tree that ended with exit 0 is not repeated ("reused, HEAD <sha>" and the saved summary; `--force` runs anyway) |
 | `scripts/wt-setup.sh` | creates a task worktree and clones (not symlinks) git-ignored data into it |
 | `scripts/wt-remove-check.js` | before a worktree or data directory is removed: prints its ignored data with sizes, the path named in code and the symbolic links that lead into it; removes nothing |
 | `scripts/role-diff-check.js` | git post-check of the tester and reviewers |
@@ -176,6 +176,7 @@ node <plugin>/scripts/config.js check
 | `sharedDir` | task folders `<sharedDir>/<task>/` (`BRIEF.md`, `analyst.md`, `prog.md`, `test.md`, `review.md`) and guard logs |
 | `guardCommand` | the full guard run, executed with zsh in the worktree; placeholders `{wt}`, `{jobs}` and optionally `{limitFile}` (a file the runner re-reads for an adaptive worker limit) |
 | `guardCommandLegacy`, `guardAdaptiveProbe` | for branches whose runner has no adaptive limit: if `<wt>/<probe.file>` lacks `<probe.contains>`, the legacy command runs with a fixed worker count |
+| `guardRerun` | rerun of new reds one by one after a red full run, in the same slot (`scripts/guards-result.js`): `command` runs one guard (`{wt}`, `{name}`), `newRedPattern` takes the names of new reds from the log (group 1), optional `tallyPattern` (no tally - a cut-off run - nothing reruns) and `maxReruns` (default 10). Red again alone - a new red, the runner's exit code stays; green alone - flaky, listed for the project backlog, not a regression; only flaky - exit 0. Without the key nothing reruns |
 | `worktreeSetup` | `scan` directories whose ignored data is copied into a new worktree; `skip` and `link` globs (everything else is an APFS clone) |
 | `slots` | `medium`, `heavy`, `total`, `lockDir`, `legacyLock`, `jobsAlone`, `jobsShared` |
 | `reportLanguage` | language of role reports (prompts stay in English) |

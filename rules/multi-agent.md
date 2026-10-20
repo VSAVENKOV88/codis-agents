@@ -84,6 +84,9 @@ Larger changes run as a chain of agents, each in its own role:
   task with that cause, and the coordinator frees the machine and relaunches it. The preconditions check free disk and
   swap headroom (`scripts/env-check.js`, floors in the project config `preconditions`: by default 10 GB of disk and
   4 GB of swap). Why: programmer rounds "without changes" after such reds cost about 3.3M tokens in one window.
+- **A new red is first rerun alone.** After a red full run `guards-all.sh` reruns each new red by itself in the same slot (project config `guardRerun`): red again alone - a new red, a regression for the programmer; green alone - flaky, red only under load: not a regression and not sent to the programmer as one, but named in the role's report and written into the project backlog by the coordinator. A full run on the same HEAD with a clean tracked tree that ended without a repeated new red is not run again: `guards-all.sh` prints "reused, HEAD <sha>" with the saved summary (`--force` runs anyway). <!-- role:rerun -->
+  Why: 6 of 17 full runs ended red only from guards unstable under load, and each cost a programmer round or a stopped
+  task.
 - On rejection: a fix round, then a second review. A second rejection for a code defect sends the task to the analyst
   (cases, cause) inside the same run, then one more full round; a third rejection goes to the coordinator. A question
   of scope goes to the owner.
