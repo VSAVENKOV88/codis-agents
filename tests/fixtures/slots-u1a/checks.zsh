@@ -14,11 +14,12 @@ zmodload zsh/datetime zsh/system
 T=$(mktemp -d "${${TMPDIR:-/tmp}%/}/slots-u1a.XXXXXX"); T=${T:A}
 export SLOTS_DIR=$T/slots SLOT_LEGACY_LOCK= SLOT_POLL=0.2 SLOT_SAY=1 SLOT_THIRD_WINDOW=1 SLOT_HIST_GAP=2
 # hermetic inside an outer slot (heavy.sh node tests/run.js): drop what the outer slots.zsh exported
-unset GUARDS_EXCLUSIVE_LOCK SLOT_JOURNAL SLOT_MEDIUM_N SLOT_HEAVY_N SLOT_TOTAL_MAX GUARDS_JOBS_ALONE GUARDS_JOBS_SHARED SLOT_EXCL_TOOLS SLOT_PATH SLOT_LABEL SLOT_KIND SLOT_RETRY_RC
+# The thresholds are dropped too (README: SLOT_SWAP_MIN_MB=0 on Linux): the cases rely on the defaults on the fake machine.
+unset GUARDS_EXCLUSIVE_LOCK SLOT_JOURNAL SLOT_MEDIUM_N SLOT_HEAVY_N SLOT_TOTAL_MAX GUARDS_JOBS_ALONE GUARDS_JOBS_SHARED SLOT_EXCL_TOOLS SLOT_PATH SLOT_LABEL SLOT_KIND SLOT_RETRY_RC SLOT_SWAP_MIN_MB SLOT_THIRD_FREE_PCT SLOT_THIRD_SWAP_GROW_MB
 mkdir -p $T/shared $T/wts $T/g
 print -r -- '{"repoDir": "'$T'/main", "worktreeRoot": "'$T'/wts", "sharedDir": "'$T'/shared"}' > $T/cfg.json
 export CODIS_AGENTS_CONFIG=$T/cfg.json
-# Fake machine: free 20 % (no extra heavy slot), plenty of swap (macOS sources; on Linux the swap check is off).
+# Fake machine: free 20 % (no extra heavy slot), plenty of swap (the same fake sources on macOS and Linux).
 mkdir -p $T/bin
 print -r -- '#!/bin/zsh
 [[ $1 == -n && $2 == vm.swapusage ]] || exec /usr/sbin/sysctl "$@"
@@ -32,7 +33,6 @@ print -r -- '#!/bin/zsh
 print -r -- "Filesystem 1M-blocks Used Available Capacity Mounted"
 print -r -- "/dev/disk3s6 100000 0 0 0% /System/Volumes/VM"' > $T/bin/df
 chmod +x $T/bin/*; export PATH=$T/bin:$PATH
-[[ $OSTYPE == linux* ]] && export SLOT_SWAP_MIN_MB=0   # swap on Linux is measured by U1b
 
 pass=0 fail=0
 ok() { if eval "$2"; then (( pass++ )); print -r -- "  ok   $1"; else (( fail++ )); print -r -- "  FAIL $1${3:+

@@ -9,7 +9,8 @@ T=$(mktemp -d "${${TMPDIR:-/tmp}%/}/slots-check.XXXXXX")
 export SLOTS_DIR=$T/slots SLOT_LEGACY_LOCK=$T/guards.lock SLOT_POLL=0.3 SLOT_SAY=1 SLOT_THIRD_WINDOW=1 SLOT_HIST_GAP=2
 # Run inside an outer slot (heavy.sh node tests/run.js) the outer slots.zsh has exported its own lock, journal and
 # counts: without this the test would wait on (and write to) the real ones.
-unset GUARDS_EXCLUSIVE_LOCK SLOT_JOURNAL SLOT_MEDIUM_N SLOT_HEAVY_N SLOT_TOTAL_MAX GUARDS_JOBS_ALONE GUARDS_JOBS_SHARED SLOT_EXCL_TOOLS SLOT_PATH SLOT_LABEL SLOT_KIND SLOT_RETRY_RC
+# The thresholds are dropped too (README: SLOT_SWAP_MIN_MB=0 on Linux): the cases rely on the defaults on the fake machine.
+unset GUARDS_EXCLUSIVE_LOCK SLOT_JOURNAL SLOT_MEDIUM_N SLOT_HEAVY_N SLOT_TOTAL_MAX GUARDS_JOBS_ALONE GUARDS_JOBS_SHARED SLOT_EXCL_TOOLS SLOT_PATH SLOT_LABEL SLOT_KIND SLOT_RETRY_RC SLOT_SWAP_MIN_MB SLOT_THIRD_FREE_PCT SLOT_THIRD_SWAP_GROW_MB
 # Project config of the test: worktrees under $T/wts with a fake runner; the adaptive runner is recognised by a probe.
 mkdir -p $T/wts $T/shared
 print -r -- '{"repoDir": "'$T'/main", "worktreeRoot": "'$T'/wts", "sharedDir": "'$T'/shared",
@@ -68,6 +69,8 @@ waitlong 'started h1 && started h2'
 ok '1. two heavy at once' '[[ $(running) -eq 2 ]]' "running: $(running)"
 hjob heavy.sh h3
 newline h3 'waiting for slot heavy' 1          # two waiting lines (SLOT_SAY=1) - it has been refused repeatedly
+# the first lines may say "memory history still accumulating" (the window): wait for the line with the reason
+waitlong 'grep -q "free 20%" $T/h3.out'
 ok '1. the third heavy at 20 % free memory < 50 % did not start' '! started h3'
 ok '1. the third prints "waiting for slot heavy" again and again' '(( $(lines h3 "waiting for slot heavy") >= 2 ))' "$(cat $T/h3.out)"
 ok '1. the waiting line gives the reason (free %)' 'grep -q "free 20%" $T/h3.out' "$(tail -1 $T/h3.out)"

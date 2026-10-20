@@ -37,7 +37,7 @@ for (const f of SLOT_TESTS) {
   const src = fs.readFileSync(p, 'utf8');
   const loose = [...knobs].filter((k) => !neutral(src, k));
   ok(`${f}: neutralises every environment knob of slots.zsh`, loose.length === 0, 'not set or unset: ' + loose.join(' '));
-  const tools = ['sysctl', 'memory_pressure', 'vm_stat', 'df'].filter((t) => !new RegExp(`bin/${t}\\b|sh\\('${t}'`).test(src));
-  ok(`${f}: fake machine (sysctl, memory_pressure, vm_stat, df) in front of PATH`, tools.length === 0 && /PATH[^\n]*bin/.test(src), 'missing: ' + tools.join(' '));
+  const tools = ['sysctl', 'memory_pressure', 'vm_stat', 'df'].filter((t) => !new RegExp(`\\$T/bin/${t}\\b|\\(\\s*'${t}'\\s*,`).test(src));
+  ok(`${f}: fake machine (sysctl, memory_pressure, vm_stat, df) in front of PATH`, tools.length === 0 && /PATH[^\n]*bin/i.test(src), 'missing: ' + tools.join(' '));
 }
 done();

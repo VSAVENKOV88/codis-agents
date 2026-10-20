@@ -5,7 +5,7 @@
 # Cases: 1. a hold writes one v1 line: 11 fields, times in order, class, slot number, kind, pid, rc, worktree, command;
 #        2. a waiter behind busy slots: queue wait = acquire - request covers the wait, hold covers the command;
 #        3. the command is short and secret-free: environment and --key=value masked, long words cut, at most 6 words;
-#        4. a journal that cannot be written (a directory, a missing directory, a read-only file) never fails or stalls
+#        4. a journal that cannot be written (a directory, a missing directory, a path under a file, a read-only file) never fails or stalls
 #           the slot: the command runs, its exit code comes back, nothing on stderr; SLOT_JOURNAL='' - no journal;
 #        5. an exclusive guard: a heavy record and an exclusive record; 6. killed while queueing: acquire "-", rc 143;
 #        7. a full run (guards-all.sh) is labelled "guards-all <worktree>", kind full; 8. slot-journal.js reads the lines
@@ -16,7 +16,8 @@ T=$(mktemp -d "${${TMPDIR:-/tmp}%/}/slots-journal.XXXXXX"); T=${T:A}
 export SLOTS_DIR=$T/slots SLOT_LEGACY_LOCK=$T/guards.lock SLOT_POLL=0.2 SLOT_SAY=1 SLOT_THIRD_WINDOW=1 SLOT_HIST_GAP=2
 # Run inside an outer slot (heavy.sh node tests/run.js) the outer slots.zsh has exported its own lock, journal and
 # counts: without this the test would wait on (and write to) the real ones.
-unset GUARDS_EXCLUSIVE_LOCK SLOT_JOURNAL SLOT_MEDIUM_N SLOT_HEAVY_N SLOT_TOTAL_MAX GUARDS_JOBS_ALONE GUARDS_JOBS_SHARED SLOT_EXCL_TOOLS SLOT_PATH SLOT_LABEL SLOT_KIND SLOT_RETRY_RC
+# The thresholds are dropped too (README: SLOT_SWAP_MIN_MB=0 on Linux): the cases rely on the defaults on the fake machine.
+unset GUARDS_EXCLUSIVE_LOCK SLOT_JOURNAL SLOT_MEDIUM_N SLOT_HEAVY_N SLOT_TOTAL_MAX GUARDS_JOBS_ALONE GUARDS_JOBS_SHARED SLOT_EXCL_TOOLS SLOT_PATH SLOT_LABEL SLOT_KIND SLOT_RETRY_RC SLOT_SWAP_MIN_MB SLOT_THIRD_FREE_PCT SLOT_THIRD_SWAP_GROW_MB
 J=$SLOTS_DIR/journal.tsv
 mkdir -p $T/wts/xo/srv/tools $T/shared $T/repo/sub
 print -r -- '{"repoDir": "'$T'/main", "worktreeRoot": "'$T'/wts", "sharedDir": "'$T'/shared",
@@ -91,10 +92,13 @@ ok '3. assignments masked as name=*' '[[ $F[11] == "env TOKEN=* true --api-key=*
 ok '3. long word cut to 40 characters, at most 6 words' '[[ $F[11] == *" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~ w5 ..." ]]' "$F[11]"
 
 # 4. a journal that cannot be written
-mkdir -p $T/jdir; : > $T/ro.tsv; chmod 444 $T/ro.tsv
-UNW=( $T/jdir $T/missing/dir/j.tsv $T/ro.tsv )
+# a directory, a missing directory, a path under a regular file (not a directory - unwritable for root too), and a
+# read-only file - only for a user chmod stops: root writes a mode 444 file (the container runs as root by default)
+mkdir -p $T/jdir; : > $T/afile; : > $T/ro.tsv; chmod 444 $T/ro.tsv
 # writable <path>... - the ones this user could append a line to (a directory never; a new file if its directory is writable)
 writable() { local f; for f; do [[ -d $f ]] && continue; if [[ -e $f ]]; then [[ -w $f ]]; else [[ -d ${f:h} && -w ${f:h} ]]; fi && print -rn -- "$f "; done }
+UNW=( $T/jdir $T/missing/dir/j.tsv $T/afile/j.tsv )
+[[ -z $(writable $T/ro.tsv) ]] && UNW+=( $T/ro.tsv ) || print -r -- "  note 4. this user writes a mode 444 file (root): the read-only case is the path under a regular file"
 ok '4. every journal of this case is one this user cannot write' '[[ -z $(writable $UNW) ]]' "writable: $(writable $UNW)"
 for jj in $UNW; do
   t0=$EPOCHREALTIME
@@ -103,7 +107,7 @@ for jj in $UNW; do
   ok "4. [$jj] nothing on stderr" '[[ ! -s $T/4.err ]]' "$(<$T/4.err)"
   ok "4. [$jj] no stall (< 3 s)" '(( EPOCHREALTIME - t0 < 3 ))'
 done
-ok '4. the read-only journal stays empty' '[[ ! -s $T/ro.tsv ]]'
+ok '4. the unwritable journals stay empty' '[[ ! -s $T/afile ]] && { (( ! $UNW[(I)$T/ro.tsv] )) || [[ ! -s $T/ro.tsv ]] }'
 SLOT_JOURNAL=$T/ok.tsv "$H/heavy.sh" true; SLOT_JOURNAL=$T/ok.tsv "$H/heavy.sh" true
 ok '4. SLOT_JOURNAL=<file> - written there (two lines, append)' '[[ $(wc -l < $T/ok.tsv | tr -d " ") == 2 ]]' "$(cat $T/ok.tsv 2>&1)"
 : > $J
