@@ -10,7 +10,8 @@
 //  - Docker: containers, networks, volumes and images carrying the label com.docker.compose.project=<stack>;
 //  - processes whose cwd (lsof, or /proc/<pid>/cwd) or argv lies inside --wt or a --tmp dir (a path boundary, so
 //    /w-other is not inside /w); this script and its ancestors are never counted;
-//  - slots: <slots-dir>/*.who files (written by slots.zsh: "class pid date cmd") whose pid is one of those processes.
+//  - slots: <slots-dir>/*.who files (written by slots.zsh: "class pid date cmd") whose pid is one of those processes;
+//    the ticket of the shared stand is one of them (stand.lock.who, "stand pid ...": its holder runs in the worktree).
 // --fix removes exactly these: docker rm -f / network rm / volume rm / rmi -f by id, SIGTERM then SIGKILL to the pids
 // (a slot is released when its holder dies). The owner's stack is refused as --stack, and nothing else is touched.
 // --log appends what was found and removed to a file (the task folder's leftovers.md).

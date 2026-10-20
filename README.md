@@ -119,6 +119,7 @@ read.
 | `rules/multi-agent.md` | the process rules; lines marked `<!-- role:<id> -->` go into every role prompt |
 | `hooks/hooks.json` | PreToolUse on Bash: refuses `git add -A` / `git add .` and pushes to protected branches or of protected tags |
 | `scripts/slots.zsh`, `heavy.sh`, `medium.sh` | memory slots for heavy and medium jobs, with a FIFO queue |
+| `scripts/stand.sh`, `stand.js` | the ticket of the project's shared stand (queue, holder, reset at issue and release) and its commands from the config |
 | `scripts/slot-journal.js` | summary of the slot journal: queue wait and hold per class and per worktree |
 | `scripts/guards-all.sh` | a full guard run of one worktree in a heavy slot, with a shared worker budget; new reds rerun alone (`guardRerun`); a run on the same HEAD with a clean tracked tree that ended with exit 0 is not repeated ("reused, HEAD <sha>" and the saved summary; `--force` runs anyway) |
 | `scripts/wt-setup.sh` | creates a task worktree and clones (not symlinks) git-ignored data into it |
@@ -189,6 +190,7 @@ node <plugin>/scripts/config.js check
 | `threatModel` | path (in the worktree) of the threat model the security reviewer reads |
 | `standingPush` | only for the repository of process rules: `branches` its HEAD may be pushed to without `ALLOW_PROTECTED_PUSH=1`, and a `check` that must pass first; the hooks honour only the committed `standingPush` of the repository that pushes, never forced, never tags |
 | `gitHooks` | `blockICloudCopies` and `preCommit` (extra shell commands) for `scripts/git-hooks/pre-commit` |
+| `stand` | the project's shared stand (`scripts/stand.sh`): `project` (its compose project, never `ownerStackReadOnly`), `ports`, command templates `up`, `deploy` (must contain `{wt}`), `reset`, `status` (exit 0 only while up), `down` - placeholders `{project}`, `{port}`, `{ports}`, `{repo}`, `{wt}`, values shell-quoted, run with zsh in `repoDir`; `imageFiles` (globs of the files that define the stand's image) and `memLimitMB` (for reference). The plugin only calls the commands; what they do is the project's |
 | `preconditions` | `minFreeDiskGB` (default 10: an image build or a full guard run writes several GB) and `minSwapGB` (default 4: four slots of ~1 GB) - floors of free disk on the worktree and task folder volumes and of swap headroom, checked by `scripts/env-check.js` before a task starts |
 
 Recommended in the project's `CLAUDE.md`, so the coordinator session follows the rules:
@@ -307,6 +309,30 @@ turns it off): request, acquire and release times, class, slot, kind, pid, exit 
 [--until <time>] [--json]` sums it up: queue wait (acquire - request) and hold (release - acquire), total and median,
 per class and per worktree, and the share of the queue in the agents' waiting.
 
+## Shared stand
+
+A project can keep one Docker stand for acceptance (config `stand`) instead of a stack per task: testers take it in
+turn by ticket. `scripts/stand.sh`:
+
+- `take` waits in the queue (FIFO, "waiting for the stand ticket <project>, position N in queue" at least every
+  `SLOT_SAY` s) and then holds the ticket for as long as it runs: start it in the background; the line
+  `ticket taken by <worktree>` says it is yours. Refused while the stand is not up (its `status` fails); the project's
+  `reset` runs before the ticket is given.
+- `deploy [<wt>]` runs the project's deploy of the holder's worktree in a medium slot; `reset` - the project's reset;
+  `release` - reset while still held, then free. For another worktree than the holder's all three are refused
+  ("the ticket is held by <wt>"); `release --force` is the coordinator's and is journaled.
+- `status` - the stand, the holder with its worktree, pid and hold time, the queue; `up` / `down` - the coordinator's.
+- `image-diff --base <ref>` - do the worktree's commits since `<ref>` touch `imageFiles` (exit 1: the task builds its
+  own stack).
+
+The ticket is a lock held by the take process itself: if it dies (even `kill -9`) the ticket is free and the next
+holder gets a reset first; the leftovers post-check stops a holder left in the task's worktree. There is no idle limit
+(a limit without data would be a guess); hold times are in `status` and in the slot journal (class `stand`). The stand
+holds no memory slot: its memory is its own fixed ceiling.
+
+An invalid project config is a refusal for every slot and stand script (exit 78 with the errors), never a silent
+fallback to another slot directory: a second directory would be a second queue that the first one does not see.
+
 ## Tests
 
 ```sh
@@ -315,7 +341,8 @@ npm test            # or: node tests/run.js [filter]
 
 The suite checks the chain logic with fake agents (every routing case, the post-checks, the rule markers against
 `RULE_LIST` and every role prompt), the post-check and cost scripts, the config, the hooks, the worktree setup, the
-slots on a fake machine (classes, the extra slot, swap, queue order, worker budget, the slot journal and its summary), that the repository holds no
+slots on a fake machine (classes, the extra slot, swap, queue order, worker budget, the slot journal and its summary),
+the stand ticket on fake project commands, that the repository holds no
 Cyrillic text, home paths or e-mail addresses, and that a run without zsh skips the zsh tests visibly instead of failing.
 
 ## License

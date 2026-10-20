@@ -7,7 +7,9 @@
 // Notes for reading it: a heavy hold of an exclusive guard includes its wait for the exclusive lock (that wait is also
 // the "exclusive" class's queue); a full run (kind "full") that left the slot with exit 75 had no worker budget - its
 // hold is waiting too, counted in the line "no worker budget". Records with no acquire ("-") never got a slot (killed
-// while queueing): their wait counts, they have no hold.
+// while queueing): their wait counts, they have no hold. The class "stand" is the ticket of the project's shared stand
+// (scripts/stand.sh): its hold is the whole time a tester held the stand; kind "dead" - a holder found dead by the next
+// one, its release is the time it was found (an upper bound of the hold).
 //
 // usage: slot-journal.js [--journal <file>] [--since <time>] [--until <time>] [--json]
 //   <time>: 30m, 6h, 2d (ago), an ISO date/time, or epoch seconds. Journal: --journal, else $SLOT_JOURNAL, else

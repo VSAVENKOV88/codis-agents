@@ -4,6 +4,6 @@
 # A guard marked `// guards:exclusive — <reason>` also takes the exclusive lock ($GUARDS_EXCLUSIVE_LOCK), waiting out
 # loud ("waiting for the exclusive lock ..." at least every SLOT_SAY s).
 # usage: heavy.sh <command...>
-source "${0:A:h}/slots.zsh"
+source "${0:A:h}/slots.zsh" || exit $?
 if slot_is_exclusive_guard "$@"; then SLOT_LABEL="$*" slot_run heavy zsh -c 'source "$1"; shift; slot_exclusive_run "$@"' heavy-excl "${0:A:h}/slots.zsh" "$@"
 else slot_run heavy "$@"; fi

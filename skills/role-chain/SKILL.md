@@ -36,7 +36,7 @@ Only tasks the owner asked for in this conversation. For each task:
 | `spec` | optional: path or list of paths of the arc specification (and its `PRINCIPLES.md`); every role gets it as context; it is not the task's analysis |
 | `useCases` | optional: absolute path of the feature's `use-cases.md` (in the task folder or the folder of its `feature`, never the arc specification); every role gets it as context, the preconditions check it has no open questions left, the analyst's matrix cites it, the tester builds acceptance along its flows, the reviewer checks its alternative flows and errors |
 | `useCasesFirst` | optional: `true` together with `analystFirst` for a feature whose use cases are not written yet - the analyst writes only `<dir>/use-cases.md` with its open questions and the task stops with status `use-cases-review`; review them with the owner, then relaunch with `useCases` and `analystFirst` |
-| `stack` | optional: docker compose project the tester may start and tear down |
+| `stack` | optional: docker compose project the tester may start and tear down; with a shared stand in the config (`stand`) only for a task whose commits change the stand's image files |
 | `security` | optional: the brief marks the task as security work - a security reviewer joins |
 
 Every task carries exactly one of `analystFirst`, `analysis`, `noAnalysis`; with none or several the workflow stops

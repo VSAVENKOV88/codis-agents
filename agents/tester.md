@@ -14,6 +14,10 @@ by default guards and fixtures) stops the chain - whatever tool made it.
 - Add guards for what is not covered (guards and fixtures are the only worktree files you may change), commit them, and mutation-test them after the commit.
 - Run the brief's acceptance scenario in the real environment - not a substitute, not a unit test of it - and keep the
   evidence (logs, numbers, screenshots) in the task folder with the prefix `test-`.
+- When the project has a shared stand (config `stand`) and the task's commits do not change its image files
+  (`scripts/stand.sh image-diff`), accept on the stand instead of a stack of your own: `stand.sh take` in the
+  background (that process holds the ticket until release), `stand.sh deploy`, the scenario, `stand.sh release` - also
+  after a red, others wait in the queue. Never bring the stand up or down.
 - Do not repeat the programmer's full guard run: reuse its log, run new and touched guards and mutations; run the full
   suite only after your own commits.
 - Verdict green only when the acceptance of the brief is met in full; otherwise red with file:line.

@@ -359,6 +359,19 @@ async function run(script, task = T, extra = {}) {
   const tp = x.prompts.find((p) => p.role === 'test').prompt;
   ok('tester prompt: own stack torn down with images and volumes (docker compose -p <stack> down -v --rmi all)', tp.includes('docker compose -p k-test down -v --rmi all'), tp);
   ok('every role prompt: the owner\'s stack images are never removed, nor other images or the build cache', x.prompts.filter((p) => !['diff', 'left'].includes(p.role)).every((p) => /[Nn]ever remove[^.]*owner's stack[^.]*other images[^.]*build cache/.test(p.prompt)));
+  // The project's shared stand: the tester checks image-diff, takes the ticket in the background, deploys, releases.
+  const STANDCFG = Object.assign({}, CFG, { stand: { project: 'p-dev', ports: [3101] } });
+  const xst = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D] }, T, { config: STANDCFG });
+  const tst = xst.prompts.find((p) => p.role === 'test').prompt;
+  ok('tester prompt with a stand: image-diff, take in the background, deploy, release', /stand\.sh image-diff --wt '[^']+' --base /.test(tst) && /stand\.sh take --wt '[^']+' with run_in_background/.test(tst)
+    && /stand\.sh deploy '/.test(tst) && /stand\.sh release --wt '/.test(tst) && tst.includes('p-dev'), tst);
+  ok('tester prompt with a stand: release also after a red; a refused take is an environment red', /also after a red/.test(tst) && /environment red/.test(tst), tst);
+  ok('tester prompt with a stand and no stack: changed image files -> a question to the coordinator', /❓ coordinator: own stack needed/.test(tst), tst);
+  const xst2 = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D] }, Object.assign({}, T, { stack: 'k-test' }), { config: STANDCFG });
+  const tst2 = xst2.prompts.find((p) => p.role === 'test').prompt;
+  ok('tester prompt with a stand and a stack: own stack only when the stand does not fit', /Only when the stand does not fit, your own stack: docker compose -p k-test/.test(tst2), tst2);
+  ok('tester prompt without a stand: no stand steps', !/stand\.sh/.test(tp));
+  ok('every role prompt with a stand names it in the stand rule', xst.prompts.filter((p) => !['diff', 'left'].includes(p.role)).every((p) => /Shared stand: acceptance in Docker goes to the project's stand p-dev/.test(p.prompt)));
   // One source of role rules: markers in rules/multi-agent.md <-> RULE_LIST <-> the prompt of every role.
   const rules = fs.readFileSync(path.join(ROOT, 'rules', 'multi-agent.md'), 'utf8');
   const marked = [...rules.matchAll(/<!-- role:([\w-]+) -->/g)].map((m) => m[1]);
