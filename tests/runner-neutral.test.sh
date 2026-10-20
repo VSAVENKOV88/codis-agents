@@ -70,6 +70,13 @@ ok 'A5. a heavy neighbour holds a slot: the run waits in the queue, not admitted
 pl=$(zsh -c 'source "$1" || exit 9; slot_guard_plan $SLOTS_DIR/heavy.3.lock whole start; print -r -- "$(<$SLOTS_DIR/heavy.3.lock.jobs)"' _ $H/slots.zsh 2>&1)
 ok 'A5. ... slot_guard_plan whole next to a neighbour: 0 workers, "fixed 0" for the others' '[[ $pl == "0 0"$'"'"'\n'"'"'"fixed 0" ]]' "$pl"
 rm -f $SLOTS_DIR/heavy.3.lock.jobs
+# ... next to an ADAPTIVE neighbour too: waiting in the slot would not help (the neighbour sheds only to its share), so
+# the plan reports no adaptive neighbour and the run goes back to the queue
+nb=$(grep -l ' _ n1$' $SLOTS_DIR/heavy.*.lock.who 2>/dev/null | head -1); nb=${nb%.who}; : ${nb:=$SLOTS_DIR/heavy.1.lock}
+print -r -- adaptive > $nb.jobs; print -r -- 3 > $nb.limit
+pl=$(zsh -c 'source "$1" || exit 9; slot_guard_plan $SLOTS_DIR/heavy.3.lock whole start' _ $H/slots.zsh 2>&1)
+ok 'A5. ... slot_guard_plan whole next to an adaptive neighbour: "0 0" (wait outside the slot)' '[[ $pl == "0 0" ]]' "$pl"
+rm -f $SLOTS_DIR/heavy.3.lock.jobs $nb.jobs $nb.limit
 touch $T/rel.n1; waitlong '[[ -e $T/n1.end ]]'; wait $GA; rc=$?
 ok 'A5. ... the neighbour ended: the run started after it and exits 0' '(( rc == 0 )) && grep -q "^start xp fixed 6 " $T/run.log' "$rc $(cat $T/a5.out)"
 
@@ -114,6 +121,8 @@ print -r -- '#guards:exclusive —' > $T/wts/xp/tests/test_noreason.py
 print -r -- '// guards:exclusive — fixed port' > $T/wts/xp/tests/x-run.js
 print -r -- '  [x]  guards:exclusive — literal marker' > $T/wts/xp/tests/test_lit.py
 print -r -- 'x guards:exclusive — not the marker' > $T/wts/xp/tests/test_notlit.py
+print -r -- '// guards:exclusive — marked, but the name is not *-run.js' > $T/wts/xp/tests/helper.js
+print -r -- '# guards:exclusive — marked, but the name is not test_*.py' > $T/wts/xp/tests/conftest.py
 cfg $T/lit.json 'cd {wt} && pytest' '"guardExclusive": {"glob": ["test_*.py"], "marker": "[x]"}'
 cfg $T/def.json 'cd {wt} && pytest'
 excl() { # excl <config> <file> -> 0 when slot_is_exclusive_guard says exclusive
@@ -123,6 +132,7 @@ ok 'D1. ... no key: a test_*.py with "#" is not' '! excl $T/def.json tests/test_
 ok 'D2. {glob: [test_*.py], marker: #}: test_port.py with "# guards:exclusive — fixed port" is exclusive' 'excl $T/py.json tests/test_port.py'
 ok 'D3. ... a test_*.py without the marker is not' '! excl $T/py.json tests/test_plain.py'
 ok 'D4. ... x-run.js with "//" is not (the key replaces the default)' '! excl $T/py.json tests/x-run.js'
+ok 'D3. the marker in a file whose name matches no glob is not exclusive (helper.js by default, conftest.py by the key)' '! excl $T/def.json tests/helper.js && ! excl $T/py.json tests/conftest.py'
 ok 'D5. ... the marker without a reason after "—" is not' '! excl $T/py.json tests/test_noreason.py'
 ok 'D2. a marker with pattern characters ([x]) is matched literally' 'excl $T/lit.json tests/test_lit.py && ! excl $T/lit.json tests/test_notlit.py'
 chk $T/py.json; ok 'D2. config.js check: guardExclusive {glob, marker} - ok' '(( crc == 0 )) && [[ $c == ok* ]]' "$crc $c $(<$T/chk.err)"
