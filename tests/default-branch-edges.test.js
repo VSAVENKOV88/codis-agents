@@ -101,6 +101,26 @@ try {
   for (const c of ['git push origin :', 'git push origin +:', 'git push -f origin :', 'git push origin b-t1 :']) {
     ok(`unknown: matching push "${c}" refused with the reason`, unknownRe.test(bash(c, norem, unk) || ''), String(bash(c, norem, unk)));
   }
+  // Round 5 (tester): other spellings of the matching refspec while unknown - quoted, with lease, after an allowed tag
+  // (build-1 alone goes through, so only ":" can refuse it), through git -C from outside the repository; the reason
+  // names the matching push; the owner's word still lets it through.
+  for (const c of ["git push origin ':'", 'git push origin "+:"', 'git push --force-with-lease origin +:', 'git push origin build-1 :',
+    'git push origin -- :', 'git push --no-verify origin :']) {
+    const w = bash(c, norem, unk) || '';
+    ok(`unknown: matching push "${c}" refused, the reason names the matching refspec`, unknownRe.test(w) && /matching refspec/.test(w), w);
+  }
+  ok('unknown: git -C <repo> push origin : from outside any repository refused', unknownRe.test(bash(`git -C ${norem} push origin :`, dir, unk) || ''), String(bash(`git -C ${norem} push origin :`, dir, unk)));
+  ok('unknown: ALLOW_PROTECTED_PUSH=1 git push origin : goes through (the owner\'s word)', bash('ALLOW_PROTECTED_PUSH=1 git push origin :', norem, unk) === null, String(bash('ALLOW_PROTECTED_PUSH=1 git push origin :', norem, unk)));
+  {
+    // With the branches known the matching push is judged as before the task (f5ab484: it names no branch and goes
+    // through; pre-push catches it) - the fix touches only the unknown case. An explicit [] protects nothing.
+    const kn = cfgFile('kn5', { repoDir: norem, defaultBranch: 'master' }), none = cfgFile('none5', { repoDir: norem, protectedBranches: [] });
+    ok('known master: git push origin : judged as before (allowed by the session hook)', bash('git push origin :', norem, kn) === null, String(bash('git push origin :', norem, kn)));
+    ok('protectedBranches []: git push origin +: allowed (no branch is protected)', bash('git push origin +:', norem, none) === null, String(bash('git push origin +:', norem, none)));
+    const hp = spawnSync('node', [path.join(ROOT, 'scripts', 'hooks', 'guard-bash.js')], { cwd: norem, encoding: 'utf8',
+      input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'git push origin +:' }, cwd: norem }), env: Object.assign({}, env, { CODIS_AGENTS_CONFIG: unk }) });
+    ok('unknown: the hook process on "git push origin +:" exits 0 with deny', hp.status === 0 && /"permissionDecision":"deny"/.test(hp.stdout) && /matching/.test(hp.stdout), `${hp.status} ${hp.stdout} ${hp.stderr}`);
+  }
   {
     const hp = spawnSync('node', [path.join(ROOT, 'scripts', 'hooks', 'guard-bash.js')], { cwd: norem, encoding: 'utf8',
       input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'git push origin v1.0' }, cwd: norem }), env: Object.assign({}, env, { CODIS_AGENTS_CONFIG: unk }) });
@@ -155,6 +175,14 @@ try {
   p = spawnSync('git', ['-C', norem, 'push', 'origin', '--delete', 'build-1'], { encoding: 'utf8', env });
   ok('no origin/HEAD: real git push origin --delete build-1 refused by pre-push, remote branch build-1 kept', p.status !== 0 && unknownRe.test(p.stderr)
     && git(origin, 'show-ref', '--verify', '--quiet', 'refs/heads/build-1').status === 0, p.stderr);
+  // Round 5 (tester): the second layer on the matching push - origin and norem both hold master (unrelated history),
+  // so a real git push origin +: would force-update origin's master; pre-push refuses and master stays.
+  {
+    const before = git(origin, 'rev-parse', 'refs/heads/master').stdout.trim();
+    p = spawnSync('git', ['-C', norem, 'push', 'origin', '+:'], { encoding: 'utf8', env });
+    ok('no origin/HEAD: real git push origin +: refused by pre-push, origin master unchanged', p.status !== 0 && unknownRe.test(p.stderr)
+      && git(origin, 'rev-parse', 'refs/heads/master').stdout.trim() === before, p.stderr);
+  }
   git(proj, 'worktree', 'remove', '--force', lw);
 } finally {
   fs.rmSync(dir, { recursive: true, force: true });
