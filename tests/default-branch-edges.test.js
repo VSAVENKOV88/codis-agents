@@ -5,6 +5,8 @@
 // (bare git push, HEAD:refs/heads/x, --delete) but not an existing unprotected tag; an explicit defaultBranch protects
 // a repository without a remote; a linked worktree reads origin/HEAD of its repository; a relative repoDir "." is the
 // project root; a real `git push` through core.hooksPath is refused for the default branch and let through for others.
+// Round 2: tags in every form while unknown, the hook process exits 0 with deny on a tag, and a branch push named like
+// an existing tag (HEAD:build-1 creates refs/heads/build-1) is still a branch push.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -65,6 +67,19 @@ try {
   }
   ok('unknown: an existing tag outside protectedTagPattern is not a branch push - allowed', bash('git push origin build-1', norem, unk) === null, String(bash('git push origin build-1', norem, unk)));
   ok('unknown: a protected tag stays refused as a tag (no crash: a crash lets the push through)', /tag v1.0 is refused/.test(bash('git push origin v1.0', norem, unk) || ''), String(bash('git push origin v1.0', norem, unk)));
+  // Round 2: tags while unknown in every form, and a branch push whose destination is named like an existing tag.
+  ok('unknown: refs/tags/v1.0 refused as a protected tag', /tag v1.0 is refused/.test(bash('git push origin refs/tags/v1.0', norem, unk) || ''), String(bash('git push origin refs/tags/v1.0', norem, unk)));
+  ok('unknown: refs/tags/build-1 allowed (a tag, not a branch push)', bash('git push origin refs/tags/build-1', norem, unk) === null, String(bash('git push origin refs/tags/build-1', norem, unk)));
+  ok('unknown: a tag and a branch in one push - the branch still refused', unknownRe.test(bash('git push origin build-1 b-t1', norem, unk) || ''), String(bash('git push origin build-1 b-t1', norem, unk)));
+  // git creates refs/heads/build-1 on the remote here (src HEAD is a branch; measured with git 2.50: "[new branch] HEAD -> build-1").
+  for (const c of ['git push origin HEAD:build-1', 'git push origin b-t1:build-1']) {
+    ok(`unknown: "${c}" is a branch push (src is a branch) - refused with the reason`, unknownRe.test(bash(c, norem, unk) || ''), String(bash(c, norem, unk)));
+  }
+  {
+    const hp = spawnSync('node', [path.join(ROOT, 'scripts', 'hooks', 'guard-bash.js')], { cwd: norem, encoding: 'utf8',
+      input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'git push origin v1.0' }, cwd: norem }), env: Object.assign({}, env, { CODIS_AGENTS_CONFIG: unk }) });
+    ok('unknown: the hook process on a protected tag exits 0 with deny (exit 1 would be non-blocking)', hp.status === 0 && /"permissionDecision":"deny"/.test(hp.stdout), `${hp.status} ${hp.stdout} ${hp.stderr}`);
+  }
   const keyed = cfgFile('keyed', { repoDir: norem, defaultBranch: 'master' });
   ok('no remote + defaultBranch master: hook protects master, lets b-t1 through',
     /master is protected/.test(bash('git push origin master', norem, keyed) || '') && bash('git push origin b-t1', norem, keyed) === null);
@@ -99,6 +114,9 @@ try {
   p = spawnSync('git', ['-C', norem, 'push', 'origin', 'b-t1'], { encoding: 'utf8', env });
   ok('no origin/HEAD, no config: real git push origin b-t1 refused with the reason', p.status !== 0 && unknownRe.test(p.stderr)
     && git(origin, 'show-ref', '--verify', '--quiet', 'refs/heads/b-t1').status !== 0, p.stderr);
+  p = spawnSync('git', ['-C', norem, 'push', 'origin', 'HEAD:build-1'], { encoding: 'utf8', env });
+  ok('no origin/HEAD: real git push origin HEAD:build-1 (a new branch named like a tag) refused by pre-push', p.status !== 0 && unknownRe.test(p.stderr)
+    && git(origin, 'show-ref', '--verify', '--quiet', 'refs/heads/build-1').status !== 0, p.stderr);
   git(proj, 'worktree', 'remove', '--force', lw);
 } finally {
   fs.rmSync(dir, { recursive: true, force: true });
