@@ -236,7 +236,8 @@ _slot_pick() {
 # they would pass:
 #  * when the first is a full run (SLOT_KIND=full, guards-all.sh) with no worker budget and no adaptive neighbour
 #    (slot_guard_plan would return "0 0"), it does not take the slot, but single heavy jobs behind it do not pass
-#    either: it is never starved;
+#    either: it is never starved; a run of kind "whole" admitted on the whole budget reserves it in <slot>.whole before
+#    its ticket goes, so a single heavy job that takes the next slot right after cannot bump it back to the queue;
 #  * the first of its class may take the last slot of the shared ceiling (medium + heavy = SLOT_TOTAL_MAX - 1) only if
 #    the first of the OTHER queue with a smaller number cannot take it right now.
 # Any waiter removes tickets of dead waiters (no pid, or the pid was reused - a different start time) under admit.lock;
@@ -365,7 +366,13 @@ slot_run() {
             tacq=${${=$(<$got)}[2]}; [[ -n $tacq ]] || tacq=$(_slot_now)   # the holder's own start time
             jslot=${${slot:t:r}##*.}
             print -r -- "$class $$ $(date '+%F %T') $*" > $slot.who
-            rm -f $slot.jobs $slot.limit $slot.limit.active   # numbers of the previous holder (slot_guard_plan) are not inherited
+            rm -f $slot.jobs $slot.limit $slot.limit.active $slot.whole   # numbers of the previous holder (slot_guard_plan) are not inherited
+            # kind whole was admitted on the whole budget: reserve it now, under admit.lock, before the ticket goes. A
+            # single heavy job behind it may take the next slot at once (as next to a fixed run), and the run's own plan
+            # in the slot would then see a neighbour and give 0 - back to the queue behind that job, over and over.
+            if [[ $kind == whole ]]; then
+              print -r -- $GUARDS_JOBS_ALONE > $slot.whole; print -r -- "fixed $GUARDS_JOBS_ALONE" > $slot.jobs
+            fi
             rm -f $qf; qf=                                     # ticket used - the next in the queue is now first
             zsystem flock -u $fd
             break
@@ -468,16 +475,22 @@ slot_jobs_budget() {
 
 # slot_guard_plan <my slot> <fixed|whole|adaptive> <start|run> -> "workers_for_me adaptive_neighbours"
 # Under the admission lock: two newcomers do not count the same remainder. Writes my share for the neighbours:
-# fixed -> "fixed N"; whole (a runner without {jobs}) -> "fixed GUARDS_JOBS_ALONE" when the whole budget is mine, else
-# "fixed 0" and "0 0" (wait outside the slot); adaptive -> "adaptive" and the limit in <slot>.limit (at start only when N >= 1; mid-run at least
+# fixed -> "fixed N"; whole (a runner without {jobs}) -> "fixed GUARDS_JOBS_ALONE" when the whole budget is mine (reserved
+# at admission in <slot>.whole, or no other heavy job now), else "fixed 0" and "0 0" (wait outside the slot); adaptive -> "adaptive" and the limit in <slot>.limit (at start only when N >= 1; mid-run at least
 # 1: the runner reads 0 as "no limit"). No lock within 30 s - 0 (wait), nothing written.
 slot_guard_plan() {
   local me=$1 mode=$2 phase=$3 fd n=0 ad=0 sc
   if zsystem flock -t 30 -f fd $SLOTS_DIR/admit.lock 2>/dev/null; then
     sc=( $(_slot_heavy_scan $me) )
     n=$(slot_jobs_budget $sc[1] $sc[2] $(( sc[3] + sc[5] ))); ad=$sc[4]
-    # whole: an adaptive neighbour sheds only to its share, never to 0, so waiting in the slot cannot help - "0 0"
-    [[ $mode == whole ]] && { (( n < GUARDS_JOBS_ALONE )) && n=0; ad=0 }
+    # whole: the budget reserved at admission (<slot>.whole, slot_run) is mine, whoever came after it. Without the
+    # reservation: an adaptive neighbour sheds only to its share, never to 0, so waiting in the slot cannot help - "0 0"
+    if [[ $mode == whole ]]; then
+      if [[ -s $me.whole && $(<$me.whole) == $GUARDS_JOBS_ALONE ]]; then n=$GUARDS_JOBS_ALONE
+      elif (( n < GUARDS_JOBS_ALONE )); then n=0
+      fi
+      ad=0
+    fi
     if [[ $mode == (fixed|whole) ]]; then print -r -- "fixed $n" > $me.jobs
     else
       print -r -- adaptive > $me.jobs

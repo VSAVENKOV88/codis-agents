@@ -9,7 +9,8 @@
 #   Fixed runner (guardCommandLegacy, or guardCommand without {limitFile}): the count is chosen once at start.
 #   Runner without {jobs} (and without {limitFile}): it sets its own workers, so it is counted as the whole budget
 #   ("fixed GUARDS_JOBS_ALONE") and starts only when that whole budget is free - no other heavy job (queue kind
-#   "whole"); starting it on a share would break the ceiling, since nothing tells it to use fewer.
+#   "whole"); starting it on a share would break the ceiling, since nothing tells it to use fewer. The admission
+#   reserves that budget (<slot>.whole), so single heavy jobs admitted right after it do not send it back to the queue.
 #   No budget -> "waiting for workers ..." (inside the slot with an adaptive neighbour; outside it otherwise).
 # Queue (slots.zsh, FIFO): a full run waits by ticket as kind "full" - without a budget it does not take the slot, but
 #   late single heavy jobs do not pass it either; exit 75 (budget taken after admission) - back to the queue with the
@@ -90,7 +91,7 @@ while true; do
       print -r -- "workers: $n for the whole run (fixed runner; $SLOT_PATH)"
       zsh -c "$(sub "$CMD" $n)" > "$OUT" 2>&1; print -r -- $? > "$RCF"
     fi
-    rm -f "$SLOT_PATH.jobs" "$SLOT_PATH.limit" "$SLOT_PATH.limit.tmp" "$SLOT_PATH.limit.active"
+    rm -f "$SLOT_PATH.jobs" "$SLOT_PATH.limit" "$SLOT_PATH.limit.tmp" "$SLOT_PATH.limit.active" "$SLOT_PATH.whole"
     tail -25 "$OUT"
     if [[ -n $RERUN ]]; then node "$GR" rerun "$WT" "$OUT" "$(<$RCF)" "$RERUN"; print -r -- $? > "$RCF"; fi
     node "$GR" meta-end "$WT" "$OUT" "$(<$RCF)"' guards-all "$H/slots.zsh" "$WT" "$OUT" "$CMD" "$mode" "$RCF" "$H/guards-result.js" "$RERUN"
