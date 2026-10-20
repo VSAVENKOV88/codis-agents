@@ -100,11 +100,12 @@ function judge(words, ctx) {
       const isTag = g('show-ref', '--verify', '--quiet', 'refs/tags/' + d).status === 0;
       const isBranch = g('show-ref', '--verify', '--quiet', 'refs/heads/' + d).status === 0;
       if (isTag || !isBranch) tag = d;
-      // The destination is a tag push only when the source is that tag (no source given, a delete, or a source that
-      // resolves to refs/tags/): git push origin HEAD:build-1 creates refs/heads/build-1 on the remote even when a
-      // local tag build-1 exists, so it stays a branch push.
-      const srcRef = !src ? 'refs/tags/' + d
-        : (g('rev-parse', '--symbolic-full-name', src).stdout || '').trim();
+      // The destination is a tag push only when the source resolves to refs/tags/ (git push origin build-1 takes
+      // the name as its own source): git push origin HEAD:build-1 creates refs/heads/build-1 on the remote even
+      // when a local tag build-1 exists, so it stays a branch push. A delete of a bare name is never a known tag:
+      // git deletes whatever the remote holds under that name (git push origin --delete build-1 removes a remote
+      // branch build-1 although a local tag build-1 exists), so only an explicit :refs/tags/<name> deletes a tag.
+      const srcRef = src ? (g('rev-parse', '--symbolic-full-name', src).stdout || '').trim() : '';
       knownTag = isTag && srcRef.startsWith('refs/tags/');
     }
     if (branch && !knownTag && !cfg.protectedBranches) return `\`git push\` of ${branch} is refused: protected branches unknown - ${cfg.defaultBranchUnknown} (ALLOW_PROTECTED_PUSH=1 only on the owner's explicit word).`;
