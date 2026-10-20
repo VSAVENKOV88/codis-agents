@@ -243,8 +243,13 @@ none or several the task stops before any agent. The result carries `analysis: {
 A feature gets its own analysis: `analysis` must lie in the task's folder or in the folder of its `feature`, and the arc
 specification goes into `spec` (context for every role), never into `analysis`.
 Optional task fields: `dir`, `gdir`, `start`, `feature` (the feature this task was split from), `spec` (the arc
-specification), `stack` (the tester's own compose project), `security`.
-Each task ends `done` or `stopped` with the reason, the open questions, a proposed split or the review findings.
+specification), `useCases` (the feature's `use-cases.md`: actor, trigger, main and alternative flows, errors, out of
+scope - context for every role, cited by the matrix, the tester's acceptance follows its flows), `useCasesFirst`,
+`stack` (the tester's own compose project), `security`. For a feature, `useCasesFirst: true` with `analystFirst` has the
+analyst write only the use cases with their open questions and stops the task with status `use-cases-review`; after
+the review with the owner the coordinator relaunches it with `useCases` and `analystFirst`.
+Each task ends `done`, `use-cases-review` or `stopped` with the reason, the open questions, a proposed split or the
+review findings.
 
 ## How the chain decides
 
@@ -252,7 +257,8 @@ Each task ends `done` or `stopped` with the reason, the open questions, a propos
   unanswered question that acceptance depends on, free disk and swap headroom above the floors of `preconditions`
   (`scripts/env-check.js`). Otherwise it stops before any code.
 - **Analyst** before the programmer when the task is marked `analystFirst`; a proposal to split stops the chain. With
-  `analysis` the phase logs the reused report, with `noAnalysis` the reason.
+  `analysis` the phase logs the reused report, with `noAnalysis` the reason. With `useCasesFirst` it writes only the
+  use cases and the task stops for the owner's review.
 - **Programmer** commits a red guard, then the code, then mutation-tests the guards after the commit and runs the full
   guard suite in a heavy slot.
 - **Tester** builds its own inventory, adds and mutation-tests guards, runs the acceptance scenario for real. Red goes

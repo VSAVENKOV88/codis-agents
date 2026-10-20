@@ -41,6 +41,19 @@ Larger changes run as a chain of agents, each in its own role:
     it" is not one; the preconditions refuse it). Why: tasks that had only the arc specification had 44 % red testers
     and 2.4 programmer rounds, tasks with their own analysis 24 % and 1.65: the specification describes the surface, not
     the matrix of the task.
+  - **Use cases before the matrix, for a feature** (not a defect, not a tail). The analyst's first step is the use
+    cases, `use-cases.md` in the folder of the task or of the feature: for every use case the actor, trigger, main flow,
+    alternative flows, errors, out of scope. The open questions of the use cases go to the owner as one list and are
+    settled with the owner before the matrix of cases; every cell of the matrix then cites its use case. Every role gets
+    the use cases as context (task field `useCases`, a path inside the task's or feature's folder, like `analysis`); the
+    tester builds the acceptance along the flows (main, alternative, errors), the reviewer checks that the alternative
+    flows and errors are closed too, not only the main flow. In the chain: `useCasesFirst` (`true`, with `analystFirst`):
+    the analyst writes only the use cases with their questions and the task stops with status `use-cases-review`;
+    after the review with the owner the coordinator relaunches it with `useCases` set to that path and `analystFirst`
+    (the matrix on the use cases).
+    Why: questions were born during the task instead of before it - in one task about 40 questions to the coordinator on
+    the way and 8 programmer rounds, almost all from one flow nobody had written down (an AI edited the code, then a
+    person sent the result back).
   - For a feature with several dimensions the analyst first writes a matrix of cases into the brief (every dimension:
     states x events x environments). Without it each round closed one cell and broke the next.
   - **Split the task before the first programmer** if any holds: the matrix has more than ~30 cells; it spans more

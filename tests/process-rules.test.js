@@ -54,6 +54,11 @@ const CHECKS = [
   // Cost per feature: parts summed by an explicit `feature`, flagged above featureIELimit (owner 2026-10-19).
   [[RULES, CHAIN, README], 'chain-cost sums the parts of a feature and flags it above featureIELimit', /`featureIELimit`[^\n]{0,200}3 x `medianTaskIE`|sums[^.]*`feature`[^.]*`featureIELimit`/],
   [[RULES], 'the feature is named explicitly, never guessed from a key prefix', /named\s+explicitly, never guessed from a common key prefix/],
+  // Use cases before a feature (owner 2026-10-20): the analyst's first step, reviewed with the owner before the matrix.
+  [[RULES], 'for a feature the analyst first writes use-cases.md: actor, trigger, main flow, alternative flows, errors, out of scope', /use cases[^.]*`use-cases\.md`[^.]*actor, trigger, main flow, alternative flows, errors, out of scope/i],
+  [[RULES], 'open questions of the use cases go to the owner before the matrix; every cell cites its use case', /open questions[^.]*use cases[^.]*owner[^.]*before the matrix[^.]*every cell[^.]*cites its use case/i],
+  [[RULES], 'the tester builds acceptance along the flows, the reviewer checks alternative flows', /tester builds the acceptance along the flows[^.]*reviewer checks[^.]*alternative flows/],
+  [[RULES, CHAIN, README], 'useCasesFirst stops the task for the review with the owner, then useCases + analystFirst', /`useCasesFirst`[^\n]*`useCases`[^\n]*`analystFirst`/],
   // New reds rerun alone; flaky goes to the backlog, not to the programmer; reuse on the same HEAD (owner 2026-10-20).
   [[RULES, README], 'a new red is first rerun alone (guardRerun)', /(new reds? (is first )?rerun alone|new reds rerun alone)[^\n]*`guardRerun`/i],
   [[RULES], 'a flaky guard is not sent to the programmer as a regression but goes into the project backlog', /flaky[^.]*not a regression and not sent to the programmer[^.]*project backlog/],

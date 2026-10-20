@@ -25,7 +25,9 @@ one. For whatever the owner judges by the screen, show a mockup of all states be
    "inactive while ..." restriction - split before any programmer, or send the analyst first. Defects get a diagnosis
    first by default; an analysis of the task that already exists is passed as the task's `analysis` path, and a
    defect without a diagnosis gets a written `noAnalysis` reason. A feature gets its own analysis: the arc
-   specification goes into `spec`, never into `analysis`.
+   specification goes into `spec`, never into `analysis`. A feature (not a defect, not a tail) starts with its use cases:
+   run it with `useCasesFirst: true` and `analystFirst`, take the `use-cases-review` result to the owner as one list of
+   questions, write the answers into `use-cases.md`, then relaunch with `useCases: <path>` and `analystFirst`.
 3. **Brief.** One folder per task under `sharedDir` with `BRIEF.md` (skill `codis-agents:brief`); the owner's words
    verbatim and dated; the acceptance as a scenario in the real environment.
 4. **Worktree.** `${CLAUDE_PLUGIN_ROOT}/scripts/wt-setup.sh <name> <branch> [base]`.
