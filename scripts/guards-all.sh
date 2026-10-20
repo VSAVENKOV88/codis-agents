@@ -18,7 +18,7 @@
 H=${0:A:h}
 [[ -n $1 ]] || { print -u2 "usage: guards-all.sh <worktree name or path>"; exit 64; }
 cfg() { node "$H/config.js" get "$1" 2>/dev/null }
-source "$H/slots.zsh"
+source "$H/slots.zsh" || exit $?
 [[ -n $CODIS_WORKTREE_ROOT && -n $CODIS_SHARED_DIR ]] || { print -u2 "guards-all: no project config (.claude/codis-agents.json) found"; exit 78; }
 if [[ $1 == /* ]]; then WT=$1; else WT=$CODIS_WORKTREE_ROOT/$1; fi
 [[ -d $WT ]] || { print -u2 "guards-all: no worktree $WT"; exit 66; }

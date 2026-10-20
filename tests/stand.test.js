@@ -34,7 +34,7 @@ const held = `zsh -c 'zmodload zsh/system; zsystem flock -t 0 -f f ${SL}/stand.l
 const STAND = {
   project: 'stand-test', ports: [39999],
   up: `touch ${T}/up`, down: `rm -f ${T}/up`, status: `test -e ${T}/up && print -r -- "stand {project} up"`,
-  deploy: `print -r -- "deploy $(basename {wt}) {project}" >> ${LOG}`,
+  deploy: `print -r -- deploy $(basename {wt}) {project} >> ${LOG}`,   // values come shell-quoted: never inside "..."
   reset: `[[ ! -e ${T}/reset-fail ]] || exit 3; print -r -- "reset $(${held})" >> ${LOG}`,
   imageFiles: ['server/Dockerfile*', 'docker-compose*.yml'], memLimitMB: 3072,
 };
@@ -101,8 +101,10 @@ const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { retu
       r = st(args, B);
       ok(`B7 ${name} from another worktree is refused: "the ticket is held by <wt>"`, r.status === 77 && outOf(r).includes(`the ticket is held by ${A}`), `${r.status} ${outOf(r)}`);
     }
-    r = st(['deploy', A], B);
-    ok('B7 deploy of the holder\'s worktree called from another worktree is refused', r.status === 77, outOf(r));
+    r = st(['deploy', B], A);
+    ok('B7 deploy of another worktree, called from the holder\'s, is refused', r.status === 77 && outOf(r).includes(`the ticket is held by ${A}`), outOf(r));
+    r = st(['release', '--wt', B], A);
+    ok('B7 release --wt <another worktree> is refused', r.status === 77, outOf(r));
     ok('B7 ... and the stand was not touched', log().length === before, log().join('|'));
 
     // B10: deploy of the holder runs in a medium slot.

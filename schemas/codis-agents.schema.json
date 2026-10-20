@@ -67,6 +67,21 @@
       },
       "description": "Environment floors checked by the preconditions with scripts/env-check.js; below them the task stops before any agent instead of a tester going red for the environment."
     },
+    "stand": {
+      "type": "object", "additionalProperties": false, "required": ["project", "up", "deploy", "reset", "status", "down"],
+      "properties": {
+        "project": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_-]*$", "description": "Docker Compose project of the shared stand; never the owner's stack (ownerStackReadOnly)." },
+        "ports": { "type": "array", "items": { "type": "integer", "minimum": 1, "maximum": 65535 }, "description": "Ports of the stand on the host; {port} is the first, {ports} all of them." },
+        "up": { "type": "string", "description": "Brings the stand up (the coordinator: stand.sh up). Placeholders {project}, {port}, {ports}, {repo}." },
+        "deploy": { "type": "string", "description": "Deploys the committed HEAD of a worktree into the stand; must contain {wt}. Run by stand.sh deploy for the ticket holder only, in a medium slot." },
+        "reset": { "type": "string", "description": "Makes the stand as new (sessions, builds, storage, task settings); run by stand.sh before a ticket is given and at release, while the ticket is held." },
+        "status": { "type": "string", "description": "Exits 0 only while the stand is up and ready; its output is shown by stand.sh status. take refuses while it fails." },
+        "down": { "type": "string", "description": "Takes the stand down (the coordinator: stand.sh down; refused while the ticket is held, unless --force)." },
+        "imageFiles": { "type": "array", "items": { "type": "string" }, "description": "Globs of the files that define the stand's image (Dockerfile, package manifests, compose files, .dockerignore). A task whose commits touch one builds its own stack instead (stand.sh image-diff). A glob without / matches the file name at any depth; * and ? stay within a path segment, ** crosses them." },
+        "memLimitMB": { "type": "number", "exclusiveMinimum": 0, "description": "Memory ceiling of the whole stand in MB (for reference; shown by stand.sh status)." }
+      },
+      "description": "The project's shared stand: one Docker stack that tasks take in turn by ticket (scripts/stand.sh) instead of building their own. The plugin only calls these commands, with zsh in repoDir; what they do is the project's."
+    },
     "standingPush": {
       "type": "object", "additionalProperties": false, "required": ["branches", "check"],
       "properties": {

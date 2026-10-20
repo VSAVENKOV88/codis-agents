@@ -43,6 +43,7 @@ const SPEC = {
   gitHooks: ['object', null],
   standingPush: ['object', null],
   preconditions: ['object', null],
+  stand: ['object', null],
   $schema: ['string', ''],
 };
 const REQUIRED = ['repoDir', 'worktreeRoot', 'sharedDir'];
@@ -56,6 +57,18 @@ const HOOKS_SPEC = { blockICloudCopies: ['boolean', false], preCommit: ['string[
 const STANDING_SPEC = { branches: ['string[]', []], check: ['string', ''] };
 // Environment floors of the preconditions (scripts/env-check.js documents why these defaults).
 const PRE_SPEC = { minFreeDiskGB: ['number', 10], minSwapGB: ['number', 4] };
+// The project's shared stand (scripts/stand.sh): one Docker stack that tasks take in turn by ticket instead of building
+// their own. The plugin only calls these commands (zsh, in repoDir); what they do is the project's. Placeholders:
+// {project}, {port} (first of ports), {ports}, {repo}, and {wt} (deploy only: the worktree whose committed HEAD goes in).
+// status exits 0 only while the stand is up. imageFiles: globs of files that define the stand's image (a task whose
+// commits touch one builds its own stack); a glob without "/" matches the file name at any depth, * and ? stay
+// within one path segment, ** crosses them. memLimitMB: the stand's memory ceiling, for reference and status.
+const STAND_SPEC = {
+  project: ['string', undefined], ports: ['number[]', []], up: ['string', undefined], deploy: ['string', undefined],
+  reset: ['string', undefined], status: ['string', undefined], down: ['string', undefined], imageFiles: ['string[]', []],
+  memLimitMB: ['number', null],
+};
+const STAND_REQUIRED = ['project', 'up', 'deploy', 'reset', 'status', 'down'];
 const ROLES = ['analyst', 'programmer', 'tester', 'reviewer', 'security-reviewer'];
 
 const expand = (p) => (typeof p === 'string' && p ? p.replace(/^~(?=$|\/)/, os.homedir()).replace(/\$\{HOME\}|\$HOME\b/g, os.homedir()) : p);
@@ -65,6 +78,7 @@ function typeOk(type, v) {
   if (type === 'number') return typeof v === 'number' && Number.isFinite(v);
   if (type === 'boolean') return typeof v === 'boolean';
   if (type === 'string[]') return Array.isArray(v) && v.every((x) => typeof x === 'string');
+  if (type === 'number[]') return Array.isArray(v) && v.every((x) => typeof x === 'number' && Number.isFinite(x));
   if (type === 'object') return v !== null && typeof v === 'object' && !Array.isArray(v);
   return false;
 }
@@ -104,6 +118,17 @@ function resolve(raw) {
   if (c.standingPush) {
     c.standingPush = level(STANDING_SPEC, c.standingPush, 'standingPush.', errors);
     if (!c.standingPush.branches.length || !c.standingPush.check.trim()) errors.push('standingPush: branches and check are required');
+  }
+  if (c.stand) {
+    c.stand = level(STAND_SPEC, c.stand, 'stand.', errors);
+    const s = c.stand;
+    for (const k of STAND_REQUIRED) if (!(typeof s[k] === 'string' && s[k].trim())) errors.push(`stand.${k}: required`);
+    // Docker Compose project names: lowercase letters, digits, dashes and underscores, starting with a letter or digit.
+    if (s.project && !/^[a-z0-9][a-z0-9_-]*$/.test(s.project)) errors.push(`stand.project: not a compose project name (lowercase letters, digits, - and _): ${s.project}`);
+    if (s.project && s.project === c.ownerStackReadOnly) errors.push(`stand.project: ${s.project} is the owner's stack (ownerStackReadOnly); the stand is reset and redeployed by roles`);
+    if (s.deploy && !s.deploy.includes('{wt}')) errors.push('stand.deploy: must contain {wt} (the worktree to deploy)');
+    if (!s.ports.every((p) => Number.isInteger(p) && p >= 1 && p <= 65535)) errors.push('stand.ports: expected port numbers 1-65535');
+    if (s.memLimitMB !== null && !(s.memLimitMB > 0)) errors.push('stand.memLimitMB: expected a positive number (or leave it out)');
   }
   const notes = c.roleNotes || {};
   for (const [k, v] of Object.entries(notes)) {
@@ -165,7 +190,7 @@ function shellLines(c) {
   return Object.entries(v).map(([k, x]) => (x === '' ? `[[ -v ${k} ]] || ${k}=''` : `: \${${k}:=${q(x)}}`)).join('\n');
 }
 
-module.exports = { find, load, resolve, shellLines, SPEC, SLOT_SPEC, WT_SPEC, PROBE_SPEC, HOOKS_SPEC, STANDING_SPEC, PRE_SPEC, ROLES, expand };
+module.exports = { find, load, resolve, shellLines, SPEC, SLOT_SPEC, STAND_SPEC, STAND_REQUIRED, WT_SPEC, PROBE_SPEC, HOOKS_SPEC, STANDING_SPEC, PRE_SPEC, ROLES, expand };
 
 if (require.main === module) {
   const [cmd, ...rest] = process.argv.slice(2);

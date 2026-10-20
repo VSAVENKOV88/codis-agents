@@ -25,5 +25,16 @@
   },
   "threatModel": "ACCESS.md",
   "gitHooks": { "blockICloudCopies": true, "preCommit": [] },
-  "preconditions": { "minFreeDiskGB": 10, "minSwapGB": 4 }
+  "preconditions": { "minFreeDiskGB": 10, "minSwapGB": 4 },
+  "stand": {
+    "project": "my-app-dev",
+    "ports": [3101],
+    "up": "{repo}/scripts/stand/up.sh {project} {port}",
+    "deploy": "{repo}/scripts/stand/deploy.sh {project} {wt}",
+    "reset": "{repo}/scripts/stand/reset.sh {project}",
+    "status": "{repo}/scripts/stand/status.sh {project}",
+    "down": "{repo}/scripts/stand/down.sh {project}",
+    "imageFiles": ["server/Dockerfile*", "server/.dockerignore", "server/package*.json", "docker-compose*.yml"],
+    "memLimitMB": 3072
+  }
 }

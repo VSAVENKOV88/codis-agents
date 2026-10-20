@@ -1,5 +1,6 @@
 # Memory slots for heavy jobs on one machine shared by several agents.
-# Sourced by heavy.sh / medium.sh / guards-all.sh:  source slots.zsh; slot_run <medium|heavy> <cmd...>
+# Sourced by heavy.sh / medium.sh / guards-all.sh / stand.sh:  source slots.zsh || exit $?; slot_run <medium|heavy> <cmd...>
+# (sourcing returns 78 when the project config does not validate: see below).
 #
 # Classes: medium - SLOT_MEDIUM_N slots (default 2: tsc, a plugin build, one bundler build without a browser);
 #          heavy  - SLOT_HEAVY_N slots (default 2), one more only while free memory holds and swap does not grow;
@@ -45,8 +46,19 @@
 
 zmodload zsh/system zsh/datetime
 _SLOTS_HERE=${${(%):-%x}:A:h}
-_slot_cfg=$(node "$_SLOTS_HERE/config.js" shell 2>/dev/null) && eval "$_slot_cfg"
-unset _slot_cfg
+# A project config that exists but does not validate is a refusal, never a silent default: falling back to
+# ~/.cache/codis-agents/slots made a second, separate queue whose waiters did not see the first one's (one unknown key
+# in the config was enough), and the memory ceiling of the machine no longer held. No config at all keeps the defaults.
+if _slot_cfgf=$(node "$_SLOTS_HERE/config.js" path 2>/dev/null); then
+  if _slot_cfg=$(node "$_SLOTS_HERE/config.js" shell "$_slot_cfgf" 2>/dev/null); then eval "$_slot_cfg"
+  else
+    print -u2 -r -- "codis-agents slots: refused - the project config does not validate, so the slot directory is unknown (no fallback to another directory):"
+    node "$_SLOTS_HERE/config.js" check "$_slot_cfgf" >&2
+    unset _slot_cfg _slot_cfgf
+    return 78
+  fi
+fi
+unset _slot_cfg _slot_cfgf
 : ${SLOTS_DIR:=$HOME/.cache/codis-agents/slots}
 [[ -v SLOT_LEGACY_LOCK ]] || SLOT_LEGACY_LOCK=
 : ${SLOT_MEDIUM_N:=2}
@@ -196,12 +208,12 @@ _slot_q_clean() {
   done
 }
 
-# Ticket (number $1 or a new one) -> path in $SLOT_QF. Under its own short lock queue.lock, not admit.lock: admit.lock
+# Ticket (number $1 or a new one; $4 - optional extra field, the worktree of a stand ticket) -> path in $SLOT_QF. Under its own short lock queue.lock, not admit.lock: admit.lock
 # is held while a slot is chosen (memory_pressure, ps, lockf - up to a second), and a waiter that came earlier but hit
 # it got a number after the one that came next. The ticket file goes through tmp + mv: the cleaner (under admit.lock)
 # never sees a half-written ticket and never takes it for a dead one.
 _slot_q_take() {
-  local num=$1 class=$2 kind=$3 pid=$sysparams[pid] seq=0 qfd tmp
+  local num=$1 class=$2 kind=$3 extra=$4 pid=$sysparams[pid] seq=0 qfd tmp
   zsystem flock -t 30 -i 0.02 -f qfd $SLOTS_DIR/queue.lock || return 1
   if [[ -z $num ]]; then
     [[ -s $SLOTS_DIR/queue.seq ]] && seq=$(<$SLOTS_DIR/queue.seq); [[ $seq == <-> ]] || seq=0
@@ -209,12 +221,13 @@ _slot_q_take() {
     print -r -- $num > $SLOTS_DIR/queue.seq.tmp && mv -f $SLOTS_DIR/queue.seq.tmp $SLOTS_DIR/queue.seq
   fi
   SLOT_QF=$SLOTS_DIR/queue/${(l:10::0:)num}; tmp=$SLOTS_DIR/queue/.tmp.$pid
-  print -r -- "$class $pid $(_slot_pstart $pid) $kind" > $tmp && mv -f $tmp $SLOT_QF
+  print -r -- "$class $pid $(_slot_pstart $pid) $kind${extra:+ $extra}" > $tmp && mv -f $tmp $SLOT_QF
   zsystem flock -u $qfd
 }
 
 # Under admit.lock: position of ticket $1 in the queue of class $2 -> $SLOT_QPOS; first ticket of the other queue ->
-# $SLOT_QOTHER ("path class kind", empty - none); first ticket of my queue -> $SLOT_QHEAD.
+# $SLOT_QOTHER ("path class kind", empty - none; only medium and heavy share the ceiling, so a stand ticket is never
+# the other queue - scripts/stand.sh); first ticket of my queue -> $SLOT_QHEAD.
 _slot_q_where() {
   local me=$1 class=$2 f t
   SLOT_QPOS=0 SLOT_QOTHER= SLOT_QHEAD=
@@ -224,7 +237,7 @@ _slot_q_where() {
       [[ -z $SLOT_QHEAD ]] && SLOT_QHEAD="${f:t} $t[4] pid $t[2]"
       (( SLOT_QPOS++ ))
       [[ $f == $me ]] && break
-    elif [[ -z $SLOT_QOTHER ]]; then SLOT_QOTHER="$f $t[1] $t[4]"
+    elif [[ -z $SLOT_QOTHER && $t[1] == (medium|heavy) ]]; then SLOT_QOTHER="$f $t[1] $t[4]"
     fi
   done
   # only a smaller number than mine matters in the other queue
