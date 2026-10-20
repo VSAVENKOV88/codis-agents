@@ -87,4 +87,16 @@ try {
   ok('cli: default journal - <slots.lockDir>/journal.tsv of the project config', r.status === 0 && r.stdout.startsWith(f + ':'), r.stdout + r.stderr);
 } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
 
+// U2b-2 (tester): a full run without {jobs} (queue kind "whole") that went back to the queue with 75 had no worker
+// budget either; a single heavy job that exited 75 did not.
+{
+  const ws = J.summarize(J.parse([
+    line(0, 10, 12, 'heavy', 1, 'whole', 75, '/w/p', 'guards-all p'),
+    line(12, 40, 90, 'heavy', 1, 'whole', 0, '/w/p', 'guards-all p'),
+    line(0, 1, 3, 'heavy', 2, 'single', 75, '/w/p', 'node x-run.js'),
+  ].join('\n') + '\n').records);
+  ok('summary: a run without {jobs} (kind whole) back in the queue with 75 counts as no worker budget, a single 75 does not',
+    ws.noBudget.n === 1 && near(ws.noBudget.holdTotal, 2), JSON.stringify(ws.noBudget));
+}
+
 done();
