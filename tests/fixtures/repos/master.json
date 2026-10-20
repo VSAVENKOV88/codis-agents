@@ -1,0 +1,18 @@
+{
+  "files": {
+    "README.md": "# x\n"
+  },
+  "git": {
+    "init": true,
+    "branch": "master",
+    "commit": true,
+    "tags": [
+      "v1.2.0",
+      "release-2026-10"
+    ],
+    "origin": {
+      "head": "master",
+      "url": "https://user:secret@example.com/org/x.git"
+    }
+  }
+}

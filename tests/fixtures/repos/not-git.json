@@ -1,0 +1,5 @@
+{
+  "files": {
+    "package.json": "{\n  \"name\": \"fx-not-git\",\n  \"scripts\": {\n    \"test\": \"node --test\"\n  }\n}\n"
+  }
+}

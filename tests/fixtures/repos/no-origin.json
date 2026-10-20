@@ -1,0 +1,13 @@
+{
+  "files": {
+    "README.md": "# trunk\n"
+  },
+  "git": {
+    "init": true,
+    "branch": "trunk",
+    "commit": true,
+    "config": {
+      "core.hooksPath": ".githooks"
+    }
+  }
+}

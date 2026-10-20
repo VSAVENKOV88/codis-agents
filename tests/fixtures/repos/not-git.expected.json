@@ -1,0 +1,21 @@
+{
+  "git": {
+    "isRepo": false,
+    "commits": null,
+    "head": null,
+    "defaultBranch": null,
+    "branches": null,
+    "tagShapes": null,
+    "remote": null,
+    "hooksPath": null
+  },
+  "ci": null,
+  "stacks": null,
+  "venvs": null,
+  "compose": null,
+  "ignored": null,
+  "existing": null,
+  "notes": [
+    "not a git repository - git facts, stacks, CI, compose, ignored data and existing setup are read only in a git repository"
+  ]
+}

@@ -1,0 +1,44 @@
+{
+  "git": {
+    "isRepo": true,
+    "commits": 1,
+    "head": "main",
+    "defaultBranch": "main",
+    "branches": {
+      "main": true,
+      "master": false
+    },
+    "tagShapes": [],
+    "remote": [
+      {
+        "name": "origin",
+        "url": "https://example.com/org/no-tests.git"
+      }
+    ],
+    "hooksPath": null
+  },
+  "ci": [],
+  "stacks": [
+    {
+      "dir": ".",
+      "kind": "node",
+      "manifests": [
+        "package.json"
+      ],
+      "locks": [],
+      "runnerHint": {
+        "test": "echo \"Error: no test specified\" && exit 1"
+      },
+      "workspaces": null
+    }
+  ],
+  "venvs": [],
+  "compose": [],
+  "ignored": [],
+  "existing": {
+    "codisConfig": null,
+    "standScripts": [],
+    "claudeMdImport": false
+  },
+  "notes": []
+}

@@ -1,0 +1,58 @@
+{
+  "git": {
+    "isRepo": true,
+    "commits": 1,
+    "head": "main",
+    "defaultBranch": "main",
+    "branches": {
+      "main": true,
+      "master": false
+    },
+    "tagShapes": [],
+    "remote": [
+      {
+        "name": "origin",
+        "url": "https://example.com/org/compose-error.git"
+      }
+    ],
+    "hooksPath": null
+  },
+  "ci": [],
+  "stacks": [],
+  "venvs": [],
+  "compose": [
+    {
+      "dir": "a",
+      "files": [
+        "compose.yaml"
+      ],
+      "name": "a",
+      "services": [
+        {
+          "name": "x",
+          "image": "busybox:1",
+          "build": null,
+          "ports": [],
+          "healthcheck": null
+        }
+      ]
+    },
+    {
+      "dir": "b",
+      "files": [
+        "compose.yaml"
+      ],
+      "name": "b",
+      "services": null
+    }
+  ],
+  "ignored": [],
+  "existing": {
+    "codisConfig": null,
+    "standScripts": [],
+    "claudeMdImport": false
+  },
+  "notes": [
+    "compose config failed in b: <message>"
+  ]
+}

@@ -1,0 +1,95 @@
+{
+  "git": {
+    "isRepo": true,
+    "commits": 1,
+    "head": "main",
+    "defaultBranch": "main",
+    "branches": {
+      "main": true,
+      "master": false
+    },
+    "tagShapes": [],
+    "remote": [
+      {
+        "name": "origin",
+        "url": "https://example.com/org/compose-multi.git"
+      }
+    ],
+    "hooksPath": null
+  },
+  "ci": [],
+  "stacks": [],
+  "venvs": [],
+  "compose": [
+    {
+      "dir": ".",
+      "files": [
+        "compose.override.yaml",
+        "compose.yaml",
+        "docker-compose.yml"
+      ],
+      "name": "compose-multi",
+      "services": [
+        {
+          "name": "db",
+          "image": "postgres:16",
+          "build": null,
+          "ports": [],
+          "healthcheck": [
+            "CMD-SHELL",
+            "pg_isready"
+          ]
+        },
+        {
+          "name": "dns",
+          "image": "example/dns:1",
+          "build": null,
+          "ports": [
+            {
+              "target": 53,
+              "published": "5353",
+              "protocol": "udp",
+              "host_ip": "127.0.0.1"
+            }
+          ],
+          "healthcheck": null
+        },
+        {
+          "name": "web",
+          "image": null,
+          "build": {
+            "context": "web",
+            "dockerfile": "web.Dockerfile"
+          },
+          "ports": [
+            {
+              "target": 80,
+              "published": "8080",
+              "protocol": "tcp"
+            },
+            {
+              "target": 443,
+              "published": "8443",
+              "protocol": "tcp",
+              "host_ip": "127.0.0.1"
+            }
+          ],
+          "healthcheck": [
+            "CMD",
+            "wget",
+            "-q",
+            "-O-",
+            "http://localhost/health"
+          ]
+        }
+      ]
+    }
+  ],
+  "ignored": [],
+  "existing": {
+    "codisConfig": null,
+    "standScripts": [],
+    "claudeMdImport": false
+  },
+  "notes": []
+}

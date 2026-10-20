@@ -1,0 +1,54 @@
+{
+  "git": {
+    "isRepo": true,
+    "commits": 1,
+    "head": "main",
+    "defaultBranch": "main",
+    "branches": {
+      "main": true,
+      "master": false
+    },
+    "tagShapes": [],
+    "remote": [
+      {
+        "name": "origin",
+        "url": "git@example.com:org/python.git"
+      }
+    ],
+    "hooksPath": null
+  },
+  "ci": [],
+  "stacks": [
+    {
+      "dir": ".",
+      "kind": "python",
+      "manifests": [
+        "pyproject.toml"
+      ],
+      "locks": [],
+      "runnerHint": {
+        "pytestConfig": "pyproject.toml"
+      },
+      "workspaces": null
+    }
+  ],
+  "venvs": [
+    {
+      "dir": ".venv",
+      "python": ".venv/bin/python"
+    }
+  ],
+  "compose": [],
+  "ignored": [
+    {
+      "path": ".venv/",
+      "bytes": 26
+    }
+  ],
+  "existing": {
+    "codisConfig": null,
+    "standScripts": [],
+    "claudeMdImport": false
+  },
+  "notes": []
+}

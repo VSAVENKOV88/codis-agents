@@ -1,0 +1,65 @@
+{
+  "git": {
+    "isRepo": true,
+    "commits": 1,
+    "head": "main",
+    "defaultBranch": "main",
+    "branches": {
+      "main": true,
+      "master": false
+    },
+    "tagShapes": [],
+    "remote": [
+      {
+        "name": "origin",
+        "url": "https://example.com/org/compose-single.git"
+      }
+    ],
+    "hooksPath": null
+  },
+  "ci": [],
+  "stacks": [],
+  "venvs": [],
+  "compose": [
+    {
+      "dir": ".",
+      "files": [
+        "docker-compose.yml"
+      ],
+      "name": "compose-single",
+      "services": [
+        {
+          "name": "app",
+          "image": null,
+          "build": {
+            "context": ".",
+            "dockerfile": "Dockerfile"
+          },
+          "ports": [
+            {
+              "target": 3000,
+              "published": "3000",
+              "protocol": "tcp"
+            }
+          ],
+          "healthcheck": null
+        }
+      ]
+    }
+  ],
+  "ignored": [
+    {
+      "path": "data/",
+      "bytes": 4096
+    }
+  ],
+  "existing": {
+    "codisConfig": ".claude/codis-agents.json",
+    "standScripts": [
+      "scripts/stand/down.sh",
+      "scripts/stand/up.sh"
+    ],
+    "claudeMdImport": true
+  },
+  "notes": []
+}

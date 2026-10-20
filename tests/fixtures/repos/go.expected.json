@@ -1,0 +1,44 @@
+{
+  "git": {
+    "isRepo": true,
+    "commits": 1,
+    "head": "main",
+    "defaultBranch": "main",
+    "branches": {
+      "main": true,
+      "master": false
+    },
+    "tagShapes": [],
+    "remote": [
+      {
+        "name": "origin",
+        "url": "https://example.com/org/go.git"
+      }
+    ],
+    "hooksPath": null
+  },
+  "ci": [],
+  "stacks": [
+    {
+      "dir": ".",
+      "kind": "go",
+      "manifests": [
+        "go.mod"
+      ],
+      "locks": [],
+      "runnerHint": {
+        "testFiles": 1
+      },
+      "workspaces": null
+    }
+  ],
+  "venvs": [],
+  "compose": [],
+  "ignored": [],
+  "existing": {
+    "codisConfig": null,
+    "standScripts": [],
+    "claudeMdImport": false
+  },
+  "notes": []
+}
