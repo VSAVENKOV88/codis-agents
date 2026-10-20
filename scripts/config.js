@@ -32,6 +32,10 @@ const SPEC = {
   guardCommandLegacy: ['string', ''],
   guardAdaptiveProbe: ['object', null],
   guardRerun: ['object', null],
+  // Guards that share a machine resource run one at a time under the exclusive lock (scripts/slots.zsh): a guard file
+  // whose name matches one of glob and that has a line `<marker> guards:exclusive — <reason>`. Without the key the
+  // default below (resolve()); with it both members are required and replace the default.
+  guardExclusive: ['object', null],
   // One full run per task (scripts/guards-select.js): what a guard file is, which guards always run, the subset command.
   guardFiles: ['string[]', ['*-run.js', '*-run.mjs', '*-run.cjs']],
   guardAlways: ['string[]', []],
@@ -65,6 +69,8 @@ const WT_SPEC = { scan: ['string[]', []], skip: ['string[]', []], link: ['string
 // Rerun of new reds one by one after a full run (scripts/guards-result.js explains why): command ({wt}, {name}),
 // newRedPattern (per log line, group 1 = name), tallyPattern (the log reached its tally), maxReruns.
 const RERUN_SPEC = { command: ['string', undefined], newRedPattern: ['string', undefined], tallyPattern: ['string', ''], maxReruns: ['number', 10] };
+const EXCL_SPEC = { glob: ['string[]', undefined], marker: ['string', undefined] };
+const EXCL_DEFAULT = { glob: ['*-run.js', '*-run.mjs'], marker: '//' };
 const PROBE_SPEC = { file: ['string', undefined], contains: ['string', undefined] };
 const HOOKS_SPEC = { blockICloudCopies: ['boolean', false], preCommit: ['string[]', []] };
 const STANDING_SPEC = { branches: ['string[]', []], check: ['string', ''] };
@@ -140,6 +146,15 @@ function resolve(raw) {
     if (g.tallyPattern) { try { new RegExp(g.tallyPattern); } catch (e) { errors.push('guardRerun.tallyPattern: bad regular expression'); } }
     if (!(Number.isInteger(g.maxReruns) && g.maxReruns >= 1)) errors.push('guardRerun.maxReruns: expected a positive integer');
   }
+  if (c.guardExclusive) {
+    const x = c.guardExclusive = level(EXCL_SPEC, c.guardExclusive, 'guardExclusive.', errors);
+    if (x.glob === undefined) errors.push('guardExclusive.glob: required');
+    else if (!x.glob.length) errors.push('guardExclusive.glob: expected at least one glob');
+    // matched against the file name of a command argument (slots.zsh): a path segment can never match
+    else for (const g of x.glob) if (!g || /[/\n]/.test(g)) errors.push(`guardExclusive.glob: a glob of the file name, without "/": ${JSON.stringify(g)}`);
+    if (x.marker === undefined) errors.push('guardExclusive.marker: required');
+    else if (!x.marker || /\s/.test(x.marker)) errors.push(`guardExclusive.marker: the line-comment marker, not empty and without blanks: ${JSON.stringify(x.marker)}`);
+  } else c.guardExclusive = { glob: [...EXCL_DEFAULT.glob], marker: EXCL_DEFAULT.marker };
   if (c.standingPush) {
     c.standingPush = level(STANDING_SPEC, c.standingPush, 'standingPush.', errors);
     if (!c.standingPush.branches.length || !c.standingPush.check.trim()) errors.push('standingPush: branches and check are required');
@@ -167,7 +182,7 @@ function resolve(raw) {
   try { new RegExp(c.protectedTagPattern); } catch (e) { errors.push('protectedTagPattern: bad regular expression'); }
   for (const k of ['guardCommand', 'guardCommandLegacy']) {
     if (c[k] && !c[k].includes('{wt}')) errors.push(`${k}: must contain {wt} (the worktree directory)`);
-    if (c[k] && !c[k].includes('{jobs}')) errors.push(`${k}: must contain {jobs} (the worker count chosen by the slot budget)`);
+    // {jobs} is optional: a runner that sets its own workers is counted as the whole budget (scripts/guards-all.sh).
   }
   if (c.guardSubsetCommand && !c.guardSubsetCommand.includes('{onlyArgs}')) errors.push('guardSubsetCommand: must contain {onlyArgs} (one --only <guard> per selected guard)');
   if (!c.guardFiles.length) errors.push('guardFiles: expected at least one glob');
@@ -241,13 +256,14 @@ function shellLines(c) {
   const v = {
     SLOTS_DIR: c.slots.lockDir, SLOT_LEGACY_LOCK: c.slots.legacyLock, SLOT_MEDIUM_N: c.slots.medium, SLOT_HEAVY_N: c.slots.heavy,
     SLOT_TOTAL_MAX: c.slots.total, GUARDS_JOBS_ALONE: c.slots.jobsAlone, GUARDS_JOBS_SHARED: c.slots.jobsShared,
+    GUARDS_EXCL_GLOB: c.guardExclusive.glob.join('\n'), GUARDS_EXCL_MARKER: c.guardExclusive.marker,
     CODIS_REPO_DIR: c.repoDir, CODIS_WORKTREE_ROOT: c.worktreeRoot, CODIS_SHARED_DIR: c.sharedDir,
   };
   // An empty value still has to win over the built-in default, hence `=` for empties instead of `:=`.
   return Object.entries(v).map(([k, x]) => (x === '' ? `[[ -v ${k} ]] || ${k}=''` : `: \${${k}:=${q(x)}}`)).join('\n');
 }
 
-module.exports = { find, load, resolve, branches, shellLines, SPEC, SLOT_SPEC, RERUN_SPEC, STAND_SPEC, STAND_REQUIRED, WT_SPEC, PROBE_SPEC, HOOKS_SPEC, STANDING_SPEC, PRE_SPEC, ROLES, expand };
+module.exports = { find, load, resolve, branches, shellLines, SPEC, SLOT_SPEC, RERUN_SPEC, EXCL_SPEC, EXCL_DEFAULT, STAND_SPEC, STAND_REQUIRED, WT_SPEC, PROBE_SPEC, HOOKS_SPEC, STANDING_SPEC, PRE_SPEC, ROLES, expand };
 
 if (require.main === module) {
   const [cmd, ...rest] = process.argv.slice(2);

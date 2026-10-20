@@ -1,8 +1,9 @@
 #!/bin/zsh
 # A heavy command (a guard with a bundler or browser, a docker image build, a test stack) in a heavy slot
 # (slots.zsh: SLOT_HEAVY_N slots, one more only while memory is free and swap is flat; medium + heavy <= SLOT_TOTAL_MAX).
-# A guard marked `// guards:exclusive — <reason>` also takes the exclusive lock ($GUARDS_EXCLUSIVE_LOCK), waiting out
-# loud ("waiting for the exclusive lock ..." at least every SLOT_SAY s).
+# A guard marked exclusive also takes the exclusive lock ($GUARDS_EXCLUSIVE_LOCK), waiting out loud ("waiting for the
+# exclusive lock ..." at least every SLOT_SAY s): an argument that is a file matching the project's guardExclusive glob
+# with a line `<marker> guards:exclusive — <reason>` (default *-run.js / *-run.mjs and //; slots.zsh#slot_is_exclusive_guard).
 # usage: heavy.sh <command...>
 source "${0:A:h}/slots.zsh" || exit $?
 if slot_is_exclusive_guard "$@"; then SLOT_LABEL="$*" slot_run heavy zsh -c 'source "$1"; shift; slot_exclusive_run "$@"' heavy-excl "${0:A:h}/slots.zsh" "$@"

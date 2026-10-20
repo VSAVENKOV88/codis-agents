@@ -7,10 +7,24 @@
 H=${0:A:h:h}/scripts
 zmodload zsh/datetime
 T=$(mktemp -d "${${TMPDIR:-/tmp}%/}/runner-neutral.XXXXXX")
-export SLOTS_DIR=$T/slots SLOT_LEGACY_LOCK=$T/guards.lock SLOT_POLL=0.3 SLOT_SAY=1 SLOT_SWAP_MIN_MB=0 SLOT_JOURNAL=$T/journal.tsv
-# An outer slot (heavy.sh node tests/run.js) exports its own lock, counts and markers: the test must not see them.
-unset GUARDS_EXCLUSIVE_LOCK SLOT_MEDIUM_N SLOT_HEAVY_N SLOT_TOTAL_MAX GUARDS_JOBS_ALONE GUARDS_JOBS_SHARED SLOT_EXCL_TOOLS SLOT_PATH SLOT_LABEL SLOT_KIND SLOT_RETRY_RC GUARDS_EXCL_GLOB GUARDS_EXCL_MARKER
+export SLOTS_DIR=$T/slots SLOT_LEGACY_LOCK=$T/guards.lock SLOT_POLL=0.3 SLOT_SAY=1 SLOT_JOURNAL=$T/journal.tsv
+# An outer slot (heavy.sh node tests/run.js) exports its own lock, counts and markers, and the thresholds may be set
+# outside (SLOT_SWAP_MIN_MB=0 on Linux): the test must not see them - the fake machine below decides.
+unset GUARDS_EXCLUSIVE_LOCK SLOT_MEDIUM_N SLOT_HEAVY_N SLOT_TOTAL_MAX GUARDS_JOBS_ALONE GUARDS_JOBS_SHARED SLOT_EXCL_TOOLS SLOT_PATH SLOT_LABEL SLOT_KIND SLOT_RETRY_RC SLOT_SWAP_MIN_MB SLOT_THIRD_FREE_PCT SLOT_THIRD_SWAP_GROW_MB SLOT_THIRD_WINDOW SLOT_HIST_GAP GUARDS_EXCL_GLOB GUARDS_EXCL_MARKER
 mkdir -p $T/wts $T/shared $T/bin $T/other
+# Fake machine (as in slots-check.test.sh): plenty of free memory and swap, nothing grows.
+print -r -- '#!/bin/zsh
+[[ $1 == -n && $2 == vm.swapusage ]] || exec /usr/sbin/sysctl "$@"
+print -r -- "total = 30000,00M  used = 1000,00M  free = 20000,00M  (encrypted)"' > $T/bin/sysctl
+print -r -- '#!/bin/zsh
+print -r -- "System-wide memory free percentage: 80%"' > $T/bin/memory_pressure
+print -r -- '#!/bin/zsh
+print -r -- "Mach Virtual Memory Statistics: (page size of 16384 bytes)"
+print -r -- "Swapins:                                    5."
+print -r -- "Swapouts:                                   5."' > $T/bin/vm_stat
+print -r -- '#!/bin/zsh
+print -r -- "Filesystem 1M-blocks Used Available Capacity Mounted"
+print -r -- "/dev/disk3s6 100000 0 50000 50% /System/Volumes/VM"' > $T/bin/df
 cfg() { # cfg <file> <guardCommand> [extra json members]
   print -r -- '{"repoDir": "'$T'/main", "worktreeRoot": "'$T'/wts", "sharedDir": "'$T'/shared", "guardCommand": "'$2'"'${3:+, $3}'}' > $1 }
 cfg $T/py.json 'cd {wt} && pytest -q -rf' '"guardExclusive": {"glob": ["test_*.py"], "marker": "#"}'
@@ -24,7 +38,7 @@ print -r -- "start $tag $(<$SLOT_PATH.jobs 2>/dev/null) | $*" >> '$T'/run.log
 while [[ -e '$T'/hold.$tag ]]; do sleep 0.1; done
 print -r -- "end $tag" >> '$T'/run.log
 print -r -- "1 passed in 0.01s"' > $T/bin/pytest
-chmod +x $T/bin/pytest; export PATH=$T/bin:$PATH
+chmod +x $T/bin/*; export PATH=$T/bin:$PATH
 for d in wts/xp wts/xq other/xp; do mkdir -p $T/$d; git -C $T/$d init -q; git -C $T/$d -c user.email=t@t -c user.name=t commit -q --allow-empty -m x; done
 pass=0 fail=0 skipped=0
 ok() { if eval "$2"; then (( pass++ )); print -r -- "  ok   $1"; else (( fail++ )); print -r -- "  FAIL $1${3:+
@@ -33,12 +47,13 @@ skip() { (( skipped++ )); print -r -- "  skip $1 - skipped: $2" }
 waitlong() { local i; for i in {1..900}; do eval "$1" && return 0; sleep 0.1; done; return 1 }
 hold() { touch $T/hold.$1 }
 unhold() { local n; for n; do rm -f $T/hold.$n; done }
-hjob() { "$H/heavy.sh" zsh -c 'touch '$T'/$1.start; while [[ ! -e '$T'/rel.$1 ]]; do sleep 0.1; done; touch '$T'/$1.end' _ $2 > $T/$2.out 2>&1 & }
+hjob() { "$H/heavy.sh" zsh -c 'touch '$T'/$1.start; while [[ ! -e '$T'/rel.$1 ]]; do sleep 0.1; done; touch '$T'/$1.end' _ $1 > $T/$1.out 2>&1 & }
 started() { [[ -e $T/$1.start ]] }
+chk() { c=$(node $H/config.js check $1 2>$T/chk.err); crc=$? }   # stdout "ok <file>"; notes go to stderr
 trap 'touch $T/rel.{n1,n2}; rm -f $T/hold.*(N); wait 2>/dev/null; rm -rf $T' EXIT
 
 # -- A. guardCommand without {jobs} --------------------------------------------------------------------------------
-c=$(node $H/config.js check $T/py.json 2>&1); ok 'A1. config.js check: guardCommand without {jobs} - ok' '[[ $c == ok* ]]' "$c"
+chk $T/py.json; ok 'A1. config.js check: guardCommand without {jobs} - ok' '(( crc == 0 )) && [[ $c == ok* ]]' "$crc $c $(<$T/chk.err)"
 : > $T/run.log
 $H/guards-all.sh xp > $T/a4.out 2>&1; rc=$?
 ok 'A4. alone: guards-all.sh runs the runner and exits with its code 0' '(( rc == 0 )) && grep -q "^start xp " $T/run.log' "$rc $(cat $T/a4.out)"
@@ -65,7 +80,7 @@ unhold xp; wait $GA $GB
 ok 'A6. ... and starts with -n 6 only after it ended' 'awk '"'"'/^end xp/{e=NR} /^start xq/{s=NR} END{exit !(e && s > e)}'"'"' $T/run.log && grep -q "^start xq fixed 6 | -q -n 6$" $T/run.log' "$(cat $T/run.log)"
 
 # A7. {limitFile} without {jobs}: the adaptive runner as before
-c=$(node $H/config.js check $T/lim.json 2>&1); ok 'A7. config.js check: {limitFile} without {jobs} - ok' '[[ $c == ok* ]]' "$c"
+chk $T/lim.json; ok 'A7. config.js check: {limitFile} without {jobs} - ok' '(( crc == 0 )) && [[ $c == ok* ]]' "$crc $c $(<$T/chk.err)"
 : > $T/run.log
 CODIS_AGENTS_CONFIG=$T/lim.json $H/guards-all.sh --force xp > $T/a7.out 2>&1; rc=$?
 ok 'A7. ... guards-all.sh: adaptive, "workers at start: 6", the limit file passed' '(( rc == 0 )) && grep -q "workers at start: 6" $T/a7.out && grep -q "^start xp adaptive | -q --limit-file .*heavy.[123].lock.limit$" $T/run.log' "$rc $(cat $T/a7.out; cat $T/run.log)"
@@ -106,7 +121,7 @@ ok 'D3. ... a test_*.py without the marker is not' '! excl $T/py.json tests/test
 ok 'D4. ... x-run.js with "//" is not (the key replaces the default)' '! excl $T/py.json tests/x-run.js'
 ok 'D5. ... the marker without a reason after "—" is not' '! excl $T/py.json tests/test_noreason.py'
 ok 'D2. a marker with pattern characters ([x]) is matched literally' 'excl $T/lit.json tests/test_lit.py && ! excl $T/lit.json tests/test_notlit.py'
-c=$(node $H/config.js check $T/py.json 2>&1); ok 'D2. config.js check: guardExclusive {glob, marker} - ok' '[[ $c == ok* ]]' "$c"
+chk $T/py.json; ok 'D2. config.js check: guardExclusive {glob, marker} - ok' '(( crc == 0 )) && [[ $c == ok* ]]' "$crc $c $(<$T/chk.err)"
 tool=; for t in /usr/bin/lockf /usr/bin/flock /bin/flock; do [[ -x $t ]] && { tool=$t; break }; done
 if [[ -z $tool ]]; then
   skip 'D2. heavy.sh pytest tests/test_port.py runs under the exclusive lock' 'no lockf(1) or flock(1)'
