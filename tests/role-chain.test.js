@@ -414,6 +414,9 @@ async function run(script, task = T, extra = {}) {
   x = await run({ pre: [PRE], prog: [PROG, Object.assign({}, PROG, { status: 'environment', questions: [], summary: 'the run was cut off at 40 %' })], run: [RUN_RED] }, T, { config: ONE });
   ok('the programmer names the red of the full run an environment red -> stopped for the coordinator, no tester',
     x.r.status === 'stopped' && !x.trace.includes('test') && /environment/.test(x.r.why) && /cut off at 40 %/.test(x.r.why), JSON.stringify(x.r));
+  x = await run({ pre: [PRE], prog: [Object.assign({}, PROG, { status: 'environment', summary: 'no heavy slot for 2 h' })] });
+  ok('the first programmer round says environment -> stopped for the coordinator, no full run, no tester',
+    x.r.status === 'stopped' && x.trace === 'pre>prog' && /no heavy slot for 2 h/.test(x.r.why) && !runsOf(x).length, JSON.stringify(x.r));
   ok('programmer schema: status environment exists', (x.prompts.find((p) => p.role === 'prog').opts.schema.properties.status.enum || []).includes('environment'));
 
   // "Could not run" only without a numeric exit code (a red run is a step that ran; e2g2, 2026-10-19).
