@@ -75,12 +75,27 @@ let gx = good(Object.assign({}, B), 'D1. no guardExclusive - ok');
 ok('D1. ... default: *-run.js and *-run.mjs with the marker //', gx.guardExclusive && gx.guardExclusive.glob.join() === '*-run.js,*-run.mjs' && gx.guardExclusive.marker === '//', JSON.stringify(gx.guardExclusive));
 gx = good(Object.assign({}, B, { guardExclusive: { glob: ['test_*.py', '*_test.py'], marker: '#' } }), 'D2. guardExclusive {glob: [test_*.py, *_test.py], marker: #} - ok');
 ok('D2. ... kept as given', !!(gx && gx.guardExclusive) && gx.guardExclusive.glob.join() === 'test_*.py,*_test.py' && gx.guardExclusive.marker === '#', JSON.stringify(gx.guardExclusive));
-{ // survivor M4 of U2b-2 review 1: one zsh call for all globs - a bad one must not take the good ones after it down
-  const x = C.resolve(Object.assign({}, B, { guardExclusive: { glob: ['test_[.py', 'test_*.py', 'x('], marker: '#' } }));
-  const named = x.errors.filter((e) => /not a valid zsh pattern/.test(e));
-  ok('D6. [test_[.py, test_*.py, x(]: exactly the two bad globs are named, not test_*.py after the first', named.length === 2 && !named.some((e) => e.includes('test_*.py')) && named.some((e) => e.includes('"x("')), named.join('; '));
+// slots.zsh matches ${a:t} == ${~g} under extendedglob: a glob zsh cannot compile aborted heavy.sh with exit 1
+// ("bad pattern"), a false red instead of a config refusal (review 1 of U2b-2). The check needs zsh; without it
+// nothing is refused (slots.zsh cannot run there either).
+const ZSH_GLOB = [
+  [{ glob: ['test_[.py'], marker: '#' }, /guardExclusive\.glob: not a valid zsh pattern.*test_\[\.py/, 'glob with an unclosed ['],
+  [{ glob: ['test_*.py', 'test_(.py'], marker: '#' }, /guardExclusive\.glob: not a valid zsh pattern.*test_\(\.py/, 'second glob with an unclosed ('],
+  [{ glob: ['#'], marker: '#' }, /guardExclusive\.glob: not a valid zsh pattern/, 'glob # (extendedglob: a repetition of nothing)'],
+];
+if (!has('zsh')) {
+  for (const [, , n] of ZSH_GLOB) skip(`D6. guardExclusive ${n} - error`, 'zsh not found');
+  skip('D6. [test_[.py, test_*.py, x(]: exactly the two bad globs are named', 'zsh not found');
+  good(Object.assign({}, B, { guardExclusive: { glob: ['test_[.py'], marker: '#' } }), 'D6. without zsh a glob is not compiled here - ok (slots.zsh cannot run either)');
+} else {
+  for (const [v, re, n] of ZSH_GLOB) bad(Object.assign({}, B, { guardExclusive: v }), re, `D6. guardExclusive ${n} - error`);
+  { // survivor M4 of U2b-2 review 1: one zsh call for all globs - a bad one must not take the good ones after it down
+    const x = C.resolve(Object.assign({}, B, { guardExclusive: { glob: ['test_[.py', 'test_*.py', 'x('], marker: '#' } }));
+    const named = x.errors.filter((e) => /not a valid zsh pattern/.test(e));
+    ok('D6. [test_[.py, test_*.py, x(]: exactly the two bad globs are named, not test_*.py after the first', named.length === 2 && !named.some((e) => e.includes('test_*.py')) && named.some((e) => e.includes('"x("')), named.join('; '));
+  }
+  good(Object.assign({}, B, { guardExclusive: { glob: ['*-run.js', '(a|b)_test.py', '^x*', 'test_[ab].py'], marker: '//' } }), 'D2. zsh patterns that compile ((a|b), ^, [ab]) - ok');
 }
-good(Object.assign({}, B, { guardExclusive: { glob: ['*-run.js', '(a|b)_test.py', '^x*', 'test_[ab].py'], marker: '//' } }), 'D2. zsh patterns that compile ((a|b), ^, [ab]) - ok');
 for (const [v, re, n] of [
   [{ glob: 'test_*.py', marker: '#' }, /guardExclusive\.glob: expected string\[\]/, 'glob not a list'],
   [{ glob: [], marker: '#' }, /guardExclusive\.glob: /, 'empty glob list'],
@@ -93,11 +108,6 @@ for (const [v, re, n] of [
   [{ glob: ['test_*.py'], marker: 1 }, /guardExclusive\.marker: expected string/, 'marker not a string'],
   [{ glob: ['test_*.py'], marker: '#', reason: 'x' }, /guardExclusive\.reason: unknown key/, 'unknown key'],
   ['#', /guardExclusive: expected object/, 'not an object'],
-  // slots.zsh matches ${a:t} == ${~g} under extendedglob: a glob zsh cannot compile aborted heavy.sh with exit 1
-  // ("bad pattern"), a false red instead of a config refusal (review 1 of U2b-2)
-  [{ glob: ['test_[.py'], marker: '#' }, /guardExclusive\.glob: not a valid zsh pattern.*test_\[\.py/, 'glob with an unclosed ['],
-  [{ glob: ['test_*.py', 'test_(.py'], marker: '#' }, /guardExclusive\.glob: not a valid zsh pattern.*test_\(\.py/, 'second glob with an unclosed ('],
-  [{ glob: ['#'], marker: '#' }, /guardExclusive\.glob: not a valid zsh pattern/, 'glob # (extendedglob: a repetition of nothing)'],
 ]) bad(Object.assign({}, B, { guardExclusive: v }), re, `D6. guardExclusive ${n} - error`);
 bad({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s', guardAdaptiveProbe: { file: 'a', contains: 'b' } }, /needs guardCommandLegacy/, 'probe without a legacy command - error');
 bad({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s', roleNotes: { coder: 'x' } }, /roleNotes.coder: unknown role/, 'notes for an unknown role - error');
