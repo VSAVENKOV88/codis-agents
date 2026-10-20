@@ -3,7 +3,7 @@
 // Tester guard of task U1a (slot locks without lockf): runs tests/fixtures/slots-u1a/checks.zsh with zsh and is judged
 // by its exit code. Cases: kill -9 of a holder hands the slot to the waiter, the exclusive lock is seen by the project
 // runner's flock(2) probe, standard input reaches the command, the command's own 75 is not a lost race, no temporary
-// file is a refusal (73). usage: node tests/slots-u1a-run.js
+// file is a refusal (73). usage: node tests/slots-u1a.test.js
 const path = require('path');
 const { spawnSync } = require('child_process');
 const { has } = require('./lib');

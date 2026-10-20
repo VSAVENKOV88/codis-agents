@@ -134,6 +134,22 @@ _slot_now() { local t=${EPOCHREALTIME/,/.}; print -r -- ${t%%.*}.${${t#*.}[1,3]}
 # Busy: an fcntl lock is held on the file. The probe runs in a subshell (its own process): taking and dropping the lock
 # there never touches a lock of this process. zsystem flock -t 0: 0 - free (taken, dropped on exit), 1 - busy.
 _slot_busy() { [[ -n $1 && -e $1 ]] || return 1; ( zsystem flock -t 0 -f _slot_probe_fd "$1" ) 2>/dev/null; (( $? == 1 )) }
+# A lock this user cannot open for writing -> its path in $SLOT_BAD (return 0). zsystem flock opens the file for
+# writing, and a failed open returns 1 - the same code as "busy": a slot file left by sudo (or by root in a container
+# over a shared slot directory) counted as busy forever, an unwritable admit.lock was "admission lock busy" forever, and
+# the job never got a slot and never learned why. The slot directory and its queue need writing too (files are created
+# there). File tests only, no processes forked: it runs on every poll.
+_slot_unwritable() {
+  local f; SLOT_BAD=
+  for f in $SLOTS_DIR $SLOTS_DIR/queue $SLOTS_DIR/admit.lock $SLOTS_DIR/queue.lock $SLOTS_DIR/medium.<->.lock(N) \
+    $SLOTS_DIR/heavy.<->.lock(N) $SLOT_LEGACY_LOCK; do
+    [[ -e $f && ! -w $f ]] && { SLOT_BAD=$f; return 0 }
+  done
+  return 1
+}
+_slot_unwritable_say() {
+  print -u2 -r -- "slot_run: refused - $SLOT_BAD is not writable for this user (uid $UID): a slot lock is opened for writing, so it would count as busy forever; fix its owner or mode (left by sudo or by root in a container?)"
+}
 # A temporary file from a template (BSD and GNU mktemp).
 _slot_tmp() { mktemp "${${TMPDIR:-/tmp}%/}/$1.XXXXXX" }
 
@@ -236,7 +252,7 @@ _slot_q_clean() {
 }
 
 # Ticket (number $1 or a new one; $4 - optional extra field, the worktree of a stand ticket) -> path in $SLOT_QF. Under its own short lock queue.lock, not admit.lock: admit.lock
-# is held while a slot is chosen (memory_pressure, ps, lockf - up to a second), and a waiter that came earlier but hit
+# is held while a slot is chosen (memory_pressure, ps, the busy probes - up to a second), and a waiter that came earlier but hit
 # it got a number after the one that came next. The ticket file goes through tmp + mv: the cleaner (under admit.lock)
 # never sees a half-written ticket and never takes it for a dead one.
 _slot_q_take() {
@@ -290,6 +306,7 @@ slot_run() {
   got=$(_slot_tmp slotgot) || { print -u2 -r -- "slot_run: no temporary file in ${TMPDIR:-/tmp} (mktemp failed)"; return 73; }
   local kind=${SLOT_KIND:-single} retry=${SLOT_RETRY_RC:-} qnum= qf= pos=0 m h o treq=$(_slot_now) tacq= jslot= jcmd=( "$@" )
   [[ $class == (medium|heavy) ]] || { print -u2 "slot_run: class must be medium|heavy, not \"$class\""; return 64; }
+  if _slot_unwritable; then _slot_unwritable_say; rm -f $got; _slot_journal $treq - $(_slot_now) $class - $kind 77 "${jcmd[@]}"; return 77; fi
   : > $SLOTS_DIR/admit.lock; mkdir -p $SLOTS_DIR/queue
   # The trap is set before the holder starts: a signal between the command start and `wait` would otherwise kill only
   # us (the command an orphan outside the slot). No holder - remove the ticket and exit; a holder - stop the whole
@@ -301,6 +318,11 @@ slot_run() {
   _slot_q_take "" $class $kind && { qf=$SLOT_QF; qnum=$(( 10#${qf:t} )); }   # the number is given on arrival
   while true; do
     while true; do
+      # a lock turned unwritable while we wait (a sudo job started meanwhile) - the same refusal
+      if _slot_unwritable; then
+        _slot_unwritable_say; [[ -n $qf ]] && rm -f $qf; rm -f $got
+        _slot_journal $treq - $(_slot_now) $class - $kind 77 "${jcmd[@]}"; return 77
+      fi
       if zsystem flock -t 30 -i 0.1 -f fd $SLOTS_DIR/admit.lock; then
         _slot_q_clean
         # no ticket (a retry after SLOT_RETRY_RC, or it was cleaned) - the same number; no queue.lock on arrival - a new one

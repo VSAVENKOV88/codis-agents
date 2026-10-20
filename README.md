@@ -313,7 +313,10 @@ of the file would drop an fcntl lock), so the command is never exec-ed in its pl
 marked `guards:exclusive` (`<slots.lockDir>/exclusive.lock`) is a `flock(2)` lock by contract, because the project's
 guard runner takes the same file with `lockf(1)` or `flock(1)` and on Linux the two lock types do not see each other:
 the slot scripts take it with the first executable of `SLOT_EXCL_TOOLS` (default `/usr/bin/lockf /usr/bin/flock
-/bin/flock`); with none, a guard marked exclusive is refused (exit 72).
+/bin/flock`); with none, a guard marked exclusive is refused (exit 72). Every lock of the slot directory must be
+writable for the user: `zsystem flock` opens the file for writing and a failed open looks like "busy", so a slot file,
+`admit.lock`, `queue.lock` or the directory left unwritable (by `sudo heavy.sh`, or by root in a container over a shared
+slot directory) is a refusal with one line naming the path (exit 77), never an endless wait.
 
 Every slot hold appends one line to the slot journal, `<slots.lockDir>/journal.tsv` (`SLOT_JOURNAL` overrides it, empty
 turns it off): request, acquire and release times, class, slot, kind, pid, exit code, worktree and a short command with

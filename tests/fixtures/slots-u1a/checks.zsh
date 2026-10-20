@@ -1,6 +1,6 @@
 #!/bin/zsh
 # Tester checks of the slot locks without lockf(1) (task U1a), on a TEMPORARY slot directory and a fake machine.
-# Run by tests/slots-u1a-run.js (macOS and Linux). Exit code 0 - holds.
+# Run by tests/slots-u1a.test.js (macOS and Linux). Exit code 0 - holds.
 # Cases (cells of the U1a matrix the programmer's tests do not reach):
 #   A3. kill -9 of a holder while another heavy.sh WAITS for that slot: the waiter takes it and runs its command;
 #   A8. reverse direction of the exclusive lock: while an exclusive guard runs under heavy.sh, a flock(2) probe of the
