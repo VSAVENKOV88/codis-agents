@@ -20,7 +20,7 @@
       "type": "object", "additionalProperties": false, "required": ["glob", "marker"],
       "description": "Which guards share a machine resource (a fixed port, a temp dir, a docker project) and run one at a time under the exclusive lock (heavy.sh): a command argument that is a file whose name matches one of glob and that has a line <marker> guards:exclusive — <reason>. Without the key: glob [*-run.js, *-run.mjs], marker //.",
       "properties": {
-        "glob": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1, "pattern": "^[^/]+$" }, "description": "zsh patterns of the file name (no /), e.g. [\"test_*.py\", \"*_test.py\"]." },
+        "glob": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1, "pattern": "^[^/]+$" }, "description": "zsh patterns of the file name (no /, and each must compile as a zsh pattern under extendedglob - config.js check refuses one that does not), e.g. [\"test_*.py\", \"*_test.py\"]." },
         "marker": { "type": "string", "minLength": 1, "pattern": "^\\S+$", "description": "The line-comment marker of the language, taken literally, e.g. # or //." }
       }
     },

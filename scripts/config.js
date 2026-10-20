@@ -115,6 +115,16 @@ function level(spec, src, where, errors) {
   return out;
 }
 
+// The globs zsh cannot compile as patterns, as slots.zsh uses them (${~g} under extendedglob): there "bad pattern"
+// aborts heavy.sh with exit 1 - a false red - so check refuses them. Each glob in its own subshell (the error ends only
+// that one). No zsh on the machine: nothing to refuse here, slots.zsh cannot run there either.
+function badZshPatterns(globs) {
+  const r = spawnSync('zsh', ['-f', '-c', 'setopt extendedglob; for g in "$@"; do ( [[ x == ${~g} ]]; print -r -- ok ) 2>/dev/null || print -r -- bad; done', 'zsh', ...globs], { encoding: 'utf8' });
+  if (r.error) return [];
+  const verdicts = r.stdout.split('\n');
+  return globs.filter((g, i) => verdicts[i] !== 'ok');
+}
+
 function resolve(raw) {
   const errors = [];
   if (!typeOk('object', raw)) return { config: null, errors: ['config: expected a JSON object'] };
@@ -151,7 +161,9 @@ function resolve(raw) {
     if (x.glob === undefined) errors.push('guardExclusive.glob: required');
     else if (!x.glob.length) errors.push('guardExclusive.glob: expected at least one glob');
     // matched against the file name of a command argument (slots.zsh): a path segment can never match
-    else for (const g of x.glob) if (!g || /[/\n]/.test(g)) errors.push(`guardExclusive.glob: a glob of the file name, without "/": ${JSON.stringify(g)}`);
+    else if (x.glob.some((g) => !g || /[/\n]/.test(g))) {
+      for (const g of x.glob) if (!g || /[/\n]/.test(g)) errors.push(`guardExclusive.glob: a glob of the file name, without "/": ${JSON.stringify(g)}`);
+    } else for (const g of badZshPatterns(x.glob)) errors.push(`guardExclusive.glob: not a valid zsh pattern (slots.zsh matches it with extendedglob): ${JSON.stringify(g)}`);
     if (x.marker === undefined) errors.push('guardExclusive.marker: required');
     else if (!x.marker || /\s/.test(x.marker)) errors.push(`guardExclusive.marker: the line-comment marker, not empty and without blanks: ${JSON.stringify(x.marker)}`);
   } else c.guardExclusive = { glob: [...EXCL_DEFAULT.glob], marker: EXCL_DEFAULT.marker };
