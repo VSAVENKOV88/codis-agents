@@ -49,7 +49,9 @@ const LANG = CFG.reportLanguage || 'English'
 const NOTES = CFG.roleNotes || {}
 // Protected branches come from config.js json (explicit, else the default branch from git); unknown -> the hooks refuse
 // every branch push, and the rule says so instead of naming a branch.
+// An explicit [] protects no branch (the hooks then allow every branch push), which is not "unknown".
 const PROTECTED = Array.isArray(CFG.protectedBranches) && CFG.protectedBranches.length ? CFG.protectedBranches.join(', ') : null
+const NONE_PROTECTED = Array.isArray(CFG.protectedBranches) && !CFG.protectedBranches.length
 const PREFIX = ARGS.agentTypePrefix === undefined ? 'codis-agents:' : ARGS.agentTypePrefix
 const roleType = (role) => (PREFIX ? PREFIX + role : 'general-purpose')
 const abs = (p) => (p.startsWith('/') ? p : `${CFG.worktreeRoot}/${p}`)
@@ -78,6 +80,7 @@ const RULE_LIST = (t) => [
     : 'Shared stand: the project config has none (no section stand), so acceptance in Docker uses a stack of the task.'],
   ['specs', 'Living specs (UX specs, state models, gap lists) change in the same commit as the behaviour they describe.'],
   ['push', PROTECTED ? `Do not push, do not merge into ${PROTECTED}, do not create tags.`
+    : NONE_PROTECTED ? 'Do not push, do not merge, do not create tags (the project config protects no branch: protectedBranches [], so no branch is protected by the hooks, and pushing and merging stay the owner\'s call).'
     : `Do not push, do not merge into the default branch, do not create tags (protected branches unknown, so the hooks refuse every branch push${CFG.defaultBranchUnknown ? ': ' + CFG.defaultBranchUnknown : ''}).`],
   ['gitadd', 'git add only by path (never -A or .): synced folders spawn conflict copies "name 2.ext".'],
   ['report', `Write your role report as you go, in the task folder, in ${LANG}; if it already exists, continue from it and git log, not from scratch. Its last line is "Next step: ...".`],

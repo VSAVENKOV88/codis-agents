@@ -103,7 +103,10 @@ function judge(words, ctx) {
       knownTag = isTag;
     }
     if (branch && !knownTag && !cfg.protectedBranches) return `\`git push\` of ${branch} is refused: protected branches unknown - ${cfg.defaultBranchUnknown} (ALLOW_PROTECTED_PUSH=1 only on the owner's explicit word).`;
-    if (branch && cfg.protectedBranches.includes(branch) && tag === null) {
+    // Unknown branches refuse every branch push above; a known tag gets past it and is judged as a tag below, so here
+    // no branch counts as protected (a crash would exit 1, which Claude Code treats as non-blocking: fail open).
+    const protectedBranches = cfg.protectedBranches || [];
+    if (branch && protectedBranches.includes(branch) && tag === null) {
       if (st === undefined) st = standingPush.standing(dir);
       if (st && st.branches.includes(branch)) {
         if (forced || !src) return `\`git push\` to ${branch} is refused: a standing push never forces or deletes (ALLOW_PROTECTED_PUSH=1 only on the owner's explicit word).`;
@@ -112,7 +115,7 @@ function judge(words, ctx) {
         continue;
       }
     }
-    if (branch && cfg.protectedBranches.includes(branch)) return `\`git push\` to ${branch} is refused: ${branch} is protected. Work on a branch; pushing or merging into ${branch} is the owner's call (ALLOW_PROTECTED_PUSH=1 only on the owner's explicit word).`;
+    if (branch && protectedBranches.includes(branch)) return `\`git push\` to ${branch} is refused: ${branch} is protected. Work on a branch; pushing or merging into ${branch} is the owner's call (ALLOW_PROTECTED_PUSH=1 only on the owner's explicit word).`;
     if (tag !== null && tagRe.test(tag)) return `\`git push\` of tag ${tag} is refused: it may deploy to production (ALLOW_PROTECTED_PUSH=1 only on the owner's explicit word).`;
   }
   return pending.length ? standingPush.verify(st) : null;
