@@ -9,6 +9,10 @@
 #   A9. the command's own exit code 75 is not "lost the race": it passes through and the command runs exactly once;
 #   C1. no temporary file (TMPDIR does not exist): heavy.sh refuses with one line and code 73, does not loop, the
 #       command does not run.
+#   E77. locks of the slot directory this user cannot write (left by sudo) beyond the programmer's case 11: a heavy
+#       slot file (heavy.sh), the queue directory, the legacy lock - refusal 77, the command does not run; the refusal
+#       is journaled with code 77; a refusal while waiting leaves no queue ticket and no temporary file, and the next
+#       job behind it still gets the slot; a .who file left unwritable is not a lock - the job runs.
 H=${SLOTS_H:-${0:A:h:h:h:h}/scripts}
 zmodload zsh/datetime zsh/system
 T=$(mktemp -d "${${TMPDIR:-/tmp}%/}/slots-u1a.XXXXXX"); T=${T:A}
@@ -101,6 +105,48 @@ TMPDIR=$T/no-such-dir "$H/heavy.sh" zsh -c 'touch '$T'/c1.ran' > $T/c1.out 2> $T
 bwait $P 100; rc=$?
 ok 'C1. TMPDIR does not exist: heavy.sh refuses with code 73 and does not run the command' '(( rc == 73 )) && [[ ! -e $T/c1.ran ]]' "$rc $(tail -2 $T/c1.out; tail -2 $T/c1.err)"
 ok 'C1. ... with one line naming the temporary directory' '[[ $(grep -c "temporary file" $T/c1.err) == 1 ]]' "$(cat $T/c1.err)"
+
+# E77. unwritable locks (skipped for a user who writes read-only files: root)
+e77() {  # e77 <name> <path to make unwritable> <dir> <script> [env...]: runs <script> on slot dir <dir>, sets rc
+  local name=$1 bad=$2 d=$3 sc=$4; shift 4
+  rm -f $T/e77.ran
+  if [[ -d $bad ]]; then chmod 555 $bad; else : >> $bad; chmod 444 $bad; fi
+  if [[ -w $bad ]]; then print -r -- "  note E77. $name: this user writes a read-only file (root) - nothing to refuse"; chmod 755 $bad 2>/dev/null; rc=skip; return; fi
+  env "$@" SLOTS_DIR=$d TMPDIR=$T/tmp77 "$H/$sc" zsh -c 'touch '$T'/e77.ran' > $T/e77.out 2> $T/e77.err & local p=$!; BG+=$p
+  bwait $p 100; rc=$?
+  if [[ -d $bad ]]; then chmod 755 $bad; else chmod 644 $bad; fi
+  ok "E77. $name not writable: $sc refused with code 77, the command did not run" '(( rc == 77 )) && [[ ! -e $T/e77.ran ]]' "$rc $(tail -2 $T/e77.out; tail -2 $T/e77.err)"
+  ok "E77. $name: one stderr line naming the path" '[[ $(wc -l < $T/e77.err | tr -d " ") == 1 ]] && grep -qF -- "$bad " $T/e77.err' "$(cat $T/e77.err)"
+}
+mkdir -p $T/tmp77
+d=$T/e77h; mkdir -p $d; e77 heavy.2.lock $d/heavy.2.lock $d heavy.sh SLOT_HEAVY_N=2
+d=$T/e77q; mkdir -p $d/queue; e77 'queue directory' $d/queue $d medium.sh
+d=$T/e77l; mkdir -p $d; e77 'legacy lock' $T/legacy77.lock $d medium.sh SLOT_LEGACY_LOCK=$T/legacy77.lock
+[[ $rc == skip ]] || ok 'E77. the refusal is journaled with exit code 77' '[[ -s $d/journal.tsv ]] && awk -F"\t" "{print \$0}" $d/journal.tsv | grep -q "77"' "$(cat $d/journal.tsv 2>/dev/null)"
+[[ $rc == skip ]] || ok 'E77. a refusal leaves no temporary file' '[[ -z $(ls -A $T/tmp77) ]]' "$(ls -A $T/tmp77)"
+# a late refusal: the only medium slot held, a job waits with a ticket, its admit.lock turns unwritable -> 77; then the
+# lock is writable again, the holder ends: the next job takes the slot (no ticket left in front of it)
+d=$T/e77w; mkdir -p $d; rm -f $T/e77w.ran $T/e77n.ran
+SLOTS_DIR=$d SLOT_MEDIUM_N=1 "$H/medium.sh" zsh -c 'while [[ ! -e '$T'/rel.e77 && ! -e '$T'/rel.ALL ]]; do sleep 0.05; done' > $T/e77h.out 2>&1 & PH=$!; BG+=$PH
+waitfor '[[ -s $d/medium.1.lock.who ]]'
+SLOTS_DIR=$d SLOT_MEDIUM_N=1 TMPDIR=$T/tmp77 "$H/medium.sh" zsh -c 'touch '$T'/e77w.ran' > $T/e77w.out 2> $T/e77w.err & PW=$!; BG+=$PW
+waitfor 'grep -q "waiting for slot medium" $T/e77w.out' 100
+chmod 444 $d/admit.lock
+if [[ -w $d/admit.lock ]]; then print -r -- "  note E77. late: root - nothing to refuse"; chmod 644 $d/admit.lock; touch $T/rel.e77; bwait $PW >/dev/null; bwait $PH >/dev/null
+else
+  bwait $PW 100; rc=$?; chmod 644 $d/admit.lock
+  ok 'E77. late refusal while waiting: code 77, the command did not run' '(( rc == 77 )) && [[ ! -e $T/e77w.ran ]]' "$rc $(tail -2 $T/e77w.err)"
+  ok 'E77. ... no queue ticket and no temporary file left behind' '[[ -z $(ls -A $d/queue 2>/dev/null) && -z $(ls -A $T/tmp77) ]]' "queue: $(ls -A $d/queue) tmp: $(ls -A $T/tmp77)"
+  SLOTS_DIR=$d SLOT_MEDIUM_N=1 "$H/medium.sh" zsh -c 'touch '$T'/e77n.ran' > $T/e77n.out 2>&1 & PN=$!; BG+=$PN
+  waitfor 'grep -q "waiting for slot medium" $T/e77n.out' 100
+  touch $T/rel.e77; bwait $PH >/dev/null; bwait $PN 100; rc=$?
+  ok 'E77. ... the next job takes the slot once the holder ends' '(( rc == 0 )) && [[ -e $T/e77n.ran ]]' "$rc $(tail -3 $T/e77n.out)"
+fi
+# a .who file of a slot left unwritable is not a lock: the job still runs
+d=$T/e77o; mkdir -p $d; : > $d/medium.1.lock.who; chmod 444 $d/medium.1.lock.who; rm -f $T/e77o.ran
+SLOTS_DIR=$d SLOT_MEDIUM_N=1 "$H/medium.sh" zsh -c 'touch '$T'/e77o.ran' > $T/e77o.out 2>&1 & P=$!; BG+=$P
+bwait $P 100; rc=$?; chmod 644 $d/medium.1.lock.who
+ok 'E77. an unwritable .who of a slot is not a refusal: the job runs (exit 0)' '(( rc == 0 )) && [[ -e $T/e77o.ran ]]' "$rc $(tail -3 $T/e77o.out)"
 
 print -r -- "
 $pass passed, $fail failed"
