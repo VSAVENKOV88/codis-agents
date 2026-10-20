@@ -135,6 +135,11 @@ ok 'D4. ... x-run.js with "//" is not (the key replaces the default)' '! excl $T
 ok 'D3. the marker in a file whose name matches no glob is not exclusive (helper.js by default, conftest.py by the key)' '! excl $T/def.json tests/helper.js && ! excl $T/py.json tests/conftest.py'
 ok 'D5. ... the marker without a reason after "—" is not' '! excl $T/py.json tests/test_noreason.py'
 ok 'D2. a marker with pattern characters ([x]) is matched literally' 'excl $T/lit.json tests/test_lit.py && ! excl $T/lit.json tests/test_notlit.py'
+cfg $T/badglob.json 'cd {wt} && pytest' '"guardExclusive": {"glob": ["test_[.py"], "marker": "#"}'
+chk $T/badglob.json; ok 'D6. config.js check: a glob that is not a zsh pattern (test_[.py) - refused, named' '(( crc != 0 )) && [[ "$c $(<$T/chk.err)" == *"not a valid zsh pattern"* ]]' "$crc $c $(<$T/chk.err)"
+( cd $T/wts/xp && CODIS_AGENTS_CONFIG=$T/badglob.json $H/heavy.sh touch $T/badglob.ran tests/test_port.py > $T/d6.out 2>&1 ); rc=$?
+ok 'D6. ... heavy.sh on it: refused with 78 and the reason, the command not run (was: "bad pattern", exit 1)' \
+  '(( rc == 78 )) && grep -q "not a valid zsh pattern" $T/d6.out && [[ ! -e $T/badglob.ran ]]' "$rc $(cat $T/d6.out)"
 chk $T/py.json; ok 'D2. config.js check: guardExclusive {glob, marker} - ok' '(( crc == 0 )) && [[ $c == ok* ]]' "$crc $c $(<$T/chk.err)"
 tool=; for t in /usr/bin/lockf /usr/bin/flock /bin/flock; do [[ -x $t ]] && { tool=$t; break }; done
 if [[ -z $tool ]]; then
