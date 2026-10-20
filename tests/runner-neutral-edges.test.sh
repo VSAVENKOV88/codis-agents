@@ -3,7 +3,7 @@
 #   - guardExclusive given through the project config with several globs (a blank and a quote inside one), the marker
 #     indented, the marker taken literally (# and * are pattern characters of zsh extendedglob);
 #   - the guards-all.sh log: two worktrees OUTSIDE worktreeRoot with the same basename get two logs, a worktree under
-#     worktreeRoot given as a path with a trailing slash keeps guards-<name>.txt;
+#     worktreeRoot given as a path with a trailing slash, through ".." or a symbolic link keeps guards-<name>.txt;
 #   - a runner without {jobs}: its own exit code is the exit code (a red run is not retried, its 75 is not "no budget"),
 #     guardCommandLegacy without {jobs} chosen by the probe runs the same way, and while it waits in the queue a later
 #     single heavy job does not pass it (FIFO).
@@ -78,6 +78,16 @@ $H/guards-all.sh $T/o2/xp > $T/g3.out 2>&1
 ok '... the second one again: reused from its own log' 'grep -q reused $T/g3.out' "$(cat $T/g3.out)"
 $H/guards-all.sh $T/wts/xp/ > $T/g4.out 2>&1
 ok 'a worktree under worktreeRoot given with a trailing slash: guards-xp.txt' '[[ -f $T/shared/guards-xp.txt ]]' "$(ls $T/shared)"
+# The same worktree spelt otherwise (through "..", through a symbolic link to worktreeRoot) is the same worktree: its
+# log is guards-xp.txt, not a third guards-xp-<cksum>.txt (the name is taken from the resolved path, ${WT:A})
+ln -s $T/wts $T/wlink
+for sp in $T/wts/../wts/xp $T/wlink/xp; do
+  rm -f $T/shared/guards-xp.txt(N) $T/shared/guards-xp.txt.meta.json(N)
+  $H/guards-all.sh --force $sp > $T/g5.out 2>&1; rc=$?
+  logs=( $T/shared/guards-xp-*.txt(N) )
+  ok "a worktree under worktreeRoot spelt ${sp#$T/}: guards-xp.txt, no new hashed log" \
+    '(( rc == 0 )) && [[ -f $T/shared/guards-xp.txt ]] && (( ${#logs} == 2 ))' "$rc $(ls $T/shared; tail -3 $T/g5.out)"
+done
 
 # -- a runner without {jobs}: its exit code ---------------------------------------------------------------------------
 : > $T/run.log; print 3 > $T/rc
@@ -111,6 +121,12 @@ waitlong 'grep -q "whole budget" $T/f.out || ! kill -0 $GA 2>/dev/null'
 SLOT_POLL=0.05 hjob n2; sleep 2
 ok 'a later single heavy job waits behind the queued run without {jobs} (a slot is free, but FIFO)' '[[ ! -e $T/n2.start ]] && ! grep -q "^start" $T/run.log' "$(cat $T/n2.out; cat $T/f.out)"
 touch $T/rel.n1
+# the reservation is made at admission, before the run's own plan (held back 1.5 s by the slow node): the slot of the
+# admitted run already says "fixed 6" in .jobs, so a full run with {jobs} that comes in this window sees the budget taken
+waitlong 'wl=( $SLOTS_DIR/heavy.*.lock.whole(N) ); (( ${#wl} ))'
+wl=( $SLOTS_DIR/heavy.*.lock.whole(N) ); wl=${wl[1]%.whole}
+ok '... admitted: its slot holds the reservation before the run starts (.whole = 6 and .jobs "fixed 6")' \
+  '[[ -n $wl && $(<$wl.whole) == 6 && $(<$wl.jobs 2>/dev/null) == "fixed 6" ]] && ! grep -q "^start" $T/run.log' "slot=$wl; $(ls $SLOTS_DIR); $(cat $wl.jobs 2>&1); $(cat $T/run.log)"
 waitlong 'grep -q "^start" $T/run.log || [[ -e $T/n2.start ]]'
 # n2 holds its slot until the run has either started or gone back to the queue (released at once, it would be gone
 # before the run's plan looks at its neighbours)
