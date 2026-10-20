@@ -48,12 +48,15 @@ waitfor() { local i; for i in {1..${2:-100}}; do eval "$1" && return 0; sleep 0.
 _tree() { local c; for c in $(pgrep -P $1 2>/dev/null); do _tree $c; done; print -r -- $1 }
 typeset -a BG
 stop() { local p i; for p; do for i in $(_tree $p); do kill $i 2>/dev/null; done; done }
+# hard <pid> - TERM to the tree; whatever still lives after 2 s gets KILL (slot_run ignores TERM that lands while a
+# holder that lost the race is being reaped - a mutant losing every race would otherwise outlive the test)
+hard() { local t=( $(_tree $1) ) i; stop $1; waitfor "! kill -0 $1 2>/dev/null" 20 || for i in $t; do kill -9 $i 2>/dev/null; done }
 # tm <seconds> <command...> - runs the command, stops its tree after <seconds> (a mutant may loop forever): code 124
 tm() { local s=$1 i p; shift; "$@" & p=$!; BG+=$p
   for i in {1..$(( s * 10 ))}; do kill -0 $p 2>/dev/null || break; sleep 0.1; done
-  kill -0 $p 2>/dev/null && { stop $p; wait $p 2>/dev/null; return 124; }; wait $p }
+  kill -0 $p 2>/dev/null && { hard $p; wait $p 2>/dev/null; return 124; }; wait $p }
 # bwait <pid> - waits for a background job at most 10 s, then stops its tree: code 124
-bwait() { waitfor "! kill -0 $1 2>/dev/null" 100; kill -0 $1 2>/dev/null && { stop $1; wait $1 2>/dev/null; return 124; }; wait $1 }
+bwait() { waitfor "! kill -0 $1 2>/dev/null" 100; kill -0 $1 2>/dev/null && { hard $1; wait $1 2>/dev/null; return 124; }; wait $1 }
 trap 'touch $T/rel.ALL 2>/dev/null; stop $BG; rm -rf $T' EXIT
 # busy <file> - an fcntl probe from its own process (the type the slot holder takes): 0 - busy
 busy() { [[ -e $1 ]] || return 1; ( zsystem flock -t 0 -f _f $1 ) 2>/dev/null; (( $? == 1 )) }
