@@ -9,7 +9,8 @@
 // an existing tag (HEAD:build-1 creates refs/heads/build-1) is still a branch push. Round 3: a delete of a bare name
 // that is a local tag may delete a remote branch of that name - refused while unknown; tag sources stay tag pushes.
 // Round 4: other delete spellings (+:x, -fd, refs/heads/, no local ref, mixed), --delete refs/tags/ as a tag delete,
-// the known-branch delete unchanged, and the real pre-push on the delete.
+// the known-branch delete unchanged, and the real pre-push on the delete. Round 5: the matching push ":" / "+:" while
+// unknown (its destination is empty) is a branch push and refused.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -94,6 +95,12 @@ try {
   }
   ok('unknown: --delete refs/tags/build-1 is a tag delete - allowed', bash('git push origin --delete refs/tags/build-1', norem, unk) === null, String(bash('git push origin --delete refs/tags/build-1', norem, unk)));
   ok('unknown: --delete refs/tags/v1.0 refused as a protected tag', /tag v1.0 is refused/.test(bash('git push origin --delete refs/tags/v1.0', norem, unk) || ''), String(bash('git push origin --delete refs/tags/v1.0', norem, unk)));
+  // Round 5 (review): the refspec ":" (and "+:") is a "matching" push - git pushes every branch that exists on both
+  // sides under the same name, the default branch too (measured with git 2.50: "+ ... main -> main (forced update)").
+  // Its destination is empty, so it named no branch and slipped past the unknown check: refused while unknown.
+  for (const c of ['git push origin :', 'git push origin +:', 'git push -f origin :', 'git push origin b-t1 :']) {
+    ok(`unknown: matching push "${c}" refused with the reason`, unknownRe.test(bash(c, norem, unk) || ''), String(bash(c, norem, unk)));
+  }
   {
     const hp = spawnSync('node', [path.join(ROOT, 'scripts', 'hooks', 'guard-bash.js')], { cwd: norem, encoding: 'utf8',
       input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'git push origin v1.0' }, cwd: norem }), env: Object.assign({}, env, { CODIS_AGENTS_CONFIG: unk }) });
