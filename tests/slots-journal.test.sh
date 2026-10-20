@@ -10,10 +10,9 @@
 #        5. an exclusive guard: a heavy record and an exclusive record; 6. killed while queueing: acquire "-", rc 143;
 #        7. a full run (guards-all.sh) is labelled "guards-all <worktree>", kind full; 8. slot-journal.js reads the lines
 #           the shell wrote and its queue / hold numbers match.
-[[ -x /usr/bin/lockf ]] || { print -r -- "skip: /usr/bin/lockf not found (the slot scripts are macOS-only)"; exit 0; }
 H=${SLOTS_H:-${0:A:h:h}/scripts}
 zmodload zsh/datetime
-T=$(mktemp -d -t slots-journal); T=${T:A}
+T=$(mktemp -d "${${TMPDIR:-/tmp}%/}/slots-journal.XXXXXX"); T=${T:A}
 export SLOTS_DIR=$T/slots SLOT_LEGACY_LOCK=$T/guards.lock SLOT_POLL=0.2 SLOT_SAY=1 SLOT_THIRD_WINDOW=1 SLOT_HIST_GAP=2
 unset SLOT_JOURNAL SLOT_LABEL SLOT_KIND SLOT_RETRY_RC
 J=$SLOTS_DIR/journal.tsv

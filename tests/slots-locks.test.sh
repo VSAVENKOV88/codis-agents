@@ -13,7 +13,8 @@
 #           work; 6. no ps or no pgrep - sourcing slots.zsh is refused with one line and code 72, the command never
 #           runs; 7. no flock(2) utility - an exclusive guard is refused with one line and code 72; 8. the flock(1) form
 #           (-o -w <s> -E 75) waits out loud while lockf(1) holds the lock, then runs; 9. no lockf in the slot holder or
-#           the busy probe, and no slot test skips for a missing lockf.
+#           the busy probe, and no slot test skips for a missing lockf; 10. (macOS) an old lockf(1) holder of a slot
+#           counts as busy for the new probe.
 H=${SLOTS_H:-${0:A:h:h}/scripts}
 zmodload zsh/datetime zsh/system
 T=$(mktemp -d "${${TMPDIR:-/tmp}%/}/slots-locks.XXXXXX"); T=${T:A}
@@ -97,7 +98,7 @@ stop $c3
 : > $T/4.ran; fhold $SLOTS_DIR/heavy.1.lock r4; waitfor '[[ -e $T/r4.held ]]'
 ( SLOT_HEAVY_N=1; SLOT_SAY=0; source $H/slots.zsh; _slot_busy() { return 1 }   # every probe says "free": the race
   slot_run heavy zsh -c 'print -r -- ran >> '$T'/4.ran' ) > $T/4.out 2>&1 & P=$!; BG+=$P
-waitfor 'grep -q "was taken first" $T/4.out' 50
+waitfor 'grep -qs "was taken first" $T/4.out' 50
 sleep 0.5
 ok '4. the holder lost the race: slot_run says "was taken first" and does NOT run the command' 'grep -q "slot .*heavy.1.lock was taken first" $T/4.out && [[ ! -s $T/4.ran ]]' "ran: $(<$T/4.ran); $(tail -2 $T/4.out)"
 touch $T/rel.r4
@@ -158,8 +159,17 @@ ok '8. ... and runs once the lock is free (exit 0)' '(( rc == 0 )) && [[ -e $T/5
 # 9. no lockf in the slot holder or the busy probe; no slot test skips for a missing lockf
 F9=$(zsh -c 'source "$1" >/dev/null 2>&1; functions slot_run _slot_busy' _ $H/slots.zsh)
 ok '9. slot_run and _slot_busy do not use lockf' '[[ -n $F9 && $F9 != *lockf* ]]' "$(print -r -- $F9 | grep -n lockf)"
-sk=$(grep -l 'lockf not found\|no /usr/bin/lockf' ${0:A:h}/*.test.(sh|js) 2>/dev/null)
+sk=$(grep -l 'lockf not found\|no /usr/bin/lockf' ${${0:A:h}/*.test.(sh|js):#${0:A}} 2>/dev/null)
 ok '9. no slot test skips for a missing lockf' '[[ -z $sk ]]' "$sk"
+
+# 10. macOS, a plugin version from before (lockf(1) holders) in the middle of a chain: its slot counts as busy for the
+#     fcntl probe (on macOS fcntl and flock(2) locks see each other), a new holder takes another slot
+if [[ -x /usr/bin/lockf ]]; then
+  : > $T/10.slot; xhold $SLOTS_DIR/heavy.1.lock old10; waitfor '[[ -e $T/old10.held ]]'
+  tm 20 "$H/heavy.sh" zsh -c 'print -r -- $SLOT_PATH > '$T'/10.slot' > $T/10.out 2>&1; rc=$?
+  ok '10. an old lockf(1) holder of heavy.1 is seen busy: the new holder took heavy.2' '(( rc == 0 )) && [[ $(<$T/10.slot) == */heavy.2.lock ]]' "$rc $(<$T/10.slot) $(tail -2 $T/10.out)"
+  touch $T/rel.old10
+fi
 
 print -r -- "
 $pass passed, $fail failed"

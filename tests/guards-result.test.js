@@ -7,7 +7,7 @@
 //   No tally, no names, more names than maxReruns, or a green run -> nothing reruns and the runner's code stands.
 // - Reuse: a full run is not repeated on the same HEAD with a clean tracked tree when its final exit code was 0 and the
 //   guard command is the same; HEAD, cleanliness and the code are kept next to the log (<log>.meta.json).
-// - guards-all.sh end to end (zsh and /usr/bin/lockf): rerun in the slot, exit codes, the summary, reuse and --force.
+// - guards-all.sh end to end (zsh): rerun in the slot, exit codes, the summary, reuse and --force.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -164,8 +164,8 @@ try {
   ok('reuse: the log itself is gone -> full run', !G.reusable(repo, rlog, CMD).reuse);
 
   // --- guards-all.sh end to end ---
-  if (!zsh || !fs.existsSync('/usr/bin/lockf')) {
-    skip('guards-all.sh end to end', zsh ? 'no /usr/bin/lockf (the slot scripts are macOS-only)' : 'zsh not found');
+  if (!zsh) {
+    skip('guards-all.sh end to end', 'zsh not found');
   } else {
     const T = path.join(tmp, 'e2e');
     const bin = path.join(T, 'bin'), wts = path.join(T, 'wts'), shared = path.join(T, 'shared'), w = path.join(wts, 'xw');

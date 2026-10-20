@@ -153,9 +153,12 @@ Things that bite on first use:
   from the working directory or the session's scratchpad; anything else is refused. The plugin's own workflow is
   started by name.
 
-Requirements: Node.js 18+ and git everywhere; zsh for the slot scripts and `scripts/wt-setup.sh`. The slot scripts also
-use `/usr/bin/lockf`, `memory_pressure` and `vm_stat`, so they are **macOS-only**; the workflow, agents, hooks and
-post-checks work anywhere. `wt-setup.sh` clones ignored data with an APFS clone (`cp -c`) and, where that is refused,
+Requirements: Node.js 18+ and git everywhere; zsh for the slot scripts and `scripts/wt-setup.sh`. The slot locks use
+zsh's own `zsystem flock` on macOS and Linux and need `ps` and `pgrep` (procps; missing - the slot scripts refuse with
+exit 72); the exclusive guard lock needs `lockf(1)` (macOS) or `flock(1)` (Linux, util-linux). The memory and swap
+readings still come from `sysctl`, `memory_pressure` and `vm_stat`, which are **macOS-only**: on Linux run the slot
+scripts with `SLOT_SWAP_MIN_MB=0` (no swap check) until they are ported, and the extra heavy slot stays closed there.
+The workflow, agents, hooks and post-checks work anywhere. `wt-setup.sh` clones ignored data with an APFS clone (`cp -c`) and, where that is refused,
 with `cp -r --reflink=auto` (GNU), then a plain copy. On a machine without zsh (Linux, CI) `npm test` stays green and
 the zsh tests are skipped with "skipped: zsh not found" in their line and in the final tally.
 
@@ -302,6 +305,15 @@ Heavy work runs through `scripts/heavy.sh <cmd>` and `scripts/medium.sh <cmd>` (
 
 The thresholds are measurements from a 16 GB machine; every one can be overridden from the environment (see the top of
 `scripts/slots.zsh`).
+
+A slot is held by a small zsh that takes `zsystem flock` (an fcntl lock) on the slot file, runs the command as its child
+and exits with its code: when the holder dies (even `kill -9`) the kernel drops the lock, and a command it leaves
+behind does not hold the slot. The holder never opens its own slot file after taking the lock (closing any descriptor
+of the file would drop an fcntl lock), so the command is never exec-ed in its place. The exclusive lock of guards
+marked `guards:exclusive` (`<slots.lockDir>/exclusive.lock`) is a `flock(2)` lock by contract, because the project's
+guard runner takes the same file with `lockf(1)` or `flock(1)` and on Linux the two lock types do not see each other:
+the slot scripts take it with the first executable of `SLOT_EXCL_TOOLS` (default `/usr/bin/lockf /usr/bin/flock
+/bin/flock`); with none, a guard marked exclusive is refused (exit 72).
 
 Every slot hold appends one line to the slot journal, `<slots.lockDir>/journal.tsv` (`SLOT_JOURNAL` overrides it, empty
 turns it off): request, acquire and release times, class, slot, kind, pid, exit code, worktree and a short command with

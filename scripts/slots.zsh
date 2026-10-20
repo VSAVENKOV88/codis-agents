@@ -5,9 +5,24 @@
 # Classes: medium - SLOT_MEDIUM_N slots (default 2: tsc, a plugin build, one bundler build without a browser);
 #          heavy  - SLOT_HEAVY_N slots (default 2), one more only while free memory holds and swap does not grow;
 #          medium + heavy together (with the optional legacy lock) <= SLOT_TOTAL_MAX (default 4).
-# A slot is a file <SLOTS_DIR>/<class>.<i>.lock held by /usr/bin/lockf -k -t 0 for the whole command (the process
-# dies, the kernel drops the lock). The slot is chosen under a short admission lock (zsystem flock on admit.lock), so
-# two waiters cannot count the same "free" and overshoot the ceiling.
+# A slot is a file <SLOTS_DIR>/<class>.<i>.lock held with `zsystem flock` (fcntl, zsh/system; the same on macOS and
+# Linux) for the whole command. The HOLDER is a small zsh that takes the lock (-t 0: busy - exit 75, "lost the race"),
+# writes the got-file, runs the command as its CHILD, waits for it and exits with its code. Measured on macOS
+# (experiments E1-E3 of the U1 analysis): the holder dies (kill -9 too) - the kernel drops the lock, and the command it
+# leaves behind does not hold the slot (neither did the children of lockf -k before); the command opening and closing
+# its slot file in its own process does not drop the lock (fcntl locks belong to the process that took them). Rule:
+# the holder never opens its own slot file in its own process after taking the lock - closing any descriptor of that
+# file drops an fcntl lock (man zshmodules); so the command is never exec-ed in place of the holder.
+# The slot is chosen under a short admission lock (zsystem flock on admit.lock), so two waiters cannot count the same
+# "free" and overshoot the ceiling.
+# The EXCLUSIVE lock (GUARDS_EXCLUSIVE_LOCK, guards marked `guards:exclusive`) is different: it is a flock(2) lock by
+# contract, because the project's own guard runner takes the same file with lockf(1) (macOS) or flock(1) (Linux), and
+# on Linux flock(2) and fcntl locks do not see each other. slot_exclusive_run takes it with the first executable of
+# SLOT_EXCL_TOOLS (default /usr/bin/lockf /usr/bin/flock /bin/flock; a name ending in "flock" is called as flock(1),
+# anything else as lockf(1)); none - one refusal line, code 72.
+# Requirements checked when this file is sourced: ps and pgrep (procps: live queue tickets, stopping a command tree);
+# missing - one refusal line, code 72 (EX_OSFILE), never a silent cleaning of every ticket as dead.
+# Temporary files use a template with XXXXXX in ${TMPDIR:-/tmp} (BSD and GNU mktemp alike; GNU refuses `-t name`).
 # Legacy: while SLOT_LEGACY_LOCK (a single shared lock of an older setup) is held, it counts as one busy heavy slot.
 #
 # THRESHOLDS COME FROM MEASUREMENT (16 GB macOS machine, ~20k samples every 15 s over five days):
@@ -46,6 +61,14 @@
 
 zmodload zsh/system zsh/datetime
 _SLOTS_HERE=${${(%):-%x}:A:h}
+# ps (start time of a waiter: is its ticket alive) and pgrep (the command tree on TERM) - procps on Linux.
+() {
+  local t miss=()
+  for t in ps pgrep; do (( $+commands[$t] )) || miss+=$t; done
+  (( ${#miss} )) || return 0
+  print -u2 -r -- "codis-agents slots: refused - ${(j: and :)miss} not found in PATH (ps tells live queue tickets from dead ones, pgrep stops a command tree); install procps (Debian/Ubuntu: apt-get install procps)"
+  return 72
+} || return 72
 # A project config that exists but does not validate is a refusal, never a silent default: falling back to
 # ~/.cache/codis-agents/slots made a second, separate queue whose waiters did not see the first one's (one unknown key
 # in the config was enough), and the memory ceiling of the machine no longer held. No config at all keeps the defaults.
@@ -74,6 +97,7 @@ unset _slot_cfg _slot_cfgf
 : ${GUARDS_JOBS_ALONE:=6}          # workers of a full guard run while it is the only heavy job
 : ${GUARDS_JOBS_SHARED:=3}         # ... while at least one more heavy slot is busy
 : ${GUARDS_EXCLUSIVE_LOCK:=$SLOTS_DIR/exclusive.lock}
+: ${SLOT_EXCL_TOOLS:=/usr/bin/lockf /usr/bin/flock /bin/flock}   # flock(2) utilities for the exclusive lock, first found
 # Exported so that child shells (which source this file again, possibly from another directory) agree.
 [[ -v SLOT_JOURNAL ]] || SLOT_JOURNAL=$SLOTS_DIR/journal.tsv
 export GUARDS_EXCLUSIVE_LOCK SLOTS_DIR SLOT_JOURNAL SLOT_LEGACY_LOCK SLOT_MEDIUM_N SLOT_HEAVY_N SLOT_TOTAL_MAX GUARDS_JOBS_ALONE GUARDS_JOBS_SHARED
@@ -107,8 +131,11 @@ _slot_journal() {
 # Epoch seconds with milliseconds; no printf (it writes "," under a locale with a decimal comma).
 _slot_now() { local t=${EPOCHREALTIME/,/.}; print -r -- ${t%%.*}.${${t#*.}[1,3]} }
 
-# lockf -t 0 ... true: 0 - free (taken and released at once), 75 - busy.
-_slot_busy() { [[ -n $1 && -e $1 ]] || return 1; /usr/bin/lockf -k -t 0 "$1" true >/dev/null 2>&1; [[ $? -eq 75 ]] }
+# Busy: an fcntl lock is held on the file. The probe runs in a subshell (its own process): taking and dropping the lock
+# there never touches a lock of this process. zsystem flock -t 0: 0 - free (taken, dropped on exit), 1 - busy.
+_slot_busy() { [[ -n $1 && -e $1 ]] || return 1; ( zsystem flock -t 0 -f _slot_probe_fd "$1" ) 2>/dev/null; (( $? == 1 )) }
+# A temporary file from a template (BSD and GNU mktemp).
+_slot_tmp() { mktemp "${${TMPDIR:-/tmp}%/}/$1.XXXXXX" }
 
 _slot_swap_free_mb() {
   local f d
@@ -259,7 +286,8 @@ _slot_admit() {
 # slot_run <class> <command...> - waits for a slot (in the queue by ticket), holds it for the command, returns its code.
 slot_run() {
   local class=$1; shift
-  local got=$(mktemp -t slotgot) slot fd holder rc why t0=$EPOCHSECONDS said=0
+  local got slot fd holder rc why t0=$EPOCHSECONDS said=0
+  got=$(_slot_tmp slotgot) || { print -u2 -r -- "slot_run: no temporary file in ${TMPDIR:-/tmp} (mktemp failed)"; return 73; }
   local kind=${SLOT_KIND:-single} retry=${SLOT_RETRY_RC:-} qnum= qf= pos=0 m h o treq=$(_slot_now) tacq= jslot= jcmd=( "$@" )
   [[ $class == (medium|heavy) ]] || { print -u2 "slot_run: class must be medium|heavy, not \"$class\""; return 64; }
   : > $SLOTS_DIR/admit.lock; mkdir -p $SLOTS_DIR/queue
@@ -293,8 +321,12 @@ slot_run() {
           fi
         fi
         if [[ -n $slot ]]; then
-          : > $got
-          SLOT_KIND= SLOT_RETRY_RC= SLOT_LABEL= SLOT_PATH=$slot /usr/bin/lockf -k -t 0 $slot zsh -c 'zmodload zsh/datetime; t=${EPOCHREALTIME/,/.}; print -r -- $$ ${t%%.*}.${${t#*.}[1,3]} > "$1"; shift; exec "$@"' slot-holder $got "$@" 0<&0 &   # kind/retry are not for the children
+          : > $got; : >> $slot   # zsystem flock does not create the file; created here, never by the holder
+          # The holder: lock (-t 0, busy -> 75), got-file, the command as a child, its code. kind/retry are not for the children.
+          SLOT_KIND= SLOT_RETRY_RC= SLOT_LABEL= SLOT_PATH=$slot zsh -c 'zmodload zsh/system zsh/datetime
+            zsystem flock -t 0 -f _slot_fd "$2" 2>/dev/null || exit 75
+            t=${EPOCHREALTIME/,/.}; print -r -- $$ ${t%%.*}.${${t#*.}[1,3]} > "$1"; shift 2
+            "$@"; exit $?' slot-holder "$got" "$slot" "$@" 0<&0 &
           holder=$!
           while [[ ! -s $got ]] && kill -0 $holder 2>/dev/null; do sleep 0.1; done
           if [[ -s $got ]]; then
@@ -415,12 +447,21 @@ slot_guard_plan() {
 }
 
 # A guard marked exclusive runs under the exclusive lock, waiting out loud (`lockf -k` without -t waited silently
-# while holding a heavy slot). Attempts every SLOT_SAY s; a marker file tells "lock not given" (75 from lockf) apart
-# from the command's own exit code.
+# while holding a heavy slot). Attempts every SLOT_SAY s; a marker file tells "lock not given" (75 from the utility)
+# apart from the command's own exit code. The lock is flock(2) (see the header): lockf(1) -k -t <s>, or flock(1)
+# -o (the command does not inherit the lock) -w <s> -E 75.
 slot_exclusive_run() {
-  local m=$(mktemp -t exclgot) rc t0=$EPOCHSECONDS treq=$(_slot_now) tacq; rm -f $m
+  local m rc t0=$EPOCHSECONDS treq=$(_slot_now) tacq tool w=${SLOT_SAY%.*} pre
+  for tool in ${=SLOT_EXCL_TOOLS} ''; do [[ -n $tool && -x $tool ]] && break; done
+  if [[ -z $tool ]]; then
+    print -u2 -r -- "codis-agents slots: refused - the exclusive lock $GUARDS_EXCLUSIVE_LOCK is a flock(2) lock (the project runner takes it with lockf or flock), but none of SLOT_EXCL_TOOLS is executable ($SLOT_EXCL_TOOLS); install util-linux (flock) or set SLOT_EXCL_TOOLS"
+    return 72
+  fi
+  if [[ ${tool:t} == *flock ]]; then pre=( $tool -o -w ${w:-0} -E 75 ); else pre=( $tool -k -t ${w:-0} ); fi
+  m=$(_slot_tmp exclgot) || { print -u2 -r -- "slot_exclusive_run: no temporary file in ${TMPDIR:-/tmp} (mktemp failed)"; return 73; }
+  rm -f $m
   while true; do
-    /usr/bin/lockf -k -t ${SLOT_SAY%.*} "$GUARDS_EXCLUSIVE_LOCK" zsh -c 'zmodload zsh/datetime; t=${EPOCHREALTIME/,/.}; print -r -- ${t%%.*}.${${t#*.}[1,3]} > "$1"; shift; exec "$@"' excl $m "$@" 0<&0
+    $pre "$GUARDS_EXCLUSIVE_LOCK" zsh -c 'zmodload zsh/datetime; t=${EPOCHREALTIME/,/.}; print -r -- ${t%%.*}.${${t#*.}[1,3]} > "$1"; shift; exec "$@"' excl $m "$@" 0<&0
     rc=$?
     if [[ -e $m ]]; then
       tacq=$(<$m); rm -f $m

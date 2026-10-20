@@ -42,7 +42,7 @@ RERUN=$(cfg guardRerun); [[ $RERUN == null ]] && RERUN=   # config get prints nu
 if (( ! FORCE )) && node "$H/guards-result.js" reuse "$WT" "$OUT" "$CMD" > /dev/null 2>&1; then
   tail -40 "$OUT"; print -r -- ""; node "$H/guards-result.js" reuse "$WT" "$OUT" "$CMD"; exit 0
 fi
-RCF=$(mktemp -t guardsrc)
+RCF=$(_slot_tmp guardsrc) || { print -u2 "guards-all: no temporary file in ${TMPDIR:-/tmp} (mktemp failed)"; exit 73; }
 trap 'rm -f $RCF' EXIT
 while true; do
   : > $RCF

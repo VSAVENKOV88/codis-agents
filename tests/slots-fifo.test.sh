@@ -8,10 +8,9 @@
 #           queue; 3. a full run first in the queue without a worker budget - late single heavy jobs do not slip past;
 #        4. the last slot of the shared ceiling goes to the earlier ticket of the other queue; 5. medium has its own
 #           queue; 6. SLOT_RETRY_RC - a retry with the same ticket.
-[[ -x /usr/bin/lockf ]] || { print -r -- "skip: /usr/bin/lockf not found (the slot scripts are macOS-only)"; exit 0; }
 H=${SLOTS_H:-${0:A:h:h}/scripts}
 zmodload zsh/datetime
-T=$(mktemp -d -t slots-fifo)
+T=$(mktemp -d "${${TMPDIR:-/tmp}%/}/slots-fifo.XXXXXX")
 export SLOTS_DIR=$T/slots SLOT_LEGACY_LOCK=$T/guards.lock SLOT_POLL=0.3 SLOT_SAY=1 SLOT_THIRD_WINDOW=1 SLOT_HIST_GAP=2
 mkdir -p $T/wts/xo/srv/tools $T/shared
 print -r -- '{"repoDir": "'$T'/main", "worktreeRoot": "'$T'/wts", "sharedDir": "'$T'/shared",
