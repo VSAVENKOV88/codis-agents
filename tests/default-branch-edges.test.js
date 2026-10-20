@@ -78,8 +78,8 @@ try {
   fs.writeFileSync(path.join(proj, '.claude', 'codis-agents.json'), JSON.stringify({ repoDir: '.', worktreeRoot: '..', sharedDir: '..' }));
   r = cli(['default-branch'], proj);
   ok('repoDir "." in .claude/codis-agents.json: default branch master from the project root', r.status === 0 && r.stdout.trim() === 'master', `${r.status} ${r.stdout}${r.stderr}`);
-  r = cli(['default-branch'], path.join(proj, '.claude'));
-  ok('repoDir "." resolved from the project root even when run inside .claude/', r.status === 0 && r.stdout.trim() === 'master', `${r.status} ${r.stdout}${r.stderr}`);
+  r = cli(['default-branch', path.join(proj, '.claude', 'codis-agents.json')], dir);
+  ok('repoDir "." resolved from the project root, not from the cwd (run outside any repository)', r.status === 0 && r.stdout.trim() === 'master', `${r.status} ${r.stdout}${r.stderr}`);
   const lw = path.join(dir, 'lw');
   git(proj, 'worktree', 'add', '-q', '-b', 'b-lw', lw, 'master');
   ok('linked worktree: hook (project config found through the main checkout) refuses git push origin master',
