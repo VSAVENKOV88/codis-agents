@@ -142,7 +142,8 @@ try {
     for (const k of ['SLOTS_DIR', 'SLOT_LEGACY_LOCK', 'SLOT_JOURNAL', 'SLOT_LABEL', 'SLOT_KIND', 'SLOT_RETRY_RC', 'GUARDS_EXCLUSIVE_LOCK', 'SLOT_MEDIUM_N', 'SLOT_HEAVY_N', 'SLOT_TOTAL_MAX', 'GUARDS_JOBS_ALONE', 'GUARDS_JOBS_SHARED', 'SLOT_EXCL_TOOLS', 'GUARDS_EXCL_GLOB', 'GUARDS_EXCL_MARKER', 'SLOT_PATH',
       'SLOT_SWAP_MIN_MB', 'SLOT_THIRD_FREE_PCT', 'SLOT_THIRD_SWAP_GROW_MB', 'SLOT_PROC']) delete env[k];
     const count = (n) => { try { return fs.readFileSync(path.join(T, n), 'utf8').trim().split('\n').filter(Boolean).length; } catch { return 0; } };
-    const ga = (...a) => spawnSync('zsh', [path.join(ROOT, 'scripts', 'guards-all.sh'), ...a], { encoding: 'utf8', env, timeout: 120000 });
+    // the fixture repository has no worktrees: guards-all.sh runs in its main working copy on purpose (p-main-wt)
+    const ga = (...a) => spawnSync('zsh', [path.join(ROOT, 'scripts', 'guards-all.sh'), '--main-checkout', ...a], { encoding: 'utf8', env, timeout: 120000 });
     let x = ga('pw');
     ok('F1 guards-all: a red run of known reds only -> exit 0, "2 known red", nothing reruns', x.status === 0 && /\b2 known red\b/.test(x.stdout) && count('one.count') === 0 && count('full.count') === 1,
       `${x.status} ${count('one.count')} ${x.stdout}${x.stderr}`);
