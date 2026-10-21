@@ -102,8 +102,12 @@ clean() {
   wait $JP 2>/dev/null; JP=(); rm -f $T/*.start(N) $T/*.end(N) $T/rel.*(N)
 }
 
+# pub <meminfo line> - wait until the writer loop has published it (a job started before that reads the old value:
+# in the Ubuntu container the first medium got its slot on SwapFree 20000 MB, 3 runs of 3)
+pub() { waitlong "grep -qx -- '$1' $T/proc/meminfo" || print -r -- "  (not published in 90 s: $1)" }
+
 # B2/B8. SwapFree 1000 MB < 4096: even the first medium waits, with the number of /proc/meminfo
-setp swfree 1024000
+setp swfree 1024000; pub 'SwapFree: *1024000 kB'
 hjob medium.sh s1
 newline s1 'waiting for slot medium' 0
 ok 'B2/B8. SwapFree 1024000 kB = 1000 MB < 4096 - the first medium waits and names the capacity' '! started s1 && grep -q "swap: capacity 1000 MB < 4096" $T/s1.out' "$(cat $T/s1.out)"
@@ -113,7 +117,7 @@ ok 'B2/B8. SwapFree back to 20000 MB - it went' 'started s1' "$(cat $T/s1.out)"
 rel s1; clean
 
 # B7. no swap at all and the default threshold: refusal at once, with the numbers, code 78
-setp swtotal 0; setp swfree 0; sleep 0.3
+setp swtotal 0; setp swfree 0; pub 'SwapTotal: *0 kB'; pub 'SwapFree: *0 kB'
 rm -f $J
 once nsw zsh -c 'touch '$T'/nsw.ran'
 ok 'B7. SwapTotal 0, threshold 4096 - heavy.sh exits 78 at once (not an endless wait)' '[[ $(rc nsw) == 78 ]]' "code $(rc nsw); $(cat $T/nsw.out $T/nsw.err)"
