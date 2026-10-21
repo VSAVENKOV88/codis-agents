@@ -125,6 +125,9 @@ try {
 
   console.log('R9. the reason quotes the first fatal line of ls-remote, not the last line of its advice');
   p = prePush(clone, gone, 'refs/heads/b-t1', plain);
+  const { remoteHead } = require(path.join(ROOT, 'scripts', 'config.js'));
+  const e = remoteHead('', clone);
+  ok('R9 the address check itself failing (empty URL): no branch, its own reason', !e.branch && /--get-url -- {2}failed \(fatal: bad repository/.test(e.why || ''), JSON.stringify(e));
   ok('R9 a missing repository: the reason says it is not a git repository', /does not appear to be a git repository/.test(p.stderr) && !/repository exists\.\)/.test(p.stderr), p.stderr);
 } finally {
   fs.rmSync(dir, { recursive: true, force: true });
