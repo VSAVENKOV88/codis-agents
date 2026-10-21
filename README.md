@@ -163,8 +163,8 @@ exit 72); the exclusive guard lock needs `lockf(1)` (macOS) or `flock(1)` (Linux
 readings come from `sysctl`, `memory_pressure`, `vm_stat` and `df` on macOS and from `/proc/meminfo`, `/proc/vmstat`
 and `getconf PAGESIZE` on Linux (`SLOT_OS` and `SLOT_PROC` override the source; the Linux readings are checked on a
 fake machine and in a container, not on Linux hardware). A Linux machine without swap needs `SLOT_SWAP_MIN_MB=0`, and one
-with less swap than 4096 MB (a 4 GiB swap file is 4095 MB) a lower `SLOT_SWAP_MIN_MB`: with the default threshold the
-slot scripts refuse at once (exit 78) and say so.
+with less swap than 4000 MB a lower `SLOT_SWAP_MIN_MB` (a 4 GiB swap file, 4095 MB, fits the default): with the default
+threshold the slot scripts refuse at once (exit 78) and say so.
 The workflow, agents, hooks and post-checks work anywhere. `wt-setup.sh` clones ignored data with an APFS clone (`cp -c`) and, where that is refused,
 with `cp -r --reflink=auto` (GNU), then a plain copy. On a machine without zsh (Linux, CI) `npm test` stays green and
 the zsh tests are skipped with "skipped: zsh not found" in their line and in the final tally.
@@ -206,7 +206,7 @@ node <plugin>/scripts/config.js check
 | `threatModel` | path (in the worktree) of the threat model the security reviewer reads |
 | `standingPush` | only for the repository of process rules: `branches` its HEAD may be pushed to without `ALLOW_PROTECTED_PUSH=1`, and a `check` that must pass first; the hooks honour only the committed `standingPush` of the repository that pushes, never forced, never tags |
 | `gitHooks` | `blockICloudCopies` and `preCommit` (extra shell commands) for `scripts/git-hooks/pre-commit` |
-| `stand` | the project's shared stand (`scripts/stand.sh`): `project` (its compose project, never `ownerStackReadOnly`), `ports`, command templates `up`, `deploy` (must contain `{wt}`), `reset`, `status` (exit 0 only while up), `down` - placeholders `{project}`, `{port}`, `{ports}`, `{repo}`, `{wt}`, values shell-quoted, run with zsh in `repoDir`; `imageFiles` (globs of the files that define the stand's image) and `memLimitMB` (for reference). The plugin only calls the commands; what they do is the project's |
+| `stand` | the project's shared stand (`scripts/stand.sh`): `project` (its compose project, never `ownerStackReadOnly`), `ports`, command templates `up`, `deploy` (must contain `{wt}`), `reset`, `status` (exit 0 only while up), `down` - placeholders `{project}`, `{port}`, `{ports}`, `{repo}`, `{wt}`, values shell-quoted, run with zsh in `cwd` (an absolute or `~` path of an existing directory; without it `repoDir`); `imageFiles` (globs of the files that define the stand's image) and `memLimitMB` (for reference). The plugin only calls the commands; what they do is the project's |
 | `preconditions` | `minFreeDiskGB` (default 10: an image build or a full guard run writes several GB) and `minSwapGB` (default 4: four slots of ~1 GB) - floors of free disk on the worktree and task folder volumes and of swap headroom, checked by `scripts/env-check.js` before a task starts |
 
 Recommended in the project's `CLAUDE.md`, so the coordinator session follows the rules:
@@ -323,7 +323,7 @@ Heavy work runs through `scripts/heavy.sh <cmd>` and `scripts/medium.sh <cmd>` (
 - **medium** (tsc, one bundler build without a browser): `slots.medium` slots (2);
 - **heavy** (browsers, full guard runs, image builds): `slots.heavy` slots (2), one more only while the minimum free
   memory over a 5-minute window stays at 50 % or more and swap does not grow;
-- medium + heavy together at most `slots.total` (4); no slot at all while swap capacity is under 4 GB
+- medium + heavy together at most `slots.total` (4); no slot at all while swap capacity is under 4000 MB
   (`SLOT_SWAP_MIN_MB`; 0 switches the swap check off);
 - waiters queue in arrival order; a full guard run first in the queue is never starved by single jobs;
 - all full guard runs together use at most `slots.jobsAlone` workers (6), `slots.jobsShared` (3) next to another
@@ -343,8 +343,8 @@ On Linux the extra heavy slot is off unless `SLOT_THIRD_FREE_PCT` is set explici
 `memory_pressure`, and `MemAvailable` is a different measure). A swap smaller than the threshold
 (`SwapTotal / 1024 < SLOT_SWAP_MIN_MB`, no swap at all included) is a refusal at once with the numbers (exit 78), not an
 endless wait: `SwapFree` never exceeds `SwapTotal`, and Linux swap does not grow by itself. A 4 GiB swap file shows
-`SwapTotal 4194300 kB` = 4095 MB (the header page), below the default 4096; the refusal names the value of
-`SLOT_SWAP_MIN_MB` that fits. A swap at least the threshold but filled up is a wait, as on macOS. A reading that cannot be taken (an
+`SwapTotal 4194300 kB` = 4095 MB (the header page), so the default is 4000, not 4096 (owner 2026-10-21): such a
+swap gets the slot. The refusal names the value of `SLOT_SWAP_MIN_MB` that fits. A swap at least the threshold but filled up is a wait, as on macOS. A reading that cannot be taken (an
 unreadable source, an unknown OS) gives one line "swap not measured (...) - not checked" and the slot; the extra heavy
 slot is then refused as "memory not measured". Inside a container `/proc/meminfo` shows the memory of the host.
 
@@ -381,6 +381,10 @@ turn by ticket. `scripts/stand.sh`:
 - `status` - the stand, the holder with its worktree, pid and hold time, the queue; `up` / `down` - the coordinator's.
 - `image-diff --base <ref>` - do the worktree's commits since `<ref>` touch `imageFiles` (exit 1: the task builds its
   own stack).
+
+The project's commands run with zsh in `stand.cwd` when it is set (an absolute or `~` path; `config.js check` refuses
+one that is not an existing directory), else in `repoDir` (owner 2026-10-21). With `cwd` the commands can name
+paths relative to one checkout, so a branch and the main checkout can carry the same config.
 
 The ticket is a lock held by the take process itself: if it dies (even `kill -9`) the ticket is free and the next
 holder gets a reset first; the leftovers post-check stops a holder left in the task's worktree. There is no idle limit

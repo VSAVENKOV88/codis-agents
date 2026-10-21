@@ -9,7 +9,8 @@
 //        stand.js cmd <up|deploy|reset|status|down> [--wt <dir>]
 //                                           -> the command with {project} {port} {ports} {repo} {wt} filled in
 //                                              (each value shell-quoted); deploy needs --wt
-//        stand.js get <key>                 -> one value of the section (arrays space-separated)
+//        stand.js get <key>                 -> one value of the section (arrays space-separated); get cwd gives
+//                                              stand.cwd, or repoDir when it is not set
 //        stand.js image-diff --base <ref> [--wt <dir>]
 //                                           -> files changed by the commits of the worktree since <ref>
 //                                              (git diff --no-renames <ref>...HEAD: committed work only) that match
@@ -70,7 +71,7 @@ if (require.main === module) {
     if (name === 'deploy' && !wt) die('stand.js cmd deploy: --wt <dir> is required', 64);
     console.log(fill(stand[name], config, wt));
   } else if (cmd === 'get') {
-    const v = stand[a[1]];
+    const v = a[1] === 'cwd' ? stand.cwd || config.repoDir : stand[a[1]];
     if (v === undefined) process.exit(1);
     console.log(Array.isArray(v) ? v.join(' ') : v === null ? '' : String(v));
   } else if (cmd === 'image-diff') {

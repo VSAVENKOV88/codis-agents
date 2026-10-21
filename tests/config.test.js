@@ -58,7 +58,7 @@ ok('stand.cwd defaults to empty (stand.sh then uses repoDir)', C.resolve(withSta
     const tilde = '~/' + path.relative(os.homedir(), home);
     r = C.resolve(withStand(Object.assign({}, STAND, { cwd: tilde })));
     ok('stand.cwd: ~ is expanded', r.errors.length === 0 && r.config.stand.cwd === home, r.errors.join('; ') + ' ' + (r.config.stand && r.config.stand.cwd));
-    bad0(withStand(Object.assign({}, STAND, { cwd: path.join(home, 'missing') })), /stand\.cwd: .*does not exist.*missing/, 'stand.cwd that does not exist - error naming it');
+    bad0(withStand(Object.assign({}, STAND, { cwd: path.join(home, 'missing') })), /stand\.cwd: .*missing does not exist/, 'stand.cwd that does not exist - error naming it');
     fs.writeFileSync(path.join(home, 'file'), '');
     bad0(withStand(Object.assign({}, STAND, { cwd: path.join(home, 'file') })), /stand\.cwd: .*not a directory/, 'stand.cwd that is a file - error');
     bad0(withStand(Object.assign({}, STAND, { cwd: 'relative/dir' })), /stand\.cwd: .*absolute/, 'stand.cwd relative - error (absolute or ~)');
