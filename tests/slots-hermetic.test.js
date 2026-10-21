@@ -25,7 +25,7 @@ for (const re of [/^: \$\{([A-Z][A-Z0-9_]*):=/gm, /\[\[ -v ([A-Z][A-Z0-9_]*) \]\
 ok('knobs found in slots.zsh (swap threshold, extra-slot thresholds, counts, locks)', ['SLOT_SWAP_MIN_MB', 'SLOT_THIRD_FREE_PCT', 'SLOT_THIRD_SWAP_GROW_MB', 'SLOT_MEDIUM_N', 'GUARDS_EXCLUSIVE_LOCK', 'SLOTS_DIR', 'SLOT_OS', 'SLOT_PROC'].every((k) => knobs.has(k)), [...knobs].join(' '));
 
 // The tests that run heavy.sh / medium.sh / guards-all.sh / stand.sh or source slots.zsh.
-const SLOT_TESTS = ['slots-check.test.sh', 'slots-linux.test.sh', 'slots-linux-edges.test.sh', 'slots-fifo.test.sh', 'slots-journal.test.sh', 'slots-locks.test.sh', 'stand.test.js', 'guards-result.test.js', 'known-red.test.js', 'fixtures/slots-u1a/checks.zsh', 'runner-neutral.test.sh', 'runner-neutral-edges.test.sh', 'runner-neutral-globs.test.sh'];
+const SLOT_TESTS = ['slots-check.test.sh', 'slots-linux.test.sh', 'slots-linux-edges.test.sh', 'slots-fifo.test.sh', 'slots-journal.test.sh', 'slots-locks.test.sh', 'stand.test.js', 'guards-result.test.js', 'known-red.test.js', 'known-red-edges.test.js', 'fixtures/slots-u1a/checks.zsh', 'runner-neutral.test.sh', 'runner-neutral-edges.test.sh', 'runner-neutral-globs.test.sh'];
 const runsSlots = /\$H\/(heavy|medium|guards-all|stand)\.sh|source[^\n]*slots\.zsh|['"](heavy|medium|guards-all|stand)\.sh['"]/;
 const others = fs.readdirSync(__dirname).filter((f) => /\.test\.(js|sh)$/.test(f) && f !== path.basename(__filename) && !SLOT_TESTS.includes(f))
   .filter((f) => runsSlots.test(fs.readFileSync(path.join(__dirname, f), 'utf8')));
