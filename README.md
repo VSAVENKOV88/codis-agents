@@ -76,7 +76,7 @@ A role never answers an owner question itself: it writes the question into its r
 - **Two browsers** for anything visual: WebKit drops things Chromium draws.
 - **The real environment**: a change that touches two services is accepted in a two-service container stack driven
   through the real client, not in one process on the laptop, where guards stay green while the image fails.
-- **A full guard run** after every merge: "N green - N new red - N known red"; only new red is a regression.
+- **A full guard run** after every merge: "N green - N new red - N known red"; only new red is a regression (known reds: config `guardBaseline`).
 
 Its limit, honestly: no headless browser reproduced a blurry label in real Safari. A person looking at the screen found
 it. Agents do not replace that.
@@ -187,6 +187,7 @@ node <plugin>/scripts/config.js check
 | `guardCommand` | the full guard run, executed with zsh in the worktree; placeholder `{wt}`, optionally `{jobs}` (the worker count of the slot budget) and `{limitFile}` (a file the runner re-reads for an adaptive worker limit). Without both (a runner that sets its own workers, e.g. `cd {wt} && pytest -q`) the run is counted as the whole budget `slots.jobsAlone` and starts only when that is free: no other heavy job. The log is `<sharedDir>/guards-<name>.txt` for a worktree directly under `worktreeRoot`, `guards-<basename>-<cksum of the path>.txt` for any other path |
 | `guardCommandLegacy`, `guardAdaptiveProbe` | for branches whose runner has no adaptive limit: if `<wt>/<probe.file>` lacks `<probe.contains>`, the legacy command runs with a fixed worker count |
 | `guardRerun` | rerun of new reds one by one after a red full run, in the same slot (`scripts/guards-result.js`): `command` runs one guard (`{wt}`, `{name}`), `newRedPattern` takes the names of new reds from the log (group 1), optional `tallyPattern` (no tally - a cut-off run - nothing reruns) and `maxReruns` (default 10). Red again alone - a new red, the runner's exit code stays; green alone - flaky, listed for the project backlog, not a regression; only flaky - exit 0. Without the key nothing reruns |
+| `guardBaseline` | known reds of the project: path, relative to the worktree, of a JSON file `{"<guard name>": "<reason>"}` committed with the project (it changes in the same commit as the fix). Needs `guardRerun`: after a red full run the names that `newRedPattern` finds and the file lists are subtracted before `maxReruns` is counted and never rerun; only known reds - exit 0 and "N known red"; a known name not red in a finished run is named ("known red not red now: X — remove it from the baseline"); a missing or broken file is an error line and the runner's exit code stands, never "all known" in silence |
 | `guardExclusive` | which guards share a machine resource and run one at a time under the exclusive lock (`heavy.sh`): `glob` (zsh patterns of the file name, matched with `extendedglob`; `config.js check` refuses one zsh cannot compile, such as `test_[.py`) and `marker` (the line-comment marker, literal), e.g. `{"glob": ["test_*.py"], "marker": "#"}` for a line `# guards:exclusive — <reason>`. Left out: `*-run.js`, `*-run.mjs` and `//`; given, both are required and replace the default |
 | `guardFiles` | globs of the project's guard files for `scripts/guards-select.js` (default `*-run.js`, `*-run.mjs`, `*-run.cjs` at any depth) |
 | `guardAlways` | guards always in the programmer's selection: a guard whose path contains an entry (scanners of the diff such as secrets or semgrep) |
@@ -199,7 +200,7 @@ node <plugin>/scripts/config.js check
 | `ownerStackReadOnly` | the owner's Docker Compose project; roles only read from it |
 | `medianTaskIE` | median cost of an accepted task; `chain-cost.js` flags tasks above twice this |
 | `featureIELimit` | cost of a whole feature (its parts summed by the task field `feature`) above which `chain-cost.js` flags it; default 3 x `medianTaskIE` |
-| `testerWritable` | regular expressions of paths the tester may change (default: `*-run.{js,mjs,cjs}` guards and `fixtures/`) |
+| `testerWritable` | regular expressions of paths the tester may change - the project's guards and fixtures, e.g. `["(^\|/)tests/test_[^/]*\\.py$", "(^\|/)tests/fixtures/"]`; no default: without it the role chain stops every task before any agent, and `role-diff-check.js --role tester` without `--allow` fails |
 | `roleNotes` | project-specific lines appended to one role's prompt (`analyst`, `programmer`, `tester`, `reviewer`, `security-reviewer`) |
 | `threatModel` | path (in the worktree) of the threat model the security reviewer reads |
 | `standingPush` | only for the repository of process rules: `branches` its HEAD may be pushed to without `ALLOW_PROTECTED_PUSH=1`, and a `check` that must pass first; the hooks honour only the committed `standingPush` of the repository that pushes, never forced, never tags |
