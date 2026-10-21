@@ -10,7 +10,9 @@ T=$(mktemp -d "${${TMPDIR:-/tmp}%/}/runner-neutral.XXXXXX")
 export SLOTS_DIR=$T/slots SLOT_LEGACY_LOCK=$T/guards.lock SLOT_POLL=0.3 SLOT_SAY=1 SLOT_JOURNAL=$T/journal.tsv
 # An outer slot (heavy.sh node tests/run.js) exports its own lock, counts and markers, and the thresholds may be set
 # outside (SLOT_SWAP_MIN_MB=0 on Linux): the test must not see them - the fake machine below decides.
-unset GUARDS_EXCLUSIVE_LOCK SLOT_MEDIUM_N SLOT_HEAVY_N SLOT_TOTAL_MAX GUARDS_JOBS_ALONE GUARDS_JOBS_SHARED SLOT_EXCL_TOOLS SLOT_PATH SLOT_LABEL SLOT_KIND SLOT_RETRY_RC SLOT_SWAP_MIN_MB SLOT_THIRD_FREE_PCT SLOT_THIRD_SWAP_GROW_MB SLOT_THIRD_WINDOW SLOT_HIST_GAP GUARDS_EXCL_GLOB GUARDS_EXCL_MARKER
+unset GUARDS_EXCLUSIVE_LOCK SLOT_MEDIUM_N SLOT_HEAVY_N SLOT_TOTAL_MAX GUARDS_JOBS_ALONE GUARDS_JOBS_SHARED SLOT_EXCL_TOOLS SLOT_PATH SLOT_LABEL SLOT_KIND SLOT_RETRY_RC SLOT_SWAP_MIN_MB SLOT_THIRD_FREE_PCT SLOT_THIRD_SWAP_GROW_MB SLOT_PROC SLOT_THIRD_WINDOW SLOT_HIST_GAP GUARDS_EXCL_GLOB GUARDS_EXCL_MARKER
+# the fake machine below is a macOS one, on Linux too: the readings follow SLOT_OS, not the box
+export SLOT_OS=darwin
 mkdir -p $T/wts $T/shared $T/bin $T/other
 # Fake machine (as in slots-check.test.sh): plenty of free memory and swap, nothing grows.
 print -r -- '#!/bin/zsh
