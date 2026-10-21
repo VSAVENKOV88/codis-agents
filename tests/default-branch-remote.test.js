@@ -106,6 +106,26 @@ try {
   ok('R7 an unprotected tag goes through with the remote unreachable', p.status === 0, p.stderr);
   p = spawnSync(path.join(HOOKS, 'pre-push'), ['origin', gone], { cwd: clone, input: `refs/heads/x ${'1'.repeat(40)} refs/heads/b-t1 ${'0'.repeat(40)}\n`, encoding: 'utf8', env: Object.assign(withCfg(plain), { ALLOW_PROTECTED_PUSH: '1' }) });
   ok('R7 ALLOW_PROTECTED_PUSH=1 still lets it through', p.status === 0, p.stderr);
+  console.log('R8. a URL rewrite (url.<base>.insteadOf) would point the query at another repository: refusal');
+  // ls-remote is a fetch and follows insteadOf; a push follows pushInsteadOf first, so the hook's answer could come
+  // from a repository the push does not go to (tester round 1, C4). git ls-remote --get-url shows the rewrite.
+  const other = path.join(dir, 'other.git');
+  spawnSync('git', ['init', '-q', '--bare', '-b', 'feat', other]);
+  git(clone, 'push', '-q', '--no-verify', other, 'HEAD:refs/heads/feat');
+  ok('R8 setup: other.git names feat', /^ref: refs\/heads\/feat\tHEAD$/m.test(git(clone, 'ls-remote', '--symref', other, 'HEAD').stdout));
+  git(clone, 'config', `url.${other}.insteadOf`, origin);
+  p = prePush(clone, origin, 'refs/heads/b-t1', plain);
+  ok('R8 insteadOf rewrites the push URL for the query: refused', p.status === 1 && unknownRe.test(p.stderr), p.stderr);
+  ok('R8 the reason names the rewrite and the address it would go to', /rewrit/.test(p.stderr) && p.stderr.includes(other), p.stderr);
+  git(clone, 'config', '--unset', `url.${other}.insteadOf`);
+  git(clone, 'config', `url.${other}.insteadOf`, path.join(dir, 'nomatch'));
+  p = prePush(clone, origin, 'refs/heads/b-t1', plain);
+  ok('R8 an insteadOf that does not match the URL changes nothing: b-t1 allowed', p.status === 0, p.stderr);
+  git(clone, 'config', '--unset', `url.${other}.insteadOf`);
+
+  console.log('R9. the reason quotes the first fatal line of ls-remote, not the last line of its advice');
+  p = prePush(clone, gone, 'refs/heads/b-t1', plain);
+  ok('R9 a missing repository: the reason says it is not a git repository', /does not appear to be a git repository/.test(p.stderr) && !/repository exists\.\)/.test(p.stderr), p.stderr);
 } finally {
   fs.rmSync(dir, { recursive: true, force: true });
 }
