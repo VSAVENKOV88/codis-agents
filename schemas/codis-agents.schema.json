@@ -88,7 +88,7 @@
         "minFreeDiskGB": { "type": "number", "minimum": 0, "description": "Free disk (GB) the preconditions require on the volumes of the worktree and the task folder (default 10)." },
         "minSwapGB": { "type": "number", "minimum": 0, "description": "Swap headroom (GB) the preconditions require: on macOS the free part of the swap files plus the free space of the VM volume, on Linux SwapFree (default 4: four slots of ~1 GB)." }
       },
-      "description": "Environment floors checked by the preconditions with scripts/env-check.js; below them the task stops before any agent instead of a tester going red for the environment."
+      "description": "Machine settings, read from the machine file (minFreeDiskGB, swapMinMB): a project may still carry them until config.js migrate - equal to the machine file a warning, different an error; minSwapGB is compared as x 1024 with swapMinMB."
     },
     "stand": {
       "type": "object", "additionalProperties": false, "required": ["project", "up", "deploy", "reset", "status", "down"],

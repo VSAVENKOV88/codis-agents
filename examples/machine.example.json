@@ -1,0 +1,14 @@
+{
+  "$schema": "../schemas/codis-agents-machine.schema.json",
+  "configVersion": 1,
+  "source": "measured on a 16 GB Mac of the source project",
+  "swapMinMB": 4000,
+  "minFreeDiskGB": 10,
+  "maxDockerChains": 2,
+  "coordinatorContextK": 700,
+  "slots": {
+    "medium": 2, "heavy": 2, "total": 4, "jobsAlone": 6, "jobsShared": 3,
+    "lockDir": "~/work-trees/_shared/slots",
+    "extraHeavy": { "freePct": 50, "swapGrowMB": 256, "windowS": 300 }
+  }
+}

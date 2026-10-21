@@ -138,7 +138,7 @@ try {
   ok('known master: --delete master refused as protected', /master is protected/.test(bash('git push origin --delete master', norem, keyed) || ''), String(bash('git push origin --delete master', norem, keyed)));
   ok('known master: --delete v1.0 refused as a protected tag', /tag v1.0 is refused/.test(bash('git push origin --delete v1.0', norem, keyed) || ''), String(bash('git push origin --delete v1.0', norem, keyed)));
   r = cli(['check', keyed]);
-  ok('no remote + defaultBranch master: check ok without the note', r.status === 0 && !/note:/.test(r.stderr), r.stderr);
+  ok('no remote + defaultBranch master: check ok without the default-branch note (the machine-file note may stand)', r.status === 0 && !/default branch is unknown/.test(r.stderr), r.stderr);
 
   console.log('Linked worktree and a relative repoDir');
   const proj = path.join(dir, 'proj');

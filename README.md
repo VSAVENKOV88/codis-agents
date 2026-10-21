@@ -131,7 +131,7 @@ read.
 | `scripts/role-leftovers-check.js` | post-check after the tester and at the end of a task: Docker resources of the task's stack (by the compose project label), processes in its worktree, slots they hold; `--fix` removes only those, never the owner's stack |
 | `scripts/chain-cost.js` | cost of chain runs per task from the agent transcripts, and per feature (parts summed by `feature`, across runs) |
 | `scripts/detect.js` | the facts of a repository for onboarding, read only, as JSON: git (default branch from origin/HEAD, main/master, tag shapes, remotes without passwords, hooksPath), GitHub workflow files, stacks by manifest, venvs, compose services (`docker compose config`, no daemon), ignored data with sizes, what an earlier onboarding left; the contract is in its header |
-| `scripts/env-check.js` | free disk and swap headroom for the preconditions, floors from `preconditions` in the config; `--worktree <dir>`: the task worktree is not the main working copy |
+| `scripts/env-check.js` | free disk and swap headroom for the preconditions, floors `minFreeDiskGB` and `swapMinMB` of the machine file (the command line wins; 0 - off, said in notes); `--worktree <dir>`: the task worktree is not the main working copy |
 | `scripts/git-hooks/` | `pre-push` (protected branches and tags) and `pre-commit` (cloud conflict copies, extra checks) |
 | `scripts/config.js` | finds, validates and resolves the project config |
 | `examples/`, `schemas/` | an example project config and its JSON schema |
@@ -194,7 +194,7 @@ node <plugin>/scripts/config.js check
 | `guardAlways` | guards always in the programmer's selection: a guard whose path contains an entry (scanners of the diff such as secrets or semgrep) |
 | `guardSubsetCommand` | runs the selected guards (zsh; `{wt}`, `{onlyArgs}` = `--only <guard>` per guard). When set: one full guard run per task, run by the workflow after the programmer's last commit, and the programmer runs only the selection; without it the programmer runs the full run itself |
 | `worktreeSetup` | `scan` directories whose ignored data is copied into a new worktree; `skip` and `link` globs (everything else is an APFS clone) |
-| `slots` | `medium`, `heavy`, `total`, `lockDir`, `legacyLock`, `jobsAlone`, `jobsShared` |
+| `slots` | machine settings, read from the machine file (below); a project config may still carry `medium`, `heavy`, `total`, `lockDir`, `legacyLock`, `jobsAlone`, `jobsShared` until `config.js migrate` |
 | `reportLanguage` | language of role reports (prompts stay in English) |
 | `defaultBranch` | base of new worktrees (`wt-setup.sh` without a third argument); left out, it is taken from git: where `refs/remotes/origin/HEAD` points (`git clone` sets it, `git remote set-head origin --auto` sets it again - on the owner's word: the session hook refuses `set-head` in every form writes of `symbolic-ref refs/remotes/<remote>/HEAD` and `update-ref` on it without `ALLOW_PROTECTED_PUSH=1`; only the remote `origin` is read). Not derivable: `config.js check` still passes with a note, `wt-setup.sh` without a base exits 78 |
 | `protectedBranches`, `protectedTagPattern` | refused by the hook and by `pre-push` without `ALLOW_PROTECTED_PUSH=1`; `protectedBranches` defaults to `[defaultBranch]` of the repository that pushes, and while that is unknown both hooks refuse every branch push (closed, not open) - a tag to a bare name after a colon too (`git push origin master:master` with a local tag `master`: git matches the bare name against the remote's refs and updates a branch there); a tag goes as `<tag>` or `<src>:refs/tags/<name>` |
@@ -207,7 +207,33 @@ node <plugin>/scripts/config.js check
 | `standingPush` | only for the repository of process rules: `branches` its HEAD may be pushed to without `ALLOW_PROTECTED_PUSH=1`, and a `check` that must pass first; the hooks honour only the committed `standingPush` of the repository that pushes, never forced, never tags |
 | `gitHooks` | `blockICloudCopies` and `preCommit` (extra shell commands) for `scripts/git-hooks/pre-commit` |
 | `stand` | the project's shared stand (`scripts/stand.sh`): `project` (its compose project, never `ownerStackReadOnly`), `ports`, command templates `up`, `deploy` (must contain `{wt}`), `reset`, `status` (exit 0 only while up), `down` - placeholders `{project}`, `{port}`, `{ports}`, `{repo}`, `{wt}`, values shell-quoted, run with zsh in `cwd` (an absolute or `~` path of an existing directory; without it `repoDir`); `imageFiles` (globs of the files that define the stand's image) and `memLimitMB` (for reference). The plugin only calls the commands; what they do is the project's |
-| `preconditions` | `minFreeDiskGB` (default 10: an image build or a full guard run writes several GB) and `minSwapGB` (default 4: four slots of ~1 GB) - floors of free disk on the worktree and task folder volumes and of swap headroom, checked by `scripts/env-check.js` before a task starts |
+| `preconditions` | machine settings, read from the machine file (`minFreeDiskGB`, `swapMinMB`); a project config may still carry `minFreeDiskGB` (GB) and `minSwapGB` (GB, compared as x 1024 with `swapMinMB`) until `config.js migrate` |
+
+### The machine file
+
+Settings of the machine, shared by every project on it, live outside any project:
+`${XDG_CONFIG_HOME:-~/.config}/codis-agents/machine.json` (a relative `XDG_CONFIG_HOME` is ignored, as the XDG Base
+Directory specification says); `$CODIS_AGENTS_MACHINE` names another file (tests; a missing named file is an error:
+exit 78, `check` exit 1). Example: `examples/machine.example.json`, schema `schemas/codis-agents-machine.schema.json`.
+
+| key | meaning |
+|---|---|
+| `configVersion` | format version (1); newer than the plugin reads - refused with "update the plugin"; left out - a note |
+| `source` | where the numbers come from (a measurement on which machine) |
+| `slots` | `medium` (2), `heavy` (2), `total` (4), `jobsAlone` (6), `jobsShared` (3) - positive integers; `lockDir` (`~/.cache/codis-agents/slots`) and `legacyLock` (empty) - absolute or `~`; `extraHeavy` - `false` (the extra heavy slot off) or `{freePct, swapGrowMB, windowS}` (0-100, >= 0, > 0); left out - the slot scripts decide by OS |
+| `swapMinMB` | swap floor in MB for the slot scripts and the preconditions (4000: a 4 GiB swap passes); 0 switches the swap check off |
+| `minFreeDiskGB` | free disk in GB the preconditions require on the worktree and task folder volumes (10); 0 switches it off |
+| `maxDockerChains` | chains with acceptance in Docker at once (2) |
+| `coordinatorContextK` | the coordinator's context signpost in thousands of tokens (700) |
+
+No machine file: the built-in defaults (measured on a 16 GB Mac), and `config.js check` and `env-check.js` say so in a
+note. `config.js json` gives the merged values under `slots`, `preconditions` (`minFreeDiskGB`, `swapMinMB`),
+`maxDockerChains`, `coordinatorContextK`, plus `machine` (`path`, `exists`, `source`); `config.js shell` with no
+project config prints the machine's slot lines alone. An older machine key in a project config (`slots.*`,
+`preconditions.*`): equal to the machine file - a warning; different - an error naming both values and both files
+(two queues, two ceilings); with no machine file the project's value applies, with a warning to run `config.js
+migrate`. `swapMinMB`, `slots.extraHeavy`, `maxDockerChains` and `coordinatorContextK` in a project config are always
+an error. The hooks read neither: a broken machine file never changes what they decide about branches and tags.
 
 Recommended in the project's `CLAUDE.md`, so the coordinator session follows the rules:
 

@@ -81,6 +81,20 @@ try {
         && j.maxDockerChains === 2 && j.coordinatorContextK === 700 && j.machine.exists === false && j.slots.extraHeavy === null, JSON.stringify(j && [j.slots, j.preconditions, j.machine]));
   }
 
+  // ---- the example and the schema of the machine file know the same keys as config.js
+  {
+    const ex = path.join(ROOT, 'examples', 'machine.example.json');
+    const sc = JSON.parse(fs.readFileSync(path.join(ROOT, 'schemas', 'codis-agents-machine.schema.json'), 'utf8'));
+    const same = (a, b) => JSON.stringify([...a].sort()) === JSON.stringify([...b].sort());
+    const m = C.loadMachine(withM(ex));
+    ok('the machine example validates (Q5 shape, defaults)', m.errors.length === 0 && m.values.swapMinMB === 4000 && m.values.maxDockerChains === 2 && m.values.coordinatorContextK === 700, m.errors.join('; '));
+    ok('machine schema top-level keys = config.js MACHINE_SPEC', same(Object.keys(sc.properties), Object.keys(C.MACHINE_SPEC)), Object.keys(sc.properties).join());
+    ok('machine schema slots keys = config.js MACHINE_SLOT_SPEC', same(Object.keys(sc.properties.slots.properties), Object.keys(C.MACHINE_SLOT_SPEC)));
+    ok('machine schema slots.extraHeavy keys = config.js EXTRA_SPEC', same(Object.keys(sc.properties.slots.properties.extraHeavy.oneOf[1].properties), Object.keys(C.EXTRA_SPEC)));
+    const pe = C.resolve(JSON.parse(fs.readFileSync(path.join(ROOT, 'examples', 'codis-agents.example.json'), 'utf8')), { machine: C.loadMachine(noM) });
+    ok('the project example carries no machine keys (no warning to migrate)', pe.errors.length === 0 && !pe.warnings.some((w) => /^warning:/.test(w)), pe.errors.concat(pe.warnings).join('; '));
+  }
+
   // ---- V: validation of the machine file
   {
     const bad = write('{ "slots": ');
