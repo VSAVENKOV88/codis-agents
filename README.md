@@ -117,7 +117,7 @@ read.
 | `skills/brief` | how to write a task brief |
 | `skills/coordinator` | the coordinator's loop |
 | `rules/multi-agent.md` | the process rules; lines marked `<!-- role:<id> -->` go into every role prompt |
-| `hooks/hooks.json` | PreToolUse on Bash: refuses `git add -A` / `git add .`, pushes to protected branches or of protected tags, and `git remote set-head` / writes of `git symbolic-ref refs/remotes/<remote>/HEAD` / `git update-ref` on it and `git update-ref --stdin`, in any letter case, Unicode case folding included (they move the default branch the hooks protect); an abbreviated long option (`--del`, `--mi`) counts as the option; with `--git-dir` / `--work-tree` / `GIT_DIR` / `GIT_WORK_TREE` / `GIT_COMMON_DIR` the config is looked up from those paths too and a push is refused (use `-C`) |
+| `hooks/hooks.json` | PreToolUse on Bash: refuses `git add -A` / `git add .`, pushes to protected branches or of protected tags, and `git remote set-head` / writes of `git symbolic-ref refs/remotes/<remote>/HEAD` / `git update-ref` on it and `git update-ref --stdin`, in any letter case, Unicode case folding included (they move the default branch the hooks protect); an abbreviated long option (`--del`, `--mi`) counts as the option; with `--git-dir` / `--work-tree` / `GIT_DIR` / `GIT_WORK_TREE` / `GIT_COMMON_DIR` the config is looked up from those paths too and a push is refused (use `-C`); git's global options before the subcommand are read by a table measured against git, and one outside it is refused |
 | `scripts/slots.zsh`, `heavy.sh`, `medium.sh` | memory slots for heavy and medium jobs, with a FIFO queue |
 | `scripts/stand.sh`, `stand.js` | the ticket of the project's shared stand (queue, holder, reset at issue and release) and its commands from the config |
 | `scripts/slot-journal.js` | summary of the slot journal: queue wait and hold per class and per worktree |
@@ -392,13 +392,32 @@ fallback to another slot directory: a second directory would be a second queue t
 
 ## Known gaps
 
-- The session hook reads the command line as written: wrappers (`bash -c 'git push ...'`, `command git push`, an alias
-  such as `git -c alias.p=push p` or `git -c alias.x=symbolic-ref x ...`) pass it. For a push the git `pre-push` hook
-  of the target repository is a second layer, but only while it runs (`git push --no-verify` and
-  `git -c core.hooksPath=...` turn it off, and the session hook does not refuse them) and only for the branch it knows:
-  `git remote set-head`, `git symbolic-ref` and `git update-ref` have no second layer, and once a wrapper has moved
-  `refs/remotes/origin/HEAD`, `pre-push` protects the branch it now points to. To be closed in its own task
-  (owner 2026-10-21).
+- The session hook reads the command line as written: wrappers and indirection (`bash -c 'git push ...'`,
+  `command git push`, `builtin`, `exec`, `eval`, `env` with options such as `env -i` / `env -u NAME`, `$G` or `G=git; $G`
+  in the place of the command, an alias such as `git -c alias.p=push p` or `git -c alias.x=symbolic-ref x ...`, aliases
+  and functions of the user's shell profile) pass it. For a push the git `pre-push` hook of the target repository is a
+  second layer, but only while it runs (`git push --no-verify` and `git -c core.hooksPath=...` turn it off, and the
+  session hook does not refuse them) and only for the branch it knows: `git remote set-head`, `git symbolic-ref` and
+  `git update-ref` have no second layer, and once a wrapper has moved `refs/remotes/origin/HEAD`, `pre-push` protects
+  the branch it now points to. Wrappers: their own task (owner 2026-10-21); a second layer that reads the default branch
+  from the remote (`git ls-remote --symref <remote> HEAD`) or the config and refuses without the network: task p-head2.
+- The session hook splits a line by its own small lexer, not by the grammar of the shell (zsh on macOS, bash in
+  Linux), and a git command it does not see as one passes. Open forms (measured with git 2.50, zsh and bash): a leading
+  reserved word or modifier (`{ git ...; }`, `! git`, `time [-p] git`, `if ...; then git`, `do git`, zsh `repeat 1 git`,
+  `noglob git`, `nocorrect git`, `{git ...}`); a redirection before or between the words (`2>/dev/null git ...`,
+  `2> /dev/null git`, `&>/dev/null git`, `git 2>/dev/null remote set-head ...`); a line continuation (backslash and
+  newline); `$'...'` with escapes (`$'\x73et-head'`) and `$"..."`; backquotes (`` echo `git ...` ``); an expansion in
+  the subcommand or its arguments (`$X`, `${X:-set-head}`, `$(printf set-head)`, `git $(echo remote) ...`). To be closed
+  in task p-shell (owner 2026-10-21: after p-head2), which refuses an expansion in `git remote`, `git symbolic-ref` and
+  `git update-ref`. A push with an expansion (`git push origin "$BRANCH"`, `git push origin HEAD:$B`) stays allowed
+  (owner 2026-10-21): `pre-push`, while it runs, is its layer.
+- Global options of git before the subcommand are read by a table measured against git (`GIT_GLOBAL` in
+  `scripts/hooks/guard-bash.js`, checked by `tests/hooks-sec-globals.test.js` against the git it runs on); in a
+  project with a config an option outside the table is refused. A git that adds a global option with a value needs a
+  new row; until then the hook refuses it (fail closed), it does not misread it.
+- `git branch -dr origin/HEAD` deletes `refs/remotes/origin/HEAD` and the session hook does not judge it; with no
+  `defaultBranch` / `protectedBranches` the branches then become unknown and every branch push is refused (closed, not
+  open), until the owner sets it again.
 - Other ways to move `refs/remotes/origin/HEAD` that the session hook does not judge: `git remote rename` (the HEAD of
   the renamed remote becomes `origin/HEAD`), `git fetch` with `remote.origin.followRemoteHEAD` (git 2.48+), writing the
   ref file under `.git/refs/remotes/` directly. Open, for the coordinator's backlog.

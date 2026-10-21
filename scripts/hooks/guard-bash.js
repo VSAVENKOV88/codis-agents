@@ -18,6 +18,8 @@
 //  * a git command the hook judges that names its repository with --git-dir / --work-tree or GIT_DIR / GIT_WORK_TREE /
 //    GIT_COMMON_DIR (inline, through env, assigned anywhere in the same command line, or in the hook's environment):
 //    the config is looked up from those paths too, and a push is refused (the hook reads the branches through -C).
+//  * a git command with a global option before the subcommand that the hook's measured table (GIT_GLOBAL) does not hold:
+//    the hook cannot tell which word is the subcommand, and git fails on an option it does not know anyway.
 // git takes any unique prefix of a long option (gitcli(7)): --del is --delete. A word that is a prefix of a long option
 // the hook judges counts as that option; an ambiguous prefix makes git fail, so judging it so is safe.
 // Active only in projects that have .claude/codis-agents.json: the plugin is opt-in per project.
@@ -51,7 +53,23 @@ function parse(line) {
   return cmds;
 }
 
-const GIT_GLOBAL_WITH_VALUE = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--exec-path', '--config-env']);
+// The global options of git before the subcommand, measured with `git <option> version` and `git <option> <value>
+// version` (git 2.50 on macOS; tests/hooks-sec-globals.test.js checks the table against the git it runs on, the
+// Ubuntu 24.04 container's too). git(1) does not list them all (--shallow-file, --attr-source are missing from its
+// usage line). value: the next word is the value; eq: the attached --opt=<value> form is accepted; flag: no value;
+// exit / exitEq: git prints something (or runs git version / git help with the rest as arguments) and runs nothing
+// after it - bare --exec-path is one of these, it takes no separate value. Global options take no abbreviation
+// (--git-d= is an unknown option). Any other word starting with - before the subcommand is unknown to the hook: in a
+// project with a config it is refused, since the hook cannot tell which word is the subcommand and git fails on an
+// option it does not know anyway.
+const GIT_GLOBAL = {
+  value: new Set(['-C', '-c', '--config-env', '--git-dir', '--work-tree', '--namespace', '--attr-source', '--shallow-file']),
+  eq: new Set(['--config-env', '--git-dir', '--work-tree', '--namespace', '--attr-source', '--exec-path']),
+  flag: new Set(['-p', '--paginate', '-P', '--no-pager', '--bare', '--no-replace-objects', '--no-lazy-fetch', '--no-optional-locks',
+    '--no-advice', '--literal-pathspecs', '--no-literal-pathspecs', '--glob-pathspecs', '--noglob-pathspecs', '--icase-pathspecs']),
+  exit: new Set(['-v', '--version', '-h', '--help', '--exec-path', '--html-path', '--man-path', '--info-path']),
+  exitEq: new Set(['--list-cmds']),
+};
 const PUSH_WITH_VALUE = new Set(['-o', '--push-option', '--repo', '--receive-pack', '--exec', '--signed']);
 
 // git accepts a unique prefix of a long option, with or without =<value> (gitcli(7); measured with git 2.50:
@@ -112,15 +130,22 @@ function judge(words, ctx) {
   // Paths that name the repository instead of -C: assignments before git (also through env), the line's own, the hook's.
   const repoPaths = [...ctx.repoVars, ...words.slice(0, i).filter((w) => GIT_REPO_VAR.test(w)).map((w) => w.slice(w.indexOf('=') + 1))];
   i++;
-  let dir = ctx.cwd;
+  let dir = ctx.cwd, unknown = null;
   while (i < words.length && words[i].startsWith('-')) {
-    const o = words[i];
-    if (o === '--git-dir' || o === '--work-tree') repoPaths.push(words[i + 1] || '');
-    else if (o.startsWith('--git-dir=') || o.startsWith('--work-tree=')) repoPaths.push(o.slice(o.indexOf('=') + 1));
-    if (GIT_GLOBAL_WITH_VALUE.has(o)) { if (o === '-C') dir = path.resolve(dir, words[i + 1] || ''); i += 2; } else i++;
+    const o = words[i], eq = o.indexOf('='), name = eq > 0 ? o.slice(0, eq) : o;
+    if (eq > 0 ? GIT_GLOBAL.exitEq.has(name) : GIT_GLOBAL.exit.has(o)) return null;   // git runs nothing after it
+    if (eq < 0 && GIT_GLOBAL.value.has(o)) {
+      if (o === '--git-dir' || o === '--work-tree') repoPaths.push(words[i + 1] || '');
+      if (o === '-C') dir = path.resolve(dir, words[i + 1] || '');
+      i += 2;
+    } else if (eq > 0 && GIT_GLOBAL.eq.has(name)) {
+      if (name === '--git-dir' || name === '--work-tree') repoPaths.push(o.slice(eq + 1));
+      i++;
+    } else if (eq < 0 && GIT_GLOBAL.flag.has(o)) i++;
+    else { unknown = o; break; }
   }
   const sub = words[i], args = words.slice(i + 1);
-  if (sub !== 'add' && sub !== 'push' && sub !== 'remote' && sub !== 'symbolic-ref' && sub !== 'update-ref') return null;
+  if (!unknown && sub !== 'add' && sub !== 'push' && sub !== 'remote' && sub !== 'symbolic-ref' && sub !== 'update-ref') return null;
   let cfg = ctx.cfgFor(dir);
   if (repoPaths.length) {
     // The repository git works on is not dir: take the config from any of the places the command can reach.
@@ -129,6 +154,7 @@ function judge(words, ctx) {
     if (cfg && sub === 'push' && !allow) return `\`git push\` with --git-dir, --work-tree, GIT_DIR, GIT_WORK_TREE or GIT_COMMON_DIR is refused: the hook judges the branches of the repository it reads through -C; run git -C <worktree> push instead (ALLOW_PROTECTED_PUSH=1 only on the owner's explicit word).`;
   }
   if (!cfg) return null;
+  if (unknown) return allow ? null : `\`git ${unknown}\` before the subcommand is refused: the hook does not know this global option of git, so it cannot tell which word is the subcommand (git fails on an option it does not know; write the git command without it, or ALLOW_PROTECTED_PUSH=1 only on the owner's explicit word).`;
   if (sub === 'remote' || sub === 'symbolic-ref' || sub === 'update-ref') return allow ? null : judgeRemoteHead(sub, args);
   if (sub === 'add') {
     const blanket = args.find((a) => a === '-A' || a === '--all' || a === '--no-ignore-removal' || a === '.' || a === './' || a === ':/' || /^-[a-zA-Z]*A[a-zA-Z]*$/.test(a));
@@ -231,7 +257,7 @@ function decide(input, env = process.env) {
   return null;
 }
 
-module.exports = { parse, decide };
+module.exports = { parse, decide, GIT_GLOBAL };
 
 if (require.main === module) {
   let raw = '';
