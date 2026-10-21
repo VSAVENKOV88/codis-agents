@@ -159,8 +159,10 @@ Things that bite on first use:
 Requirements: Node.js 18+ and git everywhere; zsh for the slot scripts and `scripts/wt-setup.sh`. The slot locks use
 zsh's own `zsystem flock` on macOS and Linux and need `ps` and `pgrep` (procps; missing - the slot scripts refuse with
 exit 72); the exclusive guard lock needs `lockf(1)` (macOS) or `flock(1)` (Linux, util-linux). The memory and swap
-readings still come from `sysctl`, `memory_pressure` and `vm_stat`, which are **macOS-only**: on Linux run the slot
-scripts with `SLOT_SWAP_MIN_MB=0` (no swap check) until they are ported, and the extra heavy slot stays closed there.
+readings come from `sysctl`, `memory_pressure`, `vm_stat` and `df` on macOS and from `/proc/meminfo`, `/proc/vmstat`
+and `getconf PAGESIZE` on Linux (`SLOT_OS` and `SLOT_PROC` override the source; the Linux readings are checked on a
+fake machine and in a container, not on Linux hardware). A Linux machine without swap needs `SLOT_SWAP_MIN_MB=0`: with
+the default threshold the slot scripts refuse at once (exit 78) and say so.
 The workflow, agents, hooks and post-checks work anywhere. `wt-setup.sh` clones ignored data with an APFS clone (`cp -c`) and, where that is refused,
 with `cp -r --reflink=auto` (GNU), then a plain copy. On a machine without zsh (Linux, CI) `npm test` stays green and
 the zsh tests are skipped with "skipped: zsh not found" in their line and in the final tally.
@@ -318,13 +320,27 @@ Heavy work runs through `scripts/heavy.sh <cmd>` and `scripts/medium.sh <cmd>` (
 - **medium** (tsc, one bundler build without a browser): `slots.medium` slots (2);
 - **heavy** (browsers, full guard runs, image builds): `slots.heavy` slots (2), one more only while the minimum free
   memory over a 5-minute window stays at 50 % or more and swap does not grow;
-- medium + heavy together at most `slots.total` (4); no slot at all while swap capacity is under 4 GB;
+- medium + heavy together at most `slots.total` (4); no slot at all while swap capacity is under 4 GB
+  (`SLOT_SWAP_MIN_MB`; 0 switches the swap check off);
 - waiters queue in arrival order; a full guard run first in the queue is never starved by single jobs;
 - all full guard runs together use at most `slots.jobsAlone` workers (6), `slots.jobsShared` (3) next to another
   heavy job, re-evaluated during the run for runners that read `{limitFile}`.
 
 The thresholds are measurements from a 16 GB machine; every one can be overridden from the environment (see the top of
 `scripts/slots.zsh`).
+
+| quantity | macOS | Linux (proc(5)) |
+|---|---|---|
+| swap capacity | `vm.swapusage` free + free space of `/System/Volumes/VM` | `SwapFree` of `/proc/meminfo` |
+| swap used | `vm.swapusage` used | `SwapTotal - SwapFree` |
+| free memory (extra heavy slot) | `memory_pressure` free percentage | `MemAvailable / MemTotal` |
+| swapped out | `vm_stat` Swapouts x page size | `pswpout` of `/proc/vmstat` x `getconf PAGESIZE` |
+
+On Linux the extra heavy slot is off unless `SLOT_THIRD_FREE_PCT` is set explicitly (the 50 % was measured with
+`memory_pressure`, and `MemAvailable` is a different measure). No swap at all (`SwapTotal 0`) with a swap threshold
+above 0 is a refusal at once with the numbers (exit 78), not an endless wait. A reading that cannot be taken (an
+unreadable source, an unknown OS) gives one line "swap not measured (...) - not checked" and the slot; the extra heavy
+slot is then refused as "memory not measured". Inside a container `/proc/meminfo` shows the memory of the host.
 
 A slot is held by a small zsh that takes `zsystem flock` (an fcntl lock) on the slot file, runs the command as its child
 and exits with its code: when the holder dies (even `kill -9`) the kernel drops the lock, and a command it leaves
@@ -376,7 +392,8 @@ npm test            # or: node tests/run.js [filter]
 
 The suite checks the chain logic with fake agents (every routing case, the post-checks, the rule markers against
 `RULE_LIST` and every role prompt), the post-check and cost scripts, the config, the hooks, the worktree setup, the
-slots on a fake machine (classes, the extra slot, swap, queue order, worker budget, the slot journal and its summary),
+slots on a fake macOS and a fake Linux machine (classes, the extra slot, swap, queue order, worker budget, the slot
+journal and its summary),
 the stand ticket on fake project commands, `detect.js` on fixture repositories built from
 `tests/fixtures/repos/` against their expected output, that the repository holds no
 Cyrillic text, home paths or e-mail addresses, and that a run without zsh skips the zsh tests visibly instead of failing.

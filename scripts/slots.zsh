@@ -43,6 +43,13 @@
 #    extra slot (every SLOT_POLL), so the window must be covered by samples with no gap > SLOT_HIST_GAP (30 s);
 #    otherwise the answer is "unknown" and the extra slot is refused until history accumulates.
 # All thresholds and sources come from the environment, so tests/slots-check.sh can check them on a fake machine.
+# LINUX (proc(5); the table is at "Machine measurement" below; not measured on hardware): swap capacity is SwapFree,
+# swap-out the pswpout counter x PAGESIZE. No swap at all (SwapTotal 0) with SLOT_SWAP_MIN_MB > 0 is a refusal at once,
+# with the numbers, code 78; SLOT_SWAP_MIN_MB=0 switches the swap check off (a machine without swap is normal: cloud
+# VMs). The extra heavy slot is OFF on Linux unless SLOT_THIRD_FREE_PCT is set explicitly: then free memory is
+# MemAvailable / MemTotal, a different measure from memory_pressure, so the 50 % above does not carry over.
+# NOT MEASURED (a source that cannot be read, an unknown OS): one line "swap not measured (...) - not checked" and the
+# slot is given; the extra heavy slot is refused as "memory not measured".
 #
 # Settings: environment first, then the project config (.claude/codis-agents.json, key "slots"), then the defaults.
 #
@@ -89,11 +96,14 @@ unset _slot_cfg _slot_cfgf
 : ${SLOT_POLL:=5}                 # pause between attempts, s
 : ${SLOT_SAY:=30}                 # "waiting for slot ..." at least this often, s (an agent silent for 10 min is killed)
 : ${SLOT_SWAP_MIN_MB:=4096}
+_SLOT_THIRD_SET=${SLOT_THIRD_FREE_PCT:+1}   # set explicitly - the extra heavy slot is on on Linux too (see _slot_pick)
 : ${SLOT_THIRD_FREE_PCT:=50}
 : ${SLOT_THIRD_SWAP_GROW_MB:=256}
 : ${SLOT_THIRD_WINDOW:=300}
 : ${SLOT_HIST_GAP:=30}
 : ${SLOT_TOTAL_MAX:=4}
+: ${SLOT_OS:=${${OSTYPE:l}%%[^a-z]*}}   # source of the memory readings: darwin or linux ("darwin25.0" -> darwin)
+: ${SLOT_PROC:=/proc}             # the /proc read on Linux
 : ${GUARDS_JOBS_ALONE:=6}          # workers of a full guard run while it is the only heavy job
 : ${GUARDS_JOBS_SHARED:=3}         # ... while at least one more heavy slot is busy
 : ${GUARDS_EXCLUSIVE_LOCK:=$SLOTS_DIR/exclusive.lock}
@@ -157,31 +167,87 @@ _slot_unwritable_say() {
 # A temporary file from a template (BSD and GNU mktemp).
 _slot_tmp() { mktemp "${${TMPDIR:-/tmp}%/}/$1.XXXXXX" }
 
-_slot_swap_free_mb() {
+# -- Machine measurement: one module, two sources --------------------------------------------------------------------
+# SLOT_OS picks the source (default from $OSTYPE: darwin or linux; anything else cannot be measured), SLOT_PROC is the
+# /proc directory read on Linux; the tests point both at a fake machine (tests/slots-linux.test.sh).
+#   quantity            macOS                                                 Linux (proc(5))
+#   swap capacity, MB   vm.swapusage free + free space of /System/Volumes/VM  SwapFree / 1024 (/proc/meminfo, kB)
+#   swap used, MB       vm.swapusage used                                     (SwapTotal - SwapFree) / 1024
+#   free memory, %      memory_pressure "free percentage"                     MemAvailable * 100 / MemTotal
+#   swapped out, MB     vm_stat Swapouts x its page size (monotonic)          pswpout (/proc/vmstat) x getconf PAGESIZE
+# A reading that cannot be taken is EMPTY with its reason in SLOT_NM, never 0: a failing sysctl read as "capacity 0 MB"
+# and the job waited forever. Linux has not been measured on hardware (no VM; U-16/U-17), and inside a container
+# /proc/meminfo shows the memory of the host, not of the cgroup.
+
+# _slot_meminfo -> the kB values of $SLOT_PROC/meminfo in the assoc _SLOT_MI; 1 with SLOT_NM when it cannot be read.
+# No process forked ($(<file) is read by the shell itself).
+typeset -gA _SLOT_MI
+_slot_meminfo() {
+  local f=$SLOT_PROC/meminfo l v
+  _SLOT_MI=()
+  [[ -f $f && -r $f ]] || { SLOT_NM="$f cannot be read"; return 1 }
+  for l in "${(@f)$(<$f)}"; do v=${${l#*:}//[^0-9]/}; [[ $l == *:* && -n $v ]] && _SLOT_MI[${l%%:*}]=$v; done
+  return 0
+}
+# _slot_mi_need <keys...> - all present in _SLOT_MI, else 1 with SLOT_NM
+_slot_mi_need() {
+  local k miss=()
+  for k; do [[ -n $_SLOT_MI[$k] ]] || miss+=$k; done
+  (( ${#miss} )) || return 0
+  SLOT_NM="no ${(j:, :)miss} in $SLOT_PROC/meminfo"; return 1
+}
+# _slot_swap -> SLOT_SWF swap capacity in MB (and on Linux _SLOT_MI with SwapTotal); 1 with SLOT_NM when not measured.
+_slot_swap() {
   local f d
-  f=$(sysctl -n vm.swapusage | awk '{for(i=1;i<=NF;i++) if($i=="free"){v=$(i+2); gsub("M","",v); gsub(",",".",v); printf "%d", v}}')
-  d=$(df -m /System/Volumes/VM 2>/dev/null | awk 'NR==2{print $4}')
-  print -r -- $(( ${f:-0} + ${d:-0} ))
+  SLOT_SWF= SLOT_NM=
+  case $SLOT_OS in
+    darwin)
+      f=$(sysctl -n vm.swapusage 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="free"){v=$(i+2); gsub("M","",v); gsub(",",".",v); printf "%d", v}}')
+      [[ $f == <-> ]] || { SLOT_NM="sysctl vm.swapusage gave no free value"; return 1 }
+      d=$(df -m /System/Volumes/VM 2>/dev/null | awk 'NR==2{print $4}'); [[ $d == <-> ]] || d=0
+      SLOT_SWF=$(( f + d )) ;;
+    linux)
+      _slot_meminfo && _slot_mi_need SwapTotal SwapFree || return 1
+      SLOT_SWF=$(( _SLOT_MI[SwapFree] / 1024 )) ;;
+    *) SLOT_NM="unknown OS \"$SLOT_OS\" (SLOT_OS: darwin or linux)"; return 1 ;;
+  esac
+  return 0
 }
-_slot_swap_used_mb() {
-  sysctl -n vm.swapusage | awk '{for(i=1;i<=NF;i++) if($i=="used"){v=$(i+2); gsub("M","",v); gsub(",",".",v); printf "%d", v}}'
-}
-_slot_free_pct() {
-  memory_pressure 2>/dev/null | awk -F': ' '/free percentage/{gsub("%","",$2); print $2+0}'
-}
-# Monotonic swap-out counter in MB (pages x page size from the vm_stat header).
-_slot_swapouts_mb() {
-  vm_stat | awk '/page size of/{for(i=1;i<=NF;i++) if($i=="of") ps=$(i+1)} /^Swapouts:/{gsub("\\.","",$2); so=$2}
-    END{printf "%d", so*ps/1048576}'
+# _slot_mem_sample -> "free% swap_used_MB swapped_out_MB", or "- <reason>" when any of the three cannot be read.
+_slot_mem_sample() {
+  local pct used so l pg=
+  case $SLOT_OS in
+    darwin)
+      pct=$(memory_pressure 2>/dev/null | awk -F': ' '/free percentage/{gsub("%","",$2); print $2+0}')
+      [[ $pct == <-> ]] || { print -r -- "- memory_pressure gave no free percentage"; return }
+      used=$(sysctl -n vm.swapusage 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="used"){v=$(i+2); gsub("M","",v); gsub(",",".",v); printf "%d", v}}')
+      [[ $used == <-> ]] || { print -r -- "- sysctl vm.swapusage gave no used value"; return }
+      so=$(vm_stat 2>/dev/null | awk '/page size of/{for(i=1;i<=NF;i++) if($i=="of") ps=$(i+1)} /^Swapouts:/{gsub("\\.","",$2); so=$2}
+        END{if (so != "" && ps != "") printf "%d", so*ps/1048576}')
+      [[ $so == <-> ]] || { print -r -- "- vm_stat gave no Swapouts or page size"; return } ;;
+    linux)
+      _slot_meminfo && _slot_mi_need MemTotal MemAvailable SwapTotal SwapFree || { print -r -- "- $SLOT_NM"; return }
+      (( _SLOT_MI[MemTotal] > 0 )) || { print -r -- "- MemTotal 0 in $SLOT_PROC/meminfo"; return }
+      pct=$(( _SLOT_MI[MemAvailable] * 100 / _SLOT_MI[MemTotal] ))
+      used=$(( (_SLOT_MI[SwapTotal] - _SLOT_MI[SwapFree]) / 1024 ))
+      [[ -f $SLOT_PROC/vmstat && -r $SLOT_PROC/vmstat ]] || { print -r -- "- $SLOT_PROC/vmstat cannot be read"; return }
+      for l in "${(@f)$(<$SLOT_PROC/vmstat)}"; do [[ $l == pswpout\ <-> ]] && { so=${l#pswpout }; break }; done
+      [[ -n $so ]] || { print -r -- "- no pswpout in $SLOT_PROC/vmstat"; return }
+      pg=$(getconf PAGESIZE 2>/dev/null); [[ $pg == <1-> ]] || { print -r -- "- getconf PAGESIZE failed"; return }
+      so=$(( so * pg / 1048576 )) ;;
+    *) print -r -- "- unknown OS \"$SLOT_OS\" (SLOT_OS: darwin or linux)"; return ;;
+  esac
+  print -r -- $pct $used $so
 }
 
 # Memory history: "epoch free% used_MB swapouts_MB" in <SLOTS_DIR>/mem.hist, last 15 minutes kept.
-# Prints "min_free% swapouts_growth_MB used_growth_MB" over the window, or "?" when the window is not covered by
-# samples without gaps.
+# Prints "min_free% swapouts_growth_MB used_growth_MB" over the window, "?" when the window is not covered by samples
+# without gaps, "- <reason>" when the machine cannot be measured now (no sample is written).
 _slot_third_stats() {
-  local now=$EPOCHSECONDS h=$SLOTS_DIR/mem.hist pct used so
-  pct=$(_slot_free_pct); used=$(_slot_swap_used_mb); so=$(_slot_swapouts_mb)
-  print -r -- "$now ${pct:-0} ${used:-0} ${so:-0}" >> $h
+  local now=$EPOCHSECONDS h=$SLOTS_DIR/mem.hist smp
+  smp=( $(_slot_mem_sample) )
+  [[ $smp[1] == - ]] && { print -r -- "$smp"; return }
+  print -r -- "$now $smp[1] $smp[2] $smp[3]" >> $h
   sort -n -k1,1 $h | awk -v now=$now -v win=$SLOT_THIRD_WINDOW -v gap=$SLOT_HIST_GAP '
     { t[++n]=$1; p[n]=$2; u[n]=$3; s[n]=$4 }
     END {
@@ -201,15 +267,21 @@ _slot_third_stats() {
 # Admission decision: the slot path goes to $SLOT_PICK (empty - refused), the reason to $SLOT_WHY.
 # Busy medium/heavy counts go to $SLOT_M / $SLOT_H (the queues need them: "last slot of the ceiling", see slot_run).
 _slot_pick() {
-  local class=$1 m=0 h=0 legacy=0 f i swapfree
+  local class=$1 m=0 h=0 legacy=0 f i
   SLOT_PICK= SLOT_WHY=
   for i in {1..$SLOT_MEDIUM_N}; do _slot_busy $SLOTS_DIR/medium.$i.lock && (( m++ )); done
   for i in {1..$_SLOT_HEAVY_MAX}; do _slot_busy $SLOTS_DIR/heavy.$i.lock && (( h++ )); done
   _slot_busy "$SLOT_LEGACY_LOCK" && legacy=1
   (( h += legacy ))
   SLOT_M=$m SLOT_H=$h
-  swapfree=$(_slot_swap_free_mb)
-  if (( swapfree < SLOT_SWAP_MIN_MB )); then SLOT_WHY="swap: capacity ${swapfree} MB < ${SLOT_SWAP_MIN_MB}"; return; fi
+  # threshold 0 - the swap check is off (a machine without swap): nothing is measured. Not measured - one note per
+  # process, and the slot is not held back (like env-check; U1 decision 4).
+  if (( SLOT_SWAP_MIN_MB > 0 )); then
+    if ! _slot_swap; then
+      [[ -n $_SLOT_NM_SAID ]] || { print -u2 -r -- "slot_run: swap not measured ($SLOT_NM) - not checked"; _SLOT_NM_SAID=1 }
+    elif (( SLOT_SWF < SLOT_SWAP_MIN_MB )); then SLOT_WHY="swap: capacity ${SLOT_SWF} MB < ${SLOT_SWAP_MIN_MB}"; return
+    fi
+  fi
   if (( m + h >= SLOT_TOTAL_MAX )); then SLOT_WHY="busy: medium $m + heavy $h = ceiling $SLOT_TOTAL_MAX"; return; fi
   if [[ $class == medium ]]; then
     for i in {1..$SLOT_MEDIUM_N}; do f=$SLOTS_DIR/medium.$i.lock; _slot_busy $f || { SLOT_PICK=$f; return; }; done
@@ -217,7 +289,11 @@ _slot_pick() {
   fi
   if (( h >= _SLOT_HEAVY_MAX )); then SLOT_WHY="all $_SLOT_HEAVY_MAX heavy slots busy"; (( legacy )) && SLOT_WHY+=" (including the legacy lock)"; return; fi
   if (( h == SLOT_HEAVY_N )); then
+    # Linux: off unless SLOT_THIRD_FREE_PCT is set explicitly (U-15) - the 50 % was measured with memory_pressure on
+    # macOS, and MemAvailable / MemTotal is a different measure, so the threshold does not carry over.
+    if [[ $SLOT_OS == linux && -z $_SLOT_THIRD_SET ]]; then SLOT_WHY="$h heavy busy; extra slot: off on Linux (its threshold was measured with macOS memory_pressure; set SLOT_THIRD_FREE_PCT to switch it on with MemAvailable / MemTotal)"; return; fi
     local st=( $(_slot_third_stats) )
+    if [[ $st[1] == - ]]; then SLOT_WHY="$h heavy busy; extra slot: memory not measured (${st[2,-1]}) - refused"; return; fi
     if [[ $st[1] == '?' ]]; then SLOT_WHY="$h heavy busy; extra slot: memory history still accumulating (${SLOT_THIRD_WINDOW} s)"; return; fi
     if (( st[1] < SLOT_THIRD_FREE_PCT )); then SLOT_WHY="$h heavy busy; extra slot: free ${st[1]}% < ${SLOT_THIRD_FREE_PCT}% (minimum over ${SLOT_THIRD_WINDOW} s)"; return; fi
     if (( st[2] > SLOT_THIRD_SWAP_GROW_MB )); then SLOT_WHY="$h heavy busy; extra slot: swap - ${st[2]} MB swapped out in ${SLOT_THIRD_WINDOW} s"; return; fi
@@ -318,6 +394,12 @@ slot_run() {
   local kind=${SLOT_KIND:-single} retry=${SLOT_RETRY_RC:-} qnum= qf= pos=0 m h o treq=$(_slot_now) tacq= jslot= jcmd=( "$@" )
   [[ $class == (medium|heavy) ]] || { print -u2 "slot_run: class must be medium|heavy, not \"$class\""; return 64; }
   if _slot_unwritable; then _slot_unwritable_say; rm -f $got; _slot_journal $treq - $(_slot_now) $class - $kind 77 "${jcmd[@]}"; return 77; fi
+  # No swap at all (Linux, SwapTotal 0 - a cloud VM) while a slot needs swap capacity: no slot would ever be given, so
+  # refuse at once with the numbers (78: the threshold does not suit this machine; U1 decision 3), never wait forever.
+  if (( SLOT_SWAP_MIN_MB > 0 )) && [[ $SLOT_OS == linux ]] && _slot_swap && [[ $_SLOT_MI[SwapTotal] == 0 ]]; then
+    print -u2 -r -- "codis-agents slots: refused - this machine has no swap (SwapTotal 0 kB in $SLOT_PROC/meminfo; MemTotal ${_SLOT_MI[MemTotal]:+$(( _SLOT_MI[MemTotal] / 1024 ))} MB, MemAvailable ${_SLOT_MI[MemAvailable]:+$(( _SLOT_MI[MemAvailable] / 1024 ))} MB), but every slot needs swap capacity SLOT_SWAP_MIN_MB = $SLOT_SWAP_MIN_MB MB and would wait forever; on a machine without swap run with SLOT_SWAP_MIN_MB=0 (swap check off), or add swap"
+    rm -f $got; _slot_journal $treq - $(_slot_now) $class - $kind 78 "${jcmd[@]}"; return 78
+  fi
   : > $SLOTS_DIR/admit.lock; mkdir -p $SLOTS_DIR/queue
   # The trap is set before the holder starts: a signal between the command start and `wait` would otherwise kill only
   # us (the command an orphan outside the slot). No holder - remove the ticket and exit; a holder - stop the whole

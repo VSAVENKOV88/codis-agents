@@ -151,7 +151,7 @@ rel b1 b2 b3; clean
 # B6. swap-out: pswpout grows 100000 pages (x 4096 = 390 MB) every 0.1 s - the extra slot is refused, by the counter
 hjob heavy.sh c1; hjob heavy.sh c2
 waitlong 'started c1 && started c2'
-setp step 100000
+setp step 100000; sleep 0.5    # the growth is in the history before the third asks (no window of flat samples)
 SLOT_THIRD_FREE_PCT=50 hjob heavy.sh c3
 waitlong 'grep -q "swapped out" $T/c3.out'
 ok 'B6. pswpout x PAGESIZE grows - the third waits: "MB swapped out"' '! started c3 && grep -q "extra slot: swap - [0-9]* MB swapped out in 1 s" $T/c3.out' "$(cat $T/c3.out)"
@@ -160,10 +160,11 @@ waitlong 'started c3'
 ok 'B6. the counter stands still - the third went' 'started c3' "$(tail -3 $T/c3.out)"
 rel c1 c2 c3; clean
 
-# B3. swap used = SwapTotal - SwapFree grows (SwapFree drops 100000 kB every 0.1 s), pswpout flat - refused
+# B3. swap used = SwapTotal - SwapFree grows (SwapFree drops 300000 kB = 293 MB every 0.1 s), pswpout flat - refused
+setp swtotal 102400000; setp swfree 92160000
 hjob heavy.sh d1; hjob heavy.sh d2
 waitlong 'started d1 && started d2'
-setp drop 100000
+setp drop 300000; sleep 0.5
 SLOT_THIRD_FREE_PCT=50 hjob heavy.sh d3
 waitlong 'grep -q "swap grew by" $T/d3.out'
 ok 'B3. SwapTotal - SwapFree grows - the third waits: "swap grew by"' '! started d3 && grep -q "extra slot: swap grew by [0-9]* MB in 1 s" $T/d3.out' "$(cat $T/d3.out)"
@@ -171,7 +172,7 @@ setp drop 0
 waitlong 'started d3'
 ok 'B3. used stands still - the third went' 'started d3' "$(tail -3 $T/d3.out)"
 rel d1 d2 d3; clean
-setp swfree 20480000; sleep 0.3
+setp swtotal 30720000; setp swfree 20480000; sleep 0.3
 
 ok 'Linux readings never called the macOS tools (sysctl, memory_pressure, vm_stat, df)' '[[ ! -e $T/mac.called ]]'
 
