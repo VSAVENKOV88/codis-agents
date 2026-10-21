@@ -116,16 +116,17 @@ let server;
     git(clone, 'config', '--remove-section', 'remote.realrepo');
     git(clone, 'remote', 'set-url', 'origin', real);
 
-    console.log('C8. the pushed URL names another configured remote (its url -> fake.git)');
+    console.log('C8. the pushed URL (a path to real.git) is also the name of another remote whose url is fake.git');
+    fs.symlinkSync(real, path.join(clone, 'evil'));
+    fs.appendFileSync(path.join(clone, '.git', 'info', 'exclude'), 'evil\n');
     git(clone, 'remote', 'add', 'evil', fake);
     git(clone, 'remote', 'set-url', 'origin', 'evil');
-    git(clone, 'remote', 'set-url', '--push', 'origin', real);
+    ok('C8 setup: ls-remote of the pushed URL answers fake.git (feat)', /^ref: refs\/heads\/feat\tHEAD$/m.test(git(clone, 'ls-remote', '--symref', '--', 'evil', 'HEAD').stdout));
     commit(clone, 'c8.txt');
     t7 = rev(real, 'refs/heads/trunk');
     p = push(clone, plain, 'origin', 'HEAD:trunk');
     ok('C8 refused, real trunk unchanged', p.status !== 0 && rev(real, 'refs/heads/trunk') === t7, p.stderr);
     git(clone, 'remote', 'set-url', 'origin', real);
-    git(clone, 'config', '--unset', 'remote.origin.pushurl');
     git(clone, 'remote', 'remove', 'evil');
 
     console.log('C9. the rewrite given on the push command line (git -c), not in the config file');
@@ -137,6 +138,8 @@ let server;
     git(clone, 'remote', 'set-url', 'origin', 'short:');
     p = push(clone, plain, '-q', 'origin', 'HEAD:b-c10');
     ok('C10 a working branch goes through to real.git', p.status === 0 && rev(real, 'refs/heads/b-c10') !== '', p.stderr);
+    commit(clone, 'c10.txt');   // something new for trunk, whatever the cells above did
+    t7 = rev(real, 'refs/heads/trunk');
     p = push(clone, plain, 'origin', 'HEAD:trunk');
     ok('C10 trunk refused as the default branch (not as an unknown one)', p.status !== 0 && blocked('trunk').test(p.stderr) && !/unknown/.test(p.stderr) && rev(real, 'refs/heads/trunk') === t7, p.stderr);
     git(clone, 'remote', 'set-url', 'origin', real);
