@@ -16,6 +16,9 @@
 #   R4. meminfo without the SwapTotal line - "swap not measured (no SwapTotal ...)", the slot is given, never 78;
 #   R5. explicit SLOT_THIRD_FREE_PCT, the extra slot cannot be measured - refused as "memory not measured" naming the
 #       reason: /proc/vmstat missing; no pswpout in it; getconf PAGESIZE failing; MemTotal 0.
+#   R7. (round 2) the refusal follows the threshold that is set (8192 on a 4096 MB swap, 2048 on 1023 MB), a lowered
+#       threshold below the swap gives the slot, SwapTotal 1 kB is "smaller" (hint "0 or less"), a swap at the threshold
+#       but partly used waits, and macOS with a small swap waits (never 78).
 H=${0:A:h:h}/scripts
 zmodload zsh/datetime
 T=$(mktemp -d "${${TMPDIR:-/tmp}%/}/slots-linux-edges.XXXXXX"); T=${T:A}
@@ -87,7 +90,7 @@ clean() {
     for p in $live; do pkill -P $p 2>/dev/null; kill $p 2>/dev/null; done }
   wait $JP 2>/dev/null; JP=(); rm -f $T/*.start(N) $T/rel.*(N)
 }
-trap 'touch $T/rel.{a,b,c}{1,2,3}(N) 2>/dev/null; wait 2>/dev/null; rm -rf $T' EXIT
+trap 'touch $T/rel.{a,b,c}{1,2,3,4}(N) 2>/dev/null; wait 2>/dev/null; rm -rf $T' EXIT
 
 # R1. guards-all.sh on a machine without swap: 78, the runner does not start
 rm -f $J
@@ -158,5 +161,36 @@ rm -f $T/getconf.broken
 third mem0  "MemTotal 0 in $T/proc/mem0/meminfo" 'MemTotal 0'
 
 ok 'Linux readings never called the macOS tools' '[[ ! -e $T/mac.called ]]'
+
+# R7 (tester, round 2). The swap-smaller-than-threshold refusal follows the threshold that is set, not 4096; a 1 kB
+# swap is "smaller", not "no swap"; a swap that fits a lowered threshold but is partly used waits; macOS never refuses
+# a small swap (its swap file grows: capacity = vm.swapusage free + free space of /System/Volumes/VM).
+mkproc used1 16000000 3200000  1048572  524288   yes
+mkproc tiny  16000000 3200000  1        1        yes
+rm -f $J; rm -rf $SLOTS_DIR/queue
+SLOT_SWAP_MIN_MB=8192 SLOT_PROC=$T/proc/exact4 once t8 heavy.sh zsh -c 'touch '$T'/t8.ran'
+ok 'R7. SLOT_SWAP_MIN_MB=8192, SwapTotal 4194304 kB = 4096 MB - heavy.sh exits 78, the command does not run' '[[ $(rc t8) == 78 && ! -e $T/t8.ran ]]' "code $(rc t8); $(cat $T/t8.out $T/t8.err)"
+ok 'R7. ... the line names the threshold that is set (8192) and the value that fits (4096)' 'grep -qF "SwapTotal 4194304 kB = 4096 MB" $T/t8.err && grep -qF "SLOT_SWAP_MIN_MB = 8192 MB" $T/t8.err && grep -qF "set SLOT_SWAP_MIN_MB to 4096 or less" $T/t8.err && ! grep -q "no swap" $T/t8.err' "$(cat $T/t8.err)"
+SLOT_SWAP_MIN_MB=2048 SLOT_PROC=$T/proc/small1 once t2 heavy.sh zsh -c 'touch '$T'/t2.ran'
+ok 'R7. SLOT_SWAP_MIN_MB=2048, SwapTotal 1048572 kB = 1023 MB - 78 naming 2048 and 1023' '[[ $(rc t2) == 78 && ! -e $T/t2.ran ]] && grep -qF "SLOT_SWAP_MIN_MB = 2048 MB" $T/t2.err && grep -qF "set SLOT_SWAP_MIN_MB to 1023 or less" $T/t2.err' "code $(rc t2); $(cat $T/t2.err)"
+SLOT_SWAP_MIN_MB=1024 SLOT_PROC=$T/proc/small4 once t1 heavy.sh zsh -c 'exit 7'
+ok 'R7. SLOT_SWAP_MIN_MB=1024 below a 4095 MB swap that is free - the slot is given (code 7), no refusal' '[[ $(rc t1) == 7 ]] && ! grep -q refused $T/t1.err' "code $(rc t1); $(cat $T/t1.err)"
+SLOT_PROC=$T/proc/tiny once ty heavy.sh zsh -c 'touch '$T'/ty.ran'
+ok 'R7. SwapTotal 1 kB = 0 MB - 78 as a swap smaller than the threshold (not "no swap"), hint "to 0 or less"' '[[ $(rc ty) == 78 && ! -e $T/ty.ran ]] && grep -qF "SwapTotal 1 kB = 0 MB" $T/ty.err && grep -qF "set SLOT_SWAP_MIN_MB to 0 or less" $T/ty.err && ! grep -q "no swap" $T/ty.err' "code $(rc ty); $(cat $T/ty.err)"
+SLOT_SWAP_MIN_MB=1023 SLOT_PROC=$T/proc/used1 hjob heavy.sh a3
+waitlong '(( $(grep -c "waiting for slot heavy" $T/a3.out 2>/dev/null) > 0 ))'
+ok 'R7. SLOT_SWAP_MIN_MB=1023 = SwapTotal 1023 MB, SwapFree 512 MB - heavy.sh WAITS with "capacity 512 MB < 1023" (no 78)' '! started a3 && grep -q "swap: capacity 512 MB < 1023" $T/a3.out && ! grep -q "refused" $T/a3.out' "$(cat $T/a3.out)"
+kill $JP 2>/dev/null; clean
+# macOS: a fake mac with 1024 MB of swap free and 0 MB free on its VM volume - a WAIT, never the Linux refusal
+mkdir -p $T/macbin
+print -r -- '#!/bin/zsh
+[[ "$*" == *vm.swapusage* ]] && { print "total = 1024.00M  used = 0.00M  free = 1024.00M  (encrypted)"; exit 0 }; exit 1' > $T/macbin/sysctl
+print -r -- '#!/bin/zsh
+print "Filesystem 1M-blocks Used Available Capacity Mounted"; print "/dev/disk3s6 100 100 0 100% /System/Volumes/VM"' > $T/macbin/df
+chmod +x $T/macbin/*
+PATH=$T/macbin:$PATH SLOT_OS=darwin hjob heavy.sh a4
+waitlong '(( $(grep -c "waiting for slot heavy" $T/a4.out 2>/dev/null) > 0 ))'
+ok 'R7. macOS, swap capacity 1024 MB < 4096 - heavy.sh WAITS (its swap grows), never 78' '! started a4 && grep -q "swap: capacity 1024 MB < 4096" $T/a4.out && ! grep -q "refused" $T/a4.out' "$(cat $T/a4.out)"
+kill $JP 2>/dev/null; clean
 print -r -- "TOTAL: $pass ok, $fail fail"
 (( fail == 0 ))
