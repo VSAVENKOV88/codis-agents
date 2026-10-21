@@ -75,8 +75,8 @@ function rerun({ wt, log, rc, cfg, baseline }) {
   const staleText = stale.map((n) => `known red not red now: ${n} — remove it from the baseline ${baseline}\n`).join('');
   if (rc === 0) return staleText ? finish(head + staleText) : res;
   const max = cfg.maxReruns || 10;
-  res.known = p.names.filter((n) => n in known);
-  const fresh = p.names.filter((n) => !(n in known));
+  res.known = p.names.filter((n) => Object.hasOwn(known, n));
+  const fresh = p.names.filter((n) => !Object.hasOwn(known, n));
   const knownText = res.known.map((n) => `known red (guardBaseline ${baseline}): ${n} — ${known[n]}\n`).join('') + staleText;
   let text;
   if (!p.tally) text = `${head}no tally in the log (the run was cut off before it): nothing reruns, the runner's exit code ${rc} stands\n`;
