@@ -26,9 +26,7 @@ print -r -- '#!/bin/zsh
 print -r -- "Filesystem 1M-blocks Used Available Capacity Mounted"
 print -r -- "/dev/disk3s6 100000 0 50000 50% /System/Volumes/VM"' > $T/bin/df
 chmod +x $T/bin/*; export PATH=$T/bin:$PATH
-# The worktrees are linked worktrees of one repository: guards-all.sh refuses a main working copy (main-checkout.js).
-git init -q $T/repo && git -C $T/repo -c user.email=t@t -c user.name=t commit -q --allow-empty -m x
-git -C $T/repo worktree add -q --detach $T/wts/w && cd $T/wts/w
+cd $T/wts/w && git init -q . && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m x
 print -r -- '# guards:exclusive — a fixed port' > tests/test_2.py
 pass=0 fail=0 skipped=0
 ok() { if eval "$2"; then (( pass++ )); print -r -- "  ok   $1"; else (( fail++ )); print -r -- "  FAIL $1${3:+
