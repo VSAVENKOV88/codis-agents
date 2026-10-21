@@ -7,22 +7,24 @@
 //   -> JSON {ok, role, since, head, offending, untracked, error?}
 // offending - paths committed after <since> or changed in tracked files that the role may not touch. untracked -
 // untracked files (noise of guard runs), not part of the verdict.
-// --allow: regular expressions of paths the tester may change (project config "testerWritable"); without it, guards
-// named *-run.{js,mjs,cjs} and fixture directories.
+// --allow: regular expressions of paths the tester may change (project config "testerWritable"), required for the
+// tester: there is no built-in list (the guards and fixtures of a project are the project's), so without one the check
+// fails instead of guessing.
 const { execFileSync } = require('child_process');
-
-const TESTER_DEFAULT = ['-run\\.(js|mjs|cjs)$', '(^|/)(__)?fixtures(__)?/'];
 
 const allowFor = (role, allow) => {
   if (role === 'reviewer') return () => false;
   if (role === 'tester') {
-    const res = (allow && allow.length ? allow : TESTER_DEFAULT).map((r) => new RegExp(r));
+    const res = allow.map((r) => new RegExp(r));
     return (f) => res.some((re) => re.test(f));
   }
   return null;
 };
 
 function check({ wt, since, role, allow }) {
+  if (role === 'tester' && !(allow && allow.length)) {
+    return { ok: false, role, error: 'no testerWritable: pass the paths the tester may change with --allow <regex> (project config testerWritable)' };
+  }
   const ok = allowFor(role, allow);
   if (!ok) return { ok: false, role, error: `unknown role ${role}` };
   const git = (...a) => execFileSync('git', ['-C', wt, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -44,7 +46,7 @@ function check({ wt, since, role, allow }) {
   return { ok: offending.length === 0, role, since, head, offending, untracked };
 }
 
-module.exports = { check, TESTER_DEFAULT };
+module.exports = { check };
 
 if (require.main === module) {
   const a = process.argv.slice(2);

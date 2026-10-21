@@ -10,13 +10,19 @@
 //    Only flaky -> exit 0. The names come from the log by `newRedPattern` (capture group 1, per line); the reruns happen
 //    only when the log reached its tally (`tallyPattern`, when set) and names no more than `maxReruns` guards, so a run
 //    cut off before its tally (an environment red) or a mass red keeps the runner's code untouched.
+//    Known reds (project config `guardBaseline`, owner decision U-20): a JSON file {"<guard name>": "<reason>"} in the
+//    project's repository, its path relative to the worktree (it changes in the same commit as the fix, so the reuse
+//    below never keeps an old answer). The names of the log found there are subtracted before maxReruns is counted and
+//    never rerun; only known reds -> exit 0 and "N known red". A known name that is not red in a finished run is named
+//    ("known red not red now: X — remove it from the baseline"), the code is not changed for it. A baseline that is
+//    missing or broken is an error line and the runner's code stands: never "all known" in silence.
 // 2. Reuse. The log has a record next to it (<log>.meta.json): HEAD and whether the tracked tree was clean at the
 //    start and at the end, the guard command template, the final exit code. A full run on the same HEAD with a clean
 //    tracked tree, the same command and a final exit code 0 is not repeated (guards-all.sh prints "reused, HEAD <sha>"
 //    and the saved summary; --force runs anyway). Untracked files do not count: guard runs and probes leave them.
 //
-// usage: guards-result.js rerun <wt> <log> <runner rc> <guardRerun JSON>  -> summary on stdout, appended to the log;
-//                                                                            exit = final code
+// usage: guards-result.js rerun <wt> <log> <runner rc> <guardRerun JSON> [<guardBaseline>]
+//          -> summary on stdout, appended to the log; exit = final code
 //        guards-result.js meta-start <wt> <log> <command template>
 //        guards-result.js meta-end <wt> <log> <final rc>
 //        guards-result.js reuse <wt> <log> <command template>             -> exit 0 and the message when reusable,
@@ -39,21 +45,50 @@ function newReds(log, cfg) {
 
 const rerunLog = (log) => (log.endsWith('.txt') ? log.slice(0, -4) : log) + '.rerun.txt';
 
-// {rc, repeated: [{name, rc}], flaky: [names], text}. text is appended to the log (empty for a green run).
-function rerun({ wt, log, rc, cfg }) {
-  const res = { rc, repeated: [], flaky: [], text: '' };
-  if (rc === 0) return res;
-  const max = cfg.maxReruns || 10;
+// The known reds of the baseline file (path relative to wt): {known: {name: reason}} or {error}.
+function readBaseline(wt, rel) {
+  let o;
+  try { o = JSON.parse(fs.readFileSync(path.resolve(wt, rel), 'utf8')); } catch (e) {
+    return { error: e.code === 'ENOENT' ? 'no such file in the worktree' : `not readable as JSON (${e.message})` };
+  }
+  if (!o || typeof o !== 'object' || Array.isArray(o)) return { error: 'expected a JSON object {"<guard name>": "<reason>"}' };
+  const bad = Object.keys(o).filter((k) => typeof o[k] !== 'string');
+  if (bad.length) return { error: `the reason of ${bad.join(', ')} is not a string (expected {"<guard name>": "<reason>"})` };
+  return { known: o };
+}
+
+// {rc, repeated: [{name, rc}], flaky: [names], known: [names], text}. text is appended to the log (empty for a green
+// run without a baseline).
+function rerun({ wt, log, rc, cfg, baseline }) {
+  const res = { rc, repeated: [], flaky: [], known: [], text: '' };
   const head = '==== rerun of new reds one by one (guardRerun) ====\n';
-  let text;
+  const finish = (text) => { res.text = text; fs.appendFileSync(log, '\n' + text); return res; };
+  let bl = null;
+  if (baseline) {
+    bl = readBaseline(wt, baseline);
+    if (bl.error) return finish(`${head}guardBaseline ${baseline}: ${bl.error}: nothing is subtracted and nothing reruns, the runner's exit code ${rc} stands\n`);
+  }
+  const known = bl ? bl.known : {};
   const p = newReds(fs.readFileSync(log, 'utf8'), cfg);
+  // a known name not red in a finished run: the fix landed, the entry is stale
+  const stale = p.tally ? Object.keys(known).filter((n) => !p.names.includes(n)) : [];
+  const staleText = stale.map((n) => `known red not red now: ${n} — remove it from the baseline ${baseline}\n`).join('');
+  if (rc === 0) return staleText ? finish(head + staleText) : res;
+  const max = cfg.maxReruns || 10;
+  res.known = p.names.filter((n) => n in known);
+  const fresh = p.names.filter((n) => !(n in known));
+  const knownText = res.known.map((n) => `known red (guardBaseline ${baseline}): ${n} — ${known[n]}\n`).join('') + staleText;
+  let text;
   if (!p.tally) text = `${head}no tally in the log (the run was cut off before it): nothing reruns, the runner's exit code ${rc} stands\n`;
   else if (!p.names.length) text = `${head}no new reds found in the log by newRedPattern: nothing reruns, the runner's exit code ${rc} stands\n`;
-  else if (p.names.length > max) text = `${head}${p.names.length} new reds, more than maxReruns ${max}: nothing reruns (not flakiness), the runner's exit code ${rc} stands\n`;
+  else if (!fresh.length) {
+    res.rc = 0;
+    text = `${head}${knownText}${res.known.length} known red, no new reds: nothing reruns, exit 0\n`;
+  } else if (fresh.length > max) text = `${head}${knownText}${fresh.length} new reds, more than maxReruns ${max}: nothing reruns (not flakiness), the runner's exit code ${rc} stands\n`;
   else {
     const details = rerunLog(log);
     fs.writeFileSync(details, '');
-    for (const name of p.names) {
+    for (const name of fresh) {
       const cmd = subst(cfg.command, wt, name);
       fs.appendFileSync(details, `==== ${name}: ${cmd}\n`);
       const r = spawnSync('zsh', ['-c', cmd], { cwd: wt, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
@@ -62,16 +97,14 @@ function rerun({ wt, log, rc, cfg }) {
       if (r.status === 0) res.flaky.push(name); else res.repeated.push({ name, rc: code });
     }
     if (!res.repeated.length) res.rc = 0;
-    text = head
+    text = head + knownText
       + res.repeated.map((x) => `new red, red again alone: ${x.name} (exit ${x.rc})\n`).join('')
       + res.flaky.map((n) => `flaky, red under load, green alone: ${n}\n`).join('')
-      + `rerun: ${p.names.length} new reds -> ${res.repeated.length} repeated, ${res.flaky.length} flaky; exit ${res.rc}\n`
+      + `rerun: ${fresh.length} new reds -> ${res.repeated.length} repeated, ${res.flaky.length} flaky${res.known.length ? `; ${res.known.length} known red` : ''}; exit ${res.rc}\n`
       + (res.flaky.length ? `flaky guards (not a regression; put them into the project backlog): ${res.flaky.join(', ')}\n` : '')
       + `single runs: ${details}\n`;
   }
-  res.text = text;
-  fs.appendFileSync(log, '\n' + text);
-  return res;
+  return finish(text);
 }
 
 const metaFile = (log) => `${log}.meta.json`;
@@ -111,12 +144,12 @@ function reusable(wt, log, command) {
     text: `reused, HEAD ${short}: the full run of ${m.finishedAt} on this HEAD with a clean tracked tree ended with exit 0 (log ${log}); --force runs again` };
 }
 
-module.exports = { newReds, rerun, subst, metaStart, metaEnd, reusable, rerunLog };
+module.exports = { newReds, rerun, readBaseline, subst, metaStart, metaEnd, reusable, rerunLog };
 
 if (require.main === module) {
-  const [cmd, wt, log, x, y] = process.argv.slice(2);
+  const [cmd, wt, log, x, y, z] = process.argv.slice(2);
   if (cmd === 'rerun') {
-    const r = rerun({ wt, log, rc: Number(x), cfg: JSON.parse(y) });
+    const r = rerun({ wt, log, rc: Number(x), cfg: JSON.parse(y), baseline: z || '' });
     if (r.text) process.stdout.write('\n' + r.text);
     process.exit(r.rc > 255 ? 1 : r.rc);
   } else if (cmd === 'meta-start') metaStart(wt, log, x);

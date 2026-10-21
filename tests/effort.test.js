@@ -19,7 +19,7 @@ for (const r of ROLES) {
 // The workflow: run it with a fake agent() through one review round (plain and security) and record the options.
 const SRC = fs.readFileSync(path.join(ROOT, 'workflows', 'role-chain.js'), 'utf8').replace(/^export const meta/m, 'const meta');
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-const CFG = { sharedDir: '/s', worktreeRoot: '/r', scriptsDir: '/p/scripts', protectedBranches: ['main'] };
+const CFG = { sharedDir: '/s', worktreeRoot: '/r', scriptsDir: '/p/scripts', protectedBranches: ['main'], testerWritable: ['-run\\.js$'] };
 const T = { key: 'x', title: 'X', dir: '/d', wt: '/w', branch: 'b', gdir: 'w', accept: 'acc', security: true, noAnalysis: 'n' };
 const ANSWER = {
   pre: { ok: true, problems: [], blockingQuestions: [] },

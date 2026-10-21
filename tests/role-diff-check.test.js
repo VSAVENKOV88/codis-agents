@@ -9,6 +9,8 @@ const path = require('path');
 const { execFileSync, spawnSync } = require('child_process');
 const { check } = require('../scripts/role-diff-check');
 const { ok, done } = require('./lib');
+// The project's list of what the tester may change (config testerWritable; there is no built-in one).
+const ALLOW = ['-run\\.(js|mjs|cjs)$', '(^|/)(__)?fixtures(__)?/'];
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'role-diff-'));
 const git = (...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8' }).trim();
@@ -19,27 +21,27 @@ try {
   git('init', '-q'); git('config', 'user.email', 't@t'); git('config', 'user.name', 't'); git('config', 'core.hooksPath', '/dev/null');
   const base = commit({ 'src/a.ts': '1', 'services/x-run.js': '1' }, 'base');
 
-  let r = check({ wt: dir, since: base, role: 'tester' });
+  let r = check({ wt: dir, since: base, role: 'tester', allow: ALLOW });
   ok('no changes - ok', r.ok && r.offending.length === 0, JSON.stringify(r));
 
   const g = commit({ 'services/y-run.js': '1', 'src/z-run.mjs': '1', 'services/fixtures/f.json': '{}' }, 'guards');
-  r = check({ wt: dir, since: base, role: 'tester' });
+  r = check({ wt: dir, since: base, role: 'tester', allow: ALLOW });
   ok('tester: guards and fixtures - ok', r.ok, JSON.stringify(r));
 
   r = check({ wt: dir, since: base, role: 'reviewer' });
   ok('reviewer: any commit - not ok', !r.ok && r.offending.length === 3, JSON.stringify(r));
 
   r = check({ wt: dir, since: base, role: 'tester', allow: ['\\.test\\.js$'] });
-  ok('tester with a project allow-list: default guard names no longer allowed', !r.ok && r.offending.length === 3, JSON.stringify(r));
+  ok('tester with another project allow-list: guard names of the first list no longer allowed', !r.ok && r.offending.length === 3, JSON.stringify(r));
 
   commit({ 'src/a.ts': '2' }, 'product');
-  r = check({ wt: dir, since: g, role: 'tester' });
+  r = check({ wt: dir, since: g, role: 'tester', allow: ALLOW });
   ok('tester committed a product file - not ok', !r.ok && r.offending.join() === 'src/a.ts', JSON.stringify(r));
   const h = git('rev-parse', 'HEAD');
 
   write('src/b.ts', '0'); git('add', 'src/b.ts'); git('commit', '-qm', 'b'); const h2 = git('rev-parse', 'HEAD');
   write('src/b.ts', 'changed without a commit (sed -i, python -c - all the same)');
-  r = check({ wt: dir, since: h2, role: 'tester' });
+  r = check({ wt: dir, since: h2, role: 'tester', allow: ALLOW });
   ok('uncommitted change of a tracked file - not ok', !r.ok && r.offending.join() === 'src/b.ts', JSON.stringify(r));
   git('checkout', '--', 'src/b.ts');
 
@@ -48,7 +50,7 @@ try {
   ok('untracked noise - in untracked, verdict ok', r.ok && r.untracked.includes('scratch.log'), JSON.stringify(r));
 
   git('checkout', '-q', '-b', 'other', base); commit({ 'services/q-run.js': '1' }, 'other');
-  r = check({ wt: dir, since: h, role: 'tester' });
+  r = check({ wt: dir, since: h, role: 'tester', allow: ALLOW });
   ok('since not an ancestor of HEAD - not ok', !r.ok && /not an ancestor/.test(r.error || ''), JSON.stringify(r));
 
   r = check({ wt: dir, since: base, role: 'programmer' });

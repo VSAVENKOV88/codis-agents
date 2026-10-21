@@ -5,7 +5,7 @@
 // - E2 no key (or an empty list) -> role-chain stops the task before any agent, with the reason;
 // - E3 role-diff-check.js --role tester without --allow -> ok=false, error "no testerWritable", no built-in list;
 // - E4 a project list (pytest) -> its guards pass, product code is offending;
-// - E5 an explicit key (the example config, like figma-codis) -> unchanged.
+// - E5 an explicit key (the example config, as a project that sets the key) -> unchanged.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');

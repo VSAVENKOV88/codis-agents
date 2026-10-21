@@ -12,6 +12,7 @@
     "tallyPattern": "^TOTAL: ",
     "maxReruns": 10
   },
+  "guardBaseline": "server/known-red.json",
   "worktreeSetup": {
     "scan": ["server", "client"],
     "skip": ["*.DS_Store"],

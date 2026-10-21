@@ -13,6 +13,9 @@
 // guessed from the key; a task without `feature` is its own feature, and a task whose key is a feature name counts in
 // that feature.
 // usage: chain-cost.js <workflow transcript directory>... [--median 5e6] [--feature-limit 15e6]
+// A wrong path - no directory, a file, a directory without agent transcripts (*.meta.json) - is one line on stderr and
+// exit 66 (EX_NOINPUT), before any report: an empty directory is almost always a wrong path (coordinator decision U2b
+// v.6). A broken .meta.json is a note and is skipped; the rest is counted.
 const fs = require('fs');
 const path = require('path');
 
@@ -41,12 +44,26 @@ const ieOfAgent = (jsonl) => {
   return { ie, maxCtx };
 };
 
-// Agent labels: role:key#n, diff:key:role - the task key is the second field.
-function cost(dir) {
+// Why a path cannot be counted ('' when it can): the one line the CLI prints before exit 66.
+function badDir(dir) {
+  let st;
+  try { st = fs.statSync(dir); } catch (e) { return e.code === 'ENOENT' ? `chain-cost: no directory ${dir}` : `chain-cost: ${dir}: ${e.message}`; }
+  if (!st.isDirectory()) return `chain-cost: ${dir} is not a directory (pass a workflow transcript directory)`;
+  let names;
+  try { names = fs.readdirSync(dir); } catch (e) { return `chain-cost: ${dir}: ${e.message}`; }
+  return names.some((x) => x.endsWith('.meta.json')) ? '' : `chain-cost: no agent transcripts (*.meta.json) in ${dir}`;
+}
+
+// Agent labels: role:key#n, diff:key:role - the task key is the second field. notes (optional array) gets one line per
+// agent record that cannot be read; that record is skipped.
+function cost(dir, notes = []) {
   const tasks = {};
   for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.meta.json'))) {
-    const meta = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
-    const label = meta.description || '';
+    let meta;
+    try { meta = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')); } catch (e) {
+      notes.push(`unreadable agent record ${path.join(dir, f)} (${e.message}) - skipped`); continue;
+    }
+    const label = (meta && meta.description) || '';
     const key = (label.split(':')[1] || '?').split('#')[0];
     const role = label.split(':')[0];
     const jf = path.join(dir, f.replace(/\.meta\.json$/, '.jsonl'));
@@ -80,7 +97,7 @@ function featuresOf(dir) {
 function costAll(dirs) {
   const tasks = {}, features = {}, notes = [];
   for (const dir of dirs) {
-    for (const [k, t] of Object.entries(cost(dir))) {
+    for (const [k, t] of Object.entries(cost(dir, notes))) {
       const s = tasks[k] || (tasks[k] = { ie: 0, agents: 0, maxCtx: 0, byRole: {} });
       s.ie += t.ie; s.agents += t.agents; s.maxCtx = Math.max(s.maxCtx, t.maxCtx);
       for (const [r, v] of Object.entries(t.byRole)) s.byRole[r] = (s.byRole[r] || 0) + v;
@@ -120,7 +137,7 @@ function report(tasks, median, opts = {}) {
   return lines;
 }
 
-module.exports = { cost, costAll, featuresOf, byFeature, ieOfAgent, report, runRecordOf };
+module.exports = { badDir, cost, costAll, featuresOf, byFeature, ieOfAgent, report, runRecordOf };
 
 if (require.main === module) {
   const a = process.argv.slice(2);
@@ -132,6 +149,8 @@ if (require.main === module) {
   if (!Number.isFinite(median)) median = cfg && Number.isFinite(cfg.medianTaskIE) ? cfg.medianTaskIE : 5e6;
   if (!Number.isFinite(featureLimit)) featureLimit = cfg && Number.isFinite(cfg.featureIELimit) ? cfg.featureIELimit : 3 * median;
   if (!dirs.length) { console.error('usage: chain-cost.js <transcript directory>... [--median N] [--feature-limit N]'); process.exit(64); }
+  const bad = dirs.map(badDir).filter(Boolean);
+  if (bad.length) { for (const b of bad) console.error(b); process.exit(66); }
   const { tasks, features, notes } = costAll(dirs);
   for (const l of report(tasks, median, { features, featureLimit })) console.log(l);
   for (const n of notes) console.log('note: ' + n);

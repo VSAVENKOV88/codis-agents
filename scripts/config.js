@@ -32,6 +32,10 @@ const SPEC = {
   guardCommandLegacy: ['string', ''],
   guardAdaptiveProbe: ['object', null],
   guardRerun: ['object', null],
+  // Known reds of the project (owner decision U-20): a JSON file {"<guard name>": "<reason>"} in the project's
+  // repository, this path relative to the worktree; scripts/guards-result.js subtracts them after the full run. Needs
+  // guardRerun (the names come from the log by its newRedPattern).
+  guardBaseline: ['string', ''],
   // Guards that share a machine resource run one at a time under the exclusive lock (scripts/slots.zsh): a guard file
   // whose name matches one of glob and that has a line `<marker> guards:exclusive — <reason>`. Without the key the
   // default below (resolve()); with it both members are required and replace the default.
@@ -51,7 +55,9 @@ const SPEC = {
   ownerStackReadOnly: ['string', ''],
   medianTaskIE: ['number', 5e6],
   featureIELimit: ['number', null],
-  testerWritable: ['string[]', ['-run\\.(js|mjs|cjs)$', '(^|/)(__)?fixtures(__)?/']],
+  // The paths the tester may change: the project's own guards and fixtures. No default - the plugin cannot know them;
+  // without the key the role chain refuses to start (workflows/role-chain.js).
+  testerWritable: ['string[]', null],
   roleNotes: ['object', null],
   threatModel: ['string', ''],
   gitHooks: ['object', null],
@@ -156,6 +162,10 @@ function resolve(raw) {
     if (g.tallyPattern) { try { new RegExp(g.tallyPattern); } catch (e) { errors.push('guardRerun.tallyPattern: bad regular expression'); } }
     if (!(Number.isInteger(g.maxReruns) && g.maxReruns >= 1)) errors.push('guardRerun.maxReruns: expected a positive integer');
   }
+  if (c.guardBaseline) {
+    if (!c.guardRerun) errors.push('guardBaseline: needs guardRerun (the names of the reds come from the log by guardRerun.newRedPattern)');
+    if (path.isAbsolute(c.guardBaseline) || /^~/.test(c.guardBaseline)) errors.push(`guardBaseline: a path relative to the worktree (the file is committed with the project), not ${c.guardBaseline}`);
+  }
   if (c.guardExclusive) {
     const x = c.guardExclusive = level(EXCL_SPEC, c.guardExclusive, 'guardExclusive.', errors);
     if (x.glob === undefined) errors.push('guardExclusive.glob: required');
@@ -188,7 +198,7 @@ function resolve(raw) {
     else if (typeof v !== 'string') errors.push(`roleNotes.${k}: expected string`);
   }
   c.roleNotes = notes;
-  for (const [k, list] of [['testerWritable', c.testerWritable]]) {
+  for (const [k, list] of [['testerWritable', c.testerWritable || []]]) {
     for (const re of list) { try { new RegExp(re); } catch (e) { errors.push(`${k}: bad regular expression ${re}`); } }
   }
   try { new RegExp(c.protectedTagPattern); } catch (e) { errors.push('protectedTagPattern: bad regular expression'); }

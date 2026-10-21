@@ -83,7 +83,7 @@ const RULE_LIST = (t) => [
   ['pauses', 'Pauses: never wait longer than 270 s at a time - run anything long through Bash run_in_background and wait with Monitor in slices; an agent with no output for 10 minutes is killed.'],
   ['context', 'Context: past ~200k finish the current stage, write the report with "Next step: ..." and stop - a fresh agent continues.'],
   ['slots', `Heavy work goes through memory slots: ${SCRIPTS}/heavy.sh <cmd>, ${SCRIPTS}/medium.sh <cmd>, full guard run ${SCRIPTS}/guards-all.sh ${t.gdir}.`],
-  ['rerun', `New reds of a full run: ${SCRIPTS}/guards-all.sh reruns each one alone in the same slot. Red again alone - a new red (a regression); green alone - flaky: not a regression, name it in your report under "Flaky guards" for the coordinator, who puts it into the project backlog. A full run on the same HEAD with a clean tracked tree that ended green is reused ("reused, HEAD <sha>"); --force runs again.`],
+  ['rerun', `New reds of a full run: ${SCRIPTS}/guards-all.sh reruns each one alone in the same slot. Red again alone - a new red (a regression); green alone - flaky: not a regression, name it in your report under "Flaky guards" for the coordinator, who puts it into the project backlog.${CFG.guardBaseline ? ` Known reds listed in ${CFG.guardBaseline} (config guardBaseline) are subtracted first and never rerun ("N known red"): not a regression; a fix that turns one green removes its entry in the same commit.` : ''} A full run on the same HEAD with a clean tracked tree that ended green is reused ("reused, HEAD <sha>"); --force runs again.`],
   ['onerun', ONE_RUN
     ? `One full guard run per task: the workflow runs ${SCRIPTS}/guards-all.sh ${t.gdir} once after the programmer's last commit (a wait step) and hands its log to the next role; no role runs the full suite itself. Roles run their new guards and the selection printed by ${selectCmd(t)} (changed guards, guards that import a changed file or name it, the project's guardAlways), in a heavy slot: ${SCRIPTS}/heavy.sh zsh -c '<printed command>'; exit 3 - nothing selected, run your new guards directly.`
     : `One full guard run per task: the project config has no guardSubsetCommand, so the programmer runs the full run (${SCRIPTS}/guards-all.sh ${t.gdir}) and the tester reuses its log; ${SCRIPTS}/guards-select.js --wt ${sq(t.wt)} --base ${baseArg(t)} lists the guards a change touches.`],
@@ -158,6 +158,10 @@ async function checkTwice(t, what, passed, run) {
   log(`${t.title}: ${what} post-check ${first ? 'failed' : 'returned no result'} - repeated once by the default model`)
   return { first, res: await run(true) }
 }
+// The paths the tester may change: the project's own, no built-in list (coordinator decision U2b v.4); without them
+// every task stops before any agent (chain()), since the tester post-check could not tell a guard from product code.
+const TESTER_WRITABLE_MISSING = Array.isArray(CFG.testerWritable) && CFG.testerWritable.length ? ''
+  : 'testerWritable is not set: the paths the tester may change (its guards and fixtures, as regular expressions, e.g. ["(^|/)tests/test_[^/]*\\.py$", "(^|/)tests/fixtures/"]) - set testerWritable in the project config (.claude/codis-agents.json); there is no default'
 const ALLOW = (CFG.testerWritable || []).map((r) => ` --allow ${sq(r)}`).join('')
 const diffCheck1 = (t, role, since, retry) => agent(`Run one command and return its JSON output as the schema fields (change nothing, analyse nothing):
 node ${SCRIPTS}/role-diff-check.js --wt ${t.wt} --since ${since} --role ${role}${role === 'tester' ? ALLOW : ''}
@@ -502,6 +506,7 @@ async function reviewLoop(t, st, tag) {
 // After the preconditions every outcome passes the leftovers post-check; removed leftovers are named in the result.
 // The analysis marker is checked before any agent; from then on every result carries it (analysis).
 async function chain(t0) {
+  if (TESTER_WRITABLE_MISSING) return stop(t0, 'preconditions', { problems: [TESTER_WRITABLE_MISSING], questions: [TESTER_WRITABLE_MISSING] })
   const an = analysisOf(t0)
   if (an.error) return stop(t0, 'preconditions', { problems: [an.error], questions: [an.error] })
   const uc = useCasesOf(t0)
