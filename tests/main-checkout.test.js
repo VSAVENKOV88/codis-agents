@@ -62,5 +62,6 @@ const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
 ok('README: guards-all.sh row names the main working copy refusal and --main-checkout', /\| `scripts\/guards-all\.sh` \|[^\n]*main working copy[^\n]*--main-checkout/.test(read('README.md')));
 ok('README: scripts table names main-checkout.js', /\| `scripts\/main-checkout\.js` \|/.test(read('README.md')));
 const machine = read('rules/multi-agent.md').split('## Machine and environment')[1].split('\n## ')[0];
-ok('rules, Machine and environment: the main working copy refusal and --main-checkout', /main working copy[^\n]*--main-checkout/.test(machine));
+const bullet = (machine.split('\n- ').find((b) => /^\*\*No full guard run in the main working copy/.test(b)) || '');
+ok('rules, Machine and environment: the main working copy refusal, wt-setup.sh and --main-checkout', /--main-checkout/.test(bullet) && /wt-setup\.sh/.test(bullet) && /git-common-dir/.test(bullet), bullet);
 done();

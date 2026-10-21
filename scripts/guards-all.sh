@@ -25,20 +25,25 @@
 # Reuse: HEAD, clean tracked tree, command and final code are kept next to the log (<log>.meta.json). The same HEAD,
 #   still clean, same command, final code 0 -> no new run: "reused, HEAD <sha>" and the saved summary, exit 0.
 #   --force runs anyway.
-# usage: guards-all.sh [--force] <worktree>   (a name under worktreeRoot, or a path) -> log in <sharedDir>/guards-<name>.txt
+# Main working copy (scripts/main-checkout.js): a worktree that is the main working copy of its repository
+#   (git-dir == git-common-dir) is refused with 78 before any slot - its ignored data is the only original and a guard
+#   run there once wiped a corpus; task worktrees hold clones (wt-setup.sh). --main-checkout runs it anyway, for a
+#   project that has no worktrees (a flag, not an environment variable, so it is never inherited silently).
+# usage: guards-all.sh [--force] [--main-checkout] <worktree>   (a name under worktreeRoot, or a path) -> log in <sharedDir>/guards-<name>.txt
 #   A worktree directly under worktreeRoot (by name or by path) logs as guards-<name>.txt; any other path as
 #   guards-<basename>-<cksum of its resolved path>.txt, so two worktrees with the same basename never share a log and
 #   its reuse record.
 H=${0:A:h}
-FORCE=0; typeset -a POS
-for a in "$@"; do if [[ $a == --force ]]; then FORCE=1; else POS+=("$a"); fi; done
+FORCE=0 MAINOK=(); typeset -a POS
+for a in "$@"; do if [[ $a == --force ]]; then FORCE=1; elif [[ $a == --main-checkout ]]; then MAINOK=(--main-checkout); else POS+=("$a"); fi; done
 set -- "${POS[@]}"
-[[ -n $1 ]] || { print -u2 "usage: guards-all.sh [--force] <worktree name or path>"; exit 64; }
+[[ -n $1 ]] || { print -u2 "usage: guards-all.sh [--force] [--main-checkout] <worktree name or path>"; exit 64; }
 cfg() { node "$H/config.js" get "$1" 2>/dev/null }
 source "$H/slots.zsh" || exit $?
 [[ -n $CODIS_WORKTREE_ROOT && -n $CODIS_SHARED_DIR ]] || { print -u2 "guards-all: no project config (.claude/codis-agents.json) found"; exit 78; }
 if [[ $1 == /* ]]; then WT=$1; else WT=$CODIS_WORKTREE_ROOT/$1; fi
 [[ -d $WT ]] || { print -u2 "guards-all: no worktree $WT"; exit 66; }
+node "$H/main-checkout.js" $MAINOK "$WT" || exit $?
 NAME=${WT:A:t}
 [[ ${WT:A:h} == ${CODIS_WORKTREE_ROOT:A} ]] || NAME=$NAME-${${=$(print -rn -- ${WT:A} | cksum)}[1]}
 OUT=$CODIS_SHARED_DIR/guards-$NAME.txt

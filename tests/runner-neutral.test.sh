@@ -41,7 +41,9 @@ while [[ -e '$T'/hold.$tag ]]; do sleep 0.1; done
 print -r -- "end $tag" >> '$T'/run.log
 print -r -- "1 passed in 0.01s"' > $T/bin/pytest
 chmod +x $T/bin/*; export PATH=$T/bin:$PATH
-for d in wts/xp wts/xq other/xp; do mkdir -p $T/$d; git -C $T/$d init -q; git -C $T/$d -c user.email=t@t -c user.name=t commit -q --allow-empty -m x; done
+# The worktrees are linked worktrees of one repository: guards-all.sh refuses a main working copy (main-checkout.js).
+git init -q $T/repo && git -C $T/repo -c user.email=t@t -c user.name=t commit -q --allow-empty -m x
+for d in wts/xp wts/xq other/xp; do mkdir -p $T/$d; git -C $T/repo worktree add -q --detach $T/$d; done
 pass=0 fail=0 skipped=0
 ok() { if eval "$2"; then (( pass++ )); print -r -- "  ok   $1"; else (( fail++ )); print -r -- "  FAIL $1${3:+
        $3}"; fi }
