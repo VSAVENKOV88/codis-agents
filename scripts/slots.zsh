@@ -44,8 +44,9 @@
 #    otherwise the answer is "unknown" and the extra slot is refused until history accumulates.
 # All thresholds and sources come from the environment, so tests/slots-check.sh can check them on a fake machine.
 # LINUX (proc(5); the table is at "Machine measurement" below; not measured on hardware): swap capacity is SwapFree,
-# swap-out the pswpout counter x PAGESIZE. No swap at all (SwapTotal 0) with SLOT_SWAP_MIN_MB > 0 is a refusal at once,
-# with the numbers, code 78; SLOT_SWAP_MIN_MB=0 switches the swap check off (a machine without swap is normal: cloud
+# swap-out the pswpout counter x PAGESIZE. A swap smaller than the threshold (SwapTotal / 1024 < SLOT_SWAP_MIN_MB, no
+# swap at all included) is a refusal at once, with the numbers, code 78 (SwapFree never exceeds SwapTotal, so waiting
+# would never end); a swap at least the threshold but filled up is a wait; SLOT_SWAP_MIN_MB=0 switches the swap check off (a machine without swap is normal: cloud
 # VMs). The extra heavy slot is OFF on Linux unless SLOT_THIRD_FREE_PCT is set explicitly: then free memory is
 # MemAvailable / MemTotal, a different measure from memory_pressure, so the 50 % above does not carry over.
 # NOT MEASURED (a source that cannot be read, an unknown OS): one line "swap not measured (...) - not checked" and the
@@ -394,10 +395,19 @@ slot_run() {
   local kind=${SLOT_KIND:-single} retry=${SLOT_RETRY_RC:-} qnum= qf= pos=0 m h o treq=$(_slot_now) tacq= jslot= jcmd=( "$@" )
   [[ $class == (medium|heavy) ]] || { print -u2 "slot_run: class must be medium|heavy, not \"$class\""; return 64; }
   if _slot_unwritable; then _slot_unwritable_say; rm -f $got; _slot_journal $treq - $(_slot_now) $class - $kind 77 "${jcmd[@]}"; return 77; fi
-  # No swap at all (Linux, SwapTotal 0 - a cloud VM) while a slot needs swap capacity: no slot would ever be given, so
-  # refuse at once with the numbers (78: the threshold does not suit this machine; U1 decision 3), never wait forever.
-  if (( SLOT_SWAP_MIN_MB > 0 )) && [[ $SLOT_OS == linux ]] && _slot_swap && [[ $_SLOT_MI[SwapTotal] == 0 ]]; then
-    print -u2 -r -- "codis-agents slots: refused - this machine has no swap (SwapTotal 0 kB in $SLOT_PROC/meminfo; MemTotal ${_SLOT_MI[MemTotal]:+$(( _SLOT_MI[MemTotal] / 1024 ))} MB, MemAvailable ${_SLOT_MI[MemAvailable]:+$(( _SLOT_MI[MemAvailable] / 1024 ))} MB), but every slot needs swap capacity SLOT_SWAP_MIN_MB = $SLOT_SWAP_MIN_MB MB and would wait forever; on a machine without swap run with SLOT_SWAP_MIN_MB=0 (swap check off), or add swap"
+  # Linux swap smaller than the threshold (SwapTotal / 1024 < SLOT_SWAP_MIN_MB; SwapTotal 0 - no swap, a cloud VM) while
+  # a slot needs swap capacity: SwapFree never exceeds SwapTotal and Linux swap does not grow by itself, so no slot would
+  # ever be given - refuse at once with the numbers (78: the threshold does not suit this machine; U1 decision 3 and the
+  # coordinator's decision of 2026-10-21 after review 1), never wait forever. A 4 GiB swap is 4194300 kB = 4095 MB (its
+  # header page), below the default 4096: compared as read, never rounded up.
+  if (( SLOT_SWAP_MIN_MB > 0 )) && [[ $SLOT_OS == linux ]] && _slot_swap && (( _SLOT_MI[SwapTotal] / 1024 < SLOT_SWAP_MIN_MB )); then
+    local swmb=$(( _SLOT_MI[SwapTotal] / 1024 ))
+    local mem="MemTotal ${_SLOT_MI[MemTotal]:+$(( _SLOT_MI[MemTotal] / 1024 ))} MB, MemAvailable ${_SLOT_MI[MemAvailable]:+$(( _SLOT_MI[MemAvailable] / 1024 ))} MB"
+    if (( _SLOT_MI[SwapTotal] == 0 )); then
+      print -u2 -r -- "codis-agents slots: refused - this machine has no swap (SwapTotal 0 kB in $SLOT_PROC/meminfo; $mem), but every slot needs swap capacity SLOT_SWAP_MIN_MB = $SLOT_SWAP_MIN_MB MB and would wait forever; on a machine without swap run with SLOT_SWAP_MIN_MB=0 (swap check off), or add swap"
+    else
+      print -u2 -r -- "codis-agents slots: refused - the swap of this machine is smaller than the threshold (SwapTotal ${_SLOT_MI[SwapTotal]} kB = $swmb MB in $SLOT_PROC/meminfo; $mem), but every slot needs swap capacity SLOT_SWAP_MIN_MB = $SLOT_SWAP_MIN_MB MB and would wait forever (SwapFree never exceeds SwapTotal); set SLOT_SWAP_MIN_MB to $swmb or less (0 switches the swap check off), or add swap"
+    fi
     rm -f $got; _slot_journal $treq - $(_slot_now) $class - $kind 78 "${jcmd[@]}"; return 78
   fi
   : > $SLOTS_DIR/admit.lock; mkdir -p $SLOTS_DIR/queue

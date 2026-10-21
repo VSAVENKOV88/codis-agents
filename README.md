@@ -161,8 +161,9 @@ zsh's own `zsystem flock` on macOS and Linux and need `ps` and `pgrep` (procps; 
 exit 72); the exclusive guard lock needs `lockf(1)` (macOS) or `flock(1)` (Linux, util-linux). The memory and swap
 readings come from `sysctl`, `memory_pressure`, `vm_stat` and `df` on macOS and from `/proc/meminfo`, `/proc/vmstat`
 and `getconf PAGESIZE` on Linux (`SLOT_OS` and `SLOT_PROC` override the source; the Linux readings are checked on a
-fake machine and in a container, not on Linux hardware). A Linux machine without swap needs `SLOT_SWAP_MIN_MB=0`: with
-the default threshold the slot scripts refuse at once (exit 78) and say so.
+fake machine and in a container, not on Linux hardware). A Linux machine without swap needs `SLOT_SWAP_MIN_MB=0`, and one
+with less swap than 4096 MB (a 4 GiB swap file is 4095 MB) a lower `SLOT_SWAP_MIN_MB`: with the default threshold the
+slot scripts refuse at once (exit 78) and say so.
 The workflow, agents, hooks and post-checks work anywhere. `wt-setup.sh` clones ignored data with an APFS clone (`cp -c`) and, where that is refused,
 with `cp -r --reflink=auto` (GNU), then a plain copy. On a machine without zsh (Linux, CI) `npm test` stays green and
 the zsh tests are skipped with "skipped: zsh not found" in their line and in the final tally.
@@ -337,8 +338,11 @@ The thresholds are measurements from a 16 GB machine; every one can be overridde
 | swapped out | `vm_stat` Swapouts x page size | `pswpout` of `/proc/vmstat` x `getconf PAGESIZE` |
 
 On Linux the extra heavy slot is off unless `SLOT_THIRD_FREE_PCT` is set explicitly (the 50 % was measured with
-`memory_pressure`, and `MemAvailable` is a different measure). No swap at all (`SwapTotal 0`) with a swap threshold
-above 0 is a refusal at once with the numbers (exit 78), not an endless wait. A reading that cannot be taken (an
+`memory_pressure`, and `MemAvailable` is a different measure). A swap smaller than the threshold
+(`SwapTotal / 1024 < SLOT_SWAP_MIN_MB`, no swap at all included) is a refusal at once with the numbers (exit 78), not an
+endless wait: `SwapFree` never exceeds `SwapTotal`, and Linux swap does not grow by itself. A 4 GiB swap file shows
+`SwapTotal 4194300 kB` = 4095 MB (the header page), below the default 4096; the refusal names the value of
+`SLOT_SWAP_MIN_MB` that fits. A swap at least the threshold but filled up is a wait, as on macOS. A reading that cannot be taken (an
 unreadable source, an unknown OS) gives one line "swap not measured (...) - not checked" and the slot; the extra heavy
 slot is then refused as "memory not measured". Inside a container `/proc/meminfo` shows the memory of the host.
 
