@@ -298,6 +298,20 @@ done
 nlog; $H/guards-all.sh xo > $T/rc.out 2>&1; rc=$?
 ok '10b. runner exits 0 -> guards-all.sh exits 0' '(( rc == 0 ))' "code $rc"
 
+# 10c. the main working copy (git-dir == git-common-dir) is refused with 78 before any slot or runner: its ignored data
+#      is the only original (a guard run there once wiped a corpus); a linked worktree runs; --main-checkout runs it.
+mkdir -p $T/main/srv/tools; print -r -- "// old runner" > $T/main/srv/tools/guards.js
+gm() { git -C $T/main -c user.name=t -c user.email=t@t "$@" }
+gm init -q -b main && gm add srv/tools/guards.js && gm commit -qm base && gm worktree add -q -b b-xg $T/wts/xg
+ticks main 1; ticks xg 1
+nlog; $H/guards-all.sh $T/main > $T/mc.out 2>&1; rc=$?
+ok '10c. guards-all.sh on the main working copy -> 78, the reason, the path, wt-setup.sh, no runner started' \
+  '(( rc == 78 )) && grep -q "main working copy" $T/mc.out && grep -qF -- "$T/main" $T/mc.out && grep -q "wt-setup.sh" $T/mc.out && ! grep -q "^start" $T/npm.log' "code $rc; $(cat $T/mc.out; cat $T/npm.log)"
+nlog; $H/guards-all.sh xg > $T/mc.out 2>&1; rc=$?
+ok '10c. guards-all.sh on a linked worktree of the same repository -> runs' '(( rc == 0 )) && grep -q "^start xg " $T/npm.log' "code $rc; $(cat $T/mc.out)"
+nlog; $H/guards-all.sh --main-checkout $T/main > $T/mc.out 2>&1; rc=$?
+ok '10c. guards-all.sh --main-checkout on the main working copy -> runs' '(( rc == 0 )) && grep -q "^start main " $T/npm.log' "code $rc; $(cat $T/mc.out)"
+
 # 11. a fixed runner FIRST alone (6 until the end) + a second full run -> the second waits, not 6 + 3 = 9
 export SLOT_SAY=1
 for second in xo2 xn2; do
