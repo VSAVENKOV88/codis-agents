@@ -86,7 +86,9 @@ try {
     ok(`unknown: "${c}" may delete a remote branch named like the local tag - refused with the reason`, unknownRe.test(bash(c, norem, unk) || ''), String(bash(c, norem, unk)));
   }
   ok('unknown: a delete of refs/tags/build-1 is a tag delete - allowed', bash('git push origin :refs/tags/build-1', norem, unk) === null, String(bash('git push origin :refs/tags/build-1', norem, unk)));
-  ok('unknown: src tag v1.0 to dst build-1 (an existing tag) stays a tag push - allowed', bash('git push origin v1.0:build-1', norem, unk) === null, String(bash('git push origin v1.0:build-1', norem, unk)));
+  // p-sec (owner 2026-10-21): a bare destination after a colon is matched by git against the remote's refs - a remote
+  // branch build-1 is updated though the source is a tag (tests/hooks-sec.test.js); while unknown it is refused.
+  ok('unknown: src tag v1.0 to the bare dst build-1 may update a remote branch build-1 - refused with the reason', unknownRe.test(bash('git push origin v1.0:build-1', norem, unk) || ''), String(bash('git push origin v1.0:build-1', norem, unk)));
   // Round 4 (tester): every other spelling of a bare-name delete is refused while unknown; only an explicit
   // refs/tags/ delete is a tag delete, and it is judged by protectedTagPattern.
   for (const c of ['git push origin +:build-1', 'git push -fd origin build-1', 'git push origin --delete refs/heads/build-1',
