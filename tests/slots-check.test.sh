@@ -311,6 +311,25 @@ nlog; $H/guards-all.sh xg > $T/mc.out 2>&1; rc=$?
 ok '10c. guards-all.sh on a linked worktree of the same repository -> runs' '(( rc == 0 )) && grep -q "^start xg " $T/npm.log' "code $rc; $(cat $T/mc.out)"
 nlog; $H/guards-all.sh --main-checkout $T/main > $T/mc.out 2>&1; rc=$?
 ok '10c. guards-all.sh --main-checkout on the main working copy -> runs' '(( rc == 0 )) && grep -q "^start main " $T/npm.log' "code $rc; $(cat $T/mc.out)"
+# 10d (tester). The refusal comes before the reuse record: the --main-checkout run above left one (same HEAD, clean,
+#      code 0), yet a run without the flag is still 78, never "reused". It comes before any slot request too (no new
+#      journal line). Other spellings of the main copy are refused as well: a subdirectory, a symlink (with a space in
+#      its name, so the path reaches main-checkout.js as one argument); an environment variable is no override; the flag
+#      after the path, with --force, runs.
+JN() { local n; n=$(wc -l < $SLOTS_DIR/journal.tsv 2>/dev/null); print -r -- $(( ${n:-0} )) }
+j0=$(JN); nlog; $H/guards-all.sh $T/main > $T/mc.out 2>&1; rc=$?
+ok '10d. after a --main-checkout run left a reuse record, the main copy without the flag -> still 78, not reused' \
+  '(( rc == 78 )) && ! grep -q "reused" $T/mc.out && grep -q "main working copy" $T/mc.out' "code $rc; $(cat $T/mc.out)"
+ok '10d. the refused run requested no slot (journal unchanged)' '(( $(JN) == j0 ))' "journal $j0 -> $(JN)"
+nlog; MAINOK=--main-checkout MAIN_CHECKOUT=1 CODIS_MAIN_CHECKOUT=1 $H/guards-all.sh --force $T/main > $T/mc.out 2>&1; rc=$?
+ok '10d. environment variables do not override the refusal' '(( rc == 78 )) && ! grep -q "^start" $T/npm.log' "code $rc; $(cat $T/mc.out)"
+nlog; $H/guards-all.sh --force $T/main/srv > $T/mc.out 2>&1; rc=$?
+ok '10d. a subdirectory of the main working copy -> 78' '(( rc == 78 )) && grep -q "main working copy" $T/mc.out && ! grep -q "^start" $T/npm.log' "code $rc; $(cat $T/mc.out)"
+ln -s $T/main "$T/main link"
+nlog; $H/guards-all.sh --force "$T/main link" > $T/mc.out 2>&1; rc=$?
+ok '10d. a symlink (name with a space) to the main working copy -> 78' '(( rc == 78 )) && grep -q "main working copy" $T/mc.out && ! grep -q "^start" $T/npm.log' "code $rc; $(cat $T/mc.out)"
+nlog; $H/guards-all.sh $T/main --force --main-checkout > $T/mc.out 2>&1; rc=$?
+ok '10d. the flag after the path, with --force -> runs the main copy' '(( rc == 0 )) && grep -q "^start main " $T/npm.log' "code $rc; $(cat $T/mc.out)"
 
 # 11. a fixed runner FIRST alone (6 until the end) + a second full run -> the second waits, not 6 + 3 = 9
 export SLOT_SAY=1
