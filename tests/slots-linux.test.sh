@@ -14,7 +14,8 @@
 #   B3.    swap used = SwapTotal - SwapFree; its growth over the window refuses the extra slot;
 #   B10.   a source that cannot be read (no meminfo, an unknown OS, a failing sysctl on macOS) - "swap not measured -
 #          not checked" once, the slot is given; the extra slot is refused as "not measured".
-# On Linux the macOS tools (sysctl, memory_pressure, vm_stat, df) are never called.
+# On Linux the macOS tools (sysctl, memory_pressure, vm_stat, df) are never called; with SLOT_OS unset the source
+# follows $OSTYPE. A job of a case that never ends is a failure after 90 s, not a stuck test.
 H=${0:A:h:h}/scripts
 zmodload zsh/datetime
 T=$(mktemp -d "${${TMPDIR:-/tmp}%/}/slots-linux.XXXXXX"); T=${T:A}
@@ -92,7 +93,14 @@ once() {
   waitlong "[[ -s $T/$n.rc ]]" || { pkill -P $p 2>/dev/null; kill $p 2>/dev/null; print -r -- hang > $T/$n.rc }
 }
 rc() { print -r -- $(<$T/$1.rc) }
-clean() { wait $JP 2>/dev/null; JP=(); rm -f $T/*.start(N) $T/*.end(N) $T/rel.*(N) }
+# clean - the jobs of the case end; one still running after 90 s is a failure, killed, never an endless wait of the test
+clean() {
+  local p live
+  waitlong 'live=(); for p in $JP; do kill -0 $p 2>/dev/null && live+=$p; done; (( ! ${#live} ))' || {
+    (( fail++ )); print -r -- "  FAIL a job of the case still waits after 90 s (killed): pids $live"
+    for p in $live; do pkill -P $p 2>/dev/null; kill $p 2>/dev/null; done }
+  wait $JP 2>/dev/null; JP=(); rm -f $T/*.start(N) $T/*.end(N) $T/rel.*(N)
+}
 
 # B2/B8. SwapFree 1000 MB < 4096: even the first medium waits, with the number of /proc/meminfo
 setp swfree 1024000
@@ -174,6 +182,11 @@ ok 'B3. used stands still - the third went' 'started d3' "$(tail -3 $T/d3.out)"
 rel d1 d2 d3; clean
 setp swtotal 30720000; setp swfree 20480000; sleep 0.3
 
+# The source follows the OS by default ($OSTYPE: "linux-gnu" -> linux, "darwin25.0" -> darwin); SLOT_OS overrides it.
+osd() { ( unset SLOT_OS; OSTYPE=$1; source $H/slots.zsh >/dev/null 2>&1; print -r -- $SLOT_OS ) }
+ok 'SLOT_OS unset: OSTYPE linux-gnu -> linux, darwin25.0 -> darwin, freebsd14.1 -> freebsd (not measured)' \
+  '[[ $(osd linux-gnu) == linux && $(osd darwin25.0) == darwin && $(osd freebsd14.1) == freebsd ]]' \
+  "linux-gnu -> $(osd linux-gnu), darwin25.0 -> $(osd darwin25.0), freebsd14.1 -> $(osd freebsd14.1)"
 ok 'Linux readings never called the macOS tools (sysctl, memory_pressure, vm_stat, df)' '[[ ! -e $T/mac.called ]]'
 
 # B10. a source that cannot be read: the slot is given with one note, the extra slot is refused as not measured
