@@ -401,6 +401,12 @@ fallback to another slot directory: a second directory would be a second queue t
   `git update-ref` have no second layer, and once a wrapper has moved `refs/remotes/origin/HEAD`, `pre-push` protects
   the branch it now points to. Wrappers: their own task (owner 2026-10-21); a second layer that reads the default branch
   from the remote (`git ls-remote --symref <remote> HEAD`) or the config and refuses without the network: task p-head2.
+- Git config that itself runs a command is the same class of indirection and passes the session hook: `git -c
+  core.fsmonitor='git remote set-head origin feat; true' status` moves `refs/remotes/origin/HEAD` (measured with git
+  2.50, a project with a config, no tty); likewise `-c core.sshCommand=...`, `-c diff.external=...`, `-c core.pager=...`
+  and `GIT_PAGER`, `-c man.<tool>.cmd=...` with `--help`, and config passed through the environment
+  (`GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_<n>` / `GIT_CONFIG_VALUE_<n>`, `GIT_CONFIG_PARAMETERS`). Open; to be closed with
+  the wrappers in their own task (owner 2026-10-21).
 - The session hook splits a line by its own small lexer, not by the grammar of the shell (zsh on macOS, bash in
   Linux), and a git command it does not see as one passes. Open forms (measured with git 2.50, zsh and bash): a leading
   reserved word or modifier (`{ git ...; }`, `! git`, `time [-p] git`, `if ...; then git`, `do git`, zsh `repeat 1 git`,
