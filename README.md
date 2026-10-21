@@ -425,6 +425,9 @@ fallback to another slot directory: a second directory would be a second queue t
   `scripts/hooks/guard-bash.js`, checked by `tests/hooks-sec-globals.test.js` against the git it runs on); in a
   project with a config an option outside the table is refused. A git that adds a global option with a value needs a
   new row; until then the hook refuses it (fail closed), it does not misread it.
+  From a directory without a project config the unknown option is not refused, even when `-C` then points into a
+  project: `git --newopt -C <project> remote set-head ...` passes the session hook (open; `pre-push` stays the layer
+  for pushes).
 - `git branch -dr origin/HEAD` deletes `refs/remotes/origin/HEAD` and the session hook does not judge it; with no
   `defaultBranch` / `protectedBranches` the branches then become unknown and every branch push is refused (closed, not
   open), until the owner sets it again.
