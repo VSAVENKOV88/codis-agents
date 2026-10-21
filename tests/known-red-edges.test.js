@@ -4,6 +4,7 @@
 // paths that tests/known-red.test.js, tests/tester-writable.test.js and tests/chain-cost-paths.test.js do not reach:
 // - F2 a new red whose name is an Object.prototype member (constructor, toString, hasOwnProperty, __proto__) is not
 //   "known" because of the prototype of the baseline object: it reruns and its code stands;
+//   while an own baseline key with such a name ("__proto__", "constructor") is known, and named when it is stale;
 // - F2 an empty baseline {} subtracts nothing (the rerun goes as without a baseline);
 // - F5 config: a "~/" path is an error, an empty guardBaseline without guardRerun is not;
 // - F5/F2 end to end through guards-all.sh: a broken baseline file -> the error line and the runner's code, nothing
@@ -53,6 +54,15 @@ async function main() {
       ok(`F2 a new red named ${n} is not known through the prototype -> it reruns, the runner code stands`,
         r.rc === 1 && JSON.stringify(calls()) === JSON.stringify([n]) && /\b1 known red\b/.test(r.text) && !/no new reds/.test(r.text), `${r.text} calls ${calls()}`);
     }
+    // round 2: an own key of the baseline named after a prototype member is known (JSON.parse makes "__proto__" an
+    // own key), and a stale one is named
+    known('{"__proto__": "BACKLOG #7", "constructor": "BACKLOG #8"}');
+    const rp = R(['__proto__', 'constructor']);
+    ok('F1 own baseline keys __proto__ and constructor -> both known, nothing reruns, exit 0',
+      rp.rc === 0 && calls().length === 0 && /2 known red, no new reds/.test(rp.text) && /__proto__ — BACKLOG #7/.test(rp.text) && /constructor — BACKLOG #8/.test(rp.text), `${rp.text} calls ${calls()}`);
+    const rs = R(['tests/test_n.py::new']);
+    ok('F6 own baseline key __proto__ not red in a finished run -> "known red not red now: __proto__", the new red reruns',
+      rs.rc === 1 && JSON.stringify(calls()) === '["tests/test_n.py::new"]' && /known red not red now: __proto__ — remove it/.test(rs.text) && /known red not red now: constructor — remove it/.test(rs.text), `${rs.text} calls ${calls()}`);
     known({});
     const r = R(['tests/test_a.py::t1']);
     ok('F2 an empty baseline {} subtracts nothing -> the red reruns, the runner code stands', r.rc === 1 && JSON.stringify(calls()) === '["tests/test_a.py::t1"]' && !/known red/.test(r.text), `${r.text} calls ${calls()}`);
