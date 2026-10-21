@@ -13,7 +13,13 @@
 //    remote branch master), so only <tag> without a colon or <src>:refs/tags/<name> is a tag push;
 //  * `git remote set-head` (any form) and a write or delete of `git symbolic-ref refs/remotes/<remote>/HEAD`: the
 //    default branch the hooks protect is where the local refs/remotes/origin/HEAD points (config.js), so moving or
-//    dropping it is the owner's call too (ALLOW_PROTECTED_PUSH=1 on the owner's explicit word).
+//    dropping it is the owner's call too (ALLOW_PROTECTED_PUSH=1 on the owner's explicit word); so is `git update-ref`
+//    on refs/remotes/<remote>/HEAD, and `git update-ref --stdin` (its refs come from input the hook cannot see);
+//  * a git command the hook judges that names its repository with --git-dir / --work-tree or GIT_DIR / GIT_WORK_TREE /
+//    GIT_COMMON_DIR (inline, through env, assigned anywhere in the same command line, or in the hook's environment):
+//    the config is looked up from those paths too, and a push is refused (the hook reads the branches through -C).
+// git takes any unique prefix of a long option (gitcli(7)): --del is --delete. A word that is a prefix of a long option
+// the hook judges counts as that option; an ambiguous prefix makes git fail, so judging it so is safe.
 // Active only in projects that have .claude/codis-agents.json: the plugin is opt-in per project.
 // The git pre-push hook (scripts/git-hooks/pre-push) is the last line; this hook explains the refusal to the agent
 // before anything runs.
@@ -48,6 +54,13 @@ function parse(line) {
 const GIT_GLOBAL_WITH_VALUE = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--exec-path', '--config-env']);
 const PUSH_WITH_VALUE = new Set(['-o', '--push-option', '--repo', '--receive-pack', '--exec', '--signed']);
 
+// git accepts a unique prefix of a long option, with or without =<value> (gitcli(7); measured with git 2.50:
+// `git symbolic-ref --del`, `git push --de`, `git update-ref --no-d`). Git's own global options (--git-dir) do not.
+const longOpt = (a, name) => { if (!a.startsWith('--')) return false; const n = a.slice(2).split('=')[0]; return n.length > 0 && name.startsWith(n); };
+const REMOTE_HEAD = /^refs\/remotes\/.+\/HEAD$/iu;
+// The variables that name the repository git works on (git(1) ENVIRONMENT VARIABLES).
+const GIT_REPO_VAR = /^(GIT_DIR|GIT_WORK_TREE|GIT_COMMON_DIR)=/;
+
 const HEAD_WHY = 'refs/remotes/origin/HEAD names the default branch the hooks protect when the config does not; moving or dropping it is the owner\'s call (ALLOW_PROTECTED_PUSH=1 only on the owner\'s explicit word)';
 
 // git remote [-v | --verbose] set-head ... (git-remote(1)) - every form: --auto, --delete and a branch name all rewrite
@@ -59,6 +72,14 @@ const HEAD_WHY = 'refs/remotes/origin/HEAD names the default branch the hooks pr
 // JavaScript /i regex does not fold U+017F to s (or U+212A Kelvin to k). Git subcommand names are case-sensitive
 // (`git Remote` fails: cannot handle Remote as a builtin), so only the ref name needs it.
 function judgeRemoteHead(sub, args) {
+  if (sub === 'update-ref') {
+    // git update-ref [-m <reason>] [--no-deref] (-d <ref> [<old>] | <ref> <new> [<old>] | --stdin [-z]) (git-update-ref(1)):
+    // with --no-deref it rewrites the symbolic ref itself, and --stdin takes symref-update/-delete commands from input.
+    const stdin = args.find((a) => longOpt(a, 'stdin'));
+    if (stdin) return `\`git update-ref ${stdin}\` is refused: it takes the refs to change from its input, which the hook cannot judge, and it can move refs/remotes/origin/HEAD - ${HEAD_WHY}.`;
+    const name = args.find((a) => REMOTE_HEAD.test(a));
+    return name ? `\`git update-ref ${name}\` is refused: ${HEAD_WHY}.` : null;
+  }
   if (sub === 'remote') {
     let k = 0;
     while (k < args.length && args[k].startsWith('-')) k++;
@@ -70,7 +91,7 @@ function judgeRemoteHead(sub, args) {
     const a = args[k];
     if (dashes || !a.startsWith('-') || a === '-') { pos.push(a); continue; }
     if (a === '--') { dashes = true; continue; }
-    if (a === '--delete') { del = true; continue; }
+    if (longOpt(a, 'delete')) { del = true; continue; }
     if (a.startsWith('--')) { if (a === '--message') k++; continue; }
     // A cluster of short options (-qd, -qm why, -mwhy): d deletes, m takes the rest or the next word as its value.
     const m = a.indexOf('m');
@@ -78,7 +99,7 @@ function judgeRemoteHead(sub, args) {
     if (flags.includes('d')) del = true;
     if (m === a.length - 1) k++;
   }
-  if (/^refs\/remotes\/.+\/HEAD$/iu.test(pos[0] || '') && (del || pos.length >= 2)) return `\`git symbolic-ref ${pos[0]}\` (write or delete) is refused: ${HEAD_WHY}.`;
+  if (REMOTE_HEAD.test(pos[0] || '') && (del || pos.length >= 2)) return `\`git symbolic-ref ${pos[0]}\` (write or delete) is refused: ${HEAD_WHY}.`;
   return null;
 }
 
@@ -88,17 +109,27 @@ function judge(words, ctx) {
   while (i < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i])) { if (words[i] === 'ALLOW_PROTECTED_PUSH=1') allow = true; i++; }
   if (words[i] === 'env') { i++; while (i < words.length && /=/.test(words[i])) { if (words[i] === 'ALLOW_PROTECTED_PUSH=1') allow = true; i++; } }
   if (!(words[i] === 'git' || /\/git$/.test(words[i] || ''))) return null;
+  // Paths that name the repository instead of -C: assignments before git (also through env), the line's own, the hook's.
+  const repoPaths = [...ctx.repoVars, ...words.slice(0, i).filter((w) => GIT_REPO_VAR.test(w)).map((w) => w.slice(w.indexOf('=') + 1))];
   i++;
   let dir = ctx.cwd;
   while (i < words.length && words[i].startsWith('-')) {
     const o = words[i];
+    if (o === '--git-dir' || o === '--work-tree') repoPaths.push(words[i + 1] || '');
+    else if (o.startsWith('--git-dir=') || o.startsWith('--work-tree=')) repoPaths.push(o.slice(o.indexOf('=') + 1));
     if (GIT_GLOBAL_WITH_VALUE.has(o)) { if (o === '-C') dir = path.resolve(dir, words[i + 1] || ''); i += 2; } else i++;
   }
   const sub = words[i], args = words.slice(i + 1);
-  if (sub !== 'add' && sub !== 'push' && sub !== 'remote' && sub !== 'symbolic-ref') return null;
-  const cfg = ctx.cfgFor(dir);
+  if (sub !== 'add' && sub !== 'push' && sub !== 'remote' && sub !== 'symbolic-ref' && sub !== 'update-ref') return null;
+  let cfg = ctx.cfgFor(dir);
+  if (repoPaths.length) {
+    // The repository git works on is not dir: take the config from any of the places the command can reach.
+    const home = ctx.env.HOME || '';
+    for (const p of repoPaths) if (!cfg) cfg = ctx.cfgFor(path.resolve(dir, p.replace(/^~(?=\/|$)/, home))) || ctx.cfgFor(ctx.cwd);
+    if (cfg && sub === 'push' && !allow) return `\`git push\` with --git-dir, --work-tree, GIT_DIR, GIT_WORK_TREE or GIT_COMMON_DIR is refused: the hook judges the branches of the repository it reads through -C; run git -C <worktree> push instead (ALLOW_PROTECTED_PUSH=1 only on the owner's explicit word).`;
+  }
   if (!cfg) return null;
-  if (sub === 'remote' || sub === 'symbolic-ref') return allow ? null : judgeRemoteHead(sub, args);
+  if (sub === 'remote' || sub === 'symbolic-ref' || sub === 'update-ref') return allow ? null : judgeRemoteHead(sub, args);
   if (sub === 'add') {
     const blanket = args.find((a) => a === '-A' || a === '--all' || a === '--no-ignore-removal' || a === '.' || a === './' || a === ':/' || /^-[a-zA-Z]*A[a-zA-Z]*$/.test(a));
     if (blanket) return `\`git add ${blanket}\` is refused: stage files by path (git add <path>...), never everything at once.`;
@@ -110,10 +141,10 @@ function judge(words, ctx) {
   let force = false, del = false;
   for (let k = 0; k < args.length; k++) {
     const a = args[k];
-    if (a === '--force' || a.startsWith('--force-with-lease') || a === '--force-if-includes' || /^-[a-zA-Z]*f[a-zA-Z]*$/.test(a)) force = true;
-    if (a === '--delete' || /^-[a-zA-Z]*d[a-zA-Z]*$/.test(a)) del = true;
-    if (a === '--all' || a === '--mirror') return `\`git push ${a}\` is refused: it pushes protected refs too. Push your branch by name.`;
-    if (a === '--tags' || a === '--follow-tags') return `\`git push ${a}\` is refused: tags matching ${cfg.protectedTagPattern} may deploy to production. Push a tag only on the owner's explicit word, with ALLOW_PROTECTED_PUSH=1.`;
+    if (longOpt(a, 'force') || longOpt(a, 'force-with-lease') || longOpt(a, 'force-if-includes') || /^-[a-zA-Z]*f[a-zA-Z]*$/.test(a)) force = true;
+    if (longOpt(a, 'delete') || /^-[a-zA-Z]*d[a-zA-Z]*$/.test(a)) del = true;
+    if (longOpt(a, 'all') || longOpt(a, 'mirror')) return `\`git push ${a}\` is refused: it pushes protected refs too. Push your branch by name.`;
+    if (longOpt(a, 'tags') || longOpt(a, 'follow-tags')) return `\`git push ${a}\` is refused: tags matching ${cfg.protectedTagPattern} may deploy to production. Push a tag only on the owner's explicit word, with ALLOW_PROTECTED_PUSH=1.`;
     if (PUSH_WITH_VALUE.has(a)) { k++; continue; }
     if (a === '--') continue;
     if (a.startsWith('-')) continue;
@@ -179,6 +210,11 @@ function decide(input, env = process.env) {
   if (!input || input.tool_name !== 'Bash' || !input.tool_input || typeof input.tool_input.command !== 'string') return null;
   const cwd = input.cwd || process.cwd();
   const cache = new Map();
+  // GIT_DIR / GIT_WORK_TREE / GIT_COMMON_DIR assigned anywhere in the line (export GIT_DIR=...; git ...) or set in the
+  // hook's environment reach every git command after it.
+  const all = parse(input.tool_input.command);
+  const repoVars = [].concat(...all).filter((w) => GIT_REPO_VAR.test(w)).map((w) => w.slice(w.indexOf('=') + 1))
+    .concat(['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR'].filter((k) => env[k]).map((k) => env[k]));
   const cfgFor = (dir) => {
     if (!cache.has(dir)) {
       let file = null;
@@ -188,8 +224,8 @@ function decide(input, env = process.env) {
     }
     return cache.get(dir);
   };
-  for (const words of parse(input.tool_input.command)) {
-    const why = judge(words, { cwd, env, cfgFor });
+  for (const words of all) {
+    const why = judge(words, { cwd, env, cfgFor, repoVars });
     if (why) return why;
   }
   return null;

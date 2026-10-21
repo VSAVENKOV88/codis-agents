@@ -117,7 +117,7 @@ read.
 | `skills/brief` | how to write a task brief |
 | `skills/coordinator` | the coordinator's loop |
 | `rules/multi-agent.md` | the process rules; lines marked `<!-- role:<id> -->` go into every role prompt |
-| `hooks/hooks.json` | PreToolUse on Bash: refuses `git add -A` / `git add .`, pushes to protected branches or of protected tags, and `git remote set-head` / writes of `git symbolic-ref refs/remotes/<remote>/HEAD` in any letter case, Unicode case folding included (they move the default branch the hooks protect) |
+| `hooks/hooks.json` | PreToolUse on Bash: refuses `git add -A` / `git add .`, pushes to protected branches or of protected tags, and `git remote set-head` / writes of `git symbolic-ref refs/remotes/<remote>/HEAD` / `git update-ref` on it and `git update-ref --stdin`, in any letter case, Unicode case folding included (they move the default branch the hooks protect); an abbreviated long option (`--del`, `--mi`) counts as the option; with `--git-dir` / `--work-tree` / `GIT_DIR` / `GIT_WORK_TREE` / `GIT_COMMON_DIR` the config is looked up from those paths too and a push is refused (use `-C`) |
 | `scripts/slots.zsh`, `heavy.sh`, `medium.sh` | memory slots for heavy and medium jobs, with a FIFO queue |
 | `scripts/stand.sh`, `stand.js` | the ticket of the project's shared stand (queue, holder, reset at issue and release) and its commands from the config |
 | `scripts/slot-journal.js` | summary of the slot journal: queue wait and hold per class and per worktree |
@@ -196,7 +196,7 @@ node <plugin>/scripts/config.js check
 | `worktreeSetup` | `scan` directories whose ignored data is copied into a new worktree; `skip` and `link` globs (everything else is an APFS clone) |
 | `slots` | `medium`, `heavy`, `total`, `lockDir`, `legacyLock`, `jobsAlone`, `jobsShared` |
 | `reportLanguage` | language of role reports (prompts stay in English) |
-| `defaultBranch` | base of new worktrees (`wt-setup.sh` without a third argument); left out, it is taken from git: where `refs/remotes/origin/HEAD` points (`git clone` sets it, `git remote set-head origin --auto` sets it again - on the owner's word: the session hook refuses `set-head` in every form and writes of `symbolic-ref refs/remotes/<remote>/HEAD` without `ALLOW_PROTECTED_PUSH=1`; only the remote `origin` is read). Not derivable: `config.js check` still passes with a note, `wt-setup.sh` without a base exits 78 |
+| `defaultBranch` | base of new worktrees (`wt-setup.sh` without a third argument); left out, it is taken from git: where `refs/remotes/origin/HEAD` points (`git clone` sets it, `git remote set-head origin --auto` sets it again - on the owner's word: the session hook refuses `set-head` in every form writes of `symbolic-ref refs/remotes/<remote>/HEAD` and `update-ref` on it without `ALLOW_PROTECTED_PUSH=1`; only the remote `origin` is read). Not derivable: `config.js check` still passes with a note, `wt-setup.sh` without a base exits 78 |
 | `protectedBranches`, `protectedTagPattern` | refused by the hook and by `pre-push` without `ALLOW_PROTECTED_PUSH=1`; `protectedBranches` defaults to `[defaultBranch]` of the repository that pushes, and while that is unknown both hooks refuse every branch push (closed, not open) - a tag to a bare name after a colon too (`git push origin master:master` with a local tag `master`: git matches the bare name against the remote's refs and updates a branch there); a tag goes as `<tag>` or `<src>:refs/tags/<name>` |
 | `ownerStackReadOnly` | the owner's Docker Compose project; roles only read from it |
 | `medianTaskIE` | median cost of an accepted task; `chain-cost.js` flags tasks above twice this |
@@ -393,10 +393,20 @@ fallback to another slot directory: a second directory would be a second queue t
 ## Known gaps
 
 - The session hook reads the command line as written: wrappers (`bash -c 'git push ...'`, `command git push`, an alias
-  such as `git -c alias.p=push p`) pass it; the git `pre-push` hook of the target repository still refuses the push.
-  To be closed in its own task (owner 2026-10-21).
+  such as `git -c alias.p=push p` or `git -c alias.x=symbolic-ref x ...`) pass it. For a push the git `pre-push` hook
+  of the target repository is a second layer, but only while it runs (`git push --no-verify` and
+  `git -c core.hooksPath=...` turn it off, and the session hook does not refuse them) and only for the branch it knows:
+  `git remote set-head`, `git symbolic-ref` and `git update-ref` have no second layer, and once a wrapper has moved
+  `refs/remotes/origin/HEAD`, `pre-push` protects the branch it now points to. To be closed in its own task
+  (owner 2026-10-21).
+- Other ways to move `refs/remotes/origin/HEAD` that the session hook does not judge: `git remote rename` (the HEAD of
+  the renamed remote becomes `origin/HEAD`), `git fetch` with `remote.origin.followRemoteHEAD` (git 2.48+), writing the
+  ref file under `.git/refs/remotes/` directly. Open, for the coordinator's backlog.
+- With the protected branches known, a partly qualified destination such as `git push origin HEAD:heads/main` is taken
+  by the session hook as the bare name `heads/main`, while git updates `refs/heads/main`; only `pre-push` (while it
+  runs) refuses it. Open, for the coordinator's backlog.
 - With the protected branches known, glob refspecs (`'refs/heads/*:refs/heads/*'`, `'refs/tags/*:refs/tags/*'`) and
-  the matching refspec `:` name no branch or tag the session hook can check, so it lets them through; `pre-push` judges
+  the matching refspec `:` name no branch or tag the session hook can check, so it lets them through; `pre-push` (while it runs) judges
   every ref they expand to (owner 2026-10-21: backlog).
 
 ## Tests
