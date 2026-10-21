@@ -244,13 +244,25 @@ function branches(c, dir) {
 // HEAD` answers `ref: refs/heads/<name>\tHEAD` (git-ls-remote(1)); `--` keeps a URL that starts with a dash from
 // being read as an option. Returns { branch } or { why } - unreachable, timed out, or no HEAD named (an empty
 // repository). stdin is closed: the hook's own input is the ref list, never an answer for git; the timeout bounds a
-// remote that does not answer.
+// remote that does not answer. ls-remote is a fetch and follows url.<base>.insteadOf, while a push follows
+// pushInsteadOf first (git-config(1) url.<base>.pushInsteadOf), so the URL git passes the hook (already rewritten for
+// the push) may be rewritten again for the query, to another repository: `git ls-remote --get-url -- <url>` prints
+// the address the query would go to (git-ls-remote(1)), and when it differs the answer would not be the pushed
+// remote's - refused with the reason, not followed. A failed query is reported by its first `fatal:` line (the last
+// line is git's generic advice).
 function remoteHead(url, cwd, timeoutMs = 60000) {
-  const r = spawnSync('git', ['ls-remote', '--symref', '--', url, 'HEAD'], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: timeoutMs });
-  if (r.error || r.status !== 0) {
-    const err = r.error ? r.error.message : (r.stderr || '').trim().split('\n').pop();
-    return { why: `git ls-remote --symref -- ${url} HEAD failed (${err || 'exit ' + r.status})` };
-  }
+  const opts = { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: timeoutMs };
+  const errOf = (r) => {
+    if (r.error) return r.error.message;
+    const lines = (r.stderr || '').trim().split('\n');
+    return lines.find((l) => l.startsWith('fatal:')) || lines.pop() || 'exit ' + r.status;
+  };
+  const g = spawnSync('git', ['ls-remote', '--get-url', '--', url], opts);
+  if (g.error || g.status !== 0) return { why: `git ls-remote --get-url -- ${url} failed (${errOf(g)})` };
+  const target = g.stdout.trim();
+  if (target !== url) return { why: `the git config rewrites ${url} for a fetch to ${target} (url.<base>.insteadOf), so the remote's answer would not come from the repository the push goes to - remove the rewrite or set defaultBranch (or protectedBranches)` };
+  const r = spawnSync('git', ['ls-remote', '--symref', '--', url, 'HEAD'], opts);
+  if (r.error || r.status !== 0) return { why: `git ls-remote --symref -- ${url} HEAD failed (${errOf(r)})` };
   const m = /^ref: refs\/heads\/(\S+)\tHEAD$/m.exec(r.stdout);
   return m ? { branch: m[1] } : { why: `git ls-remote --symref -- ${url} HEAD names no branch (an empty repository?)` };
 }
