@@ -54,7 +54,9 @@ const HEAD_WHY = 'refs/remotes/origin/HEAD names the default branch the hooks pr
 // the ref; git symbolic-ref [-m <reason>] <name> <ref> or -d|--delete <name> (git-symbolic-ref(1)) with
 // <name> = refs/remotes/<remote>/HEAD. Reading it (one name, no delete) stays allowed. The name is compared without
 // regard to case: on a case-insensitive file system (APFS, the macOS default) the loose ref refs/remotes/origin/head is
-// the same file as refs/remotes/origin/HEAD (measured with git 2.50). Git subcommand names are case-sensitive
+// the same file as refs/remotes/origin/HEAD (measured with git 2.50). APFS folds case by Unicode, so the comparison
+// does too (flag u): refs/remote\u017f/origin/HEAD (long s) is the same file and git writes through it; without u a
+// JavaScript /i regex does not fold U+017F to s (or U+212A Kelvin to k). Git subcommand names are case-sensitive
 // (`git Remote` fails: cannot handle Remote as a builtin), so only the ref name needs it.
 function judgeRemoteHead(sub, args) {
   if (sub === 'remote') {
@@ -76,7 +78,7 @@ function judgeRemoteHead(sub, args) {
     if (flags.includes('d')) del = true;
     if (m === a.length - 1) k++;
   }
-  if (/^refs\/remotes\/.+\/HEAD$/i.test(pos[0] || '') && (del || pos.length >= 2)) return `\`git symbolic-ref ${pos[0]}\` (write or delete) is refused: ${HEAD_WHY}.`;
+  if (/^refs\/remotes\/.+\/HEAD$/iu.test(pos[0] || '') && (del || pos.length >= 2)) return `\`git symbolic-ref ${pos[0]}\` (write or delete) is refused: ${HEAD_WHY}.`;
   return null;
 }
 
