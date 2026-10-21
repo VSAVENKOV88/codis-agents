@@ -20,7 +20,7 @@
     "swapMinMB": {
       "type": "integer",
       "minimum": 0,
-      "description": "Swap floor in MB for the slot scripts and the preconditions (default 4000: a 4 GiB swap passes); 0 switches the swap check off."
+      "description": "Swap floor in MB for the preconditions (default 4000: a 4 GiB swap passes); 0 switches the swap check off. The slot scripts read it from U2a-2 on; until then they take SLOT_SWAP_MIN_MB from the environment."
     },
     "minFreeDiskGB": {
       "type": "number",
@@ -77,7 +77,7 @@
           "description": "Workers of a full guard run next to another heavy job (default 3)."
         },
         "extraHeavy": {
-          "description": "The extra heavy slot: false - off; an object - its thresholds; left out - the slot scripts decide by OS.",
+          "description": "The extra heavy slot: false - off; an object - its thresholds; left out - decided by OS. The slot scripts read it from U2a-2 on; until then they take SLOT_THIRD_* from the environment.",
           "oneOf": [
             {
               "const": false

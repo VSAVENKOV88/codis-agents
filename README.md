@@ -220,8 +220,8 @@ exit 78, `check` exit 1). Example: `examples/machine.example.json`, schema `sche
 |---|---|
 | `configVersion` | format version (1); newer than the plugin reads - refused with "update the plugin"; left out - a note |
 | `source` | where the numbers come from (a measurement on which machine) |
-| `slots` | `medium` (2), `heavy` (2), `total` (4), `jobsAlone` (6), `jobsShared` (3) - positive integers; `lockDir` (`~/.cache/codis-agents/slots`) and `legacyLock` (empty) - absolute or `~`; `extraHeavy` - `false` (the extra heavy slot off) or `{freePct, swapGrowMB, windowS}` (0-100, >= 0, > 0); left out - the slot scripts decide by OS |
-| `swapMinMB` | swap floor in MB for the slot scripts and the preconditions (4000: a 4 GiB swap passes); 0 switches the swap check off |
+| `slots` | `medium` (2), `heavy` (2), `total` (4), `jobsAlone` (6), `jobsShared` (3) - positive integers; `lockDir` (`~/.cache/codis-agents/slots`) and `legacyLock` (empty) - absolute or `~`; `extraHeavy` - `false` (the extra heavy slot off) or `{freePct, swapGrowMB, windowS}` (0-100, >= 0, > 0); left out - decided by OS. The slot scripts read `extraHeavy` from U2a-2 on; until then they take `SLOT_THIRD_FREE_PCT`, `SLOT_THIRD_SWAP_GROW_MB`, `SLOT_THIRD_WINDOW` from the environment |
+| `swapMinMB` | swap floor in MB for the preconditions (4000: a 4 GiB swap passes); 0 switches the swap check off. The slot scripts read it from U2a-2 on; until then they take `SLOT_SWAP_MIN_MB` from the environment (default 4000), so a machine without swap also sets `SLOT_SWAP_MIN_MB=0` |
 | `minFreeDiskGB` | free disk in GB the preconditions require on the worktree and task folder volumes (10); 0 switches it off |
 | `maxDockerChains` | chains with acceptance in Docker at once (2) |
 | `coordinatorContextK` | the coordinator's context signpost in thousands of tokens (700) |

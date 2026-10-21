@@ -45,9 +45,10 @@ const CHECKS = [
   [[RULES, CHAIN, README], 'the arc specification is not the task\'s analysis: it goes into `spec`', /arc specification[^.]*(goes into|into the separate field) `spec`/],
   [[RULES], 'a feature gets its own analysis', /[Aa] feature gets its own analysis; the arc specification does not replace it/],
   [[RULES, CHAIN], '"the arc specification covers it" is not a noAnalysis reason', /"[Tt]he arc specification covers\s+it" is not/],
-  // A red from the environment goes to the coordinator; the preconditions check disk and swap (owner 2026-10-19).
+  // A red from the environment goes to the coordinator; the preconditions check disk and swap (owner 2026-10-19),
+  // their floors in the machine file from U2a-1 on (owner 2026-10-21).
   [[RULES, README], 'a red from the environment is its own tester verdict that stops for the coordinator', /verdict,? `environment`[^.]*(stops the task|the task stops)/],
-  [[RULES, README], 'the preconditions check free disk and swap from the config', /`preconditions`[^.]*(10 GB|minFreeDiskGB)|(disk and swap|swap headroom)[^.]*`preconditions`/],
+  [[RULES, README], 'the preconditions check free disk and swap from the machine file (or the config)', /machine file[^.]*`minFreeDiskGB`[^.]*`swapMinMB`|`preconditions`[^.]*(10 GB|minFreeDiskGB)|(disk and swap|swap headroom)[^.]*`preconditions`/],
   // A docs-only rejection: programmer -> second review of the diff, without the tester (owner 2026-10-19).
   [[RULES, README], 'a docs-only fix outside docs and guards is confirmed by the second review (fixBehaviourUnchanged)', /second review[^.]*changes no behaviour[^.]*`fixBehaviourUnchanged`/],
   [[RULES, README], 'only an unconfirmed fix gets a tester round', /only an unconfirmed fix gets a tester round/],
