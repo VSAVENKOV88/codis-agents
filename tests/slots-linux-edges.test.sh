@@ -6,8 +6,13 @@
 #   R1. no swap (SwapTotal 0), default threshold - guards-all.sh refuses with 78 too: the runner never starts, one
 #       refusal line, journaled (rc 78);
 #   R2. ... and medium.sh: 78, the command does not run;
-#   R3. swap present but full (SwapTotal > 0, SwapFree 0) - a WAIT with "swap: capacity 0 MB < 4096", not the
-#       refusal: only the absence of swap is permanent;
+#   R3. swap at least the threshold but full (SwapTotal 8 GB or exactly 4194304 kB = 4096 MB, SwapFree 0) - a WAIT
+#       with "swap: capacity 0 MB < 4096", not the refusal: SwapFree can come back up to SwapTotal;
+#   R6. swap present but smaller than the threshold (0 < SwapTotal / 1024 < SLOT_SWAP_MIN_MB: 4194300 kB - a 4 GiB swap
+#       minus its header page - is 4095 MB; 1048572 kB is 1023 MB) - SwapFree never exceeds SwapTotal and Linux swap
+#       does not grow by itself, so no slot would ever be given: heavy.sh, medium.sh and guards-all.sh refuse at once
+#       with 78 and the numbers, the hint names SLOT_SWAP_MIN_MB and the value that would fit, journaled, no queue
+#       ticket; with SLOT_SWAP_MIN_MB lowered to fit the slot is given;
 #   R4. meminfo without the SwapTotal line - "swap not measured (no SwapTotal ...)", the slot is given, never 78;
 #   R5. explicit SLOT_THIRD_FREE_PCT, the extra slot cannot be measured - refused as "memory not measured" naming the
 #       reason: /proc/vmstat missing; no pswpout in it; getconf PAGESIZE failing; MemTotal 0.
@@ -55,6 +60,9 @@ mkproc nototal 16000000 3200000  -        20480000 yes
 mkproc novm    16000000 14400000 30720000 20480000 no
 mkproc nopsw   16000000 14400000 30720000 20480000 nopswpout
 mkproc mem0    0        0        30720000 20480000 yes
+mkproc small4  16000000 3200000  4194300  4194300  yes
+mkproc small1  16000000 3200000  1048572  1048572  yes
+mkproc exact4  16000000 3200000  4194304  0        yes
 
 pass=0 fail=0
 ok() { if eval "$2"; then (( pass++ )); print -r -- "  ok   $1"; else (( fail++ )); print -r -- "  FAIL $1${3:+
@@ -99,6 +107,33 @@ SLOT_PROC=$T/proc/full hjob heavy.sh a1
 waitlong '(( $(grep -c "waiting for slot heavy" $T/a1.out 2>/dev/null) > 0 ))'
 ok 'R3. SwapTotal 8 GB, SwapFree 0 - heavy.sh WAITS with "swap: capacity 0 MB < 4096" (no 78)' '! started a1 && grep -q "swap: capacity 0 MB < 4096" $T/a1.out && ! grep -q "refused" $T/a1.out' "$(cat $T/a1.out)"
 kill $JP 2>/dev/null; clean
+SLOT_PROC=$T/proc/exact4 hjob heavy.sh a2
+waitlong '(( $(grep -c "waiting for slot heavy" $T/a2.out 2>/dev/null) > 0 ))'
+ok 'R3. SwapTotal 4194304 kB = 4096 MB (equal to the threshold), SwapFree 0 - heavy.sh WAITS (no 78)' '! started a2 && grep -q "swap: capacity 0 MB < 4096" $T/a2.out && ! grep -q "refused" $T/a2.out' "$(cat $T/a2.out)"
+kill $JP 2>/dev/null; clean
+
+# R6. swap smaller than the threshold: refused at once with the numbers, in every slot script
+small() { # small <name> <proc dir> <SwapTotal kB> <MB> <script> <command...>
+  local n=$1 d=$2 kb=$3 mb=$4 s=$5; shift 5
+  rm -f $J; rm -rf $SLOTS_DIR/queue
+  SLOT_PROC=$T/proc/$d once $n $s "$@"
+  ok "R6. SwapTotal $kb kB = $mb MB < 4096 - $s exits 78 at once (not an endless wait)" '[[ $(rc $n) == 78 ]]' "code $(rc $n); $(cat $T/$n.out $T/$n.err)"
+  ok "R6. ... ($s) one refusal line with SwapTotal $kb kB = $mb MB, the threshold, MemTotal and MemAvailable" \
+    '[[ $(grep -c "refused" $T/$n.err) -eq 1 ]] && grep -qF "SwapTotal $kb kB = $mb MB" $T/$n.err && grep -qF "SLOT_SWAP_MIN_MB = 4096 MB" $T/$n.err && grep -q "MemTotal 15625 MB" $T/$n.err && grep -q "MemAvailable 3125 MB" $T/$n.err' "$(cat $T/$n.err)"
+  ok "R6. ... ($s) the hint names the threshold that fits: SLOT_SWAP_MIN_MB to $mb or less" 'grep -qF "set SLOT_SWAP_MIN_MB to $mb or less" $T/$n.err' "$(cat $T/$n.err)"
+  jl=( "${(@s:	:)$(tail -1 $J 2>/dev/null)}" )
+  ok "R6. ... ($s) journaled: acquire \"-\", rc 78; no queue ticket left" '[[ $jl[3] == - && $jl[9] == 78 ]] && [[ -z $(print -r -- $SLOTS_DIR/queue/*(N)) ]]' "$(tail -1 $J 2>/dev/null); $(ls $SLOTS_DIR/queue 2>&1)"
+}
+small s4h small4 4194300 4095 heavy.sh zsh -c 'touch '$T'/s4h.ran'
+ok 'R6. ... the heavy command did not run' '[[ ! -e $T/s4h.ran ]]'
+small s4m small4 4194300 4095 medium.sh zsh -c 'touch '$T'/s4m.ran'
+ok 'R6. ... the medium command did not run' '[[ ! -e $T/s4m.ran ]]'
+rm -f $T/runner.ran
+small s4g small4 4194300 4095 guards-all.sh $T/wts/w1
+ok 'R6. ... the runner (guardCommand) never started' '[[ ! -e $T/runner.ran ]]'
+small s1h small1 1048572 1023 heavy.sh zsh -c 'touch '$T'/s1h.ran'
+SLOT_SWAP_MIN_MB=1023 SLOT_PROC=$T/proc/small1 once s1ok heavy.sh zsh -c 'exit 7'
+ok 'R6. SwapTotal 1048572 kB with SLOT_SWAP_MIN_MB=1023 (the hinted value) - the slot is given, code 7' '[[ $(rc s1ok) == 7 ]]' "code $(rc s1ok); $(cat $T/s1ok.out $T/s1ok.err)"
 
 # R4. no SwapTotal line: not measured, the slot is given
 SLOT_PROC=$T/proc/nototal once n1 heavy.sh zsh -c 'exit 7'
