@@ -330,6 +330,21 @@ nlog; $H/guards-all.sh --force "$T/main link" > $T/mc.out 2>&1; rc=$?
 ok '10d. a symlink (name with a space) to the main working copy -> 78' '(( rc == 78 )) && grep -q "main working copy" $T/mc.out && ! grep -q "^start" $T/npm.log' "code $rc; $(cat $T/mc.out)"
 nlog; $H/guards-all.sh $T/main --force --main-checkout > $T/mc.out 2>&1; rc=$?
 ok '10d. the flag after the path, with --force -> runs the main copy' '(( rc == 0 )) && grep -q "^start main " $T/npm.log' "code $rc; $(cat $T/mc.out)"
+# 10e (tester, round 2). Through guards-all.sh itself, not only main-checkout.js: GIT_DIR of a git hook pointing at the
+#      linked worktree's gitdir does not turn the main copy into a worktree; git failing in the main copy (a fake git
+#      first in PATH that answers like a dubious-ownership refusal) is 78 with git's error, before any slot or runner.
+j0=$(JN); nlog; GIT_DIR=$T/main/.git/worktrees/xg GIT_WORK_TREE=$T/wts/xg $H/guards-all.sh --force $T/main > $T/mc.out 2>&1; rc=$?
+ok '10e. GIT_DIR/GIT_WORK_TREE of the linked worktree (a hook) -> guards-all.sh on the main copy still 78, no runner' \
+  '(( rc == 78 )) && grep -q "main working copy" $T/mc.out && ! grep -q "^start" $T/npm.log' "code $rc; $(cat $T/mc.out)"
+mkdir -p $T/badgit; print -r -- '#!/bin/sh
+echo "fatal: detected dubious ownership in repository at $PWD" >&2; exit 128' > $T/badgit/git; chmod +x $T/badgit/git
+nlog; PATH=$T/badgit:$PATH $H/guards-all.sh --force $T/main > $T/mc.out 2>&1; rc=$?
+ok '10e. git failing in the main copy -> guards-all.sh 78 with the git error, no runner' \
+  '(( rc == 78 )) && grep -q "dubious ownership" $T/mc.out && ! grep -q "^start" $T/npm.log' "code $rc; $(cat $T/mc.out)"
+nlog; PATH=$T/badgit:$PATH $H/guards-all.sh --force xg > $T/mc.out 2>&1; rc=$?
+ok '10e. git failing in a linked worktree -> 78 too (cannot tell), no runner' \
+  '(( rc == 78 )) && grep -q "dubious ownership" $T/mc.out && ! grep -q "^start" $T/npm.log' "code $rc; $(cat $T/mc.out)"
+ok '10e. the refusals requested no slot (journal unchanged)' '(( $(JN) == j0 ))' "journal $j0 -> $(JN)"
 
 # 11. a fixed runner FIRST alone (6 until the end) + a second full run -> the second waits, not 6 + 3 = 9
 export SLOT_SAY=1
