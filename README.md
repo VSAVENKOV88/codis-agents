@@ -117,7 +117,7 @@ read.
 | `skills/brief` | how to write a task brief |
 | `skills/coordinator` | the coordinator's loop |
 | `rules/multi-agent.md` | the process rules; lines marked `<!-- role:<id> -->` go into every role prompt |
-| `hooks/hooks.json` | PreToolUse on Bash: refuses `git add -A` / `git add .` and pushes to protected branches or of protected tags |
+| `hooks/hooks.json` | PreToolUse on Bash: refuses `git add -A` / `git add .`, pushes to protected branches or of protected tags, and `git remote set-head` / writes of `git symbolic-ref refs/remotes/<remote>/HEAD` (they move the default branch the hooks protect) |
 | `scripts/slots.zsh`, `heavy.sh`, `medium.sh` | memory slots for heavy and medium jobs, with a FIFO queue |
 | `scripts/stand.sh`, `stand.js` | the ticket of the project's shared stand (queue, holder, reset at issue and release) and its commands from the config |
 | `scripts/slot-journal.js` | summary of the slot journal: queue wait and hold per class and per worktree |
@@ -196,8 +196,8 @@ node <plugin>/scripts/config.js check
 | `worktreeSetup` | `scan` directories whose ignored data is copied into a new worktree; `skip` and `link` globs (everything else is an APFS clone) |
 | `slots` | `medium`, `heavy`, `total`, `lockDir`, `legacyLock`, `jobsAlone`, `jobsShared` |
 | `reportLanguage` | language of role reports (prompts stay in English) |
-| `defaultBranch` | base of new worktrees (`wt-setup.sh` without a third argument); left out, it is taken from git: where `refs/remotes/origin/HEAD` points (`git clone` sets it, `git remote set-head origin --auto` sets it again; only the remote `origin` is read). Not derivable: `config.js check` still passes with a note, `wt-setup.sh` without a base exits 78 |
-| `protectedBranches`, `protectedTagPattern` | refused by the hook and by `pre-push` without `ALLOW_PROTECTED_PUSH=1`; `protectedBranches` defaults to `[defaultBranch]` of the repository that pushes, and while that is unknown both hooks refuse every branch push (closed, not open) |
+| `defaultBranch` | base of new worktrees (`wt-setup.sh` without a third argument); left out, it is taken from git: where `refs/remotes/origin/HEAD` points (`git clone` sets it, `git remote set-head origin --auto` sets it again - on the owner's word: the session hook refuses `set-head` in every form and writes of `symbolic-ref refs/remotes/<remote>/HEAD` without `ALLOW_PROTECTED_PUSH=1`; only the remote `origin` is read). Not derivable: `config.js check` still passes with a note, `wt-setup.sh` without a base exits 78 |
+| `protectedBranches`, `protectedTagPattern` | refused by the hook and by `pre-push` without `ALLOW_PROTECTED_PUSH=1`; `protectedBranches` defaults to `[defaultBranch]` of the repository that pushes, and while that is unknown both hooks refuse every branch push (closed, not open) - a tag to a bare name after a colon too (`git push origin master:master` with a local tag `master`: git matches the bare name against the remote's refs and updates a branch there); a tag goes as `<tag>` or `<src>:refs/tags/<name>` |
 | `ownerStackReadOnly` | the owner's Docker Compose project; roles only read from it |
 | `medianTaskIE` | median cost of an accepted task; `chain-cost.js` flags tasks above twice this |
 | `featureIELimit` | cost of a whole feature (its parts summed by the task field `feature`) above which `chain-cost.js` flags it; default 3 x `medianTaskIE` |
@@ -389,6 +389,15 @@ holds no memory slot: its memory is its own fixed ceiling.
 
 An invalid project config is a refusal for every slot and stand script (exit 78 with the errors), never a silent
 fallback to another slot directory: a second directory would be a second queue that the first one does not see.
+
+## Known gaps
+
+- The session hook reads the command line as written: wrappers (`bash -c 'git push ...'`, `command git push`, an alias
+  such as `git -c alias.p=push p`) pass it; the git `pre-push` hook of the target repository still refuses the push.
+  To be closed in its own task (owner 2026-10-21).
+- With the protected branches known, glob refspecs (`'refs/heads/*:refs/heads/*'`, `'refs/tags/*:refs/tags/*'`) and
+  the matching refspec `:` name no branch or tag the session hook can check, so it lets them through; `pre-push` judges
+  every ref they expand to (owner 2026-10-21: backlog).
 
 ## Tests
 

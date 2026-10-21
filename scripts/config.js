@@ -225,7 +225,7 @@ function originHead(dir) {
 // resolved config from its explicit keys, else from the git repository dir.
 function branches(c, dir) {
   const def = c.defaultBranch || (dir ? originHead(dir) : null);
-  const why = def ? '' : `the default branch is unknown: no defaultBranch in the config and refs/remotes/origin/HEAD is not set in ${dir || '(no repository)'} - set defaultBranch (or protectedBranches) in the config, or run git remote set-head origin --auto`;
+  const why = def ? '' : `the default branch is unknown: no defaultBranch in the config and refs/remotes/origin/HEAD is not set in ${dir || '(no repository)'} - set defaultBranch (or protectedBranches) in the config, or let the owner run git remote set-head origin --auto (the session hook refuses it to agents)`;
   const prot = c.protectedBranches || (def ? [def] : null);
   return Object.assign(c, { defaultBranch: def || null, protectedBranches: prot, defaultBranchUnknown: why });
 }

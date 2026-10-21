@@ -8,6 +8,12 @@
 //    repository that pushes - config.js; when that is unknown, every branch push: closed, not open) unless ALLOW_PROTECTED_PUSH=1 is set, inline or in
 //    the environment, on the owner's explicit word, or - for a branch only - when the pushing repository itself declares a
 //    standing push in its committed config (scripts/standing-push.js: HEAD only, no force or delete, check green).
+//    While the branches are unknown a bare destination after a colon is a branch push even when the source is a tag:
+//    git matches the name against the remote's refs (a local tag master + git push origin master:master updates the
+//    remote branch master), so only <tag> without a colon or <src>:refs/tags/<name> is a tag push;
+//  * `git remote set-head` (any form) and a write or delete of `git symbolic-ref refs/remotes/<remote>/HEAD`: the
+//    default branch the hooks protect is where the local refs/remotes/origin/HEAD points (config.js), so moving or
+//    dropping it is the owner's call too (ALLOW_PROTECTED_PUSH=1 on the owner's explicit word).
 // Active only in projects that have .claude/codis-agents.json: the plugin is opt-in per project.
 // The git pre-push hook (scripts/git-hooks/pre-push) is the last line; this hook explains the refusal to the agent
 // before anything runs.
@@ -42,6 +48,35 @@ function parse(line) {
 const GIT_GLOBAL_WITH_VALUE = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--exec-path', '--config-env']);
 const PUSH_WITH_VALUE = new Set(['-o', '--push-option', '--repo', '--receive-pack', '--exec', '--signed']);
 
+const HEAD_WHY = 'refs/remotes/origin/HEAD names the default branch the hooks protect when the config does not; moving or dropping it is the owner\'s call (ALLOW_PROTECTED_PUSH=1 only on the owner\'s explicit word)';
+
+// git remote [-v | --verbose] set-head ... (git-remote(1)) - every form: --auto, --delete and a branch name all rewrite
+// the ref; git symbolic-ref [-m <reason>] <name> <ref> or -d|--delete <name> (git-symbolic-ref(1)) with
+// <name> = refs/remotes/<remote>/HEAD. Reading it (one name, no delete) stays allowed.
+function judgeRemoteHead(sub, args) {
+  if (sub === 'remote') {
+    let k = 0;
+    while (k < args.length && args[k].startsWith('-')) k++;
+    return args[k] === 'set-head' ? `\`git remote set-head\` is refused: ${HEAD_WHY}.` : null;
+  }
+  let del = false, dashes = false;
+  const pos = [];
+  for (let k = 0; k < args.length; k++) {
+    const a = args[k];
+    if (dashes || !a.startsWith('-') || a === '-') { pos.push(a); continue; }
+    if (a === '--') { dashes = true; continue; }
+    if (a === '--delete') { del = true; continue; }
+    if (a.startsWith('--')) { if (a === '--message') k++; continue; }
+    // A cluster of short options (-qd, -qm why, -mwhy): d deletes, m takes the rest or the next word as its value.
+    const m = a.indexOf('m');
+    const flags = m < 0 ? a.slice(1) : a.slice(1, m);
+    if (flags.includes('d')) del = true;
+    if (m === a.length - 1) k++;
+  }
+  if (/^refs\/remotes\/.+\/HEAD$/.test(pos[0] || '') && (del || pos.length >= 2)) return `\`git symbolic-ref ${pos[0]}\` (write or delete) is refused: ${HEAD_WHY}.`;
+  return null;
+}
+
 // -> null (allowed) or a refusal reason.
 function judge(words, ctx) {
   let i = 0, allow = ctx.env.ALLOW_PROTECTED_PUSH === '1';
@@ -55,9 +90,10 @@ function judge(words, ctx) {
     if (GIT_GLOBAL_WITH_VALUE.has(o)) { if (o === '-C') dir = path.resolve(dir, words[i + 1] || ''); i += 2; } else i++;
   }
   const sub = words[i], args = words.slice(i + 1);
-  if (sub !== 'add' && sub !== 'push') return null;
+  if (sub !== 'add' && sub !== 'push' && sub !== 'remote' && sub !== 'symbolic-ref') return null;
   const cfg = ctx.cfgFor(dir);
   if (!cfg) return null;
+  if (sub === 'remote' || sub === 'symbolic-ref') return allow ? null : judgeRemoteHead(sub, args);
   if (sub === 'add') {
     const blanket = args.find((a) => a === '-A' || a === '--all' || a === '--no-ignore-removal' || a === '.' || a === './' || a === ':/' || /^-[a-zA-Z]*A[a-zA-Z]*$/.test(a));
     if (blanket) return `\`git add ${blanket}\` is refused: stage files by path (git add <path>...), never everything at once.`;
@@ -81,14 +117,14 @@ function judge(words, ctx) {
   const g = (...x) => spawnSync('git', ['-C', dir, ...x], { encoding: 'utf8' });
   const current = () => g('rev-parse', '--abbrev-ref', 'HEAD').stdout.trim();
   const refspecs = pos.slice(1);
-  // [source, destination, forced]; a source '' deletes the destination.
+  // [source, destination, forced, colon]; a source '' deletes the destination.
   const specs = refspecs.length ? refspecs.map((r) => {
     const s = r.replace(/^\+/, ''), c = s.indexOf(':');
-    return [del ? '' : (c >= 0 ? s.slice(0, c) : s), c >= 0 ? s.slice(c + 1) : s, force || r.startsWith('+')];
-  }) : [['HEAD', current(), force]];
+    return [del ? '' : (c >= 0 ? s.slice(0, c) : s), c >= 0 ? s.slice(c + 1) : s, force || r.startsWith('+'), c >= 0];
+  }) : [['HEAD', current(), force, false]];
   let st;   // the standing push of the pushing repository, looked up once on demand
   const pending = [];
-  for (let [src, d, forced] of specs) {
+  for (let [src, d, forced, colon] of specs) {
     if (d === 'HEAD' || d === '@') d = current();
     let tag = null, branch = null, knownTag = false;
     if (d.startsWith('refs/tags/')) tag = d.slice(10);
@@ -107,6 +143,10 @@ function judge(words, ctx) {
       // branch build-1 although a local tag build-1 exists), so only an explicit :refs/tags/<name> deletes a tag.
       const srcRef = src ? (g('rev-parse', '--symbolic-full-name', src).stdout || '').trim() : '';
       knownTag = isTag && srcRef.startsWith('refs/tags/');
+      // After a colon the bare name is not the source's own: git matches it against the remote's refs first, so
+      // <tag>:master updates a remote branch master (measured with git 2.50: "7b2107e..a07f5f0  master -> master").
+      // Only without a colon does git push the source under its full name refs/tags/<name>.
+      if (knownTag && colon && !cfg.protectedBranches) return `\`git push\` of ${src}:${d} is refused: git matches the bare name ${d} against the remote's refs and may update a branch ${d} there; protected branches unknown - ${cfg.defaultBranchUnknown}. Push a tag as ${src}:refs/tags/${d} (ALLOW_PROTECTED_PUSH=1 only on the owner's explicit word).`;
     }
     // The refspec ":" (or "+:") is a matching push: its destination is empty, yet git pushes every branch present on
     // both sides under the same name, the default branch too. While the branches are unknown it is a branch push.
