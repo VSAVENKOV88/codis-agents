@@ -117,7 +117,7 @@ read.
 | `skills/brief` | how to write a task brief |
 | `skills/coordinator` | the coordinator's loop |
 | `rules/multi-agent.md` | the process rules; lines marked `<!-- role:<id> -->` go into every role prompt |
-| `hooks/hooks.json` | PreToolUse on Bash: refuses `git add -A` / `git add .`, pushes to protected branches or of protected tags, and `git remote set-head` / writes of `git symbolic-ref refs/remotes/<remote>/HEAD` (they move the default branch the hooks protect) |
+| `hooks/hooks.json` | PreToolUse on Bash: refuses `git add -A` / `git add .`, pushes to protected branches or of protected tags, and `git remote set-head` / writes of `git symbolic-ref refs/remotes/<remote>/HEAD` in any letter case (they move the default branch the hooks protect) |
 | `scripts/slots.zsh`, `heavy.sh`, `medium.sh` | memory slots for heavy and medium jobs, with a FIFO queue |
 | `scripts/stand.sh`, `stand.js` | the ticket of the project's shared stand (queue, holder, reset at issue and release) and its commands from the config |
 | `scripts/slot-journal.js` | summary of the slot journal: queue wait and hold per class and per worktree |
