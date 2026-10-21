@@ -51,7 +51,7 @@
 # (scripts/slot-journal.js sums it up). Tab-separated, one record per hold, written when the hold ends:
 #   v1  request  acquire  release  class  slot  kind  pid  rc  worktree  command
 #   request/acquire/release - epoch seconds with milliseconds (acquire "-": never got the slot, e.g. killed while
-#   waiting); class medium|heavy|exclusive; slot - its number (exclusive: "-"); kind single|full; pid of the waiter;
+#   waiting); class medium|heavy|exclusive; slot - its number (exclusive: "-"); kind single|full|whole; pid of the waiter;
 #   rc - exit code; worktree - the nearest directory with .git above the working directory (else the directory);
 #   command - at most 6 words, each cut to 40 characters, words with "=" (environment, --key=value) masked as "name=*".
 # queue wait = acquire - request, hold = release - acquire. A retry with the same ticket (SLOT_RETRY_RC) is a new record
@@ -98,6 +98,10 @@ unset _slot_cfg _slot_cfgf
 : ${GUARDS_JOBS_SHARED:=3}         # ... while at least one more heavy slot is busy
 : ${GUARDS_EXCLUSIVE_LOCK:=$SLOTS_DIR/exclusive.lock}
 : ${SLOT_EXCL_TOOLS:=/usr/bin/lockf /usr/bin/flock /bin/flock}   # flock(2) utilities for the exclusive lock, first found
+# Which guards are exclusive (project config key guardExclusive; config.js has the same default): zsh patterns of the
+# file name, one per line, and the line-comment marker. Not exported: a child shell reads its own project's config.
+[[ -v GUARDS_EXCL_GLOB ]] || GUARDS_EXCL_GLOB=$'*-run.js\n*-run.mjs'
+: ${GUARDS_EXCL_MARKER:=//}
 # Exported so that child shells (which source this file again, possibly from another directory) agree.
 [[ -v SLOT_JOURNAL ]] || SLOT_JOURNAL=$SLOTS_DIR/journal.tsv
 export GUARDS_EXCLUSIVE_LOCK SLOTS_DIR SLOT_JOURNAL SLOT_LEGACY_LOCK SLOT_MEDIUM_N SLOT_HEAVY_N SLOT_TOTAL_MAX GUARDS_JOBS_ALONE GUARDS_JOBS_SHARED
@@ -232,7 +236,8 @@ _slot_pick() {
 # they would pass:
 #  * when the first is a full run (SLOT_KIND=full, guards-all.sh) with no worker budget and no adaptive neighbour
 #    (slot_guard_plan would return "0 0"), it does not take the slot, but single heavy jobs behind it do not pass
-#    either: it is never starved;
+#    either: it is never starved; a run of kind "whole" admitted on the whole budget reserves it in <slot>.whole before
+#    its ticket goes, so a single heavy job that takes the next slot right after cannot bump it back to the queue;
 #  * the first of its class may take the last slot of the shared ceiling (medium + heavy = SLOT_TOTAL_MAX - 1) only if
 #    the first of the OTHER queue with a smaller number cannot take it right now.
 # Any waiter removes tickets of dead waiters (no pid, or the pid was reused - a different start time) under admit.lock;
@@ -288,16 +293,22 @@ _slot_q_where() {
 }
 
 # Under admit.lock: may the first of the queue of class $1, kind $2, take a slot now -> $SLOT_PICK / $SLOT_WHY.
+# Kind "whole" is a full run whose runner sets its own workers (guardCommand without {jobs}): it is counted as the
+# whole budget, so it is admitted only when its budget is the whole GUARDS_JOBS_ALONE.
 _slot_admit() {
   local class=$1 kind=$2 sc n
   _slot_pick $class
-  [[ -n $SLOT_PICK && $class == heavy && $kind == full ]] || return 0
+  [[ -n $SLOT_PICK && $class == heavy && $kind == (full|whole) ]] || return 0
   sc=( $(_slot_heavy_scan $SLOT_PICK) )
   n=$(slot_jobs_budget $sc[1] $sc[2] $(( sc[3] + sc[5] )))
-  if (( n == 0 && sc[4] == 0 )); then
+  if [[ $kind == whole ]]; then
+    (( n >= GUARDS_JOBS_ALONE )) || SLOT_PICK= SLOT_WHY="$(slot_whole_why $n)"
+  elif (( n == 0 && sc[4] == 0 )); then
     SLOT_PICK= SLOT_WHY="full run: neighbouring full runs hold the whole budget of $GUARDS_JOBS_ALONE workers until they end - waiting for workers outside the slot, first in the queue"
   fi
 }
+# slot_whole_why <budget now> -> why a full run without {jobs} waits
+slot_whole_why() { print -r -- "full run without {jobs}: the runner sets its own workers and is counted as the whole budget of $GUARDS_JOBS_ALONE workers, $1 free now while other heavy jobs run - waiting outside the slot, first in the queue" }
 
 # slot_run <class> <command...> - waits for a slot (in the queue by ticket), holds it for the command, returns its code.
 slot_run() {
@@ -355,7 +366,13 @@ slot_run() {
             tacq=${${=$(<$got)}[2]}; [[ -n $tacq ]] || tacq=$(_slot_now)   # the holder's own start time
             jslot=${${slot:t:r}##*.}
             print -r -- "$class $$ $(date '+%F %T') $*" > $slot.who
-            rm -f $slot.jobs $slot.limit $slot.limit.active   # numbers of the previous holder (slot_guard_plan) are not inherited
+            rm -f $slot.jobs $slot.limit $slot.limit.active $slot.whole   # numbers of the previous holder (slot_guard_plan) are not inherited
+            # kind whole was admitted on the whole budget: reserve it now, under admit.lock, before the ticket goes. A
+            # single heavy job behind it may take the next slot at once (as next to a fixed run), and the run's own plan
+            # in the slot would then see a neighbour and give 0 - back to the queue behind that job, over and over.
+            if [[ $kind == whole ]]; then
+              print -r -- $GUARDS_JOBS_ALONE > $slot.whole; print -r -- "fixed $GUARDS_JOBS_ALONE" > $slot.jobs
+            fi
             rm -f $qf; qf=                                     # ticket used - the next in the queue is now first
             zsystem flock -u $fd
             break
@@ -388,13 +405,21 @@ slot_run() {
 _slot_tree() { local c; for c in $(pgrep -P $1); do _slot_tree $c; done; print -r -- $1 }
 _slot_kill_tree() { local p; for p in $(_slot_tree $1); do kill -TERM $p 2>/dev/null; done }
 
-# Is the guard file marked exclusive: a line `// guards:exclusive — <reason>` (a guard that shares a fixed port, a
-# temp dir or a docker project with others and must run alone).
+# Is a command argument a guard file marked exclusive (a guard that shares a fixed port, a temp dir or a docker project
+# with others and must run alone): its file name matches one of GUARDS_EXCL_GLOB, and it has a line
+# `<GUARDS_EXCL_MARKER> guards:exclusive — <reason>` (blanks around the marker allowed, the reason not empty). The
+# marker is taken literally (a parameter on the right of == is not a pattern unless ${~...}); the globs are patterns.
 slot_is_exclusive_guard() {
-  local a
+  setopt localoptions extendedglob
+  local a g l m=$GUARDS_EXCL_MARKER hit
+  [[ -n $m ]] || return 1
   for a in "$@"; do
-    [[ $a == *-run.(js|mjs) && -f $a ]] || continue
-    grep -qE '^[[:space:]]*//[[:space:]]*guards:exclusive[[:space:]]+—[[:space:]]+[^[:space:]]' -- "$a" && return 0
+    [[ -f $a ]] || continue
+    hit=0; for g in ${(f)GUARDS_EXCL_GLOB}; do [[ -n $g && ${a:t} == ${~g} ]] && { hit=1; break }; done
+    (( hit )) || continue
+    for l in "${(@f)$(<$a)}"; do
+      [[ $l == [[:space:]]#${m}[[:space:]]#guards:exclusive[[:space:]]##—[[:space:]]##[^[:space:]]* ]] && return 0
+    done
   done
   return 1
 }
@@ -448,16 +473,25 @@ slot_jobs_budget() {
   print -r -- $(( s < r ? s : r ))
 }
 
-# slot_guard_plan <my slot> <fixed|adaptive> <start|run> -> "workers_for_me adaptive_neighbours"
+# slot_guard_plan <my slot> <fixed|whole|adaptive> <start|run> -> "workers_for_me adaptive_neighbours"
 # Under the admission lock: two newcomers do not count the same remainder. Writes my share for the neighbours:
-# fixed -> "fixed N"; adaptive -> "adaptive" and the limit in <slot>.limit (at start only when N >= 1; mid-run at least
+# fixed -> "fixed N"; whole (a runner without {jobs}) -> "fixed GUARDS_JOBS_ALONE" when the whole budget is mine (reserved
+# at admission in <slot>.whole, or no other heavy job now), else "fixed 0" and "0 0" (wait outside the slot); adaptive -> "adaptive" and the limit in <slot>.limit (at start only when N >= 1; mid-run at least
 # 1: the runner reads 0 as "no limit"). No lock within 30 s - 0 (wait), nothing written.
 slot_guard_plan() {
   local me=$1 mode=$2 phase=$3 fd n=0 ad=0 sc
   if zsystem flock -t 30 -f fd $SLOTS_DIR/admit.lock 2>/dev/null; then
     sc=( $(_slot_heavy_scan $me) )
     n=$(slot_jobs_budget $sc[1] $sc[2] $(( sc[3] + sc[5] ))); ad=$sc[4]
-    if [[ $mode == fixed ]]; then print -r -- "fixed $n" > $me.jobs
+    # whole: the budget reserved at admission (<slot>.whole, slot_run) is mine, whoever came after it. Without the
+    # reservation: an adaptive neighbour sheds only to its share, never to 0, so waiting in the slot cannot help - "0 0"
+    if [[ $mode == whole ]]; then
+      if [[ -s $me.whole && $(<$me.whole) == $GUARDS_JOBS_ALONE ]]; then n=$GUARDS_JOBS_ALONE
+      elif (( n < GUARDS_JOBS_ALONE )); then n=0
+      fi
+      ad=0
+    fi
+    if [[ $mode == (fixed|whole) ]]; then print -r -- "fixed $n" > $me.jobs
     else
       print -r -- adaptive > $me.jobs
       [[ $phase == run ]] && (( n < 1 )) && n=1

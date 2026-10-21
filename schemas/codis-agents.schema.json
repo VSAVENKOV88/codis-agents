@@ -9,12 +9,20 @@
     "repoDir": { "type": "string", "description": "Main checkout of the project; worktrees are created from it. ~ is expanded." },
     "worktreeRoot": { "type": "string", "description": "Directory that holds one worktree per task; a worktree name is resolved against it." },
     "sharedDir": { "type": "string", "description": "Task folders live here: <sharedDir>/<task>/{BRIEF,analyst,prog,test,review}.md. Guard logs go here too." },
-    "guardCommand": { "type": "string", "description": "Full guard run, executed with zsh in the worktree. Placeholders: {wt} worktree directory, {jobs} worker count from the slot budget, {limitFile} (optional) file the runner re-reads for an adaptive worker limit." },
+    "guardCommand": { "type": "string", "description": "Full guard run, executed with zsh in the worktree. Placeholders: {wt} worktree directory (required), {jobs} (optional) worker count from the slot budget, {limitFile} (optional) file the runner re-reads for an adaptive worker limit. Without {jobs} and {limitFile} the runner sets its own workers: guards-all.sh counts it as the whole budget (slots.jobsAlone) and starts it only when that whole budget is free." },
     "guardCommandLegacy": { "type": "string", "description": "Guard command for worktrees whose runner has no adaptive limit (no {limitFile}). Used when guardAdaptiveProbe fails." },
     "guardAdaptiveProbe": {
       "type": "object", "additionalProperties": false, "required": ["file", "contains"],
       "properties": { "file": { "type": "string", "description": "Path relative to the worktree." }, "contains": { "type": "string" } },
       "description": "When set, guardCommand is used only if <wt>/<file> contains <contains>; otherwise guardCommandLegacy."
+    },
+    "guardExclusive": {
+      "type": "object", "additionalProperties": false, "required": ["glob", "marker"],
+      "description": "Which guards share a machine resource (a fixed port, a temp dir, a docker project) and run one at a time under the exclusive lock (heavy.sh): a command argument that is a file whose name matches one of glob and that has a line <marker> guards:exclusive — <reason>. Without the key: glob [*-run.js, *-run.mjs], marker //.",
+      "properties": {
+        "glob": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1, "pattern": "^[^/]+$" }, "description": "zsh patterns of the file name (no /, and each must compile as a zsh pattern under extendedglob - config.js check refuses one that does not), e.g. [\"test_*.py\", \"*_test.py\"]." },
+        "marker": { "type": "string", "minLength": 1, "pattern": "^\\S+$", "description": "The line-comment marker of the language, taken literally, e.g. # or //." }
+      }
     },
     "guardRerun": {
       "type": "object", "additionalProperties": false, "required": ["command", "newRedPattern"],
