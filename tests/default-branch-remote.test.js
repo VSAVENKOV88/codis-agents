@@ -73,6 +73,7 @@ try {
   p = prePush(clone, gone, 'refs/heads/b-t1', plain);
   ok('R4 a working branch refused although local origin/HEAD is set', p.status === 1 && unknownRe.test(p.stderr), p.stderr);
   ok('R4 the reason names the remote query and the fix in the config', /ls-remote/.test(p.stderr) && /defaultBranch/.test(p.stderr) && p.stderr.includes(gone), p.stderr);
+  ok('R4 the reason says the remote did not answer (not that it named no branch)', /failed/.test(p.stderr) && !/names no branch/.test(p.stderr), p.stderr);
   p = prePush(clone, gone, 'refs/heads/b-t1', null);
   ok('R4 the same without any config', p.status === 1 && unknownRe.test(p.stderr), p.stderr);
   p = prePush(clone, 'https://127.0.0.1:9/x.git', 'refs/heads/b-t1', plain);
@@ -84,6 +85,7 @@ try {
   spawnSync('git', ['init', '-q', '--bare', '-b', 'trunk', empty]);
   p = prePush(clone, empty, 'refs/heads/b-t1', plain);
   ok('R5 empty remote, no keys: refused with the reason', p.status === 1 && unknownRe.test(p.stderr), p.stderr);
+  ok('R5 the reason says the remote named no branch', /names no branch/.test(p.stderr), p.stderr);
 
   console.log('R6. the config decides without the network');
   const keyed = cfgFile('keyed', { repoDir: clone, defaultBranch: 'trunk' });
