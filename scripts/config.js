@@ -232,10 +232,37 @@ function originHead(dir) {
 // Fills defaultBranch, protectedBranches and defaultBranchUnknown (the reason with the fix, '' when known) of a
 // resolved config from its explicit keys, else from the git repository dir.
 function branches(c, dir) {
+  // pre-push reads only explicit keys: the derived origin/HEAD is local and any wrapper can move it (pushBranches).
+  c.branchesFromConfig = !!(c.defaultBranch || c.protectedBranches);
   const def = c.defaultBranch || (dir ? originHead(dir) : null);
   const why = def ? '' : `the default branch is unknown: no defaultBranch in the config and refs/remotes/origin/HEAD is not set in ${dir || '(no repository)'} - set defaultBranch (or protectedBranches) in the config, or let the owner run git remote set-head origin --auto (the session hook refuses it to agents)`;
   const prot = c.protectedBranches || (def ? [def] : null);
   return Object.assign(c, { defaultBranch: def || null, protectedBranches: prot, defaultBranchUnknown: why });
+}
+
+// The default branch of the remote a push goes to, as the remote itself names it: `git ls-remote --symref -- <url>
+// HEAD` answers `ref: refs/heads/<name>\tHEAD` (git-ls-remote(1)); `--` keeps a URL that starts with a dash from
+// being read as an option. Returns { branch } or { why } - unreachable, timed out, or no HEAD named (an empty
+// repository). stdin is closed: the hook's own input is the ref list, never an answer for git; the timeout bounds a
+// remote that does not answer.
+function remoteHead(url, cwd, timeoutMs = 60000) {
+  const r = spawnSync('git', ['ls-remote', '--symref', '--', url, 'HEAD'], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: timeoutMs });
+  if (r.error || r.status !== 0) {
+    const err = r.error ? r.error.message : (r.stderr || '').trim().split('\n').pop();
+    return { why: `git ls-remote --symref -- ${url} HEAD failed (${err || 'exit ' + r.status})` };
+  }
+  const m = /^ref: refs\/heads\/(\S+)\tHEAD$/m.exec(r.stdout);
+  return m ? { branch: m[1] } : { why: `git ls-remote --symref -- ${url} HEAD names no branch (an empty repository?)` };
+}
+
+// The protected branches for a push to url (pre-push): the explicit keys of the config, else [the remote's default
+// branch]; never the local refs/remotes/origin/HEAD. { protectedBranches, why } - null and the reason when unknown,
+// and the hook then refuses every branch push (closed, not open; owner 2026-10-21: without the network - refusal).
+function pushBranches(c, url, cwd) {
+  if (c.branchesFromConfig) return { protectedBranches: c.protectedBranches, why: '' };
+  const h = remoteHead(url, cwd);
+  if (h.branch) return { protectedBranches: [h.branch], why: '' };
+  return { protectedBranches: null, why: `the default branch is unknown: no defaultBranch or protectedBranches in the config and the remote does not name it - ${h.why}; set defaultBranch (or protectedBranches) in the config to push without the remote's answer` };
 }
 
 // The repository the branches are derived from: opts.branchDir (the hooks pass the repository that pushes), else
@@ -293,7 +320,7 @@ function shellLines(c) {
   return Object.entries(v).map(([k, x]) => (x === '' ? `[[ -v ${k} ]] || ${k}=''` : `: \${${k}:=${q(x)}}`)).join('\n');
 }
 
-module.exports = { find, load, resolve, branches, shellLines, SPEC, SLOT_SPEC, RERUN_SPEC, EXCL_SPEC, EXCL_DEFAULT, STAND_SPEC, STAND_REQUIRED, WT_SPEC, PROBE_SPEC, HOOKS_SPEC, STANDING_SPEC, PRE_SPEC, ROLES, expand };
+module.exports = { find, load, resolve, branches, remoteHead, pushBranches, shellLines, SPEC, SLOT_SPEC, RERUN_SPEC, EXCL_SPEC, EXCL_DEFAULT, STAND_SPEC, STAND_REQUIRED, WT_SPEC, PROBE_SPEC, HOOKS_SPEC, STANDING_SPEC, PRE_SPEC, ROLES, expand };
 
 if (require.main === module) {
   const [cmd, ...rest] = process.argv.slice(2);

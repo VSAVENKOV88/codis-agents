@@ -165,6 +165,10 @@ try {
   git(norem, 'remote', 'add', 'origin', origin);
   git(norem, 'config', 'core.hooksPath', path.join(ROOT, 'scripts', 'git-hooks'));
   ok('setup: norem has an origin remote but no origin/HEAD', git(norem, 'symbolic-ref', '-q', 'refs/remotes/origin/HEAD').status !== 0);
+  // p-head2: pre-push asks the remote, not the local origin/HEAD; for the branches to stay unknown the remote names no
+  // HEAD either - a HEAD on an unborn branch, which git ls-remote --symref does not list (experiment, git 2.50).
+  git(origin, 'symbolic-ref', 'HEAD', 'refs/heads/unborn-head');
+  ok('setup: origin names no HEAD', git(norem, 'ls-remote', '--symref', origin, 'HEAD').stdout === '');
   p = spawnSync('git', ['-C', norem, 'push', 'origin', 'b-t1'], { encoding: 'utf8', env });
   ok('no origin/HEAD, no config: real git push origin b-t1 refused with the reason', p.status !== 0 && unknownRe.test(p.stderr)
     && git(origin, 'show-ref', '--verify', '--quiet', 'refs/heads/b-t1').status !== 0, p.stderr);

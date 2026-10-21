@@ -196,8 +196,8 @@ node <plugin>/scripts/config.js check
 | `worktreeSetup` | `scan` directories whose ignored data is copied into a new worktree; `skip` and `link` globs (everything else is an APFS clone) |
 | `slots` | `medium`, `heavy`, `total`, `lockDir`, `legacyLock`, `jobsAlone`, `jobsShared` |
 | `reportLanguage` | language of role reports (prompts stay in English) |
-| `defaultBranch` | base of new worktrees (`wt-setup.sh` without a third argument); left out, it is taken from git: where `refs/remotes/origin/HEAD` points (`git clone` sets it, `git remote set-head origin --auto` sets it again - on the owner's word: the session hook refuses `set-head` in every form writes of `symbolic-ref refs/remotes/<remote>/HEAD` and `update-ref` on it without `ALLOW_PROTECTED_PUSH=1`; only the remote `origin` is read). Not derivable: `config.js check` still passes with a note, `wt-setup.sh` without a base exits 78 |
-| `protectedBranches`, `protectedTagPattern` | refused by the hook and by `pre-push` without `ALLOW_PROTECTED_PUSH=1`; `protectedBranches` defaults to `[defaultBranch]` of the repository that pushes, and while that is unknown both hooks refuse every branch push (closed, not open) - a tag to a bare name after a colon too (`git push origin master:master` with a local tag `master`: git matches the bare name against the remote's refs and updates a branch there); a tag goes as `<tag>` or `<src>:refs/tags/<name>` |
+| `defaultBranch` | base of new worktrees (`wt-setup.sh` without a third argument); left out, it is taken from git: where `refs/remotes/origin/HEAD` points (`git clone` sets it, `git remote set-head origin --auto` sets it again - on the owner's word: the session hook refuses `set-head` in every form writes of `symbolic-ref refs/remotes/<remote>/HEAD` and `update-ref` on it without `ALLOW_PROTECTED_PUSH=1`; only the remote `origin` is read). Not derivable: `config.js check` still passes with a note, `wt-setup.sh` without a base exits 78. `pre-push` never reads the local `origin/HEAD` (a wrapper the session hook does not see can move it): without this key and `protectedBranches` it asks the remote it pushes to, `git ls-remote --symref -- <url> HEAD` |
+| `protectedBranches`, `protectedTagPattern` | refused by the hook and by `pre-push` without `ALLOW_PROTECTED_PUSH=1`; `protectedBranches` defaults to `[defaultBranch]` of the repository that pushes - for `pre-push`, without either key, to the branch the remote names as its `HEAD` (asked only for a branch push); while that is unknown (for `pre-push`: the remote unreachable, timed out after 60 s or naming no `HEAD`, as an empty repository does) both hooks refuse every branch push with the reason (closed, not open; owner 2026-10-21) - a tag to a bare name after a colon too (`git push origin master:master` with a local tag `master`: git matches the bare name against the remote's refs and updates a branch there); a tag goes as `<tag>` or `<src>:refs/tags/<name>` |
 | `ownerStackReadOnly` | the owner's Docker Compose project; roles only read from it |
 | `medianTaskIE` | median cost of an accepted task; `chain-cost.js` flags tasks above twice this |
 | `featureIELimit` | cost of a whole feature (its parts summed by the task field `feature`) above which `chain-cost.js` flags it; default 3 x `medianTaskIE` |
@@ -402,9 +402,10 @@ fallback to another slot directory: a second directory would be a second queue t
   and functions of the user's shell profile) pass it. For a push the git `pre-push` hook of the target repository is a
   second layer, but only while it runs (`git push --no-verify` and `git -c core.hooksPath=...` turn it off, and the
   session hook does not refuse them) and only for the branch it knows: `git remote set-head`, `git symbolic-ref` and
-  `git update-ref` have no second layer, and once a wrapper has moved `refs/remotes/origin/HEAD`, `pre-push` protects
-  the branch it now points to. Wrappers: their own task (owner 2026-10-21); a second layer that reads the default branch
-  from the remote (`git ls-remote --symref <remote> HEAD`) or the config and refuses without the network: task p-head2.
+  `git update-ref` have no second layer of their own; once a wrapper has moved `refs/remotes/origin/HEAD`, the session
+  hook protects the branch it now points to, while `pre-push` does not read it: it takes the default branch from the
+  config or from the remote (`git ls-remote --symref -- <url> HEAD`) and refuses every branch push when neither answers
+  (p-head2). Wrappers: their own task (owner 2026-10-21).
 - Git config that itself runs a command is the same class of indirection and passes the session hook: `git -c
   core.fsmonitor='git remote set-head origin feat; true' status` moves `refs/remotes/origin/HEAD` (measured with git
   2.50, a project with a config, no tty); likewise `-c core.sshCommand=...`, `-c diff.external=...`, `-c core.pager=...`
@@ -429,11 +430,15 @@ fallback to another slot directory: a second directory would be a second queue t
   project: `git --newopt -C <project> remote set-head ...` passes the session hook (open; `pre-push` stays the layer
   for pushes).
 - `git branch -dr origin/HEAD` deletes `refs/remotes/origin/HEAD` and the session hook does not judge it; with no
-  `defaultBranch` / `protectedBranches` the branches then become unknown and every branch push is refused (closed, not
-  open), until the owner sets it again.
+  `defaultBranch` / `protectedBranches` the session hook then refuses every branch push (closed, not open), until the
+  owner sets it again; `pre-push` still asks the remote.
 - Other ways to move `refs/remotes/origin/HEAD` that the session hook does not judge: `git remote rename` (the HEAD of
   the renamed remote becomes `origin/HEAD`), `git fetch` with `remote.origin.followRemoteHEAD` (git 2.48+), writing the
-  ref file under `.git/refs/remotes/` directly. Open, for the coordinator's backlog.
+  ref file under `.git/refs/remotes/` directly. They mislead only the session hook (`pre-push` asks the remote); open,
+  for the coordinator's backlog.
+- `pre-push` asks the remote at the URL git hands it, from the top of the worktree; a relative URL that does not resolve
+  from there is unreachable to it and every branch push is refused (closed);
+  `defaultBranch` / `protectedBranches` in the config push without the remote's answer.
 - With the protected branches known, a partly qualified destination such as `git push origin HEAD:heads/main` is taken
   by the session hook as the bare name `heads/main`, while git updates `refs/heads/main`; only `pre-push` (while it
   runs) refuses it. Open, for the coordinator's backlog.

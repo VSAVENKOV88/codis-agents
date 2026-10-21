@@ -22,7 +22,9 @@ const cfgFile = (name, c) => { const f = path.join(dir, name + '.json'); fs.writ
 const cli = (args, e = {}) => spawnSync('node', [path.join(ROOT, 'scripts', 'config.js'), ...args], { cwd: dir, encoding: 'utf8', env: Object.assign({}, env, e) });
 const json = (f) => { const r = cli(['json', f]); try { return JSON.parse(r.stdout); } catch { return { status: r.status, err: r.stderr }; } };
 const bash = (command, cwd, cfg) => decide({ tool_name: 'Bash', tool_input: { command }, cwd }, Object.assign({}, env, cfg ? { CODIS_AGENTS_CONFIG: cfg } : {}));
-const prePush = (cwd, rref, cfg) => spawnSync(path.join(ROOT, 'scripts', 'git-hooks', 'pre-push'), ['origin', 'url'],
+// url: what git passes as the second argument; pre-push asks it for the default branch (p-head2). The clone pushes to
+// origin.git (HEAD master); norem has no remote, so its URL does not exist.
+const prePush = (cwd, rref, cfg, url = path.join(dir, cwd.endsWith('norem') ? 'none.git' : 'origin.git')) => spawnSync(path.join(ROOT, 'scripts', 'git-hooks', 'pre-push'), ['origin', url],
   { cwd, input: `refs/heads/x ${'1'.repeat(40)} ${rref} ${'0'.repeat(40)}\n`, encoding: 'utf8', env: Object.assign({}, env, cfg ? { CODIS_AGENTS_CONFIG: cfg } : {}) });
 
 try {
