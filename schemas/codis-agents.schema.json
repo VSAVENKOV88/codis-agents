@@ -101,9 +101,10 @@
         "status": { "type": "string", "description": "Exits 0 only while the stand is up and ready; its output is shown by stand.sh status. take refuses while it fails." },
         "down": { "type": "string", "description": "Takes the stand down (the coordinator: stand.sh down; refused while the ticket is held, unless --force)." },
         "imageFiles": { "type": "array", "items": { "type": "string" }, "description": "Globs of the files that define the stand's image (Dockerfile, package manifests, compose files, .dockerignore). A task whose commits touch one builds its own stack instead (stand.sh image-diff). A glob without / matches the file name at any depth; * and ? stay within a path segment, ** crosses them." },
-        "memLimitMB": { "type": "number", "exclusiveMinimum": 0, "description": "Memory ceiling of the whole stand in MB (for reference; shown by stand.sh status)." }
+        "memLimitMB": { "type": "number", "exclusiveMinimum": 0, "description": "Memory ceiling of the whole stand in MB (for reference; shown by stand.sh status)." },
+        "cwd": { "type": "string", "description": "Directory the stand's commands run in (zsh, cwd): an absolute path or one starting with ~, an existing directory (config.js check). Without it: repoDir. Lets the commands use paths relative to a checkout other than repoDir, so the config of a branch and of the main checkout can be the same." }
       },
-      "description": "The project's shared stand: one Docker stack that tasks take in turn by ticket (scripts/stand.sh) instead of building their own. The plugin only calls these commands, with zsh in repoDir; what they do is the project's."
+      "description": "The project's shared stand: one Docker stack that tasks take in turn by ticket (scripts/stand.sh) instead of building their own. The plugin only calls these commands, with zsh in stand.cwd (repoDir without it); what they do is the project's."
     },
     "standingPush": {
       "type": "object", "additionalProperties": false, "required": ["branches", "check"],

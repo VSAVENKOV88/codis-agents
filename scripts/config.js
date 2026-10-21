@@ -88,10 +88,11 @@ const PRE_SPEC = { minFreeDiskGB: ['number', 10], minSwapGB: ['number', 4] };
 // status exits 0 only while the stand is up. imageFiles: globs of files that define the stand's image (a task whose
 // commits touch one builds its own stack); a glob without "/" matches the file name at any depth, * and ? stay
 // within one path segment, ** crosses them. memLimitMB: the stand's memory ceiling, for reference and status.
+// cwd (owner 2026-10-21): the directory the commands run in, absolute or ~ and existing; empty - repoDir, as before.
 const STAND_SPEC = {
   project: ['string', undefined], ports: ['number[]', []], up: ['string', undefined], deploy: ['string', undefined],
   reset: ['string', undefined], status: ['string', undefined], down: ['string', undefined], imageFiles: ['string[]', []],
-  memLimitMB: ['number', null],
+  memLimitMB: ['number', null], cwd: ['path', ''],
 };
 const STAND_REQUIRED = ['project', 'up', 'deploy', 'reset', 'status', 'down'];
 const ROLES = ['analyst', 'programmer', 'tester', 'reviewer', 'security-reviewer'];
@@ -191,6 +192,13 @@ function resolve(raw) {
     if (s.deploy && !s.deploy.includes('{wt}')) errors.push('stand.deploy: must contain {wt} (the worktree to deploy)');
     if (!s.ports.every((p) => Number.isInteger(p) && p >= 1 && p <= 65535)) errors.push('stand.ports: expected port numbers 1-65535');
     if (s.memLimitMB !== null && !(s.memLimitMB > 0)) errors.push('stand.memLimitMB: expected a positive number (or leave it out)');
+    if (s.cwd) {
+      let st = null;
+      try { st = fs.statSync(s.cwd); } catch { /* reported below */ }
+      if (!path.isAbsolute(s.cwd)) errors.push(`stand.cwd: an absolute path or one starting with ~, not ${s.cwd}`);
+      else if (!st) errors.push(`stand.cwd: the directory ${s.cwd} does not exist`);
+      else if (!st.isDirectory()) errors.push(`stand.cwd: ${s.cwd} is not a directory`);
+    }
   }
   const notes = c.roleNotes || {};
   for (const [k, v] of Object.entries(notes)) {

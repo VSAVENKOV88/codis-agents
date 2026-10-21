@@ -106,11 +106,11 @@ clean() {
 # in the Ubuntu container the first medium got its slot on SwapFree 20000 MB, 3 runs of 3)
 pub() { waitlong "grep -qx -- '$1' $T/proc/meminfo" || print -r -- "  (not published in 90 s: $1)" }
 
-# B2/B8. SwapFree 1000 MB < 4096: even the first medium waits, with the number of /proc/meminfo
+# B2/B8. SwapFree 1000 MB < 4000 (the default threshold): even the first medium waits, with the number of /proc/meminfo
 setp swfree 1024000; pub 'SwapFree: *1024000 kB'
 hjob medium.sh s1
 newline s1 'waiting for slot medium' 0
-ok 'B2/B8. SwapFree 1024000 kB = 1000 MB < 4096 - the first medium waits and names the capacity' '! started s1 && grep -q "swap: capacity 1000 MB < 4096" $T/s1.out' "$(cat $T/s1.out)"
+ok 'B2/B8. SwapFree 1024000 kB = 1000 MB < 4000 - the first medium waits and names the capacity' '! started s1 && grep -q "swap: capacity 1000 MB < 4000" $T/s1.out' "$(cat $T/s1.out)"
 setp swfree 20480000
 waitlong 'started s1'
 ok 'B2/B8. SwapFree back to 20000 MB - it went' 'started s1' "$(cat $T/s1.out)"
@@ -120,11 +120,11 @@ rel s1; clean
 setp swtotal 0; setp swfree 0; pub 'SwapTotal: *0 kB'; pub 'SwapFree: *0 kB'
 rm -f $J
 once nsw zsh -c 'touch '$T'/nsw.ran'
-ok 'B7. SwapTotal 0, threshold 4096 - heavy.sh exits 78 at once (not an endless wait)' '[[ $(rc nsw) == 78 ]]' "code $(rc nsw); $(cat $T/nsw.out $T/nsw.err)"
+ok 'B7. SwapTotal 0, threshold 4000 - heavy.sh exits 78 at once (not an endless wait)' '[[ $(rc nsw) == 78 ]]' "code $(rc nsw); $(cat $T/nsw.out $T/nsw.err)"
 ok 'B7. ... the command did not run' '[[ ! -e $T/nsw.ran ]]'
 ok 'B7. ... one refusal line on stderr, nothing on stdout' '[[ $(wc -l < $T/nsw.err) -eq 1 && ! -s $T/nsw.out ]]' "$(cat $T/nsw.out $T/nsw.err)"
-ok 'B7. ... it names the numbers: SwapTotal 0, the threshold 4096 MB, MemTotal 15625 MB, MemAvailable 3125 MB' \
-  'grep -q "SwapTotal 0" $T/nsw.err && grep -q "4096 MB" $T/nsw.err && grep -q "MemTotal 15625 MB" $T/nsw.err && grep -q "MemAvailable 3125 MB" $T/nsw.err' "$(cat $T/nsw.err)"
+ok 'B7. ... it names the numbers: SwapTotal 0, the threshold 4000 MB, MemTotal 15625 MB, MemAvailable 3125 MB' \
+  'grep -q "SwapTotal 0" $T/nsw.err && grep -q "SLOT_SWAP_MIN_MB = 4000 MB" $T/nsw.err && grep -q "MemTotal 15625 MB" $T/nsw.err && grep -q "MemAvailable 3125 MB" $T/nsw.err' "$(cat $T/nsw.err)"
 ok 'B7. ... and the way out: SLOT_SWAP_MIN_MB=0 switches the swap check off' 'grep -q "SLOT_SWAP_MIN_MB=0" $T/nsw.err' "$(cat $T/nsw.err)"
 jl=( "${(@s:	:)$(tail -1 $J 2>/dev/null)}" )
 ok 'B7. ... journaled: acquire "-", rc 78' '[[ $jl[3] == - && $jl[9] == 78 ]]' "$(tail -1 $J 2>/dev/null)"

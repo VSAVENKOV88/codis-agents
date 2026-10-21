@@ -45,14 +45,15 @@ source "$H/slots.zsh" || exit $?
 _st_err=$(node "$H/stand.js" check 2>&1) || { print -u2 -r -- "$_st_err"; exit 78 }
 PROJECT=$(node "$H/stand.js" get project)
 MEMLIM=$(node "$H/stand.js" get memLimitMB)
+STCWD=$(node "$H/stand.js" get cwd)   # stand.cwd, or repoDir without it: where the project's commands run
 LOCK=$SLOTS_DIR/stand.lock WHO=$SLOTS_DIR/stand.lock.who REL=$SLOTS_DIR/stand.release
 mkdir -p $SLOTS_DIR/queue
 : >> $LOCK; : >> $SLOTS_DIR/admit.lock; : >> $SLOTS_DIR/queue.lock
 
-# _st_cmd <name> [wt] - the project's command, with zsh in repoDir; its exit code.
+# _st_cmd <name> [wt] - the project's command, with zsh in stand.cwd (repoDir without it); its exit code.
 _st_cmd() {
   local c; c=$(node "$H/stand.js" cmd $1 ${2:+--wt} ${2:+"$2"}) || return 78
-  ( cd -- "$CODIS_REPO_DIR" || exit 66; zsh -c "$c" )
+  ( cd -- "$STCWD" || exit 66; zsh -c "$c" )
 }
 # Is the ticket free right now (a lock attempt in a subshell: its fd closes with it, the holder's lock is untouched).
 _st_lockfree() { ( zsystem flock -t 0 -f _f $LOCK ) 2>/dev/null }
@@ -211,7 +212,7 @@ case $cmd in
     _st_need_holder "$W" || exit $?
     c=$(node "$H/stand.js" cmd deploy --wt "$W") || exit 78
     cd -- $W || exit 66
-    SLOT_LABEL="stand deploy ${W:t}" slot_run medium zsh -c 'cd -- "$1" || exit 66; eval "$2"' stand-deploy "$CODIS_REPO_DIR" "$c"
+    SLOT_LABEL="stand deploy ${W:t}" slot_run medium zsh -c 'cd -- "$1" || exit 66; eval "$2"' stand-deploy "$STCWD" "$c"
     exit $? ;;
   status) st_status; exit $? ;;
   up) _st_cmd up; exit $? ;;

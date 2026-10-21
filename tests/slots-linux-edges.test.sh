@@ -6,10 +6,12 @@
 #   R1. no swap (SwapTotal 0), default threshold - guards-all.sh refuses with 78 too: the runner never starts, one
 #       refusal line, journaled (rc 78);
 #   R2. ... and medium.sh: 78, the command does not run;
-#   R3. swap at least the threshold but full (SwapTotal 8 GB or exactly 4194304 kB = 4096 MB, SwapFree 0) - a WAIT
-#       with "swap: capacity 0 MB < 4096", not the refusal: SwapFree can come back up to SwapTotal;
-#   R6. swap present but smaller than the threshold (0 < SwapTotal / 1024 < SLOT_SWAP_MIN_MB: 4194300 kB - a 4 GiB swap
-#       minus its header page - is 4095 MB; 1048572 kB is 1023 MB) - SwapFree never exceeds SwapTotal and Linux swap
+#   R3. swap at least the threshold but full (SwapTotal 8 GB or exactly 4096000 kB = 4000 MB, SwapFree 0) - a WAIT
+#       with "swap: capacity 0 MB < 4000", not the refusal: SwapFree can come back up to SwapTotal;
+#   R8. the default threshold is 4000 MB (owner 2026-10-21): a 4 GiB swap - 4194300 kB, minus its header page, is
+#       4095 MB - gets the slot at the default, in heavy.sh, medium.sh and guards-all.sh;
+#   R6. swap present but smaller than the threshold (0 < SwapTotal / 1024 < SLOT_SWAP_MIN_MB: 4095000 kB is 3999 MB;
+#       1048572 kB is 1023 MB) - SwapFree never exceeds SwapTotal and Linux swap
 #       does not grow by itself, so no slot would ever be given: heavy.sh, medium.sh and guards-all.sh refuse at once
 #       with 78 and the numbers, the hint names SLOT_SWAP_MIN_MB and the value that would fit, journaled, no queue
 #       ticket; with SLOT_SWAP_MIN_MB lowered to fit the slot is given;
@@ -67,6 +69,8 @@ mkproc mem0    0        0        30720000 20480000 yes
 mkproc small4  16000000 3200000  4194300  4194300  yes
 mkproc small1  16000000 3200000  1048572  1048572  yes
 mkproc exact4  16000000 3200000  4194304  0        yes
+mkproc exact4k 16000000 3200000  4096000  0        yes
+mkproc small3  16000000 3200000  4095000  4095000  yes
 
 pass=0 fail=0
 ok() { if eval "$2"; then (( pass++ )); print -r -- "  ok   $1"; else (( fail++ )); print -r -- "  FAIL $1${3:+
@@ -96,7 +100,7 @@ trap 'touch $T/rel.{a,b,c}{1,2,3,4}(N) 2>/dev/null; wait 2>/dev/null; rm -rf $T'
 # R1. guards-all.sh on a machine without swap: 78, the runner does not start
 rm -f $J
 SLOT_PROC=$T/proc/noswap once g1 guards-all.sh $T/wts/w1
-ok 'R1. SwapTotal 0, threshold 4096 - guards-all.sh exits 78 (not an endless wait)' '[[ $(rc g1) == 78 ]]' "code $(rc g1); $(cat $T/g1.out $T/g1.err)"
+ok 'R1. SwapTotal 0, threshold 4000 (the default) - guards-all.sh exits 78 (not an endless wait)' '[[ $(rc g1) == 78 ]]' "code $(rc g1); $(cat $T/g1.out $T/g1.err)"
 ok 'R1. ... the runner (guardCommand) never started' '[[ ! -e $T/runner.ran ]]'
 ok 'R1. ... the refusal line names SwapTotal 0 and SLOT_SWAP_MIN_MB=0' 'grep -q "no swap (SwapTotal 0 kB" $T/g1.err && grep -q "SLOT_SWAP_MIN_MB=0" $T/g1.err' "$(cat $T/g1.err)"
 jl=( "${(@s:	:)$(tail -1 $J 2>/dev/null)}" )
@@ -109,11 +113,11 @@ ok 'R2. SwapTotal 0 - medium.sh exits 78, the command did not run' '[[ $(rc m1) 
 # R3. swap present but full: a temporary wait with the number, not the refusal
 SLOT_PROC=$T/proc/full hjob heavy.sh a1
 waitlong '(( $(grep -c "waiting for slot heavy" $T/a1.out 2>/dev/null) > 0 ))'
-ok 'R3. SwapTotal 8 GB, SwapFree 0 - heavy.sh WAITS with "swap: capacity 0 MB < 4096" (no 78)' '! started a1 && grep -q "swap: capacity 0 MB < 4096" $T/a1.out && ! grep -q "refused" $T/a1.out' "$(cat $T/a1.out)"
+ok 'R3. SwapTotal 8 GB, SwapFree 0 - heavy.sh WAITS with "swap: capacity 0 MB < 4000" (no 78)' '! started a1 && grep -q "swap: capacity 0 MB < 4000" $T/a1.out && ! grep -q "refused" $T/a1.out' "$(cat $T/a1.out)"
 kill $JP 2>/dev/null; clean
-SLOT_PROC=$T/proc/exact4 hjob heavy.sh a2
+SLOT_PROC=$T/proc/exact4k hjob heavy.sh a2
 waitlong '(( $(grep -c "waiting for slot heavy" $T/a2.out 2>/dev/null) > 0 ))'
-ok 'R3. SwapTotal 4194304 kB = 4096 MB (equal to the threshold), SwapFree 0 - heavy.sh WAITS (no 78)' '! started a2 && grep -q "swap: capacity 0 MB < 4096" $T/a2.out && ! grep -q "refused" $T/a2.out' "$(cat $T/a2.out)"
+ok 'R3. SwapTotal 4096000 kB = 4000 MB (equal to the default threshold), SwapFree 0 - heavy.sh WAITS (no 78)' '! started a2 && grep -q "swap: capacity 0 MB < 4000" $T/a2.out && ! grep -q "refused" $T/a2.out' "$(cat $T/a2.out)"
 kill $JP 2>/dev/null; clean
 
 # R6. swap smaller than the threshold: refused at once with the numbers, in every slot script
@@ -121,20 +125,31 @@ small() { # small <name> <proc dir> <SwapTotal kB> <MB> <script> <command...>
   local n=$1 d=$2 kb=$3 mb=$4 s=$5; shift 5
   rm -f $J; rm -rf $SLOTS_DIR/queue
   SLOT_PROC=$T/proc/$d once $n $s "$@"
-  ok "R6. SwapTotal $kb kB = $mb MB < 4096 - $s exits 78 at once (not an endless wait)" '[[ $(rc $n) == 78 ]]' "code $(rc $n); $(cat $T/$n.out $T/$n.err)"
+  ok "R6. SwapTotal $kb kB = $mb MB < 4000 - $s exits 78 at once (not an endless wait)" '[[ $(rc $n) == 78 ]]' "code $(rc $n); $(cat $T/$n.out $T/$n.err)"
   ok "R6. ... ($s) one refusal line with SwapTotal $kb kB = $mb MB, the threshold, MemTotal and MemAvailable" \
-    '[[ $(grep -c "refused" $T/$n.err) -eq 1 ]] && grep -qF "SwapTotal $kb kB = $mb MB" $T/$n.err && grep -qF "SLOT_SWAP_MIN_MB = 4096 MB" $T/$n.err && grep -q "MemTotal 15625 MB" $T/$n.err && grep -q "MemAvailable 3125 MB" $T/$n.err' "$(cat $T/$n.err)"
+    '[[ $(grep -c "refused" $T/$n.err) -eq 1 ]] && grep -qF "SwapTotal $kb kB = $mb MB" $T/$n.err && grep -qF "SLOT_SWAP_MIN_MB = 4000 MB" $T/$n.err && grep -q "MemTotal 15625 MB" $T/$n.err && grep -q "MemAvailable 3125 MB" $T/$n.err' "$(cat $T/$n.err)"
   ok "R6. ... ($s) the hint names the threshold that fits: SLOT_SWAP_MIN_MB to $mb or less" 'grep -qF "set SLOT_SWAP_MIN_MB to $mb or less" $T/$n.err' "$(cat $T/$n.err)"
   jl=( "${(@s:	:)$(tail -1 $J 2>/dev/null)}" )
   ok "R6. ... ($s) journaled: acquire \"-\", rc 78; no queue ticket left" '[[ $jl[3] == - && $jl[9] == 78 ]] && [[ -z $(print -r -- $SLOTS_DIR/queue/*(N)) ]]' "$(tail -1 $J 2>/dev/null); $(ls $SLOTS_DIR/queue 2>&1)"
 }
-small s4h small4 4194300 4095 heavy.sh zsh -c 'touch '$T'/s4h.ran'
+small s4h small3 4095000 3999 heavy.sh zsh -c 'touch '$T'/s4h.ran'
 ok 'R6. ... the heavy command did not run' '[[ ! -e $T/s4h.ran ]]'
-small s4m small4 4194300 4095 medium.sh zsh -c 'touch '$T'/s4m.ran'
+small s4m small3 4095000 3999 medium.sh zsh -c 'touch '$T'/s4m.ran'
 ok 'R6. ... the medium command did not run' '[[ ! -e $T/s4m.ran ]]'
 rm -f $T/runner.ran
-small s4g small4 4194300 4095 guards-all.sh $T/wts/w1
+small s4g small3 4095000 3999 guards-all.sh $T/wts/w1
 ok 'R6. ... the runner (guardCommand) never started' '[[ ! -e $T/runner.ran ]]'
+
+# R8. the default threshold 4000 fits a 4 GiB swap (SwapTotal 4194300 kB = 4095 MB, all free): the slot is given
+rm -f $J; rm -rf $SLOTS_DIR/queue
+SLOT_PROC=$T/proc/small4 once d4h heavy.sh zsh -c 'exit 7'
+ok 'R8. SwapTotal 4194300 kB = 4095 MB, default threshold - heavy.sh gives the slot (code 7), no refusal' '[[ $(rc d4h) == 7 ]] && ! grep -q refused $T/d4h.err' "code $(rc d4h); $(cat $T/d4h.out $T/d4h.err)"
+SLOT_PROC=$T/proc/small4 once d4m medium.sh zsh -c 'exit 7'
+ok 'R8. ... medium.sh gives the slot too (code 7)' '[[ $(rc d4m) == 7 ]] && ! grep -q refused $T/d4m.err' "code $(rc d4m); $(cat $T/d4m.out $T/d4m.err)"
+rm -f $T/runner.ran
+SLOT_PROC=$T/proc/small4 once d4g guards-all.sh $T/wts/w1
+ok 'R8. ... guards-all.sh starts the runner (guardCommand ran), no refusal' '[[ -e $T/runner.ran ]] && ! grep -q refused $T/d4g.err' "code $(rc d4g); $(cat $T/d4g.out $T/d4g.err)"
+rm -f $T/runner.ran
 small s1h small1 1048572 1023 heavy.sh zsh -c 'touch '$T'/s1h.ran'
 SLOT_SWAP_MIN_MB=1023 SLOT_PROC=$T/proc/small1 once s1ok heavy.sh zsh -c 'exit 7'
 ok 'R6. SwapTotal 1048572 kB with SLOT_SWAP_MIN_MB=1023 (the hinted value) - the slot is given, code 7' '[[ $(rc s1ok) == 7 ]]' "code $(rc s1ok); $(cat $T/s1ok.out $T/s1ok.err)"
@@ -163,7 +178,7 @@ third mem0  "MemTotal 0 in $T/proc/mem0/meminfo" 'MemTotal 0'
 
 ok 'Linux readings never called the macOS tools' '[[ ! -e $T/mac.called ]]'
 
-# R7 (tester, round 2). The swap-smaller-than-threshold refusal follows the threshold that is set, not 4096; a 1 kB
+# R7 (tester, round 2). The swap-smaller-than-threshold refusal follows the threshold that is set, not the default; a 1 kB
 # swap is "smaller", not "no swap"; a swap that fits a lowered threshold but is partly used waits; macOS never refuses
 # a small swap (its swap file grows: capacity = vm.swapusage free + free space of /System/Volumes/VM).
 mkproc used1 16000000 3200000  1048572  524288   yes
@@ -191,7 +206,7 @@ print "Filesystem 1M-blocks Used Available Capacity Mounted"; print "/dev/disk3s
 chmod +x $T/macbin/*
 PATH=$T/macbin:$PATH SLOT_OS=darwin hjob heavy.sh a4
 waitlong '(( $(grep -c "waiting for slot heavy" $T/a4.out 2>/dev/null) > 0 ))'
-ok 'R7. macOS, swap capacity 1024 MB < 4096 - heavy.sh WAITS (its swap grows), never 78' '! started a4 && grep -q "swap: capacity 1024 MB < 4096" $T/a4.out && ! grep -q "refused" $T/a4.out' "$(cat $T/a4.out)"
+ok 'R7. macOS, swap capacity 1024 MB < 4000 - heavy.sh WAITS (its swap grows), never 78' '! started a4 && grep -q "swap: capacity 1024 MB < 4000" $T/a4.out && ! grep -q "refused" $T/a4.out' "$(cat $T/a4.out)"
 kill $JP 2>/dev/null; clean
 print -r -- "TOTAL: $pass ok, $fail fail"
 (( fail == 0 ))

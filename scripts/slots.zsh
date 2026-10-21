@@ -27,8 +27,9 @@
 #
 # THRESHOLDS COME FROM MEASUREMENT (16 GB macOS machine, ~20k samples every 15 s over five days):
 #  * macOS swap grows in 1 GB files under /System/Volumes/VM, so "free" in vm.swapusage is only what is left in the
-#    current files. Swap capacity = that rest + free space of the VM volume (df). Any slot needs SLOT_SWAP_MIN_MB = 4096:
+#    current files. Swap capacity = that rest + free space of the VM volume (df). Any slot needs SLOT_SWAP_MIN_MB = 4000:
 #    the ceiling is 4 slots x ~1 GB (bundler + Chromium is about 1 GB), so even if everything goes to swap there is room.
+#    4000, not 4096 (owner 2026-10-21): a 4 GiB Linux swap shows SwapTotal 4194300 kB = 4095 MB (its header page).
 #  * The extra heavy slot: memory_pressure "free percentage" >= SLOT_THIRD_FREE_PCT (50) as the MINIMUM over a window,
 #    not one reading. Under load the mean was 52-55 % and the minimum 29-31 %; one heavy job is ~1 GB, ~6 % of 16 GB,
 #    so from 50 % at least 44 % stays, ~13 points above the observed minimum. Under three full guard runs free memory
@@ -96,7 +97,7 @@ unset _slot_cfg _slot_cfgf
 : ${SLOT_HEAVY_N:=2}
 : ${SLOT_POLL:=5}                 # pause between attempts, s
 : ${SLOT_SAY:=30}                 # "waiting for slot ..." at least this often, s (an agent silent for 10 min is killed)
-: ${SLOT_SWAP_MIN_MB:=4096}
+: ${SLOT_SWAP_MIN_MB:=4000}
 _SLOT_THIRD_SET=${SLOT_THIRD_FREE_PCT:+1}   # set explicitly - the extra heavy slot is on on Linux too (see _slot_pick)
 : ${SLOT_THIRD_FREE_PCT:=50}
 : ${SLOT_THIRD_SWAP_GROW_MB:=256}
@@ -399,7 +400,7 @@ slot_run() {
   # a slot needs swap capacity: SwapFree never exceeds SwapTotal and Linux swap does not grow by itself, so no slot would
   # ever be given - refuse at once with the numbers (78: the threshold does not suit this machine; U1 decision 3 and the
   # coordinator's decision of 2026-10-21 after review 1), never wait forever. A 4 GiB swap is 4194300 kB = 4095 MB (its
-  # header page), below the default 4096: compared as read, never rounded up.
+  # header page), above the default 4000; compared as read, never rounded up.
   if (( SLOT_SWAP_MIN_MB > 0 )) && [[ $SLOT_OS == linux ]] && _slot_swap && (( _SLOT_MI[SwapTotal] / 1024 < SLOT_SWAP_MIN_MB )); then
     local swmb=$(( _SLOT_MI[SwapTotal] / 1024 ))
     local mem="MemTotal ${_SLOT_MI[MemTotal]:+$(( _SLOT_MI[MemTotal] / 1024 ))} MB, MemAvailable ${_SLOT_MI[MemAvailable]:+$(( _SLOT_MI[MemAvailable] / 1024 ))} MB"

@@ -12,6 +12,8 @@
 //  B10 the stand takes no memory slot, deploy runs in a medium slot; stand tickets are not "the other queue" of slots;
 //  B11 an invalid config: stand and slot commands refuse with its text, and nothing falls back to ~/.cache.
 // Plus: release --force, a failing reset at issue, image-diff, and the class stand in the slot-journal summary.
+// cwd: the project's commands (up, status, down, reset, deploy) run in stand.cwd when it is set (owner 2026-10-21),
+// in repoDir without it.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -20,7 +22,7 @@ const { ok, skip, has, done } = require('./lib');
 
 const ROOT = path.join(__dirname, '..');
 const S = path.join(ROOT, 'scripts');
-const CASES = ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B9', 'B10', 'B11', 'force', 'reset fails', 'image-diff', 'journal'];
+const CASES = ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B9', 'B10', 'B11', 'force', 'reset fails', 'image-diff', 'cwd', 'journal'];
 if (!has('zsh')) { for (const c of CASES) skip(c, 'zsh not found'); done(); }
 
 const T = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'stand-test-')));
@@ -229,6 +231,38 @@ const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { retu
     fs.writeFileSync(path.join(G, 'server', 'dirty'), 'x');
     r = st(['image-diff', '--base', 'nope'], G);
     ok('image-diff: an unknown base -> exit 2 with the reason', r.status === 2, outOf(r));
+
+    // cwd: with stand.cwd every command of the project runs in that directory; without it in repoDir (as before).
+    const CWD = path.join(T, 'stand cwd'), CLOG = path.join(T, 'cwdlog');
+    fs.mkdirSync(CWD);
+    const at = (n) => `print -r -- "${n} $PWD" >> ${CLOG}`;
+    const CS = Object.assign({}, STAND, {
+      up: at('up') + `; touch ${T}/up`, status: at('status') + `; test -e ${T}/up`, down: at('down'),
+      reset: at('reset'), deploy: at('deploy') + '; : {wt}',
+    });
+    const cwdLog = () => (fs.existsSync(CLOG) ? fs.readFileSync(CLOG, 'utf8').trim().split('\n').filter(Boolean) : []);
+    const CWDCFG = path.join(T, 'cwd.json'), NOCWD = path.join(T, 'nocwd.json');
+    fs.writeFileSync(CWDCFG, JSON.stringify(cfgOf(Object.assign({}, CS, { cwd: CWD }))));
+    fs.writeFileSync(NOCWD, JSON.stringify(cfgOf(CS)));
+    const ce = { CODIS_AGENTS_CONFIG: CWDCFG };
+    for (const c of ['up', 'status', 'down']) st([c], A, ce);
+    const pg = take(A, [], ce);
+    ok('cwd: take with stand.cwd set gets the ticket', await waitFor(() => taken(pg)), pg.out);
+    r = st(['deploy'], A, ce);
+    ok('cwd: deploy by the holder exits 0', r.status === 0, outOf(r));
+    r = st(['release'], A, ce);
+    ok('cwd: release exits 0', r.status === 0 && await waitFor(() => pg.exited !== null, 3000), outOf(r));
+    const ran = (lines, dir) => lines.length > 0 && lines.every((l) => l.endsWith(' ' + dir)) && ['up', 'status', 'down', 'reset', 'deploy'].every((n) => lines.some((l) => l.startsWith(n + ' ')));
+    ok('cwd: up, status, down, reset (at issue and at release) and deploy all ran in stand.cwd', ran(cwdLog(), CWD) && cwdLog().filter((l) => l.startsWith('reset ')).length === 2, cwdLog().join('|'));
+    fs.rmSync(CLOG, { force: true });
+    for (const c of ['up', 'status', 'down']) st([c], A, { CODIS_AGENTS_CONFIG: NOCWD });
+    const main = path.join(T, 'main');
+    ok('cwd: without stand.cwd up, status and down run in repoDir', cwdLog().join('|') === ['up', 'status', 'down'].map((n) => `${n} ${main}`).join('|'), cwdLog().join('|'));
+    const BADCWD = path.join(T, 'badcwd.json');
+    fs.writeFileSync(BADCWD, JSON.stringify(cfgOf(Object.assign({}, CS, { cwd: path.join(T, 'missing-dir') }))));
+    r = st(['status'], A, { CODIS_AGENTS_CONFIG: BADCWD });
+    ok('cwd: a stand.cwd that does not exist - stand.sh refuses (exit 78) naming it', r.status === 78 && /stand\.cwd: /.test(outOf(r)) && outOf(r).includes('missing-dir'), `${r.status} ${outOf(r)}`);
+    st(['up'], A);
 
     // The slot-journal summary shows the class stand (queue wait and hold).
     const sj = spawnSync('node', [path.join(S, 'slot-journal.js'), '--journal', J], { encoding: 'utf8' });

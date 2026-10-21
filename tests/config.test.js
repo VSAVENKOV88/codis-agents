@@ -47,6 +47,24 @@ bad0(withStand(Object.assign({}, STAND, { ports: [0] })), /stand\.ports: /, 'sta
 bad0(withStand(Object.assign({}, STAND, { memLimitMB: -1 })), /stand\.memLimitMB: /, 'negative stand memory limit - error');
 // The stand may not be the owner's own stack: roles reset and redeploy it.
 bad0(Object.assign(withStand(STAND), { ownerStackReadOnly: 'p-dev' }), /stand\.project: .*owner's stack/, 'stand project = the owner\'s stack - error');
+// stand.cwd (owner 2026-10-21): the directory the stand's commands run in; absolute or ~, it must exist; without the
+// key it stays empty and stand.sh runs them in repoDir.
+ok('stand.cwd defaults to empty (stand.sh then uses repoDir)', C.resolve(withStand(STAND)).config.stand.cwd === '');
+{
+  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.homedir(), '.codis-cwd-test-')));
+  try {
+    r = C.resolve(withStand(Object.assign({}, STAND, { cwd: home })));
+    ok('stand.cwd: an existing absolute directory validates', r.errors.length === 0 && r.config.stand.cwd === home, r.errors.join('; '));
+    const tilde = '~/' + path.relative(os.homedir(), home);
+    r = C.resolve(withStand(Object.assign({}, STAND, { cwd: tilde })));
+    ok('stand.cwd: ~ is expanded', r.errors.length === 0 && r.config.stand.cwd === home, r.errors.join('; ') + ' ' + (r.config.stand && r.config.stand.cwd));
+    bad0(withStand(Object.assign({}, STAND, { cwd: path.join(home, 'missing') })), /stand\.cwd: .*missing does not exist/, 'stand.cwd that does not exist - error naming it');
+    fs.writeFileSync(path.join(home, 'file'), '');
+    bad0(withStand(Object.assign({}, STAND, { cwd: path.join(home, 'file') })), /stand\.cwd: .*not a directory/, 'stand.cwd that is a file - error');
+    bad0(withStand(Object.assign({}, STAND, { cwd: 'relative/dir' })), /stand\.cwd: .*absolute/, 'stand.cwd relative - error (absolute or ~)');
+    bad0(withStand(Object.assign({}, STAND, { cwd: 3 })), /stand\.cwd: expected path/, 'stand.cwd not a string - error');
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+}
 // A project's real config shape (all its sections, plus stand) passes check from the command line (B11).
 const fixture = path.join(ROOT, 'tests', 'fixtures', 'project-with-stand.json');
 const chk = spawnSync('node', [path.join(ROOT, 'scripts', 'config.js'), 'check', fixture], { encoding: 'utf8' });
