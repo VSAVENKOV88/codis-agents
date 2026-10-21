@@ -25,7 +25,7 @@ ok('schema gitHooks keys = config.js', same(Object.keys(schema.properties.gitHoo
 ok('schema standingPush keys = config.js', schema.properties.standingPush && same(Object.keys(schema.properties.standingPush.properties), Object.keys(C.STANDING_SPEC || {})));
 ok('schema standingPush says it is only for the process-rules repository', schema.properties.standingPush && /only for the repository of process rules/.test(schema.properties.standingPush.description));
 ok('schema preconditions keys = config.js', schema.properties.preconditions && same(Object.keys(schema.properties.preconditions.properties), Object.keys(C.PRE_SPEC || {})));
-ok('preconditions defaults: 10 GB of disk, 4 GB of swap', (() => { const x = C.resolve({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s' }).config.preconditions; return x.minFreeDiskGB === 10 && x.minSwapGB === 4; })());
+ok('preconditions defaults (no machine file): 10 GB of disk, swapMinMB 4000', (() => { const x = C.resolve({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s' }).config.preconditions; return x.minFreeDiskGB === 10 && x.swapMinMB === 4000; })());
 bad0({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s', featureIELimit: 0 }, /featureIELimit: expected a positive number/, 'featureIELimit 0 - error');
 ok('featureIELimit defaults to null (3 x medianTaskIE in chain-cost)', C.resolve({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s' }).config.featureIELimit === null);
 bad0({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s', preconditions: { minFreeDiskGB: -1 } }, /preconditions\.minFreeDiskGB: expected a number >= 0/, 'negative disk floor - error');
@@ -141,7 +141,7 @@ bad({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s', testerWritable: ['('] 
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'config-test-'));
 const cli = (args, cwd, env = {}) => spawnSync('node', [path.join(ROOT, 'scripts', 'config.js'), ...args],
-  { cwd, encoding: 'utf8', env: Object.assign({ HOME: os.homedir(), PATH: process.env.PATH }, env) });
+  { cwd, encoding: 'utf8', env: Object.assign({ HOME: os.homedir(), XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME, PATH: process.env.PATH }, env) });
 try {
   const proj = path.join(dir, 'proj'), sub = path.join(proj, 'a', 'b');
   fs.mkdirSync(sub, { recursive: true });
@@ -161,9 +161,9 @@ try {
     skip('shell output: quoted values, ~ expanded, empty values defined', 'zsh not found');
     skip('shell output: the environment wins over the config', 'zsh not found');
   } else {
-    const z = spawnSync('zsh', ['-c', sh + '\nprint -r -- "$SLOTS_DIR|$CODIS_SHARED_DIR|$SLOT_HEAVY_N|${+SLOT_LEGACY_LOCK}"'], { encoding: 'utf8', env: { HOME: os.homedir(), PATH: process.env.PATH } });
+    const z = spawnSync('zsh', ['-c', sh + '\nprint -r -- "$SLOTS_DIR|$CODIS_SHARED_DIR|$SLOT_HEAVY_N|${+SLOT_LEGACY_LOCK}"'], { encoding: 'utf8', env: { HOME: os.homedir(), XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME, PATH: process.env.PATH } });
     ok('shell output: quoted values, ~ expanded, empty values defined', z.stdout.trim() === `${os.homedir()}/x|${path.join(dir, "it's shared")}|2|1`, z.stdout + z.stderr);
-    const z2 = spawnSync('zsh', ['-c', sh + '\nprint -r -- $SLOTS_DIR'], { encoding: 'utf8', env: { HOME: os.homedir(), PATH: process.env.PATH, SLOTS_DIR: '/env' } });
+    const z2 = spawnSync('zsh', ['-c', sh + '\nprint -r -- $SLOTS_DIR'], { encoding: 'utf8', env: { HOME: os.homedir(), XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME, PATH: process.env.PATH, SLOTS_DIR: '/env' } });
     ok('shell output: the environment wins over the config', z2.stdout.trim() === '/env', z2.stdout);
   }
   ok('check: exit 0 on the example', cli(['check', path.join(ROOT, 'examples', 'codis-agents.example.json')], dir).status === 0);

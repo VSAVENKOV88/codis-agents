@@ -20,7 +20,7 @@ const { ok, done } = require('./lib');
 
 const ROOT = path.join(__dirname, '..');
 const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'default-branch-edges-')));
-const env = { HOME: os.homedir(), PATH: process.env.PATH };
+const env = { HOME: os.homedir(), XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME, PATH: process.env.PATH };
 const git = (d, ...a) => spawnSync('git', ['-C', d, ...a], { encoding: 'utf8' });
 const ident = (d) => { git(d, 'config', 'user.email', 't@t'); git(d, 'config', 'user.name', 't'); git(d, 'config', 'core.hooksPath', '/dev/null'); };
 const commit = (d, f) => { fs.writeFileSync(path.join(d, f), f); git(d, 'add', f); git(d, 'commit', '-qm', f); };

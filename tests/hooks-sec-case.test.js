@@ -13,7 +13,7 @@ const { decide } = require('../scripts/hooks/guard-bash');
 const { ok, skip, done } = require('./lib');
 
 const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'hooks-sec-case-')));
-const env = { HOME: os.homedir(), PATH: process.env.PATH };
+const env = { HOME: os.homedir(), XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME, PATH: process.env.PATH };
 const git = (d, ...a) => spawnSync('git', ['-C', d, ...a], { encoding: 'utf8' });
 const bash = (command, cwd, cfg) => { try { return decide({ tool_name: 'Bash', tool_input: { command }, cwd }, Object.assign({}, env, { CODIS_AGENTS_CONFIG: cfg })); } catch (e) { return 'CRASH ' + e.message; } };
 

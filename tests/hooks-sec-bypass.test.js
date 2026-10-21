@@ -18,7 +18,7 @@ const { decide } = require('../scripts/hooks/guard-bash');
 const { ok, done } = require('./lib');
 
 const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'hooks-sec-bypass-')));
-const env = { HOME: os.homedir(), PATH: process.env.PATH };
+const env = { HOME: os.homedir(), XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME, PATH: process.env.PATH };
 const git = (d, ...a) => spawnSync('git', ['-C', d, ...a], { encoding: 'utf8' });
 const ident = (d) => { git(d, 'config', 'user.email', 't@t'); git(d, 'config', 'user.name', 't'); git(d, 'config', 'core.hooksPath', '/dev/null'); };
 // extra: the environment of the hook; cfg: CODIS_AGENTS_CONFIG (omitted - the config is found from the directories only)

@@ -13,7 +13,7 @@ const ROOT = path.join(__dirname, '..');
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hooks-test-'));
 const repo = path.join(dir, 'repo');
 const g = (...a) => spawnSync('git', ['-C', repo, ...a], { encoding: 'utf8' });
-const env = { HOME: os.homedir(), PATH: process.env.PATH };   // no CODIS_AGENTS_CONFIG / CLAUDE_PROJECT_DIR leaking in
+const env = { HOME: os.homedir(), XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME, PATH: process.env.PATH };   // no CODIS_AGENTS_CONFIG / CLAUDE_PROJECT_DIR leaking in
 const cfg = { repoDir: repo, worktreeRoot: dir, sharedDir: dir, protectedBranches: ['main', 'release'], protectedTagPattern: '^v[0-9]',
   gitHooks: { blockICloudCopies: true, preCommit: [] } };
 const writeCfg = (c) => { fs.mkdirSync(path.join(repo, '.claude'), { recursive: true }); fs.writeFileSync(path.join(repo, '.claude', 'codis-agents.json'), JSON.stringify(c)); };
