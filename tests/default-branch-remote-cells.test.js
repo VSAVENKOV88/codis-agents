@@ -98,6 +98,50 @@ let server;
     p = push(clone, plain, 'origin', 'HEAD:trunk');
     ok('C4 rewrite removed: refused as before', p.status !== 0 && blocked('trunk').test(p.stderr) && rev(real, 'refs/heads/trunk') === trunk4, p.stderr);
 
+    console.log('C7. the pushed URL is also the name of a configured remote whose uploadpack points ls-remote elsewhere');
+    // ls-remote with a URL that names a configured remote takes that remote's settings; remote.<name>.uploadpack is
+    // fetch-only (a push runs receivepack), and --get-url still prints the same URL (experiment, git 2.50).
+    fs.symlinkSync(real, path.join(clone, 'realrepo'));
+    fs.appendFileSync(path.join(clone, '.git', 'info', 'exclude'), 'realrepo\n');
+    git(clone, 'remote', 'set-url', 'origin', 'realrepo');
+    git(clone, 'config', 'remote.realrepo.url', 'realrepo');
+    git(clone, 'config', 'remote.realrepo.uploadpack', `git-upload-pack '${fake}' #`);
+    ok('C7 setup: get-url unchanged, ls-remote answers fake.git (feat)',
+      git(clone, 'ls-remote', '--get-url', '--', 'realrepo').stdout.trim() === 'realrepo'
+      && /^ref: refs\/heads\/feat\tHEAD$/m.test(git(clone, 'ls-remote', '--symref', '--', 'realrepo', 'HEAD').stdout));
+    commit(clone, 'c7.txt');
+    let t7 = rev(real, 'refs/heads/trunk');
+    p = push(clone, plain, 'origin', 'HEAD:trunk');
+    ok('C7 the push goes to real.git: refused, real trunk unchanged', p.status !== 0 && rev(real, 'refs/heads/trunk') === t7, (p.stderr || '').trim().split('\n').join(' | '));
+    git(clone, 'config', '--remove-section', 'remote.realrepo');
+    git(clone, 'remote', 'set-url', 'origin', real);
+
+    console.log('C8. the pushed URL names another configured remote (its url -> fake.git)');
+    git(clone, 'remote', 'add', 'evil', fake);
+    git(clone, 'remote', 'set-url', 'origin', 'evil');
+    git(clone, 'remote', 'set-url', '--push', 'origin', real);
+    commit(clone, 'c8.txt');
+    t7 = rev(real, 'refs/heads/trunk');
+    p = push(clone, plain, 'origin', 'HEAD:trunk');
+    ok('C8 refused, real trunk unchanged', p.status !== 0 && rev(real, 'refs/heads/trunk') === t7, p.stderr);
+    git(clone, 'remote', 'set-url', 'origin', real);
+    git(clone, 'config', '--unset', 'remote.origin.pushurl');
+    git(clone, 'remote', 'remove', 'evil');
+
+    console.log('C9. the rewrite given on the push command line (git -c), not in the config file');
+    p = spawnSync('git', ['-C', clone, '-c', `url.${fake}.insteadOf=${real}`, '-c', `url.${real}.pushInsteadOf=${real}`, 'push', 'origin', 'HEAD:trunk'], { encoding: 'utf8', env: withCfg(plain) });
+    ok('C9 refused with the rewrite named, real trunk unchanged', p.status !== 0 && /rewrites/.test(p.stderr) && rev(real, 'refs/heads/trunk') === t7, p.stderr);
+
+    console.log('C10. a rewrite that a push and a fetch both follow (url.<real>.insteadOf = short name): no false refusal');
+    git(clone, 'config', `url.${real}.insteadOf`, 'short:');
+    git(clone, 'remote', 'set-url', 'origin', 'short:');
+    p = push(clone, plain, '-q', 'origin', 'HEAD:b-c10');
+    ok('C10 a working branch goes through to real.git', p.status === 0 && rev(real, 'refs/heads/b-c10') !== '', p.stderr);
+    p = push(clone, plain, 'origin', 'HEAD:trunk');
+    ok('C10 trunk refused as the default branch (not as an unknown one)', p.status !== 0 && blocked('trunk').test(p.stderr) && !/unknown/.test(p.stderr) && rev(real, 'refs/heads/trunk') === t7, p.stderr);
+    git(clone, 'remote', 'set-url', 'origin', real);
+    git(clone, 'config', '--unset', `url.${real}.insteadOf`);
+
     console.log('C5. protectedBranches [] with the remote unreachable');
     const none = cfgFile('none', { repoDir: clone, protectedBranches: [] });
     p = prePush(clone, path.join(dir, 'gone.git'), 'refs/heads/trunk', none);
