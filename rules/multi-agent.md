@@ -174,6 +174,14 @@ Larger changes run as a chain of agents, each in its own role:
   the real image (an own compose project, torn down after).
 - **Worktrees get their own copy of ignored data** (an APFS clone, `scripts/wt-setup.sh`), never a symlink to the main
   checkout: with a symlink, guards in the worktree write into the main data.
+- **No full guard run in the main working copy.** `guards-all.sh` and the preconditions of the chain
+  (`scripts/env-check.js --worktree`) refuse with 78 a directory that is the main working copy of its repository
+  (`git rev-parse --git-dir` equals `--git-common-dir`, `scripts/main-checkout.js`) and name `wt-setup.sh`; a project
+  that has no worktrees passes `--main-checkout` on the command line (a flag, never an environment variable, so that it
+  is not inherited silently). git's own variables (`GIT_DIR`, `GIT_WORK_TREE`, set by git hooks) are ignored, and a
+  git error inside a tree with `.git` above it (a repository of another owner in a container) is a refusal, not a pass.
+  Why: a full run started with the main working copy as its worktree let a guard of the
+  project wipe the measurement corpus there, the only original; the worktrees held clones.
 - **Before removing a worktree or a data directory, the coordinator shows the owner what goes with it and removes only
   after a "yes" to that list:** (a) ignored data inside, with sizes (`git status --ignored --porcelain`, `du`);
   (b) references to the path: the path named in the project's code, and symbolic links outside it that lead into it

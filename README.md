@@ -121,7 +121,8 @@ read.
 | `scripts/slots.zsh`, `heavy.sh`, `medium.sh` | memory slots for heavy and medium jobs, with a FIFO queue |
 | `scripts/stand.sh`, `stand.js` | the ticket of the project's shared stand (queue, holder, reset at issue and release) and its commands from the config |
 | `scripts/slot-journal.js` | summary of the slot journal: queue wait and hold per class and per worktree |
-| `scripts/guards-all.sh` | a full guard run of one worktree in a heavy slot, with a shared worker budget; new reds rerun alone (`guardRerun`); a run on the same HEAD with a clean tracked tree that ended with exit 0 is not repeated ("reused, HEAD <sha>" and the saved summary; `--force` runs anyway) |
+| `scripts/guards-all.sh` | a full guard run of one worktree in a heavy slot, with a shared worker budget; new reds rerun alone (`guardRerun`); a run on the same HEAD with a clean tracked tree that ended with exit 0 is not repeated ("reused, HEAD <sha>" and the saved summary; `--force` runs anyway); the main working copy of a repository is refused with 78 (`--main-checkout` runs it, for a project without worktrees) |
+| `scripts/main-checkout.js` | is a directory the main working copy of its repository (git-dir == git-common-dir)? 78 with the reason and `wt-setup.sh`, 0 for a linked worktree or with `--main-checkout`; `GIT_*` variables are ignored, and a git error inside a tree with `.git` above it is 78 with git's error; used by `guards-all.sh` and `env-check.js --worktree` |
 | `scripts/guards-select.js` | the guards a programmer runs instead of the full suite: changed guards, guards that import a changed file or name it, `guardAlways`; `--command` fills `guardSubsetCommand` |
 | `scripts/wait-step.js` | a long deterministic step (the one full guard run of a task) run detached by the workflow between role agents; `wait` blocks at most 270 s and reports JSON |
 | `scripts/wt-setup.sh` | creates a task worktree and clones (not symlinks) git-ignored data into it |
@@ -130,7 +131,7 @@ read.
 | `scripts/role-leftovers-check.js` | post-check after the tester and at the end of a task: Docker resources of the task's stack (by the compose project label), processes in its worktree, slots they hold; `--fix` removes only those, never the owner's stack |
 | `scripts/chain-cost.js` | cost of chain runs per task from the agent transcripts, and per feature (parts summed by `feature`, across runs) |
 | `scripts/detect.js` | the facts of a repository for onboarding, read only, as JSON: git (default branch from origin/HEAD, main/master, tag shapes, remotes without passwords, hooksPath), GitHub workflow files, stacks by manifest, venvs, compose services (`docker compose config`, no daemon), ignored data with sizes, what an earlier onboarding left; the contract is in its header |
-| `scripts/env-check.js` | free disk and swap headroom for the preconditions, floors from `preconditions` in the config |
+| `scripts/env-check.js` | free disk and swap headroom for the preconditions, floors from `preconditions` in the config; `--worktree <dir>`: the task worktree is not the main working copy |
 | `scripts/git-hooks/` | `pre-push` (protected branches and tags) and `pre-commit` (cloud conflict copies, extra checks) |
 | `scripts/config.js` | finds, validates and resolves the project config |
 | `examples/`, `schemas/` | an example project config and its JSON schema |

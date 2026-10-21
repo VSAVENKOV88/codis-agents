@@ -28,7 +28,8 @@ unset GUARDS_EXCLUSIVE_LOCK SLOT_JOURNAL SLOT_MEDIUM_N SLOT_HEAVY_N SLOT_TOTAL_M
 export SLOT_OS=linux SLOT_PROC=$T/proc/ok
 J=$SLOTS_DIR/journal.tsv
 mkdir -p $T/shared $T/wts/w1 $T/bin
-git -C $T/wts/w1 init -q && git -C $T/wts/w1 -c user.email=t@t -c user.name=t commit -q --allow-empty -m x
+# The worktrees are linked worktrees of one repository: guards-all.sh refuses a main working copy (main-checkout.js).
+git init -q $T/repo && git -C $T/repo -c user.email=t@t -c user.name=t commit -q --allow-empty -m x && git -C $T/repo worktree add -q --detach $T/wts/w1
 print -r -- '{"repoDir": "'$T'/main", "worktreeRoot": "'$T'/wts", "sharedDir": "'$T'/shared", "guardCommand": "cd {wt} && touch '$T'/runner.ran"}' > $T/cfg.json
 export CODIS_AGENTS_CONFIG=$T/cfg.json
 # Fake macOS tools (a Linux reading must never call them: they mark $T/mac.called); getconf PAGESIZE 4096, or a

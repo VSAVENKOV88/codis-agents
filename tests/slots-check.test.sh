@@ -298,6 +298,54 @@ done
 nlog; $H/guards-all.sh xo > $T/rc.out 2>&1; rc=$?
 ok '10b. runner exits 0 -> guards-all.sh exits 0' '(( rc == 0 ))' "code $rc"
 
+# 10c. the main working copy (git-dir == git-common-dir) is refused with 78 before any slot or runner: its ignored data
+#      is the only original (a guard run there once wiped a corpus); a linked worktree runs; --main-checkout runs it.
+mkdir -p $T/main/srv/tools; print -r -- "// old runner" > $T/main/srv/tools/guards.js
+gm() { git -C $T/main -c user.name=t -c user.email=t@t "$@" }
+gm init -q -b main && gm add srv/tools/guards.js && gm commit -qm base && gm worktree add -q -b b-xg $T/wts/xg
+ticks main 1; ticks xg 1
+nlog; $H/guards-all.sh $T/main > $T/mc.out 2>&1; rc=$?
+ok '10c. guards-all.sh on the main working copy -> 78, the reason, the path, wt-setup.sh, no runner started' \
+  '(( rc == 78 )) && grep -q "main working copy" $T/mc.out && grep -qF -- "$T/main" $T/mc.out && grep -q "wt-setup.sh" $T/mc.out && ! grep -q "^start" $T/npm.log' "code $rc; $(cat $T/mc.out; cat $T/npm.log)"
+nlog; $H/guards-all.sh xg > $T/mc.out 2>&1; rc=$?
+ok '10c. guards-all.sh on a linked worktree of the same repository -> runs' '(( rc == 0 )) && grep -q "^start xg " $T/npm.log' "code $rc; $(cat $T/mc.out)"
+nlog; $H/guards-all.sh --main-checkout $T/main > $T/mc.out 2>&1; rc=$?
+ok '10c. guards-all.sh --main-checkout on the main working copy -> runs' '(( rc == 0 )) && grep -q "^start main " $T/npm.log' "code $rc; $(cat $T/mc.out)"
+# 10d (tester). The refusal comes before the reuse record: the --main-checkout run above left one (same HEAD, clean,
+#      code 0), yet a run without the flag is still 78, never "reused". It comes before any slot request too (no new
+#      journal line). Other spellings of the main copy are refused as well: a subdirectory, a symlink (with a space in
+#      its name, so the path reaches main-checkout.js as one argument); an environment variable is no override; the flag
+#      after the path, with --force, runs.
+JN() { local n; n=$(wc -l < $SLOTS_DIR/journal.tsv 2>/dev/null); print -r -- $(( ${n:-0} )) }
+j0=$(JN); nlog; $H/guards-all.sh $T/main > $T/mc.out 2>&1; rc=$?
+ok '10d. after a --main-checkout run left a reuse record, the main copy without the flag -> still 78, not reused' \
+  '(( rc == 78 )) && ! grep -q "reused" $T/mc.out && grep -q "main working copy" $T/mc.out' "code $rc; $(cat $T/mc.out)"
+ok '10d. the refused run requested no slot (journal unchanged)' '(( $(JN) == j0 ))' "journal $j0 -> $(JN)"
+nlog; MAINOK=--main-checkout MAIN_CHECKOUT=1 CODIS_MAIN_CHECKOUT=1 $H/guards-all.sh --force $T/main > $T/mc.out 2>&1; rc=$?
+ok '10d. environment variables do not override the refusal' '(( rc == 78 )) && ! grep -q "^start" $T/npm.log' "code $rc; $(cat $T/mc.out)"
+nlog; $H/guards-all.sh --force $T/main/srv > $T/mc.out 2>&1; rc=$?
+ok '10d. a subdirectory of the main working copy -> 78' '(( rc == 78 )) && grep -q "main working copy" $T/mc.out && ! grep -q "^start" $T/npm.log' "code $rc; $(cat $T/mc.out)"
+ln -s $T/main "$T/main link"
+nlog; $H/guards-all.sh --force "$T/main link" > $T/mc.out 2>&1; rc=$?
+ok '10d. a symlink (name with a space) to the main working copy -> 78' '(( rc == 78 )) && grep -q "main working copy" $T/mc.out && ! grep -q "^start" $T/npm.log' "code $rc; $(cat $T/mc.out)"
+nlog; $H/guards-all.sh $T/main --force --main-checkout > $T/mc.out 2>&1; rc=$?
+ok '10d. the flag after the path, with --force -> runs the main copy' '(( rc == 0 )) && grep -q "^start main " $T/npm.log' "code $rc; $(cat $T/mc.out)"
+# 10e (tester, round 2). Through guards-all.sh itself, not only main-checkout.js: GIT_DIR of a git hook pointing at the
+#      linked worktree's gitdir does not turn the main copy into a worktree; git failing in the main copy (a fake git
+#      first in PATH that answers like a dubious-ownership refusal) is 78 with git's error, before any slot or runner.
+j0=$(JN); nlog; GIT_DIR=$T/main/.git/worktrees/xg GIT_WORK_TREE=$T/wts/xg $H/guards-all.sh --force $T/main > $T/mc.out 2>&1; rc=$?
+ok '10e. GIT_DIR/GIT_WORK_TREE of the linked worktree (a hook) -> guards-all.sh on the main copy still 78, no runner' \
+  '(( rc == 78 )) && grep -q "main working copy" $T/mc.out && ! grep -q "^start" $T/npm.log' "code $rc; $(cat $T/mc.out)"
+mkdir -p $T/badgit; print -r -- '#!/bin/sh
+echo "fatal: detected dubious ownership in repository at $PWD" >&2; exit 128' > $T/badgit/git; chmod +x $T/badgit/git
+nlog; PATH=$T/badgit:$PATH $H/guards-all.sh --force $T/main > $T/mc.out 2>&1; rc=$?
+ok '10e. git failing in the main copy -> guards-all.sh 78 with the git error, no runner' \
+  '(( rc == 78 )) && grep -q "dubious ownership" $T/mc.out && ! grep -q "^start" $T/npm.log' "code $rc; $(cat $T/mc.out)"
+nlog; PATH=$T/badgit:$PATH $H/guards-all.sh --force xg > $T/mc.out 2>&1; rc=$?
+ok '10e. git failing in a linked worktree -> 78 too (cannot tell), no runner' \
+  '(( rc == 78 )) && grep -q "dubious ownership" $T/mc.out && ! grep -q "^start" $T/npm.log' "code $rc; $(cat $T/mc.out)"
+ok '10e. the refusals requested no slot (journal unchanged)' '(( $(JN) == j0 ))' "journal $j0 -> $(JN)"
+
 # 11. a fixed runner FIRST alone (6 until the end) + a second full run -> the second waits, not 6 + 3 = 9
 export SLOT_SAY=1
 for second in xo2 xn2; do

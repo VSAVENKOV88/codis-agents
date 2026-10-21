@@ -9,10 +9,13 @@
 // Swap headroom: on macOS swap grows in files under /System/Volumes/VM, so it is the free part of vm.swapusage plus the
 // free space of that volume; on Linux SwapFree from /proc/meminfo. Where it cannot be measured the result says so in
 // notes and does not fail on it.
-// usage: env-check.js --path <dir> [--path <dir>...] [--min-disk-gb N] [--min-swap-gb N]
+// Main working copy (scripts/main-checkout.js): with --worktree <dir> the task worktree must not be the main working copy
+// of its repository - its ignored data is the only original; --main-checkout lets it pass.
+// usage: env-check.js --path <dir> [--path <dir>...] [--worktree <dir> [--main-checkout]] [--min-disk-gb N] [--min-swap-gb N]
 //   prints JSON {ok, problems, disk: [{path, freeGB}], swapGB, notes}; exit 0 when ok, 1 when not, 64 on bad usage.
 const fs = require('fs');
 const { spawnSync } = require('child_process');
+const { mainCheckout, refusal } = require('./main-checkout');
 
 const GB = 1024 ** 3;
 const DEFAULTS = { minFreeDiskGB: 10, minSwapGB: 4 };
@@ -72,17 +75,24 @@ module.exports = { judge, measure, swapBytes, DEFAULTS };
 if (require.main === module) {
   const a = process.argv.slice(2);
   const paths = [], limits = {};
+  let worktree = null, force = false;
   for (let i = 0; i < a.length; i++) {
     if (a[i] === '--path') paths.push(a[++i]);
+    else if (a[i] === '--worktree') worktree = a[++i];
+    else if (a[i] === '--main-checkout') force = true;
     else if (a[i] === '--min-disk-gb') limits.minFreeDiskGB = Number(a[++i]);
     else if (a[i] === '--min-swap-gb') limits.minSwapGB = Number(a[++i]);
     else { console.error(`env-check.js: unknown argument ${a[i]}`); process.exit(64); }
   }
-  if (!paths.length || paths.some((p) => !p) || Object.values(limits).some((v) => !Number.isFinite(v) || v < 0)) {
-    console.error('usage: env-check.js --path <dir> [--path <dir>...] [--min-disk-gb N] [--min-swap-gb N]');
+  if (!paths.length || paths.some((p) => !p) || worktree === undefined || worktree === '' || Object.values(limits).some((v) => !Number.isFinite(v) || v < 0)) {
+    console.error('usage: env-check.js --path <dir> [--path <dir>...] [--worktree <dir> [--main-checkout]] [--min-disk-gb N] [--min-swap-gb N]');
     process.exit(64);
   }
   const r = judge(measure(paths), limits);
+  if (worktree && !force) {
+    const m = mainCheckout(worktree);
+    if (m.main) { r.problems.push(`worktree ${refusal(worktree, m)}`); r.ok = false; }
+  }
   console.log(JSON.stringify(r));
   process.exit(r.ok ? 0 : 1);
 }

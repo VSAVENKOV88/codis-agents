@@ -73,8 +73,8 @@ async function run(script, task = T, extra = {}) {
   ok('tester prompt: the environment verdict, its causes and env-check with the floors',
     /environment - red that the product did not cause/.test(tp0.prompt) && tp0.prompt.includes("node /p/scripts/env-check.js --path '/w' --min-disk-gb 10 --min-swap-gb 4")
       && (tp0.opts.schema.properties.verdict.enum || []).includes('environment'), tp0.prompt);
-  ok('preconditions run env-check on the worktree and the task folder with the default floors',
-    x.prompts[0].prompt.includes("node /p/scripts/env-check.js --path '/w' --path '/d' --min-disk-gb 10 --min-swap-gb 4"), x.prompts[0].prompt);
+  ok('preconditions run env-check on the worktree and the task folder with the default floors, and refuse a main working copy (--worktree)',
+    x.prompts[0].prompt.includes("node /p/scripts/env-check.js --path '/w' --path '/d' --worktree '/w' --min-disk-gb 10 --min-swap-gb 4"), x.prompts[0].prompt);
   x = await run({ pre: [{ ok: false, problems: ['disk /w: 2 GB free, below 10 GB'], blockingQuestions: [] }] }, T,
     { config: Object.assign({}, CFG, { preconditions: { minFreeDiskGB: 25, minSwapGB: 6 } }) });
   ok('preconditions: floors from config.preconditions; a full disk stops before the programmer',

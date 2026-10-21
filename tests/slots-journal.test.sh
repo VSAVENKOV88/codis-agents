@@ -21,11 +21,16 @@ unset GUARDS_EXCLUSIVE_LOCK SLOT_JOURNAL SLOT_MEDIUM_N SLOT_HEAVY_N SLOT_TOTAL_M
 # the fake machine below is a macOS one, on Linux too: the readings follow SLOT_OS, not the box
 export SLOT_OS=darwin
 J=$SLOTS_DIR/journal.tsv
+# xo is a linked worktree of a real repository: guards-all.sh refuses a main working copy and a tree where git fails
+# (scripts/main-checkout.js), and an empty .git file is such a tree.
+mkdir -p $T/main $T/wts
+git -C $T/main init -q && git -C $T/main -c user.name=t -c user.email=t@t commit -q --allow-empty -m base \
+  && git -C $T/main worktree add -q --detach $T/wts/xo
 mkdir -p $T/wts/xo/srv/tools $T/shared $T/repo/sub
 print -r -- '{"repoDir": "'$T'/main", "worktreeRoot": "'$T'/wts", "sharedDir": "'$T'/shared",
   "guardCommand": "cd {wt}/srv && npm run guards -- --all --concurrency {jobs}"}' > $T/cfg.json
 export CODIS_AGENTS_CONFIG=$T/cfg.json
-: > $T/repo/.git; : > $T/wts/xo/.git
+: > $T/repo/.git
 # Fake machine: free 20 % (no extra heavy slot), plenty of swap.
 mkdir -p $T/bin
 print -r -- '#!/bin/zsh

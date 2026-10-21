@@ -169,7 +169,9 @@ try {
   } else {
     const T = path.join(tmp, 'e2e');
     const bin = path.join(T, 'bin'), wts = path.join(T, 'wts'), shared = path.join(T, 'shared'), w = path.join(wts, 'xw');
-    for (const d of [bin, shared, w]) fs.mkdirSync(d, { recursive: true });
+    // xw is a linked worktree of $T/main: guards-all.sh refuses a main working copy (scripts/main-checkout.js).
+    const main = path.join(T, 'main');
+    for (const d of [bin, shared, wts, main]) fs.mkdirSync(d, { recursive: true });
     // Fake machine for the slot scripts (no extra heavy slot, plenty of swap).
     const sh = (f, body) => { fs.writeFileSync(path.join(bin, f), '#!/bin/zsh\n' + body + '\n'); fs.chmodSync(path.join(bin, f), 0o755); };
     sh('sysctl', '[[ $1 == -n && $2 == vm.swapusage ]] || exec /usr/sbin/sysctl "$@"\nprint -r -- "total = 30000,00M  used = 1000,00M  free = 20000,00M  (encrypted)"');
@@ -177,10 +179,10 @@ try {
     sh('vm_stat', 'print -r -- "Mach Virtual Memory Statistics: (page size of 16384 bytes)"\nprint -r -- "Swapouts:                                   0."');
     sh('df', 'print -r -- "Filesystem 1M-blocks Used Available Capacity Mounted"\nprint -r -- "/dev/disk3s6 100000 0 0 0% /System/Volumes/VM"');
     // Fake runner: counts its full runs, prints the log of $T/full.log and exits with $T/full.rc.
-    fs.writeFileSync(path.join(w, 'full.sh'), `#!/bin/sh\necho run >> "${T}/full.count"\ncat "${T}/full.log"\nexit $(cat "${T}/full.rc")\n`);
-    fs.writeFileSync(path.join(w, 'one.sh'), `#!/bin/sh\necho "$1" >> "${T}/one.count"\ngrep -qxF -- "$1" "${T}/red.txt" && exit 1\nexit 0\n`);
-    for (const f of ['full.sh', 'one.sh']) fs.chmodSync(path.join(w, f), 0o755);
-    git(w, 'init', '-q'); git(w, 'add', 'full.sh', 'one.sh'); git(w, 'commit', '-q', '-m', 'w');
+    fs.writeFileSync(path.join(main, 'full.sh'), `#!/bin/sh\necho run >> "${T}/full.count"\ncat "${T}/full.log"\nexit $(cat "${T}/full.rc")\n`);
+    fs.writeFileSync(path.join(main, 'one.sh'), `#!/bin/sh\necho "$1" >> "${T}/one.count"\ngrep -qxF -- "$1" "${T}/red.txt" && exit 1\nexit 0\n`);
+    for (const f of ['full.sh', 'one.sh']) fs.chmodSync(path.join(main, f), 0o755);
+    git(main, 'init', '-q'); git(main, 'add', 'full.sh', 'one.sh'); git(main, 'commit', '-q', '-m', 'w'); git(main, 'worktree', 'add', '-q', '--detach', w);
     const cfgFile = (extra) => { const f = path.join(T, 'cfg.json'); fs.writeFileSync(f, JSON.stringify(Object.assign({ repoDir: path.join(T, 'main'), worktreeRoot: wts, sharedDir: shared,
       guardCommand: 'cd {wt} && ./full.sh {jobs}', slots: { lockDir: path.join(T, 'slots'), legacyLock: path.join(T, 'guards.lock') } }, extra))); return f; };
     const env = (f) => Object.assign({}, process.env, { CODIS_AGENTS_CONFIG: f, PATH: bin + path.delimiter + process.env.PATH, SLOT_OS: 'darwin', SLOT_POLL: '0.2', SLOT_SAY: '1', SLOT_THIRD_WINDOW: '1', SLOT_HIST_GAP: '2' });
