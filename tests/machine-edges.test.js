@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 'use strict';
-// Tester guard U2a-1: edges of the machine file next to tests/machine.test.js - the figma-codis shape after migrate
+// Tester guard U2a-1: edges of the machine file next to tests/machine.test.js - the shape of the source project after migrate
 // (the same ~ spellings in project and machine count as equal), config.js shell with no project config on a missing or
 // broken machine file, a machine file that is JSON but not an object, a bad configVersion, the command line of
 // env-check winning over the machine file in both directions, a broken machine file in env-check. Every case runs on a
@@ -21,8 +21,8 @@ let n = 0;
 const write = (obj) => { const f = path.join(T, `f${n++}.json`); fs.writeFileSync(f, typeof obj === 'string' ? obj : JSON.stringify(obj)); return f; };
 const BASE = { repoDir: T, worktreeRoot: T, sharedDir: T, defaultBranch: 'main' };
 const proj = (extra) => write(Object.assign({}, BASE, extra || {}));
-// The slots of every figma-codis project config today (analyst F-11), spelled with ~ as there.
-const FC_SLOTS = { medium: 2, heavy: 2, total: 4, lockDir: '~/figma-wt/_shared/slots', legacyLock: '~/figma-wt/_shared/guards.lock', jobsAlone: 6, jobsShared: 3 };
+// The slots of every project config of the source project today (analyst F-11), spelled with ~ as there.
+const FC_SLOTS = { medium: 2, heavy: 2, total: 4, lockDir: '~/wt-root/_shared/slots', legacyLock: '~/wt-root/_shared/guards.lock', jobsAlone: 6, jobsShared: 3 };
 const FC_MACHINE = {
   configVersion: 1, source: 'measured on a 16 GB Mac (test)', swapMinMB: 4000, minFreeDiskGB: 10, maxDockerChains: 2, coordinatorContextK: 700,
   slots: Object.assign({}, FC_SLOTS, { extraHeavy: { freePct: 50, swapGrowMB: 256, windowS: 300 } }),
@@ -39,30 +39,30 @@ const all = (r) => `[${r.status}] ` + r.stdout + r.stderr;
 const HOME = os.homedir();
 
 try {
-  // ---- the figma-codis shape: machine file written by migrate with its values, project config not yet cleaned
+  // ---- the shape of the source project: machine file written by migrate with its values, project config not yet cleaned
   {
     const m = write(FC_MACHINE);
     const p = proj({ slots: FC_SLOTS });
     let r = cfg(['check', p], withM(m));
     const warned = Object.keys(FC_SLOTS).every((k) => new RegExp(`warning: slots\\.${k}: a machine setting`).test(r.stderr));
-    ok('figma-codis after migrate: project slots equal to the machine file (both with ~) -> check exit 0, a warning per key, no error',
+    ok('source project after migrate: project slots equal to the machine file (both with ~) -> check exit 0, a warning per key, no error',
       r.status === 0 && warned && !/the project sets/.test(r.stderr) && r.stdout.includes('ok '), all(r));
     r = cfg(['json', p], withM(m));
     const j = json(r);
     ok('... json: lockDir and legacyLock expanded from ~, counts of the machine',
-      r.status === 0 && !!j && j.slots.lockDir === path.join(HOME, 'figma-wt/_shared/slots') && j.slots.legacyLock === path.join(HOME, 'figma-wt/_shared/guards.lock')
+      r.status === 0 && !!j && j.slots.lockDir === path.join(HOME, 'wt-root/_shared/slots') && j.slots.legacyLock === path.join(HOME, 'wt-root/_shared/guards.lock')
         && j.slots.heavy === 2 && j.preconditions.swapMinMB === 4000 && j.machine.exists === true, all(r));
     r = cfg(['shell', p], withM(m));
-    ok('... shell exit 0 with SLOTS_DIR of the machine', r.status === 0 && r.stdout.includes(`SLOTS_DIR:='${path.join(HOME, 'figma-wt/_shared/slots')}'`), all(r));
+    ok('... shell exit 0 with SLOTS_DIR of the machine', r.status === 0 && r.stdout.includes(`SLOTS_DIR:='${path.join(HOME, 'wt-root/_shared/slots')}'`), all(r));
     // The same directory, ~ in the project and absolute in the machine file: one queue, so equal.
-    const m2 = write(Object.assign({}, FC_MACHINE, { slots: Object.assign({}, FC_MACHINE.slots, { lockDir: path.join(HOME, 'figma-wt/_shared/slots') }) }));
+    const m2 = write(Object.assign({}, FC_MACHINE, { slots: Object.assign({}, FC_MACHINE.slots, { lockDir: path.join(HOME, 'wt-root/_shared/slots') }) }));
     r = cfg(['check', p], withM(m2));
     ok('... lockDir ~/x in the project against $HOME/x in the machine file -> equal (warning, exit 0)', r.status === 0 && /warning: slots\.lockDir/.test(r.stderr), all(r));
     // A legacyLock that differs is a second lock: an error naming both.
     const p2 = proj({ slots: Object.assign({}, FC_SLOTS, { legacyLock: '~/elsewhere/guards.lock' }) });
     r = cfg(['check', p2], withM(m));
     ok('... legacyLock that differs -> check exit 1 naming both values and the machine file',
-      r.status === 1 && /slots\.legacyLock: the project sets .*elsewhere.*the machine file sets .*figma-wt/.test(r.stderr) && r.stderr.includes(m), all(r));
+      r.status === 1 && /slots\.legacyLock: the project sets .*elsewhere.*the machine file sets .*wt-root/.test(r.stderr) && r.stderr.includes(m), all(r));
     r = cfg(['shell', p2], withM(m));
     ok('... shell exit 1 (slots.zsh maps it to 78), nothing printed', r.status === 1 && !r.stdout.trim(), all(r));
   }
