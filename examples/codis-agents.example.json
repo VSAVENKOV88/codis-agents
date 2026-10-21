@@ -18,7 +18,6 @@
     "skip": ["*.DS_Store"],
     "link": ["*/node_modules", "*/dist"]
   },
-  "slots": { "medium": 2, "heavy": 2, "total": 4, "lockDir": "~/work-trees/_shared/slots", "jobsAlone": 6, "jobsShared": 3 },
   "reportLanguage": "English",
   "protectedBranches": ["main"],
   "protectedTagPattern": "^v",
@@ -32,7 +31,6 @@
   },
   "threatModel": "ACCESS.md",
   "gitHooks": { "blockICloudCopies": true, "preCommit": [] },
-  "preconditions": { "minFreeDiskGB": 10, "minSwapGB": 4 },
   "stand": {
     "project": "my-app-dev",
     "ports": [3101],

@@ -19,7 +19,7 @@ const hook = require('../scripts/hooks/guard-bash');
 const { ok, done } = require('./lib');
 
 const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'hooks-sec-globals-')));
-const env = { HOME: os.homedir(), PATH: process.env.PATH };
+const env = { HOME: os.homedir(), XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME, PATH: process.env.PATH };
 const git = (d, ...a) => spawnSync('git', ['-C', d, ...a], { encoding: 'utf8' });
 const ident = (d) => { git(d, 'config', 'user.email', 't@t'); git(d, 'config', 'user.name', 't'); git(d, 'config', 'core.hooksPath', '/dev/null'); };
 const cfgFile = (name, c) => { const f = path.join(dir, name + '.json'); fs.writeFileSync(f, JSON.stringify(Object.assign({ worktreeRoot: path.join(dir, 'wts'), sharedDir: dir }, c))); return f; };

@@ -1,0 +1,112 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "codis-agents machine file",
+  "description": "Settings of the machine shared by every project on it: ${XDG_CONFIG_HOME:-~/.config}/codis-agents/machine.json, or the file named by CODIS_AGENTS_MACHINE. Read by scripts/config.js.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "configVersion": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Format version (1). A newer one is refused with \"update the plugin\"; left out, a note."
+    },
+    "source": {
+      "type": "string",
+      "description": "Where the numbers come from (a measurement on which machine)."
+    },
+    "swapMinMB": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Swap floor in MB for the preconditions (default 4000: a 4 GiB swap passes); 0 switches the swap check off. The slot scripts read it from U2a-2 on; until then they take SLOT_SWAP_MIN_MB from the environment."
+    },
+    "minFreeDiskGB": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Free disk in GB the preconditions require on the volumes of the worktree and the task folder (default 10); 0 switches it off."
+    },
+    "maxDockerChains": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Chains with acceptance in Docker at once (default 2)."
+    },
+    "coordinatorContextK": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "The coordinator's context signpost in thousands of tokens (default 700)."
+    },
+    "slots": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "medium": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Medium slots (default 2)."
+        },
+        "heavy": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Heavy slots (default 2)."
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Medium and heavy together at most (default 4)."
+        },
+        "lockDir": {
+          "type": "string",
+          "pattern": "^(/|~(/|$))",
+          "description": "Directory of the slot locks, queue and journal; absolute or ~ (default ~/.cache/codis-agents/slots)."
+        },
+        "legacyLock": {
+          "type": "string",
+          "pattern": "^($|/|~(/|$))",
+          "description": "An older single lock counted as one held heavy slot; absolute or ~, empty for none."
+        },
+        "jobsAlone": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Workers of a full guard run alone (default 6)."
+        },
+        "jobsShared": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Workers of a full guard run next to another heavy job (default 3)."
+        },
+        "extraHeavy": {
+          "description": "The extra heavy slot: false - off; an object - its thresholds; left out - decided by OS. The slot scripts read it from U2a-2 on; until then they take SLOT_THIRD_* from the environment.",
+          "oneOf": [
+            {
+              "const": false
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "freePct": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 100,
+                  "description": "Minimum free memory over the window, percent (default 50)."
+                },
+                "swapGrowMB": {
+                  "type": "number",
+                  "minimum": 0,
+                  "description": "Swap growth over the window that closes the extra slot, MB (default 256)."
+                },
+                "windowS": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "description": "The window, seconds (default 300)."
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

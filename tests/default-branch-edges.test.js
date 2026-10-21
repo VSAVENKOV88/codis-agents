@@ -20,7 +20,7 @@ const { ok, done } = require('./lib');
 
 const ROOT = path.join(__dirname, '..');
 const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'default-branch-edges-')));
-const env = { HOME: os.homedir(), PATH: process.env.PATH };
+const env = { HOME: os.homedir(), XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME, PATH: process.env.PATH };
 const git = (d, ...a) => spawnSync('git', ['-C', d, ...a], { encoding: 'utf8' });
 const ident = (d) => { git(d, 'config', 'user.email', 't@t'); git(d, 'config', 'user.name', 't'); git(d, 'config', 'core.hooksPath', '/dev/null'); };
 const commit = (d, f) => { fs.writeFileSync(path.join(d, f), f); git(d, 'add', f); git(d, 'commit', '-qm', f); };
@@ -138,7 +138,7 @@ try {
   ok('known master: --delete master refused as protected', /master is protected/.test(bash('git push origin --delete master', norem, keyed) || ''), String(bash('git push origin --delete master', norem, keyed)));
   ok('known master: --delete v1.0 refused as a protected tag', /tag v1.0 is refused/.test(bash('git push origin --delete v1.0', norem, keyed) || ''), String(bash('git push origin --delete v1.0', norem, keyed)));
   r = cli(['check', keyed]);
-  ok('no remote + defaultBranch master: check ok without the note', r.status === 0 && !/note:/.test(r.stderr), r.stderr);
+  ok('no remote + defaultBranch master: check ok without the default-branch note (the machine-file note may stand)', r.status === 0 && !/default branch is unknown/.test(r.stderr), r.stderr);
 
   console.log('Linked worktree and a relative repoDir');
   const proj = path.join(dir, 'proj');

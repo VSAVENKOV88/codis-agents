@@ -71,14 +71,17 @@ async function run(script, task = T, extra = {}) {
     x.r.status === 'stopped' && x.trace === 'pre>prog>test>review>prog>test' && /docker daemon down/.test(x.r.why), JSON.stringify(x.r));
   const tp0 = x.prompts.find((p) => p.role === 'test');
   ok('tester prompt: the environment verdict, its causes and env-check with the floors',
-    /environment - red that the product did not cause/.test(tp0.prompt) && tp0.prompt.includes("node /p/scripts/env-check.js --path '/w' --min-disk-gb 10 --min-swap-gb 4")
+    /environment - red that the product did not cause/.test(tp0.prompt) && tp0.prompt.includes("node /p/scripts/env-check.js --path '/w' --min-disk-gb 10 --min-swap-mb 4000")
       && (tp0.opts.schema.properties.verdict.enum || []).includes('environment'), tp0.prompt);
   ok('preconditions run env-check on the worktree and the task folder with the default floors, and refuse a main working copy (--worktree)',
-    x.prompts[0].prompt.includes("node /p/scripts/env-check.js --path '/w' --path '/d' --worktree '/w' --min-disk-gb 10 --min-swap-gb 4"), x.prompts[0].prompt);
+    x.prompts[0].prompt.includes("node /p/scripts/env-check.js --path '/w' --path '/d' --worktree '/w' --min-disk-gb 10 --min-swap-mb 4000"), x.prompts[0].prompt);
   x = await run({ pre: [{ ok: false, problems: ['disk /w: 2 GB free, below 10 GB'], blockingQuestions: [] }] }, T,
-    { config: Object.assign({}, CFG, { preconditions: { minFreeDiskGB: 25, minSwapGB: 6 } }) });
-  ok('preconditions: floors from config.preconditions; a full disk stops before the programmer',
-    x.prompts[0].prompt.includes('--min-disk-gb 25 --min-swap-gb 6') && x.r.status === 'stopped' && x.trace === 'pre' && /2 GB free/.test(JSON.stringify(x.r.problems)), JSON.stringify(x.r));
+    { config: Object.assign({}, CFG, { preconditions: { minFreeDiskGB: 25, swapMinMB: 6000 } }) });
+  ok('E1. preconditions: floors from config.preconditions (swapMinMB in MB); a full disk stops before the programmer',
+    x.prompts[0].prompt.includes('--min-disk-gb 25 --min-swap-mb 6000') && x.r.status === 'stopped' && x.trace === 'pre' && /2 GB free/.test(JSON.stringify(x.r.problems)), JSON.stringify(x.r));
+  x = await run({ pre: [{ ok: false, problems: ['x'], blockingQuestions: [] }] }, T, { config: Object.assign({}, CFG, { preconditions: { minFreeDiskGB: 25, minSwapGB: 6 } }) });
+  ok('E1. preconditions: a config resolved before the machine file (minSwapGB in GB) -> --min-swap-mb x 1024',
+    x.prompts[0].prompt.includes('--min-disk-gb 25 --min-swap-mb 6144'), x.prompts[0].prompt);
 
   x = await run({ pre: [PRE], prog: [PROG, PROG, PROG], test: [{ verdict: 'red' }, { verdict: 'red' }, { verdict: 'red', summary: '' }].map((v) => Object.assign({ summary: '' }, v)) });
   ok('three red testers -> stop, no review', x.r.status === 'stopped' && !x.trace.includes('review'), x.trace);

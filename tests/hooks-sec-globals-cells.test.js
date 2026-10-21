@@ -16,7 +16,7 @@ const hook = require('../scripts/hooks/guard-bash');
 const { ok, done } = require('./lib');
 
 const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'hooks-sec-globals-cells-')));
-const env = { HOME: os.homedir(), PATH: process.env.PATH };
+const env = { HOME: os.homedir(), XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME, PATH: process.env.PATH };
 const git = (d, ...a) => spawnSync('git', ['-C', d, ...a], { encoding: 'utf8' });
 const decide = (command, cwd) => { try { return hook.decide({ tool_name: 'Bash', tool_input: { command }, cwd }, env); } catch (e) { return 'CRASH ' + e.message; } };
 const refused = (w) => typeof w === 'string' && /refused/.test(w) && !/^CRASH/.test(w);

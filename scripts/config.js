@@ -11,10 +11,19 @@
 // usage: config.js path                 -> absolute path of the config in use (exit 1 when none)
 //        config.js check [file]         -> validation errors, exit 1 when any
 //        config.js json [file]          -> resolved config as JSON (defaults applied, ~ expanded, plugin paths added)
-//        config.js shell [file]         -> zsh lines `: ${VAR:=value}` for the slot scripts (environment wins)
+//        config.js shell [file]         -> zsh lines `: ${VAR:=value}` for the slot scripts (environment wins); with no
+//                                         project config, the machine lines alone
 //        config.js get <key.path> [file]
 //        config.js default-branch [file] -> the default branch (exit 0); when it cannot be derived, the reason with the
 //                                         fix on stdout and exit 78 (scripts/wt-setup.sh prints it)
+//
+// The machine file (owner 2026-10-21, U2a): settings of the machine shared by every project on it - slot counts and
+// their lock directory, the swap and disk floors, the limit of chains with acceptance in Docker, the coordinator's
+// context signpost. Path: $CODIS_AGENTS_MACHINE (tests), else ${XDG_CONFIG_HOME:-~/.config}/codis-agents/machine.json
+// (a relative XDG_CONFIG_HOME is ignored, as the XDG Base Directory specification says). No file: the built-in
+// defaults, with a note. A project config may still carry the older machine keys (slots.*, preconditions.*): equal
+// to the machine file - a warning, different - an error (two queues, two ceilings); with no machine file the project's
+// values apply, with a warning to run config.js migrate. The newer machine keys are never read from a project.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -97,6 +106,27 @@ const STAND_SPEC = {
 const STAND_REQUIRED = ['project', 'up', 'deploy', 'reset', 'status', 'down'];
 const ROLES = ['analyst', 'programmer', 'tester', 'reviewer', 'security-reviewer'];
 
+// The machine file. Defaults measured on a 16 GB Mac of the project the process was first built for (slots.zsh and
+// scripts/env-check.js explain each number); swapMinMB is in MB for both the slot scripts and env-check (4000: a
+// 4 GiB swap file shows a little under 4096 MB). extraHeavy left out: null - the slot scripts decide by OS (U2a-2).
+const MACHINE_VERSION = 1;
+const MACHINE_DEFAULTS_NOTE = 'defaults measured on a 16 GB Mac of the source project';
+const MACHINE_SPEC = {
+  configVersion: ['number', undefined], source: ['string', ''], swapMinMB: ['number', 4000], minFreeDiskGB: ['number', 10],
+  maxDockerChains: ['number', 2], coordinatorContextK: ['number', 700], slots: ['object', null], $schema: ['string', ''],
+};
+const MACHINE_SLOT_SPEC = Object.assign({}, SLOT_SPEC, { extraHeavy: ['any', null] });
+const EXTRA_SPEC = { freePct: ['number', 50], swapGrowMB: ['number', 256], windowS: ['number', 300] };
+// Machine keys a project config may still carry (until config.js migrate): project key -> machine key, and the
+// conversion of the project's value into the machine's unit.
+const MOVED = [
+  ...['medium', 'heavy', 'total', 'lockDir', 'legacyLock', 'jobsAlone', 'jobsShared'].map((k) => [`slots.${k}`, `slots.${k}`, (v) => v]),
+  ['preconditions.minFreeDiskGB', 'minFreeDiskGB', (v) => v],
+  ['preconditions.minSwapGB', 'swapMinMB', (v) => v * 1024],
+];
+// Machine keys that never come from a project (decision Q4): no branch ever had them there.
+const MACHINE_ONLY_TOP = ['swapMinMB', 'maxDockerChains', 'coordinatorContextK'];
+
 const expand = (p) => (typeof p === 'string' && p ? p.replace(/^~(?=$|\/)/, os.homedir()).replace(/\$\{HOME\}|\$HOME\b/g, os.homedir()) : p);
 
 function typeOk(type, v) {
@@ -106,6 +136,7 @@ function typeOk(type, v) {
   if (type === 'string[]') return Array.isArray(v) && v.every((x) => typeof x === 'string');
   if (type === 'number[]') return Array.isArray(v) && v.every((x) => typeof x === 'number' && Number.isFinite(x));
   if (type === 'object') return v !== null && typeof v === 'object' && !Array.isArray(v);
+  if (type === 'any') return true;
   return false;
 }
 
@@ -132,10 +163,89 @@ function badZshPatterns(globs) {
   return globs.filter((g, i) => verdicts[i] !== 'ok');
 }
 
-function resolve(raw) {
-  const errors = [];
-  if (!typeOk('object', raw)) return { config: null, errors: ['config: expected a JSON object'] };
-  const c = level(SPEC, raw, '', errors);
+// Where the machine file is: {path, explicit} (explicit - named by CODIS_AGENTS_MACHINE, so a missing file is an error).
+function machinePath(env = process.env) {
+  if (env.CODIS_AGENTS_MACHINE) return { path: path.resolve(expand(env.CODIS_AGENTS_MACHINE)), explicit: true };
+  const x = env.XDG_CONFIG_HOME;
+  const base = x && path.isAbsolute(x) ? x : path.join(env.HOME || os.homedir(), '.config');
+  return { path: path.join(base, 'codis-agents', 'machine.json'), explicit: false };
+}
+
+const absOrTilde = (v) => typeof v === 'string' && (path.isAbsolute(v) || /^~(\/|$)/.test(v));
+// Reads and validates the machine file. Never throws: {path, explicit, exists, missing (explicit and absent), source,
+// errors and notes (each naming the file), values (the defaults where the file is absent or wrong)}.
+function loadMachine(env = process.env) {
+  const { path: p, explicit } = machinePath(env);
+  const m = { path: p, explicit, exists: false, missing: false, source: MACHINE_DEFAULTS_NOTE, errors: [], notes: [], values: null };
+  let raw = {};
+  try {
+    const text = fs.readFileSync(p, 'utf8');
+    m.exists = true;
+    try { raw = JSON.parse(text); } catch (e) { m.errors.push(`${p}: ${e.message}`); raw = {}; }
+  } catch (e) {
+    if (explicit) { m.missing = e.code === 'ENOENT' || e.code === 'ENOTDIR'; m.errors.push(`${p}: ${m.missing ? 'no such machine file (named by CODIS_AGENTS_MACHINE)' : e.message}`); }
+    else if (e.code === 'ENOENT' || e.code === 'ENOTDIR') m.notes.push(`note: no machine file at ${p}: ${MACHINE_DEFAULTS_NOTE}`);
+    else m.errors.push(`${p}: ${e.message}`);
+  }
+  const errs = [];
+  if (m.exists && !m.errors.length && !typeOk('object', raw)) { errs.push('expected a JSON object'); raw = {}; }
+  const v = level(MACHINE_SPEC, raw, '', errs);
+  // Paths are checked as written: relative to what is unknown for a file shared by every project.
+  const rawSlots = typeOk('object', raw.slots) ? raw.slots : {};
+  for (const k of ['lockDir', 'legacyLock']) {
+    const w = rawSlots[k];
+    if (w !== undefined && typeof w === 'string' && !absOrTilde(w) && !(k === 'legacyLock' && w === '')) errs.push(`slots.${k}: an absolute path or one starting with ~, not ${JSON.stringify(w)}`);
+  }
+  v.slots = level(MACHINE_SLOT_SPEC, v.slots, 'slots.', errs);
+  for (const k of ['medium', 'heavy', 'total', 'jobsAlone', 'jobsShared']) {
+    if (typeof v.slots[k] === 'number' && !(Number.isInteger(v.slots[k]) && v.slots[k] >= 1)) errs.push(`slots.${k}: expected a positive integer`);
+  }
+  const x = v.slots.extraHeavy;
+  if (x === undefined || x === null) v.slots.extraHeavy = null;
+  else if (x === false) v.slots.extraHeavy = false;
+  else if (typeOk('object', x)) {
+    const e = v.slots.extraHeavy = level(EXTRA_SPEC, x, 'slots.extraHeavy.', errs);
+    if (typeof e.freePct === 'number' && !(e.freePct >= 0 && e.freePct <= 100)) errs.push('slots.extraHeavy.freePct: expected a number 0-100');
+    if (typeof e.swapGrowMB === 'number' && !(e.swapGrowMB >= 0)) errs.push('slots.extraHeavy.swapGrowMB: expected a number >= 0');
+    if (typeof e.windowS === 'number' && !(e.windowS > 0)) errs.push('slots.extraHeavy.windowS: expected a number > 0');
+  } else { errs.push('slots.extraHeavy: expected false or an object {freePct, swapGrowMB, windowS}'); v.slots.extraHeavy = null; }
+  if (typeof v.swapMinMB === 'number' && !(Number.isInteger(v.swapMinMB) && v.swapMinMB >= 0)) errs.push('swapMinMB: expected an integer >= 0 (MB; 0 switches the swap check off)');
+  if (typeof v.minFreeDiskGB === 'number' && !(v.minFreeDiskGB >= 0)) errs.push('minFreeDiskGB: expected a number >= 0 (GB; 0 switches the disk check off)');
+  for (const k of ['maxDockerChains', 'coordinatorContextK']) {
+    if (typeof v[k] === 'number' && !(Number.isInteger(v[k]) && v[k] >= 1)) errs.push(`${k}: expected a positive integer`);
+  }
+  if (m.exists && !m.errors.length) {
+    if (v.configVersion === undefined) m.notes.push(`note: ${p}: no configVersion - read as version ${MACHINE_VERSION}`);
+    else if (!(Number.isInteger(v.configVersion) && v.configVersion >= 1)) errs.push('configVersion: expected a positive integer');
+    else if (v.configVersion > MACHINE_VERSION) errs.push(`configVersion ${v.configVersion} is newer than this plugin reads (${MACHINE_VERSION}) - update the plugin`);
+  }
+  for (const e of errs) m.errors.push(`${p}: ${e}`);
+  // A wrong value falls back to its default, so a caller that ignores errors (the hooks) still gets a whole object.
+  const D = level(MACHINE_SPEC, {}, '', []); D.slots = level(MACHINE_SLOT_SPEC, {}, '', []); D.slots.extraHeavy = null;
+  if (m.errors.length) m.values = D;
+  else { m.values = v; if (m.exists && v.source) m.source = v.source; }
+  return m;
+}
+
+const getPath = (o, k) => k.split('.').reduce((a, x) => (a == null ? undefined : a[x]), o);
+const sameValue = (k, a, b) => (/lockDir|legacyLock/.test(k) && a && b ? path.resolve(a) === path.resolve(b) : a === b);
+const show = (v) => (typeof v === 'string' ? JSON.stringify(v) : String(v));
+
+// opts: machine (a loadMachine() result), env (to load it from; default process.env), file (the project config, for
+// the messages). Returns {config, errors, warnings}.
+function resolve(raw, opts = {}) {
+  const errors = [], warnings = [];
+  if (!typeOk('object', raw)) return { config: null, errors: ['config: expected a JSON object'], warnings };
+  const m = opts.machine || loadMachine(opts.env || process.env);
+  const here = opts.file ? `the project config ${opts.file}` : 'the project config';
+  // Machine-only keys in the project: an error always (Q4), named as such rather than "unknown key".
+  const proj = Object.assign({}, raw);
+  for (const k of MACHINE_ONLY_TOP) if (k in proj) { errors.push(`${k}: a machine setting - set it in the machine file ${m.path}, not in ${here}`); delete proj[k]; }
+  if (typeOk('object', proj.slots) && 'extraHeavy' in proj.slots) {
+    errors.push(`slots.extraHeavy: a machine setting - set it in the machine file ${m.path}, not in ${here}`);
+    proj.slots = Object.assign({}, proj.slots); delete proj.slots.extraHeavy;
+  }
+  const c = level(SPEC, proj, '', errors);
   for (const k of REQUIRED) if (!c[k]) errors.push(`${k}: required`);
   c.slots = level(SLOT_SPEC, c.slots, 'slots.', errors);
   for (const k of ['medium', 'heavy', 'total', 'jobsAlone', 'jobsShared']) {
@@ -146,6 +256,32 @@ function resolve(raw) {
   c.preconditions = level(PRE_SPEC, c.preconditions, 'preconditions.', errors);
   if (c.featureIELimit !== null && !(c.featureIELimit > 0)) errors.push('featureIELimit: expected a positive number (or leave it out for 3 x medianTaskIE)');
   for (const k of Object.keys(PRE_SPEC)) if (!(c.preconditions[k] >= 0)) errors.push(`preconditions.${k}: expected a number >= 0`);
+  // The machine values, and the older machine keys the project still sets (validated above, in the project's unit).
+  errors.push(...m.errors); warnings.push(...m.notes);
+  const mv = m.values;
+  const merged = { slots: Object.assign({}, mv.slots), swapMinMB: mv.swapMinMB, minFreeDiskGB: mv.minFreeDiskGB };
+  const given = MOVED.filter(([pk]) => getPath(proj, pk) !== undefined);
+  if (m.exists && !m.errors.length) {
+    for (const [pk, mk, conv] of given) {
+      const pv = conv(getPath(c, pk)), want = getPath(mv, mk);
+      if (sameValue(mk, pv, want)) warnings.push(`warning: ${pk}: a machine setting - the machine file ${m.path} sets the same value (${mk === pk ? '' : mk + ' '}${show(want)}); remove it from ${here} (move it to the machine file)`);
+      else {
+        const said = pk === 'preconditions.minSwapGB' ? `${getPath(c, pk)} GB (${pv} MB), the machine file sets swapMinMB ${want}` : `${show(pv)}, the machine file sets ${show(want)}`;
+        errors.push(`${pk}: the project sets ${said} - two values of a machine setting (two queues or two ceilings); remove it from ${here} or change the machine file ${m.path}`);
+      }
+    }
+  } else {
+    for (const [pk, mk, conv] of given) {
+      const pv = conv(getPath(c, pk));
+      if (mk.startsWith('slots.')) merged.slots[mk.slice(6)] = pv; else merged[mk] = pv;
+    }
+    if (given.length && !m.errors.length) warnings.push(`warning: machine settings in ${here} (${given.map(([pk]) => pk).join(', ')}) and no machine file at ${m.path}: the project's values apply - run config.js migrate`);
+  }
+  c.slots = merged.slots;
+  c.preconditions = { minFreeDiskGB: merged.minFreeDiskGB, swapMinMB: merged.swapMinMB };
+  c.maxDockerChains = mv.maxDockerChains;
+  c.coordinatorContextK = mv.coordinatorContextK;
+  c.machine = { path: m.path, exists: m.exists, source: m.source };
   if (c.guardAdaptiveProbe) {
     c.guardAdaptiveProbe = level(PROBE_SPEC, c.guardAdaptiveProbe, 'guardAdaptiveProbe.', errors);
     if (!c.guardAdaptiveProbe.file || !c.guardAdaptiveProbe.contains) errors.push('guardAdaptiveProbe: file and contains are required');
@@ -217,7 +353,7 @@ function resolve(raw) {
   if (c.guardSubsetCommand && !c.guardSubsetCommand.includes('{onlyArgs}')) errors.push('guardSubsetCommand: must contain {onlyArgs} (one --only <guard> per selected guard)');
   if (!c.guardFiles.length) errors.push('guardFiles: expected at least one glob');
   if (c.guardCommandLegacy && c.guardCommandLegacy.includes('{limitFile}')) errors.push('guardCommandLegacy: must not contain {limitFile} (legacy runners take a fixed worker count)');
-  return { config: c, errors };
+  return { config: c, errors, warnings, machineMissing: m.missing };
 }
 
 // The default branch of a git repository is where refs/remotes/origin/HEAD points: git clone sets it, git remote
@@ -270,10 +406,10 @@ function find(cwd = process.cwd(), env = process.env) {
   return null;
 }
 
-function load(file, opts) {
+function load(file, opts = {}) {
   let raw;
-  try { raw = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { return { config: null, errors: [`${file}: ${e.message}`] }; }
-  const r = resolve(raw);
+  try { raw = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { return { config: null, errors: [`${file}: ${e.message}`], warnings: [] }; }
+  const r = resolve(raw, { env: opts.env, machine: opts.machine, file: path.resolve(file) });
   if (r.config) {
     Object.assign(r.config, { configPath: path.resolve(file), pluginRoot: PLUGIN_ROOT, scriptsDir: path.join(PLUGIN_ROOT, 'scripts') });
     branches(r.config, branchDirOf(r.config, path.resolve(file), opts));
@@ -282,34 +418,46 @@ function load(file, opts) {
 }
 
 const q = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
+// The slot lines; c is a resolved project config, or {slots} of the machine alone (config.js shell with no project).
 function shellLines(c) {
   const v = {
     SLOTS_DIR: c.slots.lockDir, SLOT_LEGACY_LOCK: c.slots.legacyLock, SLOT_MEDIUM_N: c.slots.medium, SLOT_HEAVY_N: c.slots.heavy,
     SLOT_TOTAL_MAX: c.slots.total, GUARDS_JOBS_ALONE: c.slots.jobsAlone, GUARDS_JOBS_SHARED: c.slots.jobsShared,
+  };
+  if (c.guardExclusive) Object.assign(v, {
     GUARDS_EXCL_GLOB: c.guardExclusive.glob.join('\n'), GUARDS_EXCL_MARKER: c.guardExclusive.marker,
     CODIS_REPO_DIR: c.repoDir, CODIS_WORKTREE_ROOT: c.worktreeRoot, CODIS_SHARED_DIR: c.sharedDir,
-  };
+  });
   // An empty value still has to win over the built-in default, hence `=` for empties instead of `:=`.
   return Object.entries(v).map(([k, x]) => (x === '' ? `[[ -v ${k} ]] || ${k}=''` : `: \${${k}:=${q(x)}}`)).join('\n');
 }
 
-module.exports = { find, load, resolve, branches, shellLines, SPEC, SLOT_SPEC, RERUN_SPEC, EXCL_SPEC, EXCL_DEFAULT, STAND_SPEC, STAND_REQUIRED, WT_SPEC, PROBE_SPEC, HOOKS_SPEC, STANDING_SPEC, PRE_SPEC, ROLES, expand };
+module.exports = { find, load, resolve, branches, shellLines, machinePath, loadMachine, MACHINE_SPEC, MACHINE_SLOT_SPEC, EXTRA_SPEC, MACHINE_VERSION, SPEC, SLOT_SPEC, RERUN_SPEC, EXCL_SPEC, EXCL_DEFAULT, STAND_SPEC, STAND_REQUIRED, WT_SPEC, PROBE_SPEC, HOOKS_SPEC, STANDING_SPEC, PRE_SPEC, ROLES, expand };
 
 if (require.main === module) {
   const [cmd, ...rest] = process.argv.slice(2);
   const fileArg = cmd === 'get' ? rest[1] : rest[0];
   const file = fileArg ? path.resolve(fileArg) : find();
+  if (!file && cmd === 'shell') {
+    // A job outside any project (a scratchpad) still queues in the machine's slots.
+    const m = loadMachine();
+    if (m.errors.length) { for (const e of m.errors) console.error('codis-agents config: ' + e); process.exit(m.missing ? 78 : 1); }
+    console.log(shellLines(m.values));
+    process.exit(0);
+  }
   if (!file) { console.error(`codis-agents: no ${FILE} found (set CODIS_AGENTS_CONFIG or create it in the project root)`); process.exit(1); }
   if (cmd === 'path') { console.log(file); process.exit(0); }
-  const { config, errors } = load(file);
+  const { config, errors, warnings, machineMissing } = load(file);
   if (cmd === 'check') {
     for (const e of errors) console.error('codis-agents config: ' + e);
+    for (const w of warnings || []) console.error('codis-agents config: ' + w);
     // Not an error: the slots and the rest work; the hooks refuse every branch push and wt-setup.sh needs a base.
     if (config && !config.protectedBranches) console.error(`codis-agents config: note: ${config.defaultBranchUnknown}; until then the hooks refuse every branch push`);
     if (!errors.length) console.log(`ok ${file}`);
     process.exit(errors.length ? 1 : 0);
   }
-  if (errors.length) { for (const e of errors) console.error('codis-agents config: ' + e); process.exit(1); }
+  // CODIS_AGENTS_MACHINE names a file that is not there: a configuration error of the caller (78), not a bad value.
+  if (errors.length) { for (const e of errors) console.error('codis-agents config: ' + e); process.exit(machineMissing ? 78 : 1); }
   if (cmd === 'json') console.log(JSON.stringify(config, null, 2));
   else if (cmd === 'shell') console.log(shellLines(config));
   else if (cmd === 'default-branch') {
@@ -328,7 +476,7 @@ if (require.main === module) {
 module.exports.loadOrDefaults = function loadOrDefaults(cwd, env) {
   let f = null;
   try { f = find(cwd, env); } catch { /* not a git repo */ }
-  if (f) { const r = load(f, { branchDir: cwd }); if (r.config) return r.config; }
+  if (f) { const r = load(f, { branchDir: cwd, env }); if (r.config) return r.config; }
   const errors = [];
   return branches(Object.assign(level(SPEC, {}, '', errors), {
     slots: level(SLOT_SPEC, {}, '', errors), worktreeSetup: level(WT_SPEC, {}, '', errors),
