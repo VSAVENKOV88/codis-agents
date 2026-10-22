@@ -185,6 +185,20 @@ let server;
     p = push(clone, plain, '-q', 'origin', 'HEAD:b-c13');
     ok('C13 back to the plain URL: a working branch goes through', p.status === 0 && rev(real, 'refs/heads/b-c13') !== '', p.stderr);
 
+    // C16 (tester round 4): a remote whose url is empty - git falls back to the remote name as the URL (experiment,
+    // git 2.50: `git push o` with remote.o.url "" pushes to the path "o" and passes the hook "o" as the URL), so the
+    // pushed URL is the name of a configured remote by construction; with remote.<name>.uploadpack at fake.git the
+    // query would answer feat. A real push to trunk must be refused with the remote-name reason on every git version
+    // (the name check runs before --get-url, which git 2.43 may answer differently for such a remote).
+    console.log('C16. a remote with an empty url (git pushes to its name as a path) and uploadpack at fake.git');
+    fs.symlinkSync(real, path.join(clone, 'ee'));
+    fs.appendFileSync(path.join(clone, '.git', 'info', 'exclude'), 'ee\n');
+    git(clone, 'config', 'remote.ee.url', '');
+    git(clone, 'config', 'remote.ee.uploadpack', upFake);
+    ok('C16 setup: ls-remote of the name answers fake.git (feat)', answersFeat(git(clone, 'ls-remote', '--symref', '--', 'ee', 'HEAD')));
+    viaRepo('C16 git push ee HEAD:trunk', () => push(clone, plain, 'ee', 'HEAD:trunk'), /remote\.ee\.(url|uploadpack)/);
+    git(clone, 'config', '--remove-section', 'remote.ee');
+
     console.log('C5. protectedBranches [] with the remote unreachable');
     const none = cfgFile('none', { repoDir: clone, protectedBranches: [] });
     p = prePush(clone, path.join(dir, 'gone.git'), 'refs/heads/trunk', none);
