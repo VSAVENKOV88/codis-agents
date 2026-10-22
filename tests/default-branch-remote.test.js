@@ -149,6 +149,18 @@ try {
   p = prePush(clone, 'realrepo', 'refs/heads/trunk', plain);
   ok('R10 a remote of another name changes nothing: trunk refused as the default branch', p.status === 1 && blocked('trunk').test(p.stderr) && !unknownRe.test(p.stderr), p.stderr);
   git(clone, 'config', '--remove-section', 'remote.realrepo2');
+  // A URL with a dot (any path to a .git directory): the remote name is everything between remote. and the last dot.
+  fs.symlinkSync(origin, path.join(clone, 'real.repo'));
+  fs.appendFileSync(path.join(clone, '.git', 'info', 'exclude'), 'real.repo\n');
+  git(clone, 'config', 'remote.real.repo.uploadpack', `git-upload-pack '${other}' #`);
+  p = prePush(clone, 'real.repo', 'refs/heads/trunk', plain);
+  ok('R10 a URL with a dot that names a remote: refused, the reason names remote.real.repo.uploadpack', p.status === 1 && /remote\.real\.repo\.uploadpack/.test(p.stderr), p.stderr);
+  git(clone, 'config', '--remove-section', 'remote.real.repo');
+  // Only the section remote counts: url.<URL>.insteadOf rewrites other addresses to this one, not this one.
+  git(clone, 'config', 'url.realrepo.insteadOf', 'r10short:');
+  p = prePush(clone, 'realrepo', 'refs/heads/trunk', plain);
+  ok('R10 the URL as the subsection of another section (url.realrepo.insteadOf): trunk refused as the default branch', p.status === 1 && blocked('trunk').test(p.stderr) && !unknownRe.test(p.stderr), p.stderr);
+  git(clone, 'config', '--remove-section', 'url.realrepo');
 } finally {
   fs.rmSync(dir, { recursive: true, force: true });
 }
