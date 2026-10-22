@@ -255,6 +255,23 @@ function branches(c, dir) {
 // before both: git 2.43 fails --get-url for a remote with vcs and no url, and exits 0 with an empty answer for an
 // empty URL, where git 2.50 does neither - the reason must not depend on the version. A failed query is reported by its first `fatal:` line (the last line
 // is git's generic advice).
+// A URL as the reasons print it: without the userinfo (user:password@), as git shows a URL in its own messages
+// (transport_anonymize_url in git's transport.c): for <scheme>://<userinfo>@<host>/..., everything between :// and
+// the last @ before the first / after it (an @ in the path is no userinfo); for the scp-like form <user>@<host>:<path>
+// (not a local path: a colon before any slash), everything up to the @. git passes the hook the URL as written,
+// credentials included, and the reasons go to stderr, transcripts and logs.
+function anonUrl(url) {
+  const s = /^[A-Za-z0-9+.-]+:\/\//.exec(url);
+  if (s) {
+    const rest = url.slice(s[0].length), slash = rest.indexOf('/');
+    const at = (slash < 0 ? rest : rest.slice(0, slash)).lastIndexOf('@');
+    return at < 0 ? url : s[0] + rest.slice(at + 1);
+  }
+  const colon = url.indexOf(':'), slash = url.indexOf('/'), at = url.indexOf('@');
+  if (colon < 0 || (slash >= 0 && slash < colon) || at < 0 || url.indexOf(':', at) < 0) return url;
+  return url.slice(at + 1);
+}
+
 function remoteHead(url, cwd, timeoutMs = 60000) {
   const opts = { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: timeoutMs };
   const errOf = (r) => {
@@ -263,18 +280,19 @@ function remoteHead(url, cwd, timeoutMs = 60000) {
     return lines.find((l) => l.startsWith('fatal:')) || lines.pop() || 'exit ' + r.status;
   };
   if (!url) return { why: 'the push URL is empty, so there is no remote to ask' };
+  const shown = anonUrl(url);
   const l = spawnSync('git', ['config', '--name-only', '--list', '-z'], opts);
   if (l.error || l.status !== 0) return { why: `git config --list failed (${errOf(l)})` };
   const named = l.stdout.split('\0').find((k) => k.toLowerCase().startsWith('remote.') && k.slice(7, k.lastIndexOf('.')) === url);
-  if (named) return { why: `${url} is also the name of a configured remote (${named}): git ls-remote would take that remote's settings, so the answer may not come from the repository the push goes to - remove remote.${url}.* or set defaultBranch (or protectedBranches)` };
+  if (named) return { why: `${shown} is also the name of a configured remote (remote.${shown}${named.slice(7 + url.length)}): git ls-remote would take that remote's settings, so the answer may not come from the repository the push goes to - remove remote.${shown}.* or set defaultBranch (or protectedBranches)` };
   const g = spawnSync('git', ['ls-remote', '--get-url', '--', url], opts);
-  if (g.error || g.status !== 0) return { why: `git ls-remote --get-url -- ${url} failed (${errOf(g)})` };
+  if (g.error || g.status !== 0) return { why: `git ls-remote --get-url -- ${shown} failed (${errOf(g)})` };
   const target = g.stdout.trim();
-  if (target !== url) return { why: `the git config rewrites ${url} for a fetch to ${target} (url.<base>.insteadOf), so the remote's answer would not come from the repository the push goes to - remove the rewrite or set defaultBranch (or protectedBranches)` };
+  if (target !== url) return { why: `the git config rewrites ${shown} for a fetch to ${anonUrl(target)} (url.<base>.insteadOf), so the remote's answer would not come from the repository the push goes to - remove the rewrite or set defaultBranch (or protectedBranches)` };
   const r = spawnSync('git', ['ls-remote', '--symref', '--', url, 'HEAD'], opts);
-  if (r.error || r.status !== 0) return { why: `git ls-remote --symref -- ${url} HEAD failed (${errOf(r)})` };
+  if (r.error || r.status !== 0) return { why: `git ls-remote --symref -- ${shown} HEAD failed (${errOf(r)})` };
   const m = /^ref: refs\/heads\/(\S+)\tHEAD$/m.exec(r.stdout);
-  return m ? { branch: m[1] } : { why: `git ls-remote --symref -- ${url} HEAD names no branch (an empty repository?)` };
+  return m ? { branch: m[1] } : { why: `git ls-remote --symref -- ${shown} HEAD names no branch (an empty repository?)` };
 }
 
 // The protected branches for a push to url (pre-push): the explicit keys of the config, else [the remote's default
@@ -342,7 +360,7 @@ function shellLines(c) {
   return Object.entries(v).map(([k, x]) => (x === '' ? `[[ -v ${k} ]] || ${k}=''` : `: \${${k}:=${q(x)}}`)).join('\n');
 }
 
-module.exports = { find, load, resolve, branches, remoteHead, pushBranches, shellLines, SPEC, SLOT_SPEC, RERUN_SPEC, EXCL_SPEC, EXCL_DEFAULT, STAND_SPEC, STAND_REQUIRED, WT_SPEC, PROBE_SPEC, HOOKS_SPEC, STANDING_SPEC, PRE_SPEC, ROLES, expand };
+module.exports = { find, load, resolve, branches, anonUrl, remoteHead, pushBranches, shellLines, SPEC, SLOT_SPEC, RERUN_SPEC, EXCL_SPEC, EXCL_DEFAULT, STAND_SPEC, STAND_REQUIRED, WT_SPEC, PROBE_SPEC, HOOKS_SPEC, STANDING_SPEC, PRE_SPEC, ROLES, expand };
 
 if (require.main === module) {
   const [cmd, ...rest] = process.argv.slice(2);
