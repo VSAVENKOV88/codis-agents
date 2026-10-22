@@ -183,6 +183,49 @@ try {
   ok('R10 the URL as the subsection of other sections (url, branch): trunk refused as the default branch', p.status === 1 && blocked('trunk').test(p.stderr) && !unknownRe.test(p.stderr), p.stderr);
   git(clone, 'config', '--remove-section', 'url.realrepo');
   git(clone, 'config', '--remove-section', 'branch.realrepo');
+
+  console.log('R11. a URL with credentials: no reason prints the userinfo (git strips it from its own messages)');
+  // Security review round 1: git passes the hook the push URL as written, user:password included, while its own
+  // fatal lines show it without the userinfo; the reasons go to stderr, transcripts and logs.
+  const SECRET = 'R11SECRETTOKEN';
+  const credUrl = `https://user:${SECRET}@127.0.0.1:9/x.git`;
+  const noSecret = (why) => !!why && !why.includes(SECRET) && !why.includes('user:');
+  // ls-remote fails (nothing listens on port 9): the reason quotes the URL.
+  let h = remoteHead(credUrl, clone);
+  ok('R11 ls-remote failing: the reason names the URL without user:password', !h.branch && noSecret(h.why) && h.why.includes('https://127.0.0.1:9/x.git'), JSON.stringify(h));
+  // A real hook run with such a URL prints no credentials either.
+  p = prePush(clone, credUrl, 'refs/heads/b-t1', plain);
+  ok('R11 pre-push refusal on stderr: no user:password', p.status === 1 && unknownRe.test(p.stderr) && noSecret(p.stderr), p.stderr);
+  // The fetch rewrite: both the pushed URL and the rewritten target carry credentials.
+  git(clone, 'config', `url.https://other:${SECRET}2@127.0.0.1:9/.insteadOf`, `https://user:${SECRET}@127.0.0.1:9/`);
+  h = remoteHead(credUrl, clone);
+  ok('R11 a fetch rewrite: the reason names both addresses without userinfo', !h.branch && /rewrites/.test(h.why || '') && noSecret(h.why) && !h.why.includes('other:') && h.why.includes('https://127.0.0.1:9/x.git'), JSON.stringify(h));
+  git(clone, 'config', '--remove-section', `url.https://other:${SECRET}2@127.0.0.1:9/`);
+  // The URL as the name of a configured remote: the key and the advice name it without userinfo.
+  git(clone, 'config', `remote.${credUrl}.uploadpack`, 'r11');
+  h = remoteHead(credUrl, clone);
+  ok('R11 the URL names a remote: the reason (key and advice) without userinfo', !h.branch && /name of a configured remote/.test(h.why || '') && noSecret(h.why), JSON.stringify(h));
+  git(clone, 'config', '--remove-section', `remote.${credUrl}`);
+  // --get-url failing: the fake git of R9.
+  const g11 = withFakeGit(credUrl);
+  ok('R11 --get-url failing: the reason without userinfo', /--get-url/.test(g11.stdout) && noSecret(g11.stdout), g11.stdout + g11.stderr);
+  // A reachable remote that names no HEAD (the first push into an empty repository): a fake git that answers
+  // --get-url with the URL and --symref with nothing, exit 0.
+  const fakeBin2 = path.join(dir, 'fakebin2');
+  fs.mkdirSync(fakeBin2);
+  fs.writeFileSync(path.join(fakeBin2, 'git'), `#!/bin/sh\nfor a in "$@"; do case "$a" in --get-url) for u in "$@"; do :; done; echo "$u"; exit 0;; --symref) exit 0;; esac; done\nexec '${realGit}' "$@"\n`, { mode: 0o755 });
+  const emptyAnswer = (url) => spawnSync(process.execPath, ['-e', `process.stdout.write(JSON.stringify(require(${JSON.stringify(path.join(ROOT, 'scripts', 'config.js'))}).remoteHead(${JSON.stringify(url)}, ${JSON.stringify(clone)})))`],
+    { encoding: 'utf8', env: Object.assign({}, env, { PATH: fakeBin2 + path.delimiter + env.PATH }) });
+  const g11b = emptyAnswer(credUrl);
+  ok('R11 no HEAD named (an empty repository): the reason without userinfo', /names no branch/.test(g11b.stdout) && noSecret(g11b.stdout) && g11b.stdout.includes('https://127.0.0.1:9/x.git'), g11b.stdout + g11b.stderr);
+  // The scp-like form user@host:path: git strips the user there too (transport_anonymize_url).
+  const g11c = emptyAnswer(`user:${SECRET}@127.0.0.1:x.git`);
+  ok('R11 scp-like user@host:path: the reason names 127.0.0.1:x.git without the user', /names no branch/.test(g11c.stdout) && noSecret(g11c.stdout) && g11c.stdout.includes('127.0.0.1:x.git'), g11c.stdout + g11c.stderr);
+  // Not a URL with userinfo: a local path with @ stays as it is, an @ inside the path of a URL too.
+  const g11d = emptyAnswer('/srv/a@b:c/x.git');
+  ok('R11 a local path with @ and a colon after a slash: printed unchanged', g11d.stdout.includes('/srv/a@b:c/x.git'), g11d.stdout + g11d.stderr);
+  const g11e = emptyAnswer('https://127.0.0.1:9/u@x.git');
+  ok('R11 an @ in the path of a URL: printed unchanged', g11e.stdout.includes('https://127.0.0.1:9/u@x.git'), g11e.stdout + g11e.stderr);
 } finally {
   fs.rmSync(dir, { recursive: true, force: true });
 }
