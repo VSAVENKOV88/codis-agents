@@ -145,6 +145,46 @@ let server;
     git(clone, 'remote', 'set-url', 'origin', real);
     git(clone, 'config', '--unset', `url.${real}.insteadOf`);
 
+    // Round 3: the pushed URL (rr, a link to real.git) names a remote outside the git config keys, or through scopes
+    // other than the local file and git -c. Each cell pushes a new commit to trunk; the push must be refused and real
+    // trunk must stay where it was.
+    const viaRepo = (label, run, extra) => {
+      commit(clone, label.replace(/\W/g, '') + '.txt');
+      const t = rev(real, 'refs/heads/trunk');
+      const q = run();
+      ok(`${label}: refused, real trunk unchanged`, q.status !== 0 && blocked('trunk').test(q.stderr) && rev(real, 'refs/heads/trunk') === t && (!extra || extra.test(q.stderr)), (q.stderr || '').trim().split('\n').join(' | '));
+    };
+    fs.symlinkSync(real, path.join(clone, 'rr'));
+    fs.appendFileSync(path.join(clone, '.git', 'info', 'exclude'), 'rr\n');
+    git(clone, 'remote', 'set-url', 'origin', 'rr');
+    const upFake = `git-upload-pack '${fake}' #`;
+    const answersFeat = (r) => /^ref: refs\/heads\/feat\tHEAD$/m.test(r.stdout);
+
+    console.log('C12. a legacy remote file .git/remotes/<URL> or .git/branches/<URL> (no git config key) points the query at fake.git');
+    for (const [kind, body] of [['remotes', `URL: ${fake}\n`], ['branches', `${fake}\n`]]) {
+      const f = path.join(clone, '.git', kind, 'rr');
+      fs.mkdirSync(path.dirname(f), { recursive: true });
+      fs.writeFileSync(f, body);
+      ok(`C12 setup (${kind}): ls-remote of the pushed URL answers fake.git (feat)`, answersFeat(git(clone, 'ls-remote', '--symref', '--', 'rr', 'HEAD')));
+      viaRepo(`C12 .git/${kind}/rr`, () => push(clone, plain, 'origin', 'HEAD:trunk'), /unknown/);
+      fs.rmSync(f);
+    }
+
+    console.log('C13. remote.<URL>.uploadpack from include.path, from GIT_CONFIG_COUNT on the push, and as -c with an upper-case section');
+    const inc = path.join(dir, 'inc.cfg');
+    fs.writeFileSync(inc, `[remote "rr"]\n\tuploadpack = "${upFake}"\n`);
+    git(clone, 'config', 'include.path', inc);
+    ok('C13 setup (include.path): ls-remote answers fake.git (feat)', answersFeat(git(clone, 'ls-remote', '--symref', '--', 'rr', 'HEAD')));
+    viaRepo('C13 include.path', () => push(clone, plain, 'origin', 'HEAD:trunk'), /remote\.rr\.uploadpack/);
+    git(clone, 'config', '--unset', 'include.path');
+    const countEnv = Object.assign(withCfg(plain), { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'remote.rr.uploadpack', GIT_CONFIG_VALUE_0: upFake });
+    ok('C13 setup (GIT_CONFIG_COUNT): ls-remote answers fake.git (feat)', answersFeat(spawnSync('git', ['-C', clone, 'ls-remote', '--symref', '--', 'rr', 'HEAD'], { encoding: 'utf8', env: countEnv })));
+    viaRepo('C13 GIT_CONFIG_COUNT on the push', () => spawnSync('git', ['-C', clone, 'push', 'origin', 'HEAD:trunk'], { encoding: 'utf8', env: countEnv }), /remote\.rr\.uploadpack/);
+    viaRepo('C13 git -c REMOTE.rr.UPLOADPACK', () => spawnSync('git', ['-C', clone, '-c', `REMOTE.rr.UPLOADPACK=${upFake}`, 'push', 'origin', 'HEAD:trunk'], { encoding: 'utf8', env: withCfg(plain) }), /remote\.rr\.uploadpack/);
+    git(clone, 'remote', 'set-url', 'origin', real);
+    p = push(clone, plain, '-q', 'origin', 'HEAD:b-c13');
+    ok('C13 back to the plain URL: a working branch goes through', p.status === 0 && rev(real, 'refs/heads/b-c13') !== '', p.stderr);
+
     console.log('C5. protectedBranches [] with the remote unreachable');
     const none = cfgFile('none', { repoDir: clone, protectedBranches: [] });
     p = prePush(clone, path.join(dir, 'gone.git'), 'refs/heads/trunk', none);
