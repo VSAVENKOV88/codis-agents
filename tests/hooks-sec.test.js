@@ -76,6 +76,11 @@ try {
   console.log('1b. The real git push through pre-push (second layer)');
   git(repo, 'config', 'core.hooksPath', path.join(ROOT, 'scripts', 'git-hooks'));
   const before = git(origin, 'rev-parse', 'refs/heads/master').stdout.trim();
+  // p-head2: pre-push asks the remote, not the local origin/HEAD; the remote names no HEAD either (a HEAD on an unborn
+  // branch is not listed by git ls-remote --symref), so the branches stay unknown for the second layer too.
+  const originHead = git(origin, 'symbolic-ref', 'HEAD').stdout.trim();
+  git(origin, 'symbolic-ref', 'HEAD', 'refs/heads/unborn-head');
+  ok('setup: origin names no HEAD', git(repo, 'ls-remote', '--symref', origin, 'HEAD').stdout === '');
   ok('setup: the local tag master differs from origin master', git(repo, 'rev-parse', 'refs/tags/master^{commit}').stdout.trim() !== before);
   let p = spawnSync('git', ['-C', repo, 'push', 'origin', 'master:master'], { encoding: 'utf8', env });
   ok('no origin/HEAD: real git push origin master:master refused by pre-push, origin master unchanged', p.status !== 0 && unknownRe.test(p.stderr)
@@ -83,6 +88,7 @@ try {
   p = spawnSync('git', ['-C', repo, 'push', '-q', 'origin', 'build-1'], { encoding: 'utf8', env });
   ok('no origin/HEAD: real git push origin build-1 (no colon) creates the remote tag', p.status === 0 && git(origin, 'show-ref', '--verify', '--quiet', 'refs/tags/build-1').status === 0, p.stderr);
   git(repo, 'config', 'core.hooksPath', '/dev/null');
+  git(origin, 'symbolic-ref', 'HEAD', originHead);
 
   console.log('2. git remote set-head and symbolic-ref refs/remotes/<remote>/HEAD');
   for (const cfg of [unk, known]) {
