@@ -11,7 +11,7 @@ const fs = require('fs');
 const os = require('os');
 const net = require('net');
 const path = require('path');
-const { spawnSync } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const { ok, done } = require('./lib');
 
 const ROOT = path.join(__dirname, '..');
@@ -29,7 +29,7 @@ const prePush = (cwd, url, rref, cfg) => spawnSync(path.join(HOOKS, 'pre-push'),
 const rev = (d, ref) => git(d, 'rev-parse', '--verify', '--quiet', ref).stdout.trim();
 const blocked = (b) => new RegExp(`push to ${b} is blocked`);
 
-let server;
+let server, httpd;
 (async () => {
   try {
     fs.writeFileSync(path.join(dir, '.gitconfig'), '[user]\n\temail = t@t\n\tname = t\n[init]\n\tdefaultBranch = trunk\n');
@@ -209,6 +209,41 @@ let server;
     }
     git(clone, 'config', '--remove-section', 'remote.ee');
 
+    // C17 (tester, after the security review): the reviewer's scenario through a real push - the push connection
+    // succeeds (smart HTTP of git http-backend, a child process: spawnSync of the push blocks this event loop), the
+    // pre-push hook asks the same URL and the empty repository names no HEAD, so the reason prints the URL. git itself
+    // prints the URL without user:password (transport_anonymize_url); the hook must not print more than git does.
+    console.log('C17. a real push over HTTP with user:password in the URL: no part of the userinfo on stderr');
+    const www = path.join(dir, 'www');
+    fs.mkdirSync(www);
+    spawnSync('git', ['init', '-q', '--bare', '-b', 'trunk', path.join(www, 'empty.git')], { env });
+    git(path.join(www, 'empty.git'), 'config', 'http.receivepack', 'true');
+    const cgi = `const http = require('http'), { spawn } = require('child_process');
+      const s = http.createServer((q, r) => { const u = new URL(q.url, 'http://x');
+        const p = spawn('git', ['http-backend'], { env: { PATH: process.env.PATH, HOME: process.env.HOME, GIT_PROJECT_ROOT: process.argv[1],
+          GIT_HTTP_EXPORT_ALL: '1', PATH_INFO: u.pathname, QUERY_STRING: u.search.slice(1), REQUEST_METHOD: q.method,
+          CONTENT_TYPE: q.headers['content-type'] || '', HTTP_CONTENT_ENCODING: q.headers['content-encoding'] || '',
+          GIT_PROTOCOL: q.headers['git-protocol'] || '', REMOTE_USER: 'u', REMOTE_ADDR: '127.0.0.1' } });
+        q.pipe(p.stdin); const out = [];
+        p.stdout.on('data', (d) => out.push(d));
+        p.on('close', () => { const b = Buffer.concat(out), i = b.indexOf('\\r\\n\\r\\n'); let st = 200; const h = {};
+          for (const l of b.slice(0, i).toString().split('\\r\\n')) { const k = l.slice(0, l.indexOf(':')), v = l.slice(l.indexOf(':') + 1).trim();
+            if (k.toLowerCase() === 'status') st = parseInt(v, 10); else h[k] = v; }
+          r.writeHead(st, h); r.end(b.slice(i + 4)); }); });
+      s.listen(0, '127.0.0.1', () => console.log(s.address().port));`;
+    httpd = spawn(process.execPath, ['-e', cgi, www], { env, stdio: ['ignore', 'pipe', 'inherit'] });
+    const port = await new Promise((res) => httpd.stdout.once('data', (d) => res(String(d).trim())));
+    const S17 = 'C17SECRETTOKEN', base17 = `127.0.0.1:${port}/empty.git`;
+    const leaks = (t) => t.includes(S17) || t.includes('c17user');
+    p = push(clone, plain, `http://c17user:${S17}@${base17}`, 'HEAD:b-c17');
+    ok('C17 http://user:password@: refused (empty repository, no HEAD), the reason names http://' + base17 + ', no userinfo on stderr',
+      p.status !== 0 && /names no branch/.test(p.stderr) && p.stderr.includes(`-- http://${base17} HEAD`) && !leaks(p.stderr)
+      && rev(path.join(www, 'empty.git'), 'refs/heads/b-c17') === '', p.stderr);
+    p = push(clone, plain, `http::http://c17user:${S17}@${base17}`, 'HEAD:b-c17');
+    const hookLines = p.stderr.split('\n').filter((l) => l.startsWith('pre-push:')).join('\n');
+    ok('C17 the remote-helper form http::http://user:password@host:port/: the hook reason has no userinfo',
+      p.status !== 0 && /names no branch/.test(hookLines) && !leaks(hookLines), p.stderr);
+
     console.log('C5. protectedBranches [] with the remote unreachable');
     const none = cfgFile('none', { repoDir: clone, protectedBranches: [] });
     p = prePush(clone, path.join(dir, 'gone.git'), 'refs/heads/trunk', none);
@@ -223,6 +258,7 @@ let server;
     ok('C6 no branch, a reason, and within the timeout (not the git default)', !h.branch && /failed/.test(h.why || '') && ms < 10000, JSON.stringify(h) + ' ' + ms + ' ms');
   } finally {
     if (server) server.close();
+    if (httpd) httpd.kill();
     fs.rmSync(dir, { recursive: true, force: true });
   }
   done();
