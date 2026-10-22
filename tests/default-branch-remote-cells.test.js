@@ -195,8 +195,18 @@ let server;
     fs.appendFileSync(path.join(clone, '.git', 'info', 'exclude'), 'ee\n');
     git(clone, 'config', 'remote.ee.url', '');
     git(clone, 'config', 'remote.ee.uploadpack', upFake);
-    ok('C16 setup: ls-remote of the name answers fake.git (feat)', answersFeat(git(clone, 'ls-remote', '--symref', '--', 'ee', 'HEAD')));
-    viaRepo('C16 git push ee HEAD:trunk', () => push(clone, plain, 'ee', 'HEAD:trunk'), /remote\.ee\.(url|uploadpack)/);
+    // git 2.43 does not fall back to the name for an empty url: ls-remote and push both stop with "no path specified"
+    // before any hook (experiment in Ubuntu 24.04) - then the cell checks that git refuses the push itself.
+    const lr16 = git(clone, 'ls-remote', '--symref', '--', 'ee', 'HEAD');
+    if (answersFeat(lr16)) {
+      ok('C16 setup: ls-remote of the name answers fake.git (feat)', true);
+      viaRepo('C16 git push ee HEAD:trunk', () => push(clone, plain, 'ee', 'HEAD:trunk'), /remote\.ee\.(url|uploadpack)/);
+    } else {
+      commit(clone, 'c16.txt');
+      const t16 = rev(real, 'refs/heads/trunk');
+      p = push(clone, plain, 'ee', 'HEAD:trunk');
+      ok('C16 git without the name fallback: git refuses the push itself (no path), real trunk unchanged', /no path specified/.test(lr16.stderr) && p.status !== 0 && /no path specified/.test(p.stderr) && rev(real, 'refs/heads/trunk') === t16, lr16.stderr + ' | ' + p.stderr);
+    }
     git(clone, 'config', '--remove-section', 'remote.ee');
 
     console.log('C5. protectedBranches [] with the remote unreachable');
