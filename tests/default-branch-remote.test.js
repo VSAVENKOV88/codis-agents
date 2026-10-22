@@ -224,8 +224,8 @@ try {
   // Not a URL with userinfo: a local path with @ stays as it is, an @ inside the path of a URL too.
   const g11d = emptyAnswer('/srv/a@b:c/x.git');
   ok('R11 a local path with @ and a colon after a slash: printed unchanged', g11d.stdout.includes('/srv/a@b:c/x.git'), g11d.stdout + g11d.stderr);
-  const g11e = emptyAnswer('https://127.0.0.1:9/u@x.git');
-  ok('R11 an @ in the path of a URL: printed unchanged', g11e.stdout.includes('https://127.0.0.1:9/u@x.git'), g11e.stdout + g11e.stderr);
+  const g11e = emptyAnswer('https://127.0.0.1:9/a@b/x.git');
+  ok('R11 an @ in the path of a URL: printed unchanged', g11e.stdout.includes('https://127.0.0.1:9/a@b/x.git'), g11e.stdout + g11e.stderr);
 } finally {
   fs.rmSync(dir, { recursive: true, force: true });
 }
