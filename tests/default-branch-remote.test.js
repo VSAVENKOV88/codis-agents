@@ -221,6 +221,9 @@ try {
   // The scp-like form user@host:path: git strips the user there too (transport_anonymize_url).
   const g11c = emptyAnswer(`user:${SECRET}@127.0.0.1:x.git`);
   ok('R11 scp-like user@host:path: the reason names 127.0.0.1:x.git without the user', /names no branch/.test(g11c.stdout) && noSecret(g11c.stdout) && g11c.stdout.includes('127.0.0.1:x.git'), g11c.stdout + g11c.stderr);
+  // A raw @ inside the password (git itself reads the userinfo up to the last @ before the host): all of it goes.
+  const g11f = emptyAnswer(`https://user:${SECRET}@part@127.0.0.1:9/x.git`);
+  ok('R11 a raw @ in the password: the reason names https://127.0.0.1:9/x.git, no part of the userinfo', g11f.stdout.includes('https://127.0.0.1:9/x.git') && !g11f.stdout.includes('part@'), g11f.stdout + g11f.stderr);
   // Not a URL with userinfo: a local path with @ stays as it is, an @ inside the path of a URL too.
   const g11d = emptyAnswer('/srv/a@b:c/x.git');
   ok('R11 a local path with @ and a colon after a slash: printed unchanged', g11d.stdout.includes('/srv/a@b:c/x.git'), g11d.stdout + g11d.stderr);
