@@ -28,6 +28,21 @@ ok('schema preconditions keys = config.js', schema.properties.preconditions && s
 ok('preconditions defaults (no machine file): 10 GB of disk, swapMinMB 4000', (() => { const x = C.resolve({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s' }).config.preconditions; return x.minFreeDiskGB === 10 && x.swapMinMB === 4000; })());
 bad0({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s', featureIELimit: 0 }, /featureIELimit: expected a positive number/, 'featureIELimit 0 - error');
 ok('featureIELimit defaults to null (3 x medianTaskIE in chain-cost)', C.resolve({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s' }).config.featureIELimit === null);
+// roleModel / roleModels (owner 2026-10-22): the model of the role agents, an alias the Workflow agent() accepts.
+const base0 = { repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s' };
+r = C.resolve(Object.assign({}, base0, { roleModel: 'opus', roleModels: { reviewer: 'sonnet', wait: 'haiku', preconditions: 'haiku', 'security-reviewer': 'fable' } }));
+ok('roleModel "opus" and roleModels per role validate and pass through', r.errors.length === 0 && r.config.roleModel === 'opus' && r.config.roleModels.reviewer === 'sonnet' && r.config.roleModels.wait === 'haiku', r.errors.join('; '));
+r = C.resolve(base0);
+ok('no roleModel: empty (no model passed), roleModels empty', r.errors.length === 0 && r.config.roleModel === '' && JSON.stringify(r.config.roleModels) === '{}', JSON.stringify([r.config.roleModel, r.config.roleModels]));
+bad0(Object.assign({}, base0, { roleModel: 'gpt-5' }), /roleModel: .*one of sonnet, opus, haiku, fable/, 'roleModel not an alias - error');
+bad0(Object.assign({}, base0, { roleModel: 'Opus' }), /roleModel: /, 'roleModel with another case - error');
+bad0(Object.assign({}, base0, { roleModel: 5 }), /roleModel: expected string/, 'roleModel not a string - error');
+bad0(Object.assign({}, base0, { roleModels: { reviewer: 'claude-opus' } }), /roleModels\.reviewer: .*one of sonnet, opus, haiku, fable/, 'roleModels value not an alias - error');
+bad0(Object.assign({}, base0, { roleModels: { coordinator: 'fable' } }), /roleModels\.coordinator: unknown role/, 'roleModels unknown role - error');
+bad0(Object.assign({}, base0, { roleModels: 'opus' }), /roleModels: expected object/, 'roleModels not an object - error');
+ok('schema roleModel enum = config.js aliases', schema.properties.roleModel && same(schema.properties.roleModel.enum || [], C.MODEL_ALIASES || []));
+ok('schema roleModels keys = config.js roles', schema.properties.roleModels && same(Object.keys(schema.properties.roleModels.properties), C.MODEL_ROLES || [])
+  && Object.values(schema.properties.roleModels.properties).every((p) => same(p.enum || [], C.MODEL_ALIASES || [])));
 bad0({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s', preconditions: { minFreeDiskGB: -1 } }, /preconditions\.minFreeDiskGB: expected a number >= 0/, 'negative disk floor - error');
 bad0({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s', preconditions: { minSwap: 1 } }, /preconditions\.minSwap: unknown key/, 'unknown preconditions key - error');
 // The shared stand of a project (scripts/stand.sh): a section of command templates the plugin only calls.
