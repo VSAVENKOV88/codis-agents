@@ -136,8 +136,10 @@ try {
   fs.mkdirSync(fakeBin);
   const realGit = spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8', env }).stdout.trim();
   fs.writeFileSync(path.join(fakeBin, 'git'), `#!/bin/sh\nfor a in "$@"; do [ "$a" = --get-url ] && { echo 'fatal: r9 simulated' >&2; echo 'advice line' >&2; exit 128; }; done\nexec '${realGit}' "$@"\n`, { mode: 0o755 });
-  const g9 = spawnSync(process.execPath, ['-e', `process.stdout.write(JSON.stringify(require(${JSON.stringify(path.join(ROOT, 'scripts', 'config.js'))}).remoteHead(${JSON.stringify(origin)}, ${JSON.stringify(clone)})))`],
+  // remoteHead in a child whose PATH starts with the fake git.
+  const withFakeGit = (url) => spawnSync(process.execPath, ['-e', `process.stdout.write(JSON.stringify(require(${JSON.stringify(path.join(ROOT, 'scripts', 'config.js'))}).remoteHead(${JSON.stringify(url)}, ${JSON.stringify(clone)})))`],
     { encoding: 'utf8', env: Object.assign({}, env, { PATH: fakeBin + path.delimiter + env.PATH }) });
+  const g9 = withFakeGit(origin);
   const e2 = JSON.parse(g9.stdout || '{}');
   ok('R9 the address check itself failing: no branch, its own reason with the first fatal line', !e2.branch && (e2.why || '').includes(`--get-url -- ${origin} failed (fatal: r9 simulated)`), g9.stdout + g9.stderr);
   ok('R9 a missing repository: the reason says it is not a git repository', /does not appear to be a git repository/.test(p.stderr) && !/repository exists\.\)/.test(p.stderr), p.stderr);
@@ -158,6 +160,9 @@ try {
   // git 2.43 fails --get-url for a remote with a vcs key and no url ("has no configured URL"); the name check comes
   // first, so the reason names the remote on every version (tester round 3).
   ok('R10 vcs of a remote named as the URL: refused with the same reason', p.status === 1 && /remote\.realrepo\.vcs/.test(p.stderr) && !/--get-url/.test(p.stderr), p.stderr);
+  // What git 2.43 does here (--get-url fails: "remote realrepo has no configured URL"), on any version: the fake git.
+  const g10 = withFakeGit('realrepo');
+  ok('R10 vcs of a remote named as the URL with --get-url failing (git 2.43): the reason still names the remote', /remote\.realrepo\.vcs/.test(g10.stdout) && !/--get-url/.test(g10.stdout), g10.stdout + g10.stderr);
   git(clone, 'config', '--remove-section', 'remote.realrepo');
   git(clone, 'config', 'remote.realrepo2.uploadpack', `git-upload-pack '${other}' #`);
   p = prePush(clone, 'realrepo', 'refs/heads/trunk', plain);
