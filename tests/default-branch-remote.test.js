@@ -129,6 +129,26 @@ try {
   const e = remoteHead('', clone);
   ok('R9 the address check itself failing (empty URL): no branch, its own reason', !e.branch && /--get-url -- {2}failed \(fatal: bad repository/.test(e.why || ''), JSON.stringify(e));
   ok('R9 a missing repository: the reason says it is not a git repository', /does not appear to be a git repository/.test(p.stderr) && !/repository exists\.\)/.test(p.stderr), p.stderr);
+
+  console.log('R10. the pushed URL is also the name of a configured remote: its settings would steer the query - refusal');
+  // ls-remote of a URL that names a configured remote takes that remote's settings (uploadpack, vcs) even without its
+  // url key, while --get-url prints the same URL (tester round 2, C7; experiment, git 2.50).
+  fs.symlinkSync(origin, path.join(clone, 'realrepo'));
+  fs.appendFileSync(path.join(clone, '.git', 'info', 'exclude'), 'realrepo\n');
+  git(clone, 'config', 'remote.realrepo.uploadpack', `git-upload-pack '${other}' #`);
+  ok('R10 setup: get-url unchanged, the query answers other.git (feat)', git(clone, 'ls-remote', '--get-url', '--', 'realrepo').stdout.trim() === 'realrepo'
+    && /^ref: refs\/heads\/feat\tHEAD$/m.test(git(clone, 'ls-remote', '--symref', '--', 'realrepo', 'HEAD').stdout));
+  p = prePush(clone, 'realrepo', 'refs/heads/trunk', plain);
+  ok('R10 uploadpack of a remote named as the URL (no url key): trunk refused as unknown, the reason names the remote', p.status === 1 && unknownRe.test(p.stderr) && /remote\.realrepo\./.test(p.stderr), p.stderr);
+  git(clone, 'config', '--unset', 'remote.realrepo.uploadpack');
+  git(clone, 'config', 'remote.realrepo.vcs', 'nope');
+  p = prePush(clone, 'realrepo', 'refs/heads/b-t1', plain);
+  ok('R10 vcs of a remote named as the URL: refused with the same reason', p.status === 1 && /remote\.realrepo\./.test(p.stderr), p.stderr);
+  git(clone, 'config', '--remove-section', 'remote.realrepo');
+  git(clone, 'config', 'remote.realrepo2.uploadpack', `git-upload-pack '${other}' #`);
+  p = prePush(clone, 'realrepo', 'refs/heads/trunk', plain);
+  ok('R10 a remote of another name changes nothing: trunk refused as the default branch', p.status === 1 && blocked('trunk').test(p.stderr) && !unknownRe.test(p.stderr), p.stderr);
+  git(clone, 'config', '--remove-section', 'remote.realrepo2');
 } finally {
   fs.rmSync(dir, { recursive: true, force: true });
 }
