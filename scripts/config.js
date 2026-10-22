@@ -68,6 +68,11 @@ const SPEC = {
   // without the key the role chain refuses to start (workflows/role-chain.js).
   testerWritable: ['string[]', null],
   roleNotes: ['object', null],
+  // The model of the role agents (owner 2026-10-22: the coordinator on one model, the roles no higher than another):
+  // an alias the Workflow agent() takes as opts.model; roleModels overrides it per role. Empty - no model is passed
+  // and every role inherits the main session's model, as before.
+  roleModel: ['string', ''],
+  roleModels: ['object', null],
   threatModel: ['string', ''],
   gitHooks: ['object', null],
   standingPush: ['object', null],
@@ -105,6 +110,10 @@ const STAND_SPEC = {
 };
 const STAND_REQUIRED = ['project', 'up', 'deploy', 'reset', 'status', 'down'];
 const ROLES = ['analyst', 'programmer', 'tester', 'reviewer', 'security-reviewer'];
+// The model aliases of the Workflow agent() option model; roleModels keys: the roles, the preconditions agent, and wait
+// (the repeat of a post-check or wait step; their first attempt always runs on haiku).
+const MODEL_ALIASES = ['sonnet', 'opus', 'haiku', 'fable'];
+const MODEL_ROLES = ROLES.concat(['preconditions', 'wait']);
 
 // The machine file. Defaults measured on a 16 GB Mac of the project the process was first built for (slots.zsh and
 // scripts/env-check.js explain each number); swapMinMB is in MB for both the slot scripts and env-check (4000: a
@@ -342,6 +351,14 @@ function resolve(raw, opts = {}) {
     else if (typeof v !== 'string') errors.push(`roleNotes.${k}: expected string`);
   }
   c.roleNotes = notes;
+  const aliasErr = (where, v) => `${where}: ${JSON.stringify(v)} is not a model alias (one of ${MODEL_ALIASES.join(', ')})`;
+  if (c.roleModel && !MODEL_ALIASES.includes(c.roleModel)) errors.push(aliasErr('roleModel', c.roleModel));
+  const models = c.roleModels || {};
+  for (const [k, v] of Object.entries(models)) {
+    if (!MODEL_ROLES.includes(k)) errors.push(`roleModels.${k}: unknown role (one of ${MODEL_ROLES.join(', ')})`);
+    else if (!MODEL_ALIASES.includes(v)) errors.push(aliasErr(`roleModels.${k}`, v));
+  }
+  c.roleModels = models;
   for (const [k, list] of [['testerWritable', c.testerWritable || []]]) {
     for (const re of list) { try { new RegExp(re); } catch (e) { errors.push(`${k}: bad regular expression ${re}`); } }
   }
@@ -432,7 +449,7 @@ function shellLines(c) {
   return Object.entries(v).map(([k, x]) => (x === '' ? `[[ -v ${k} ]] || ${k}=''` : `: \${${k}:=${q(x)}}`)).join('\n');
 }
 
-module.exports = { find, load, resolve, branches, shellLines, machinePath, loadMachine, MACHINE_SPEC, MACHINE_SLOT_SPEC, EXTRA_SPEC, MACHINE_VERSION, SPEC, SLOT_SPEC, RERUN_SPEC, EXCL_SPEC, EXCL_DEFAULT, STAND_SPEC, STAND_REQUIRED, WT_SPEC, PROBE_SPEC, HOOKS_SPEC, STANDING_SPEC, PRE_SPEC, ROLES, expand };
+module.exports = { find, load, resolve, branches, shellLines, machinePath, loadMachine, MACHINE_SPEC, MACHINE_SLOT_SPEC, EXTRA_SPEC, MACHINE_VERSION, SPEC, SLOT_SPEC, RERUN_SPEC, EXCL_SPEC, EXCL_DEFAULT, STAND_SPEC, STAND_REQUIRED, WT_SPEC, PROBE_SPEC, HOOKS_SPEC, STANDING_SPEC, PRE_SPEC, ROLES, MODEL_ALIASES, MODEL_ROLES, expand };
 
 if (require.main === module) {
   const [cmd, ...rest] = process.argv.slice(2);
@@ -480,6 +497,6 @@ module.exports.loadOrDefaults = function loadOrDefaults(cwd, env) {
   const errors = [];
   return branches(Object.assign(level(SPEC, {}, '', errors), {
     slots: level(SLOT_SPEC, {}, '', errors), worktreeSetup: level(WT_SPEC, {}, '', errors),
-    gitHooks: level(HOOKS_SPEC, {}, '', errors), preconditions: level(PRE_SPEC, {}, '', errors), roleNotes: {}, configPath: null,
+    gitHooks: level(HOOKS_SPEC, {}, '', errors), preconditions: level(PRE_SPEC, {}, '', errors), roleNotes: {}, roleModels: {}, configPath: null,
   }), cwd);
 };

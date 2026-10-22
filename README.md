@@ -203,6 +203,8 @@ node <plugin>/scripts/config.js check
 | `featureIELimit` | cost of a whole feature (its parts summed by the task field `feature`) above which `chain-cost.js` flags it; default 3 x `medianTaskIE` |
 | `testerWritable` | regular expressions of paths the tester may change - the project's guards and fixtures, e.g. `["(^\|/)tests/test_[^/]*\\.py$", "(^\|/)tests/fixtures/"]`; no default: without it the role chain stops every task before any agent, and `role-diff-check.js --role tester` without `--allow` fails |
 | `roleNotes` | project-specific lines appended to one role's prompt (`analyst`, `programmer`, `tester`, `reviewer`, `security-reviewer`) |
+| `roleModel` | model alias of every role agent of the chain (`sonnet`, `opus`, `haiku`, `fable`), passed as the agent's `model`; left out, the roles inherit the main session's model (so the coordinator may run on one model and the roles on a lower one). The first attempt of a post-check or wait step stays on `haiku` |
+| `roleModels` | the same alias per role, over `roleModel`: `analyst`, `programmer`, `tester`, `reviewer`, `security-reviewer`, `preconditions`, and `wait` (the repeat of a post-check or wait step) |
 | `threatModel` | path (in the worktree) of the threat model the security reviewer reads |
 | `standingPush` | only for the repository of process rules: `branches` its HEAD may be pushed to without `ALLOW_PROTECTED_PUSH=1`, and a `check` that must pass first; the hooks honour only the committed `standingPush` of the repository that pushes, never forced, never tags |
 | `gitHooks` | `blockICloudCopies` and `preCommit` (extra shell commands) for `scripts/git-hooks/pre-commit` |
@@ -335,7 +337,8 @@ review findings.
   running - containers, networks, volumes and images labelled with its compose project (`stack`), processes whose cwd
   or argv lies in its worktree, the memory slots they hold - and names them in the result and in `<task>/leftovers.md`.
   It never touches the owner's stack (`ownerStackReadOnly`) or another task; what it cannot remove stops the task.
-- A failed post-check (ok=false or no result) is repeated once by the default model (label `...#retry`, logged) and the
+- A failed post-check (ok=false or no result) is repeated once by the default model (`roleModels.wait`, else `roleModel`,
+  when set; label `...#retry`, logged) and the
   second answer decides: the cheap agent that runs it sometimes answers without running the script, and the scripts
   are deterministic, so a real violation or real leftovers still stop the task.
 - Every role prompt carries the marked rules of `rules/multi-agent.md`: wait at most 270 s at a time, hand over past

@@ -29,6 +29,7 @@
     "programmer": "After changing client/src, rebuild client/bundle.js: a guard compares it with the sources.",
     "tester": "Visual checks run in both Chromium and WebKit."
   },
+  "roleModel": "opus",
   "threatModel": "ACCESS.md",
   "gitHooks": { "blockICloudCopies": true, "preCommit": [] },
   "stand": {

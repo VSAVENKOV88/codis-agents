@@ -120,7 +120,8 @@ Larger changes run as a chain of agents, each in its own role:
   Why: tasks of up to 100 lines of product took 2-2.6 h through the chain against about 0.6 h in one session.
 - After the tester and after each reviewer, a git post-check (`scripts/role-diff-check.js`) compares the worktree with
   the HEAD of the previous committing role: the tester may change only guards and their fixtures, a reviewer nothing.
-  A violation stops the chain. A post-check that fails (or returns nothing) is repeated once by the default model and
+  A violation stops the chain. A post-check that fails (or returns nothing) is repeated once by the default model (the
+  roles' model when the project config names one) and
   the second answer decides: a cheap agent sometimes reports a failure without running the script, while the script
   itself gives the same answer twice.
 - **Do not resume a multi-task workflow run with `resumeFromRunId`.** Cached agent results replay by call order; with
