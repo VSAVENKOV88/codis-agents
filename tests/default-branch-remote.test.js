@@ -126,8 +126,20 @@ try {
   console.log('R9. the reason quotes the first fatal line of ls-remote, not the last line of its advice');
   p = prePush(clone, gone, 'refs/heads/b-t1', plain);
   const { remoteHead } = require(path.join(ROOT, 'scripts', 'config.js'));
+  // An empty URL is refused before any git call: git 2.50 fails `ls-remote --get-url -- ""`, git 2.43 exits 0 with
+  // an empty answer (tester round 3, Ubuntu 24.04), so the reason must not depend on what git does with it.
   const e = remoteHead('', clone);
-  ok('R9 the address check itself failing (empty URL): no branch, its own reason', !e.branch && /--get-url -- {2}failed \(fatal: bad repository/.test(e.why || ''), JSON.stringify(e));
+  ok('R9 an empty URL: no branch, its own reason (any git version)', !e.branch && /the push URL is empty/.test(e.why || ''), JSON.stringify(e));
+  // The address check itself failing, independent of the git version: a git on PATH whose --get-url fails, every
+  // other command the real git.
+  const fakeBin = path.join(dir, 'fakebin');
+  fs.mkdirSync(fakeBin);
+  const realGit = spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8', env }).stdout.trim();
+  fs.writeFileSync(path.join(fakeBin, 'git'), `#!/bin/sh\nfor a in "$@"; do [ "$a" = --get-url ] && { echo 'fatal: r9 simulated' >&2; echo 'advice line' >&2; exit 128; }; done\nexec '${realGit}' "$@"\n`, { mode: 0o755 });
+  const g9 = spawnSync(process.execPath, ['-e', `process.stdout.write(JSON.stringify(require(${JSON.stringify(path.join(ROOT, 'scripts', 'config.js'))}).remoteHead(${JSON.stringify(origin)}, ${JSON.stringify(clone)})))`],
+    { encoding: 'utf8', env: Object.assign({}, env, { PATH: fakeBin + path.delimiter + env.PATH }) });
+  const e2 = JSON.parse(g9.stdout || '{}');
+  ok('R9 the address check itself failing: no branch, its own reason with the first fatal line', !e2.branch && (e2.why || '').includes(`--get-url -- ${origin} failed (fatal: r9 simulated)`), g9.stdout + g9.stderr);
   ok('R9 a missing repository: the reason says it is not a git repository', /does not appear to be a git repository/.test(p.stderr) && !/repository exists\.\)/.test(p.stderr), p.stderr);
 
   console.log('R10. the pushed URL is also the name of a configured remote: its settings would steer the query - refusal');
@@ -143,7 +155,9 @@ try {
   git(clone, 'config', '--unset', 'remote.realrepo.uploadpack');
   git(clone, 'config', 'remote.realrepo.vcs', 'nope');
   p = prePush(clone, 'realrepo', 'refs/heads/b-t1', plain);
-  ok('R10 vcs of a remote named as the URL: refused with the same reason', p.status === 1 && /remote\.realrepo\./.test(p.stderr), p.stderr);
+  // git 2.43 fails --get-url for a remote with a vcs key and no url ("has no configured URL"); the name check comes
+  // first, so the reason names the remote on every version (tester round 3).
+  ok('R10 vcs of a remote named as the URL: refused with the same reason', p.status === 1 && /remote\.realrepo\.vcs/.test(p.stderr) && !/--get-url/.test(p.stderr), p.stderr);
   git(clone, 'config', '--remove-section', 'remote.realrepo');
   git(clone, 'config', 'remote.realrepo2.uploadpack', `git-upload-pack '${other}' #`);
   p = prePush(clone, 'realrepo', 'refs/heads/trunk', plain);
