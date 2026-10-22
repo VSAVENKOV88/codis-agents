@@ -411,6 +411,11 @@ turn by ticket. `scripts/stand.sh`:
 - `image-diff --base <ref>` - do the worktree's commits since `<ref>` touch `imageFiles` (exit 1: the task builds its
   own stack).
 
+The project config of a call is the one found from the directory `stand.sh` is called in (or `CODIS_AGENTS_CONFIG`),
+not from the task's worktree, and it holds for every command of that call: `take` changes into the worktree, whose
+branch may carry another `stand` section, without changing the project. `take`, `deploy` and `status` print its path
+(`project config <path>`); a tester calls every stand command from one directory.
+
 The project's commands run with zsh in `stand.cwd` when it is set (an absolute or `~` path; `config.js check` refuses
 one that is not an existing directory), else in `repoDir` (owner 2026-10-21). With `cwd` the commands can name
 paths relative to one checkout, so a branch and the main checkout can carry the same config.

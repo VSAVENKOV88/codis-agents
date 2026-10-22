@@ -370,6 +370,7 @@ async function run(script, task = T, extra = {}) {
   const tst = xst.prompts.find((p) => p.role === 'test').prompt;
   ok('tester prompt with a stand: image-diff, take in the background, deploy, release', /stand\.sh image-diff --wt '[^']+' --base /.test(tst) && /stand\.sh take --wt '[^']+' with run_in_background/.test(tst)
     && /stand\.sh deploy '/.test(tst) && /stand\.sh release --wt '/.test(tst) && tst.includes('p-dev'), tst);
+  ok('tester prompt with a stand: every stand command from one directory (its config is found there, not in the worktree)', /Call every stand\.sh command from one directory/.test(tst), tst);
   ok('tester prompt with a stand: release also after a red; a refused take is an environment red', /also after a red/.test(tst) && /environment red/.test(tst), tst);
   ok('tester prompt with a stand and no stack: changed image files -> a question to the coordinator', /❓ coordinator: own stack needed/.test(tst), tst);
   const xst2 = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D] }, Object.assign({}, T, { stack: 'k-test' }), { config: STANDCFG });

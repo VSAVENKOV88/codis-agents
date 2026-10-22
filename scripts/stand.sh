@@ -18,6 +18,8 @@
 #                                         - do the worktree's commits since <ref> touch the stand's image files
 #                                           (stand.imageFiles)? exit 0 no (the stand fits), 1 yes (own stack), 2 error
 # The worktree is the argument of deploy or --wt, else the nearest directory with .git above the working directory.
+# The project config is the one found from the directory stand.sh is called in (or $CODIS_AGENTS_CONFIG), never the
+# worktree's: one config for every command of a call; take, deploy and status print its path ("project config <path>").
 # deploy, reset and release for another worktree than the holder's are refused (77): "the ticket is held by <wt>". This
 # guards against mistakes of cooperating agents (a wrong worktree, a stale holder), not against a hostile one.
 #
@@ -41,6 +43,11 @@
 #    signal, rc 143) | dead (found dead by the next holder or a release; release time = when found, rc "-") |
 #    refused (the reset or status failed at issue) | waiting (stopped before it got the ticket, acquire "-").
 H=${0:A:h}
+# The project config of this call: found once, from the directory stand.sh is called in (config.js find:
+# $CODIS_AGENTS_CONFIG, $CLAUDE_PROJECT_DIR, the nearest .claude/codis-agents.json upwards), and pinned as an absolute
+# path for every command of the call, the slots included. take changes into the holder's worktree, whose branch may
+# carry a config with another stand section: without the pin its status after the queue and its reset ran with that.
+_st_cfgf=$(node "$H/config.js" path 2>/dev/null) && export CODIS_AGENTS_CONFIG=$_st_cfgf
 source "$H/slots.zsh" || exit $?
 _st_err=$(node "$H/stand.js" check 2>&1) || { print -u2 -r -- "$_st_err"; exit 78 }
 PROJECT=$(node "$H/stand.js" get project)
@@ -87,6 +94,7 @@ _st_need_holder() {
 
 st_take() {
   local wt=$1 out rc
+  print -r -- "stand $PROJECT: project config $CODIS_AGENTS_CONFIG"
   out=$(_st_cmd status 2>&1); rc=$?
   if (( rc )); then
     print -u2 -r -- "stand: refused - the stand $PROJECT is not up (status exit $rc)${out:+: $out}. It is brought up by the coordinator (stand.sh up); nothing is held."
@@ -180,6 +188,7 @@ st_status() {
   out=$(_st_cmd status 2>&1); rc=$?
   print -r -- "stand $PROJECT: $( (( rc )) && print -r -- "down (status exit $rc)" || print up )${MEMLIM:+, memory limit $MEMLIM MB}"
   [[ -n $out ]] && print -r -- "  ${out//$'\n'/$'\n'  }"
+  print -r -- "project config $CODIS_AGENTS_CONFIG"
   case $(_st_state) in
     held) if _st_who; then print -r -- "ticket: held by $W_WT (pid $W_PID) since $(_st_since $W_TACQ)"; else print -r -- "ticket: held (holder file not written yet)"; fi ;;
     dead) _st_who; print -r -- "ticket: free (its holder pid $W_PID of $W_WT died; the next take resets the stand first)" ;;
@@ -211,6 +220,7 @@ case $cmd in
     W=$(_st_wt "${POS[1]:-$OPT_WT}") || exit $?
     _st_need_holder "$W" || exit $?
     c=$(node "$H/stand.js" cmd deploy --wt "$W") || exit 78
+    print -r -- "stand $PROJECT: deploy of $W, project config $CODIS_AGENTS_CONFIG"
     cd -- $W || exit 66
     SLOT_LABEL="stand deploy ${W:t}" slot_run medium zsh -c 'cd -- "$1" || exit 66; eval "$2"' stand-deploy "$STCWD" "$c"
     exit $? ;;
