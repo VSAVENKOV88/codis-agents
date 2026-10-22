@@ -156,11 +156,14 @@ try {
   p = prePush(clone, 'real.repo', 'refs/heads/trunk', plain);
   ok('R10 a URL with a dot that names a remote: refused, the reason names remote.real.repo.uploadpack', p.status === 1 && /remote\.real\.repo\.uploadpack/.test(p.stderr), p.stderr);
   git(clone, 'config', '--remove-section', 'remote.real.repo');
-  // Only the section remote counts: url.<URL>.insteadOf rewrites other addresses to this one, not this one.
+  // Only the section remote counts: url.<URL>.insteadOf rewrites other addresses to this one, not this one, and a
+  // branch of that name (a section of the same length as remote) does not steer the query.
   git(clone, 'config', 'url.realrepo.insteadOf', 'r10short:');
+  git(clone, 'config', 'branch.realrepo.description', 'r10');
   p = prePush(clone, 'realrepo', 'refs/heads/trunk', plain);
-  ok('R10 the URL as the subsection of another section (url.realrepo.insteadOf): trunk refused as the default branch', p.status === 1 && blocked('trunk').test(p.stderr) && !unknownRe.test(p.stderr), p.stderr);
+  ok('R10 the URL as the subsection of other sections (url, branch): trunk refused as the default branch', p.status === 1 && blocked('trunk').test(p.stderr) && !unknownRe.test(p.stderr), p.stderr);
   git(clone, 'config', '--remove-section', 'url.realrepo');
+  git(clone, 'config', '--remove-section', 'branch.realrepo');
 } finally {
   fs.rmSync(dir, { recursive: true, force: true });
 }
