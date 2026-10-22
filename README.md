@@ -409,7 +409,8 @@ fallback to another slot directory: a second directory would be a second queue t
   follows while a push follows `pushInsteadOf` first), `git ls-remote --get-url -- <url>` shows another address and
   `pre-push` refuses every branch push with the reason instead of asking that address; likewise when the pushed URL
   is also the name of a configured remote (any `remote.<url>.*` key: `ls-remote` would take its `uploadpack` or `vcs`,
-  which a push to the URL does not). The checks and the query are separate git calls: a process that changes the git config between them is not seen. Wrappers: their own task (owner
+  which a push to the URL does not; this check runs first, so the reason is the same on git 2.43 and 2.50), and an
+  empty URL is refused before any git call. The checks and the query are separate git calls: a process that changes the git config between them is not seen. Wrappers: their own task (owner
   2026-10-21).
 - Git config that itself runs a command is the same class of indirection and passes the session hook: `git -c
   core.fsmonitor='git remote set-head origin feat; true' status` moves `refs/remotes/origin/HEAD` (measured with git

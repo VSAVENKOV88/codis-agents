@@ -251,7 +251,9 @@ function branches(c, dir) {
 // remote's - refused with the reason, not followed. A URL that is also the name of a configured remote (any key
 // remote.<url>.*, from every config scope including git -c) makes ls-remote take that remote's settings - uploadpack,
 // vcs - even without its url key, while --get-url prints the same URL (experiment, git 2.50); a push to the URL does
-// not, so that is refused with the reason too. A failed query is reported by its first `fatal:` line (the last line
+// not, so that is refused with the reason too. The name check runs before --get-url, and an empty URL is refused
+// before both: git 2.43 fails --get-url for a remote with vcs and no url, and exits 0 with an empty answer for an
+// empty URL, where git 2.50 does neither - the reason must not depend on the version. A failed query is reported by its first `fatal:` line (the last line
 // is git's generic advice).
 function remoteHead(url, cwd, timeoutMs = 60000) {
   const opts = { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: timeoutMs };
@@ -260,14 +262,15 @@ function remoteHead(url, cwd, timeoutMs = 60000) {
     const lines = (r.stderr || '').trim().split('\n');
     return lines.find((l) => l.startsWith('fatal:')) || lines.pop() || 'exit ' + r.status;
   };
-  const g = spawnSync('git', ['ls-remote', '--get-url', '--', url], opts);
-  if (g.error || g.status !== 0) return { why: `git ls-remote --get-url -- ${url} failed (${errOf(g)})` };
-  const target = g.stdout.trim();
-  if (target !== url) return { why: `the git config rewrites ${url} for a fetch to ${target} (url.<base>.insteadOf), so the remote's answer would not come from the repository the push goes to - remove the rewrite or set defaultBranch (or protectedBranches)` };
+  if (!url) return { why: 'the push URL is empty, so there is no remote to ask' };
   const l = spawnSync('git', ['config', '--name-only', '--list', '-z'], opts);
   if (l.error || l.status !== 0) return { why: `git config --list failed (${errOf(l)})` };
   const named = l.stdout.split('\0').find((k) => k.toLowerCase().startsWith('remote.') && k.slice(7, k.lastIndexOf('.')) === url);
   if (named) return { why: `${url} is also the name of a configured remote (${named}): git ls-remote would take that remote's settings, so the answer may not come from the repository the push goes to - remove remote.${url}.* or set defaultBranch (or protectedBranches)` };
+  const g = spawnSync('git', ['ls-remote', '--get-url', '--', url], opts);
+  if (g.error || g.status !== 0) return { why: `git ls-remote --get-url -- ${url} failed (${errOf(g)})` };
+  const target = g.stdout.trim();
+  if (target !== url) return { why: `the git config rewrites ${url} for a fetch to ${target} (url.<base>.insteadOf), so the remote's answer would not come from the repository the push goes to - remove the rewrite or set defaultBranch (or protectedBranches)` };
   const r = spawnSync('git', ['ls-remote', '--symref', '--', url, 'HEAD'], opts);
   if (r.error || r.status !== 0) return { why: `git ls-remote --symref -- ${url} HEAD failed (${errOf(r)})` };
   const m = /^ref: refs\/heads\/(\S+)\tHEAD$/m.exec(r.stdout);
