@@ -15,7 +15,7 @@ const { ok, done } = require('./lib');
 const ROOT = path.join(__dirname, '..');
 const HOOKS = path.join(ROOT, 'scripts', 'git-hooks');
 const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'default-branch-remote-')));
-const env = { HOME: os.homedir(), PATH: process.env.PATH, LC_ALL: 'C' };
+const env = { HOME: os.homedir(), XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME, PATH: process.env.PATH, LC_ALL: 'C' }; // XDG from lib.js: never the real machine file
 const git = (d, ...a) => spawnSync('git', ['-C', d, ...a], { encoding: 'utf8', env });
 const ident = (d) => { git(d, 'config', 'user.email', 't@t'); git(d, 'config', 'user.name', 't'); };
 const commit = (d, f) => { fs.writeFileSync(path.join(d, f), f); git(d, 'add', f); git(d, 'commit', '-qm', f); };
