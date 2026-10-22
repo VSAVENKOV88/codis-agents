@@ -248,8 +248,11 @@ function branches(c, dir) {
 // pushInsteadOf first (git-config(1) url.<base>.pushInsteadOf), so the URL git passes the hook (already rewritten for
 // the push) may be rewritten again for the query, to another repository: `git ls-remote --get-url -- <url>` prints
 // the address the query would go to (git-ls-remote(1)), and when it differs the answer would not be the pushed
-// remote's - refused with the reason, not followed. A failed query is reported by its first `fatal:` line (the last
-// line is git's generic advice).
+// remote's - refused with the reason, not followed. A URL that is also the name of a configured remote (any key
+// remote.<url>.*, from every config scope including git -c) makes ls-remote take that remote's settings - uploadpack,
+// vcs - even without its url key, while --get-url prints the same URL (experiment, git 2.50); a push to the URL does
+// not, so that is refused with the reason too. A failed query is reported by its first `fatal:` line (the last line
+// is git's generic advice).
 function remoteHead(url, cwd, timeoutMs = 60000) {
   const opts = { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: timeoutMs };
   const errOf = (r) => {
@@ -261,6 +264,10 @@ function remoteHead(url, cwd, timeoutMs = 60000) {
   if (g.error || g.status !== 0) return { why: `git ls-remote --get-url -- ${url} failed (${errOf(g)})` };
   const target = g.stdout.trim();
   if (target !== url) return { why: `the git config rewrites ${url} for a fetch to ${target} (url.<base>.insteadOf), so the remote's answer would not come from the repository the push goes to - remove the rewrite or set defaultBranch (or protectedBranches)` };
+  const l = spawnSync('git', ['config', '--name-only', '--list', '-z'], opts);
+  if (l.error || l.status !== 0) return { why: `git config --list failed (${errOf(l)})` };
+  const named = l.stdout.split('\0').find((k) => k.toLowerCase().startsWith('remote.') && k.slice(7, k.lastIndexOf('.')) === url);
+  if (named) return { why: `${url} is also the name of a configured remote (${named}): git ls-remote would take that remote's settings, so the answer may not come from the repository the push goes to - remove remote.${url}.* or set defaultBranch (or protectedBranches)` };
   const r = spawnSync('git', ['ls-remote', '--symref', '--', url, 'HEAD'], opts);
   if (r.error || r.status !== 0) return { why: `git ls-remote --symref -- ${url} HEAD failed (${errOf(r)})` };
   const m = /^ref: refs\/heads\/(\S+)\tHEAD$/m.exec(r.stdout);
