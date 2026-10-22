@@ -74,6 +74,16 @@
       },
       "description": "Project-specific lines appended to one role's prompt."
     },
+    "roleModel": { "type": "string", "enum": ["sonnet", "opus", "haiku", "fable"], "description": "Model alias of every role agent of the chain (opts.model of the Workflow agent()). Leave it out to let the roles inherit the main session's model. The first attempt of a post-check or wait step stays on haiku." },
+    "roleModels": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "analyst": { "enum": ["sonnet", "opus", "haiku", "fable"] }, "programmer": { "enum": ["sonnet", "opus", "haiku", "fable"] }, "tester": { "enum": ["sonnet", "opus", "haiku", "fable"] },
+        "reviewer": { "enum": ["sonnet", "opus", "haiku", "fable"] }, "security-reviewer": { "enum": ["sonnet", "opus", "haiku", "fable"] }, "preconditions": { "enum": ["sonnet", "opus", "haiku", "fable"] },
+        "wait": { "enum": ["sonnet", "opus", "haiku", "fable"] }
+      },
+      "description": "Model alias per role, over roleModel: the roles, the preconditions agent, and wait - the repeat of a post-check or wait step."
+    },
     "threatModel": { "type": "string", "description": "Path (relative to the worktree) of the threat model the security reviewer reads." },
     "gitHooks": {
       "type": "object", "additionalProperties": false,

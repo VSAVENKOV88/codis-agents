@@ -488,6 +488,47 @@ async function run(script, task = T, extra = {}) {
   const lacking = x.prompts.filter((p) => !['diff', 'left'].includes(p.role)).flatMap((p) => ruleList.filter((r) => !p.prompt.includes(r[1])).map((r) => p.label + ':' + r[0]));
   ok('the prompt of every role (pre, analyst, prog, test, review) carries every rule', roles.size === 5 && !lacking.length, [...roles].join(',') + ' ' + lacking.join(','));
 
+  // roleModel / roleModels (owner 2026-10-22: the coordinator on one model, the role agents no higher than the one the
+  // config names): roleModel is passed as opts.model of every role agent; roleModels overrides it per role; the cheap
+  // checks keep 'haiku' on their first attempt, and their repeat gets the model of 'wait'; without the keys no role
+  // agent gets a model (it inherits the main session's, as before).
+  const ROLE_LABELS = ['pre', 'analyst', 'usecases', 'prog', 'test', 'review', 'sec'];
+  const SERVICE = ['diff', 'left', 'run'];
+  // Every kind of agent in one task: analyst first, a security review, the one-run step and a repeat of each check.
+  const allAgents = async (cfgExtra, task) => {
+    const cfg = Object.assign({}, CFG, { guardSubsetCommand: 'cd {wt}/server && npm run guards -- --all {onlyArgs}' }, cfgExtra);
+    const y = await run({ pre: [PRE], analyst: [AN], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D], sec: [D],
+      run: [{ done: false, rc: null, log: '/d/l', error: 'no JSON' }, { done: true, rc: 0, seconds: 1, log: '/d/l', tail: 'ok' }],
+      diff: [{ ok: false, offending: [], error: 'not run' }, { ok: true, offending: [] }],
+      left: [{ ok: false, found: [], removed: [], remaining: ['x'], error: 'not run' }, { ok: true, found: [], removed: [], remaining: [] }] },
+    task || bare({ analystFirst: true, security: true }), { config: cfg });
+    const uc = await run({ pre: [PRE], usecases: [{ ready: true, useCases: 1, questions: [], summary: 'u' }] },
+      bare({ analystFirst: true, useCasesFirst: true }), { config: cfg });
+    return y.prompts.concat(uc.prompts);
+  };
+  const rolesOf = (ps) => ps.filter((p) => ROLE_LABELS.includes(p.role));
+  const firstChecks = (ps) => ps.filter((p) => SERVICE.includes(p.role) && !/#retry$/.test(p.label));
+  const retryChecks = (ps) => ps.filter((p) => SERVICE.includes(p.role) && /#retry$/.test(p.label));
+  const models = (ps) => ps.map((p) => `${p.label}=${p.opts.model}`).join(' ');
+  let ap = await allAgents({ roleModel: 'opus' });
+  ok('roleModel: the scenario reaches every role agent (pre, analyst, use cases, programmer, tester, reviewer, security reviewer)',
+    ROLE_LABELS.every((r) => rolesOf(ap).some((p) => p.role === r)), [...new Set(rolesOf(ap).map((p) => p.role))].join());
+  ok('roleModel "opus": every role agent gets model opus', rolesOf(ap).every((p) => p.opts.model === 'opus'), models(rolesOf(ap)));
+  ok('roleModel "opus": the first attempt of every check and wait step stays haiku', firstChecks(ap).length >= 3 && firstChecks(ap).every((p) => p.opts.model === 'haiku'), models(firstChecks(ap)));
+  ok('roleModel "opus": the repeat of a check or wait step gets opus, not the main session model',
+    SERVICE.every((r) => retryChecks(ap).some((p) => p.role === r)) && retryChecks(ap).every((p) => p.opts.model === 'opus'), models(retryChecks(ap)));
+  ap = await allAgents({ roleModel: 'fable' }, Object.assign({}, T, { mode: 'light' }));
+  ok('roleModel: the light-mode programmer-checker gets it too', ap.filter((p) => p.role === 'prog').every((p) => p.opts.model === 'fable') && ap.some((p) => p.role === 'prog' && /PROGRAMMER-CHECKER/.test(p.prompt)), models(ap));
+  ap = await allAgents({ roleModel: 'opus', roleModels: { reviewer: 'sonnet', 'security-reviewer': 'fable', programmer: 'haiku', analyst: 'sonnet', tester: 'sonnet', preconditions: 'haiku', wait: 'sonnet' } });
+  const want = { pre: 'haiku', analyst: 'sonnet', usecases: 'sonnet', prog: 'haiku', test: 'sonnet', review: 'sonnet', sec: 'fable' };
+  ok('roleModels overrides roleModel per role', rolesOf(ap).every((p) => p.opts.model === want[p.role]), models(rolesOf(ap)));
+  ok('roleModels.wait: the repeat of a check or wait step', retryChecks(ap).length >= 3 && retryChecks(ap).every((p) => p.opts.model === 'sonnet'), models(retryChecks(ap)));
+  ap = await allAgents({ roleModels: { reviewer: 'sonnet' } });
+  ok('roleModels without roleModel: only the named role gets a model', rolesOf(ap).every((p) => (p.role === 'review' ? p.opts.model === 'sonnet' : !('model' in p.opts))) && retryChecks(ap).every((p) => !('model' in p.opts)), models(rolesOf(ap)));
+  ap = await allAgents({});
+  ok('no roleModel: no role agent and no repeat gets a model (inherited, as before)', rolesOf(ap).concat(retryChecks(ap)).every((p) => !('model' in p.opts)), models(rolesOf(ap).concat(retryChecks(ap))));
+  ok('no roleModel: the first attempts of the checks stay haiku', firstChecks(ap).every((p) => p.opts.model === 'haiku'), models(firstChecks(ap)));
+
   // B8: the push rule names the project's protected branches (derived from git by config.js), never a literal main.
   const pushLine = async (cfg) => {
     const y = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D] }, T, { config: Object.assign({}, CFG, cfg) });

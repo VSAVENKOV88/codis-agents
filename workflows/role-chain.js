@@ -57,6 +57,12 @@ const PROTECTED = Array.isArray(CFG.protectedBranches) && CFG.protectedBranches.
 const NONE_PROTECTED = Array.isArray(CFG.protectedBranches) && !CFG.protectedBranches.length
 const PREFIX = ARGS.agentTypePrefix === undefined ? 'codis-agents:' : ARGS.agentTypePrefix
 const roleType = (role) => (PREFIX ? PREFIX + role : 'general-purpose')
+// The model of an agent (config roleModel, roleModels per role; owner 2026-10-22: the coordinator on one model, the
+// roles no higher than the one the config names): {model} for the agent options, {} without the keys - the agent then
+// inherits the main session's model, as before. Keys: the roles, preconditions, and wait (the repeat of a post-check
+// or wait step; their first attempt stays on haiku).
+const ROLE_MODELS = CFG.roleModels || {}
+const modelOf = (key) => { const m = ROLE_MODELS[key] || CFG.roleModel; return m ? { model: m } : {} }
 const abs = (p) => (p.startsWith('/') ? p : `${CFG.worktreeRoot}/${p}`)
 const specsOf = (t) => (t.spec === undefined ? [] : [].concat(t.spec))
 const TASKS = TASKS_IN.map((t) => Object.assign({}, t, {
@@ -153,10 +159,11 @@ const REVIEW_SCHEMA = { type: 'object', properties: {
 
 // Post-check of a role by git (not a hook: a hook cannot see python -c, a heredoc, a checkout).
 // A post-check agent runs one deterministic script. A cheap agent sometimes returns ok=false without running it, so a
-// failed check (ok=false or no result) is repeated once by the default model (label <label>#retry) and the second
+// failed check (ok=false or no result) is repeated once by the default model (label <label>#retry; config roleModels.wait
+// or roleModel when set) and the second
 // answer decides: the script gives the same answer again, so a real violation or real leftovers still stop the task.
 const checkOpts = (label, phase, schema, retry) => Object.assign({ label: retry ? `${label}#retry` : label, phase, schema, effort: 'low', agentType: 'general-purpose' },
-  retry ? {} : { model: 'haiku' })
+  retry ? modelOf('wait') : { model: 'haiku' })
 async function checkTwice(t, what, passed, run) {
   const first = await run(false)
   if (passed(first)) return { res: first }
@@ -319,12 +326,12 @@ const preAnalysis = (t) => (t.an.mode === 'reused'
     : '')
 const pre = (t) => agent(`You check PRECONDITIONS (read only, change nothing). ${RULES(t)}
 Check: ${t.dir}/BRIEF.md exists and contains an acceptance scenario in the real environment;${preAnalysis(t)}${t.uc ? ` the use cases ${t.uc} exist, are non-empty and have no open questions to the owner left unanswered (they were reviewed with the owner);` : ''}${t.specs.length ? ` the arc specification ${t.specs.join(', ')} exists;` : ''} ${t.wt} exists and is on branch ${t.branch}; there are no uncommitted changes (except untracked build output or probes); the brief has no unanswered questions to the owner on which acceptance depends; the environment has room: run node ${SCRIPTS}/env-check.js --path ${sq(t.wt)} --path ${sq(t.dir)} --worktree ${sq(t.wt)} --min-disk-gb ${ENV.minFreeDiskGB} --min-swap-mb ${ENV.swapMinMB} (free disk and swap headroom; the worktree is not the main working copy of its repository) and copy its problems. ok=false if any of this fails.`,
-  { label: `pre:${t.key}`, phase: 'Preconditions', schema: PRE_SCHEMA, effort: 'low', agentType: 'general-purpose' })
+  Object.assign({ label: `pre:${t.key}`, phase: 'Preconditions', schema: PRE_SCHEMA, effort: 'low', agentType: 'general-purpose' }, modelOf('preconditions')))
 
 const analyst = (t, why) => agent(`You are the ANALYST/DIAGNOSER (read code only; you write only ${t.dir}/analyst.md). ${RULES(t)}
 Reason: ${why}
 Write a matrix of cases (every dimension: states x events x environments) or find the cause of the defect with file:line. Count the cells and subsystems. If by the rule "Split the task" the task must be split, propose subtasks and do not declare ready. Every cell has an expected result and a basis (the brief, documentation, an experiment); no thresholds or name lists.${t.uc ? ` Build the matrix on the use cases ${t.uc}: every cell cites its use case (UC-n and the flow step); a flow without cells is a gap.` : ''}${note('analyst')}`,
-  { label: `analyst:${t.key}`, phase: 'Analyst', schema: ANALYST_SCHEMA, agentType: roleType('analyst') })
+  Object.assign({ label: `analyst:${t.key}`, phase: 'Analyst', schema: ANALYST_SCHEMA, agentType: roleType('analyst') }, modelOf('analyst')))
 
 // First step of a feature with useCasesFirst: the use cases alone, then the task stops for the review with the owner.
 const ucAnalyst = (t, p) => agent(`You are the ANALYST, first step of a feature: USE CASES (read the brief and the code; you write only ${p}). ${RULES(t)}
@@ -338,7 +345,7 @@ Write the use cases of the feature before any matrix of cases or spec. One secti
 - Errors: what can fail at each step and what the actor sees then.
 - Out of scope: what this use case deliberately does not cover.
 End the file with "Open questions to the owner": one numbered list, each question with your recommendation; put the same list into questions. ready=true when every use case has all sections. Do not write a matrix of cases and do not answer the questions yourself: the task stops here, and the coordinator reviews the use cases with the owner.${note('analyst')}`,
-  { label: `usecases:${t.key}`, phase: 'Analyst', schema: USECASES_SCHEMA, agentType: roleType('analyst') })
+  Object.assign({ label: `usecases:${t.key}`, phase: 'Analyst', schema: USECASES_SCHEMA, agentType: roleType('analyst') }, modelOf('analyst')))
 
 // What the programmer runs after the mutations: the selection (ONE_RUN, the workflow runs the full run after it) or the
 // full run itself.
@@ -349,13 +356,13 @@ const prog = (t, task, n) => (t.light ? progLight(t, task, n) : agent(`You are t
 ${analysisLine(t.an)}
 ${task}
 Order: red guard -> commit -> code -> commit -> mutations AFTER the commit (table in prog.md) -> ${guardsPart(t)}. status=blocked if you cannot go on without the owner's answer.${note('programmer')}`,
-  { label: `prog:${t.key}#${n}`, phase: 'Programmer', schema: PROG_SCHEMA, agentType: roleType('programmer') }))
+  Object.assign({ label: `prog:${t.key}#${n}`, phase: 'Programmer', schema: PROG_SCHEMA, agentType: roleType('programmer') }, modelOf('programmer'))))
 // Light mode: one programmer-checker does the programmer's work and the tester's acceptance; the reviewer follows.
 const progLight = (t, task, n) => agent(`You are the PROGRAMMER-CHECKER of a task in the light mode: there is no tester role, so you also run the acceptance. ${RULES(t)} Reports: ${t.dir}/prog.md (round ${n}) and ${t.dir}/test.md (your acceptance, round ${n}; keep earlier rounds).
 ${analysisLine(t.an)}
 ${task}
 Order: red guard -> commit -> code -> commit -> mutations AFTER the commit (table in prog.md) -> ${guardsPart(t)} -> your own acceptance in the real environment: ${t.accept} Evidence (logs, numbers, screenshots) goes into ${t.dir}/test.md and files with the prefix test-; put the result and where its evidence is into acceptance. status=ready only when the acceptance is met; status=blocked if you cannot go on without the owner's answer.${note('programmer')}`,
-  { label: `prog:${t.key}#${n}`, phase: 'Programmer', schema: PROG_SCHEMA, agentType: roleType('programmer') })
+  Object.assign({ label: `prog:${t.key}#${n}`, phase: 'Programmer', schema: PROG_SCHEMA, agentType: roleType('programmer') }, modelOf('programmer')))
 
 // Acceptance on the project's shared stand (config stand, scripts/stand.sh): image-diff decides whether it fits.
 const standSteps = (t) => (CFG.stand && CFG.stand.project ? ` On the project's shared stand ${CFG.stand.project}: (a) ${SCRIPTS}/stand.sh image-diff --wt ${sq(t.wt)} --base <the commit this task branched from> - exit 0: the stand fits, exit 1: the task changes the stand's image files and needs ${t.stack ? 'its own stack (below)' : 'its own stack: write "❓ coordinator: own stack needed, image files changed" into test.md and give the verdict environment'}; (b) ${SCRIPTS}/stand.sh take --wt ${sq(t.wt)} with run_in_background - it waits in the queue ("position N") and then holds the ticket while it runs: wait (Monitor, slices of at most 270 s) for its line "ticket taken by"; (c) ${SCRIPTS}/stand.sh deploy ${sq(t.wt)} (your committed HEAD; it runs in a medium slot); (d) the scenario against the stand; (e) ${SCRIPTS}/stand.sh release --wt ${sq(t.wt)} as soon as the evidence is saved, also after a red (the next tester waits for it). A take refused with "not up" or "reset failed" is an environment red for the coordinator.` : '')
@@ -366,15 +373,15 @@ const test = (t, n, st) => agent(`You are the TESTER. You do not change product 
 4. ${ONE_RUN ? `Do NOT run the full guard run: the workflow ran it once on the programmer's HEAD (${fullLine(st && st.full)}); reuse its log. Run your new and touched guards and mutations; if you commit guards, run them and the selection (${selectCmd(t)}), not the full suite.` : "Do not repeat the programmer's full run: new and touched guards and mutations; a full run only after your own commits."}
 green - only if the brief's acceptance is met in full. red - the product fails a guard or the acceptance.
 environment - red that the product did not cause, so a programmer has nothing to fix: your or the programmer's full run cut off before its tally (killed, timed out, out of memory), no memory slot within your time, disk or swap exhausted (node ${SCRIPTS}/env-check.js --path ${sq(t.wt)} --min-disk-gb ${ENV.minFreeDiskGB} --min-swap-mb ${ENV.swapMinMB}), Docker or your stack down for a reason outside the task's code. Put the cause and its evidence into environment; the task stops for the coordinator. Never use it for a red that the product causes.${note('tester')}`,
-  { label: `test:${t.key}#${n}`, phase: 'Tester', schema: TEST_SCHEMA, agentType: roleType('tester') })
+  Object.assign({ label: `test:${t.key}#${n}`, phase: 'Tester', schema: TEST_SCHEMA, agentType: roleType('tester') }, modelOf('tester')))
 
 const review = (t, n, scope) => agent(`You are the REVIEWER (read only; you may rerun guards). ${RULES(t)} Report: ${t.dir}/review.md (round ${n}).
 Read BRIEF.md, analyst.md (if any), prog.md, test.md, git log/diff of branch ${t.branch} for the task${scope ? ' - ' + scope : ''}. Try to refute "done": cells of the matrix,${t.uc ? ` the alternative flows and errors of the use cases ${t.uc} (closed, not only the main flow),` : ''} guesses instead of data (thresholds, name lists), guards without mutations, the tester's evidence against the acceptance scenario (do not rerun the scenario).${t.light ? ` This task runs in the light mode: there is no tester role; the programmer-checker ran the acceptance - check its evidence in ${t.dir}/test.md against the acceptance scenario and its mutation table in prog.md.` : ''} Verdict with file:line.${note('reviewer')}`,
-  { label: `review:${t.key}#${n}`, phase: 'Reviewer', schema: REVIEW_SCHEMA, agentType: roleType('reviewer') })
+  Object.assign({ label: `review:${t.key}#${n}`, phase: 'Reviewer', schema: REVIEW_SCHEMA, agentType: roleType('reviewer') }, modelOf('reviewer')))
 
 const secReview = (t, n, scope) => agent(`You are the SECURITY REVIEWER (read only; you may rerun guards). ${RULES(t)} Report: ${t.dir}/review-sec.md (round ${n}).
 The brief marks the task as security work. Read BRIEF.md, ${CFG.threatModel ? `the threat model ${t.wt}/${CFG.threatModel}, ` : ''}git diff of branch ${t.branch} for the task${scope ? ' - ' + scope : ''}, test.md. Look with an attacker's eyes: access by a guest and by another owner, swapped ids, malformed input, secrets (model keys, passes) leaking into responses, logs, postMessage, UI; does the tester have refusal guards for every input, and are they mutation-tested. Verdict with file:line; docsOnly - only if the findings concern docs, guard wording or comments alone.${note('security-reviewer')}`,
-  { label: `sec:${t.key}#${n}`, phase: 'Reviewer', schema: REVIEW_SCHEMA, agentType: roleType('security-reviewer') })
+  Object.assign({ label: `sec:${t.key}#${n}`, phase: 'Reviewer', schema: REVIEW_SCHEMA, agentType: roleType('security-reviewer') }, modelOf('security-reviewer')))
 
 // Programmer -> tester (red -> programmer again, without review), up to maxRounds tester rounds.
 // st.head - HEAD after the last committing role; the next role's post-check starts from it.
