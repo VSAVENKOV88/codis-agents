@@ -104,6 +104,9 @@ Larger changes run as a chain of agents, each in its own role:
 - On rejection: a fix round, then a second review. A second rejection for a code defect sends the task to the analyst
   (cases, cause) inside the same run, then one more full round; a third rejection goes to the coordinator. A question
   of scope goes to the owner.
+- **The second red tester round sends the task to the analyst, like the second rejection.** Red tester verdicts for the product are counted per task: the second one, in any cells (not only the same ones), sends the task to the analyst inside the same run; the analyst writes the matrix of cases from the tester's findings (`test.md`, every round) and their cause (`prog.md`), then one round programmer -> tester -> review on that matrix; a red tester round after that analyst goes to the coordinator (the task stops with that cause). A red of the environment (verdict `environment`) does not count; the light mode has no tester, so the rule does not apply there. The tester names every failed case in `test.md` with its expected and actual result, so the analyst builds the matrix from them. Only one analyst runs inside a run: after the analyst of the second rejection the tester rounds stay as they were. <!-- role:testerred -->
+  Why: cvm-xy-1 (2026-10-23) went tester -> programmer four times in a row, each red opening a new cell of a matrix
+  nobody had written; the chain counted only rejections, so it never stopped for the analyst.
 - A rejection only for docs, guard wording or comments is fixed by the programmer and re-reviewed on that diff only,
   without a tester round. The workflow checks the claim: a fix that touches only docs and the guard files the tester
   may change (`testerWritable`) goes straight to the second review; a fix that touches other files (a comment in

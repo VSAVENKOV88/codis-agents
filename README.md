@@ -320,7 +320,10 @@ review findings.
   with evidence in `test.md`) -> the one full run -> one reviewer; no tester role. A second rejection stops the task for
   the coordinator with the proposal to relaunch it in the full mode.
 - **Tester** builds its own inventory, adds and mutation-tests guards, runs the acceptance scenario for real. Red goes
-  straight back to the programmer (up to three rounds), without a review. A red from the environment (a cut-off full
+  straight back to the programmer, without a review. Red tester rounds for the product are counted per task: the
+  second one (any cells) brings the analyst into the same run - a matrix of cases from the tester's findings in
+  `test.md` and their cause in `prog.md` - then one round programmer -> tester -> review on it; a red tester round
+  after that analyst stops the task for the coordinator (`tester red after analyst`). A red from the environment (a cut-off full
   run, no slot, disk or swap exhausted, Docker down) is the verdict `environment`: the task stops with its cause for the
   coordinator, not for a programmer.
 - **Reviewer** reads only and tries to refute. With `security: true` a security reviewer follows; done needs both.

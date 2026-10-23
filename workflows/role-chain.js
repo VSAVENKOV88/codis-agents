@@ -1,10 +1,10 @@
 export const meta = {
   name: 'role-chain',
-  description: 'Role chain over tasks in parallel: preconditions -> (analyst) -> programmer -> tester -> reviewer (+ security reviewer); fix rounds and an analyst after the second rejection',
+  description: 'Role chain over tasks in parallel: preconditions -> (analyst) -> programmer -> tester -> reviewer (+ security reviewer); fix rounds; an analyst after the second rejection or the second red tester round',
   whenToUse: 'Started by the codis-agents:role-chain skill, which reads .claude/codis-agents.json and passes it. args: {owner: "the owner\'s request, verbatim", config: <resolved project config>, tasks: [{key, title, wt, branch, accept, dir?, gdir?, start?, analystFirst | analysis | noAnalysis (exactly one), feature?, spec?, useCases?, useCasesFirst?, stack?, security?, base?, mode?}]}',
   phases: [
     { title: 'Preconditions', detail: 'brief, worktree, branch, open questions' },
-    { title: 'Analyst', detail: 'matrix of cases or a diagnosis (before the programmer, or after the second rejection)' },
+    { title: 'Analyst', detail: 'matrix of cases or a diagnosis (before the programmer, after the second rejection, or after the second red tester round)' },
     { title: 'Programmer', detail: 'red guard -> code -> mutations -> selected guards (or the full guard run without guardSubsetCommand)' },
     { title: 'Full run', detail: 'one full guard run on the programmer\'s last HEAD, run by the workflow as a wait step' },
     { title: 'Tester', detail: 'independent inventory, own guards, acceptance in the real environment' },
@@ -102,6 +102,7 @@ const RULE_LIST = (t) => [
   ['stand', CFG.stand && CFG.stand.project
     ? `Shared stand: acceptance in Docker goes to the project's stand ${CFG.stand.project} by ticket (${SCRIPTS}/stand.sh take|deploy|release|status), not to a stack of your own, unless the task's commits change its image files (${SCRIPTS}/stand.sh image-diff, exit 1 -> own stack as before). The take process is the holder: keep it running in the background until release. Call every stand.sh command from one directory: its project config is found from there (take, deploy and status print it), not from your worktree. Never bring the stand up or down, never release another worktree's ticket.`
     : 'Shared stand: the project config has none (no section stand), so acceptance in Docker uses a stack of the task.'],
+  ['testerred', 'Red tester rounds are counted per task: the second red verdict for the product (any cells, not only the same ones) sends the task to the analyst inside the same run - a matrix of cases from the tester\'s findings in test.md and their cause (prog.md) - then one round programmer -> tester -> review on that matrix; a red tester round after that analyst stops the task for the coordinator. A red of the environment (verdict environment) does not count. Tester: in test.md name every failed case with its expected and actual result and its round, so the analyst builds the matrix from them.'],
   ['specs', 'Living specs (UX specs, state models, gap lists) change in the same commit as the behaviour they describe.'],
   ['push', PROTECTED ? `Do not push, do not merge into ${PROTECTED}, do not create tags.`
     : NONE_PROTECTED ? 'Do not push, do not merge, do not create tags (the project config protects no branch: protectedBranches [], so no branch is protected by the hooks, and pushing and merging stay the owner\'s call).'
@@ -455,6 +456,18 @@ async function progStep(t, st, task, n) {
   }
 }
 
+// Red tester rounds for the product are counted per task (st.reds; environment reds never reach here). The second one,
+// in any cells, sends the task to the analyst inside the same run (redAnalyst in work()); a red after that analyst stops
+// the task for the coordinator. Only one analyst runs inside a run: after the analyst of the second rejection
+// (st.analyst = 'rejection') the tester rounds stay as before. Why: cvm-xy-1 (2026-10-23) - four tester -> programmer
+// rounds in a row, each red opening a new cell of a matrix nobody had written; the count stood only on rejections.
+function testerRed(t, st, round, tr) {
+  st.reds = (st.reds || 0) + 1
+  if (st.analyst === 'tester-red') return { fail: `tester red after analyst (round ${round})`, stopWhy: 'tester red after analyst', test: tr.summary }
+  if (!st.analyst && st.reds >= 2) { log(`${t.title}: tester ${round} - the second red tester round for the product - analyst`); return { redAnalyst: true, test: tr.summary } }
+  return null
+}
+
 async function buildAndTest(t, st, firstTask, tag, maxRounds) {
   const s1 = await progStep(t, st, firstTask, `${tag}1`)
   if (s1.fail) return s1
@@ -465,6 +478,8 @@ async function buildAndTest(t, st, firstTask, tag, maxRounds) {
     log(`${t.title}: tester ${tag}${r} - ${tr.verdict}`)
     if (tr.verdict === 'green') return { ok: tr }
     if (tr.verdict === 'environment') return envStop(`${tag}${r}`, tr)
+    const red = testerRed(t, st, `${tag}${r}`, tr)
+    if (red) return red
     if (r === maxRounds) return { fail: `${maxRounds} red tester rounds`, test: tr.summary }
     const s = await progStep(t, st, `Tester round ${tag}${r} - red. Fix according to ${t.dir}/test.md:\n${tr.summary}`, `${tag}${r + 1}`)
     if (s.fail) return s
@@ -490,7 +505,7 @@ async function reviewLoop(t, st, tag) {
     if (xt.fail) return xt
     const tr = xt.tr
     if (tr.verdict === 'environment') return Object.assign(envStop(`${tag}after-review`, tr), { review: r1.summary })
-    if (tr.verdict !== 'green') return { fail: 'tester after the review fix - red', test: tr.summary, review: r1.summary }
+    if (tr.verdict !== 'green') return Object.assign(testerRed(t, st, `${tag}after-review`, tr) || { fail: 'tester after the review fix - red', test: tr.summary }, { review: r1.summary })
     return {}
   }
   const changed = p.changedFiles || []
@@ -498,7 +513,7 @@ async function reviewLoop(t, st, tag) {
   const other = changed.filter((f) => !docsOrGuard(f))
   if (!r1.docsOnly) {
     const xt = await testAfter()
-    if (xt.fail) return xt
+    if (xt.fail || xt.redAnalyst) return xt
   }
   const scope = !r1.docsOnly ? ''
     : `only the diff of the fix after review 1 (git diff ${before}..${p.head})${byPaths ? '' : `; it touches files outside docs and guards (${other.join(', ') || 'none reported'}): set fixBehaviourUnchanged=true only if that diff changes comments, wording or docs alone and no behaviour`}`
@@ -510,7 +525,7 @@ async function reviewLoop(t, st, tag) {
   if (r1.docsOnly && !byPaths && r2.fixBehaviourUnchanged !== true) {
     log(`${t.title}: rejected "for docs", the fix touches ${other.join(', ') || 'unreported files'} and the review did not confirm it changes no behaviour - tester round`)
     const xt = await testAfter()
-    if (xt.fail) return xt
+    if (xt.fail || xt.redAnalyst) return xt
   }
   return { ok: r2 }
 }
@@ -555,12 +570,15 @@ async function work(t, st) {
 
   if (t.light) return light(t, st)
   const b = await buildAndTest(t, st, t.start || 'Start with red guards for the cells of the brief (and analyst.md, if any).', '', 3)
+  if (b.redAnalyst) return afterRedAnalyst(t, st, b)
   if (b.fail) return stop(t, b.fail, b)
   const rv = await reviewLoop(t, st, '')
   if (rv.ok) return { task: t.key, status: 'done', review: rv.ok.summary }
+  if (rv.redAnalyst) return afterRedAnalyst(t, st, rv)
   if (!rv.second || rv.docsOnly) return stop(t, rv.fail, rv)
 
   // Second rejection for code -> analyst in the same run, then one full round; a third rejection goes to the coordinator.
+  st.analyst = 'rejection'
   const a = await analyst(t, `second review rejection for code:\n${rv.review}`)
   if (!a) return stop(t, 'the analyst returned no result')
   if (!a.ready || a.split.length || a.questions.length) return stop(t, 'analyst after the second rejection: split or an answer is needed', { split: a.split, questions: a.questions, analyst: a.summary })
@@ -569,6 +587,21 @@ async function work(t, st) {
   const rv2 = await reviewLoop(t, st, 'A')
   if (rv2.ok) return { task: t.key, status: 'done', review: rv2.ok.summary }
   return stop(t, `after the analyst: ${rv2.fail}`, rv2)
+}
+
+// Second red tester round for the product -> analyst in the same run: a matrix of cases from the tester's findings
+// (test.md) and their cause (prog.md), then one round programmer -> tester -> review on it; a red tester round after it
+// stops the task (why 'tester red after analyst'), and so does a second rejection after it.
+async function afterRedAnalyst(t, st, x) {
+  st.analyst = 'tester-red'
+  const a = await analyst(t, `the second red tester round for the product in this task (rule "Red tester rounds are counted per task"). Inputs: the tester's findings in ${t.dir}/test.md (every round) and the programmer's rounds in ${t.dir}/prog.md. Write the matrix of cases those findings belong to - every dimension the reds opened, not only the failed cells - and the cause of the reds with file:line, so the next programmer round closes the whole matrix at once. Last red:\n${x.test || ''}`)
+  if (!a) return stop(t, 'the analyst returned no result')
+  if (!a.ready || a.split.length || a.questions.length) return stop(t, 'analyst after the second red tester round: split or an answer is needed', { split: a.split, questions: a.questions, analyst: a.summary })
+  const b = await buildAndTest(t, st, `After the second red tester round the analyst wrote ${t.dir}/analyst.md - a matrix of cases from the tester's findings: red guards for its cells, then the fix of every cell, according to it and to ${t.dir}/test.md.`, 'T', 1)
+  if (b.fail) return stop(t, b.stopWhy || `after the analyst: ${b.fail}`, b)
+  const rv = await reviewLoop(t, st, 'T')
+  if (rv.ok) return { task: t.key, status: 'done', review: rv.ok.summary }
+  return stop(t, rv.stopWhy || `after the analyst: ${rv.fail}`, rv)
 }
 
 // Light mode (owner 2026-10-20): programmer-checker -> the full run step -> reviewer; no tester role, so no tester

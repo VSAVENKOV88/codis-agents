@@ -1,6 +1,6 @@
 {
   "name": "codis-agents",
-  "version": "0.4.6",
+  "version": "0.4.7",
   "description": "A multi-agent delivery process for Claude Code: a coordinator and a chain of roles (analyst, programmer, tester, reviewer, security reviewer) run by a workflow, with memory slots for heavy jobs on a shared machine, git post-checks of read-only roles, and push/tag protection hooks.",
   "author": { "name": "codis-agents contributors" },
   "license": "MIT",

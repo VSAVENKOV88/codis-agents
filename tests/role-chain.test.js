@@ -4,7 +4,7 @@
 // test checks the order of roles and the outcome (rules/multi-agent.md: a red tester goes back to the programmer
 // without a review; a rejection for docs gets a second review of the diff without the tester (docs and guard paths, or
 // the review confirms fixBehaviourUnchanged); a tester red from the environment stops the task; a second
-// rejection for code brings the analyst into the same run; preconditions or open questions stop before the
+// rejection for code, or the second red tester round for the product, brings the analyst into the same run; preconditions or open questions stop before the
 // programmer; git post-check of tester and reviewer from the HEAD of the previous role; lines of
 // rules/multi-agent.md marked <!-- role:<id> --> are in RULE_LIST and in the prompt of every role).
 const fs = require('fs');
@@ -83,8 +83,34 @@ async function run(script, task = T, extra = {}) {
   ok('E1. preconditions: a config resolved before the machine file (minSwapGB in GB) -> --min-swap-mb x 1024',
     x.prompts[0].prompt.includes('--min-disk-gb 25 --min-swap-mb 6144'), x.prompts[0].prompt);
 
-  x = await run({ pre: [PRE], prog: [PROG, PROG, PROG], test: [{ verdict: 'red' }, { verdict: 'red' }, { verdict: 'red', summary: '' }].map((v) => Object.assign({ summary: '' }, v)) });
-  ok('three red testers -> stop, no review', x.r.status === 'stopped' && !x.trace.includes('review'), x.trace);
+  // Red tester rounds for the product are counted per task (cvm-xy-1, 2026-10-23): the second one sends the task to the
+  // analyst in the same run (a matrix from test.md and prog.md), then one round prog -> test -> review; a red after that
+  // analyst stops the task (why 'tester red after analyst'); a red of the environment does not count.
+  const RED = (s) => ({ verdict: 'red', summary: s || '' }), GREEN = { verdict: 'green', summary: '' }, DONE = { verdict: 'done', docsOnly: false, summary: '' };
+  x = await run({ pre: [PRE], prog: [PROG, PROG, PROG], test: [RED('r1'), RED('r2'), GREEN], analyst: [AN], review: [DONE] });
+  ok('R1. second red tester round -> analyst in the same run -> prog -> test -> review -> done',
+    x.r.status === 'done' && x.trace === 'pre>prog>test>prog>test>analyst>prog>test>review', x.trace);
+  const anP = (x.prompts.find((p) => p.role === 'analyst') || {}).prompt || '';
+  ok('R1. the analyst reads test.md and prog.md and writes a matrix from the tester\'s findings',
+    anP.includes('/d/test.md') && anP.includes('/d/prog.md') && /matrix of cases/.test(anP) && anP.includes('r2'), anP);
+  ok('R1. the analyst runs in the Analyst phase with the analyst label', (x.prompts.find((p) => p.role === 'analyst') || { opts: {} }).opts.phase === 'Analyst'
+    && (x.prompts.find((p) => p.role === 'analyst') || { opts: {} }).opts.label === 'analyst:x');
+  ok('R1. the programmer after the analyst follows analyst.md and test.md', /analyst\.md - a matrix of cases from the tester's findings/.test(x.prompts.filter((p) => p.role === 'prog')[2].prompt));
+  ok('R1. logged "the second red tester round for the product - analyst"', x.logs.some((m) => /the second red tester round for the product - analyst/.test(m)), x.logs.join(' | '));
+  x = await run({ pre: [PRE], prog: [PROG, PROG, PROG], test: [RED(), RED(), RED('r3')], analyst: [AN] });
+  ok('R2. third red tester round after the analyst -> stopped "tester red after analyst", no review',
+    x.r.status === 'stopped' && x.r.why === 'tester red after analyst' && x.trace === 'pre>prog>test>prog>test>analyst>prog>test' && x.r.test === 'r3', JSON.stringify(x.r) + ' ' + x.trace);
+  x = await run({ pre: [PRE], prog: [PROG, PROG], test: [RED(), { verdict: 'environment', environment: 'docker down', summary: '' }] });
+  ok('R3. red, then environment -> stopped for the environment, no analyst (environment does not count)',
+    x.r.status === 'stopped' && !x.trace.includes('analyst') && /environment/.test(x.r.why), JSON.stringify(x.r) + ' ' + x.trace);
+  x = await run({ pre: [PRE], prog: [PROG, PROG, PROG, PROG], test: [RED(), GREEN, RED('after fix'), GREEN], analyst: [AN],
+    review: [{ verdict: 'rejected', docsOnly: false, summary: 'r' }, DONE] });
+  ok('R4. red, green, rejection, red after the review fix (the second product red) -> analyst -> prog -> test -> review -> done',
+    x.r.status === 'done' && x.trace === 'pre>prog>test>prog>test>review>prog>test>analyst>prog>test>review', x.trace);
+  x = await run({ pre: [PRE], prog: [PROG, PROG, PROG, PROG], test: [GREEN, GREEN, RED(), RED()], analyst: [AN],
+    review: [{ verdict: 'rejected', docsOnly: false, summary: '' }, { verdict: 'rejected', docsOnly: false, summary: '' }] });
+  ok('R5. after the analyst of the second rejection the tester rounds stay as before (one analyst per run)',
+    x.r.status === 'stopped' && x.trace === 'pre>prog>test>review>prog>test>review>analyst>prog>test>prog>test' && /2 red tester rounds/.test(x.r.why), x.trace + ' ' + JSON.stringify(x.r));
 
   x = await run({ pre: [PRE], prog: [PROG, DOCS], test: [{ verdict: 'green', summary: '' }],
     review: [{ verdict: 'rejected', docsOnly: true, summary: '' }, { verdict: 'done', docsOnly: false, summary: '' }] });
