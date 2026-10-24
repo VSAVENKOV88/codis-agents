@@ -421,19 +421,43 @@ async function run(script, task = T, extra = {}) {
   ok('the full run step: a cheap agent runs wait-step.js start with guards-all.sh on the worktree, then waits in slices of at most 270 s',
     rp && rp.opts.model === 'haiku' && rp.opts.agentType === 'general-purpose' && rp.prompt.includes("node /p/scripts/wait-step.js start --id '/d/wait-full-1' --cwd '/w'")
       && rp.prompt.includes('/p/scripts/guards-all.sh') && rp.prompt.includes('wait-step.js wait') && /--max 270/.test(rp.prompt), rp && rp.prompt);
-  ok('programmer prompt (one run): selected guards through guards-select.js, no full run of its own',
-    /guards-select\.js --wt '\/w' --base .+? --command/.test(pOf(x, 'prog')) && /do NOT run the full guard run/.test(pOf(x, 'prog')) && !/full run \/p\/scripts\/guards-all\.sh w in the background/.test(pOf(x, 'prog')), pOf(x, 'prog'));
+  // C1 (p-wait, form 1): the full run of the wait step includes the selection (guardSubsetCommand narrows guardCommand),
+  // so the programmer runs no selection after its mutations: no guards-select, no heavy.sh for it in its Order line.
+  const orderOf = (pr) => (pr.match(/^Order:.*$/m) || [''])[0];
+  ok('C1. programmer prompt (one run): no selection of its own and no full run - the workflow runs the full run, which includes the selection',
+    orderOf(pOf(x, 'prog')) && !/guards-select/.test(orderOf(pOf(x, 'prog'))) && !/heavy\.sh zsh -c/.test(orderOf(pOf(x, 'prog')))
+      && /do NOT run the full guard run/.test(orderOf(pOf(x, 'prog'))) && /includes the selected guards/.test(orderOf(pOf(x, 'prog')))
+      && !/full run \/p\/scripts\/guards-all\.sh w in the background/.test(pOf(x, 'prog')), orderOf(pOf(x, 'prog')));
+  ok('C7. the full run step is one guards-all.sh, without guards-select', runsOf(x).length === 1 && !/guards-select/.test(runsOf(x)[0].prompt), runsOf(x)[0].prompt);
+  ok('C4. programmer schema (one run): fullRun is not "the selected guards\' result"',
+    !/selected guards/.test(x.prompts.find((p) => p.role === 'prog').opts.schema.properties.fullRun.description), x.prompts.find((p) => p.role === 'prog').opts.schema.properties.fullRun.description);
+  // W5 (p-wait D1): the waiter of the full run never gives up while the run is alive; only done:true returns the schema.
+  ok('W5. the wait step prompt: keep waiting while done:false whatever the tail or the time; return only on done:true',
+    /an unchanged tail[^.]*not a reason to stop/.test(rp.prompt) && /[Rr]eturn the schema only once [^.]*"done":true/.test(rp.prompt)
+      && /[Nn]ever return "done":false/.test(rp.prompt) && /"alive":true/.test(rp.prompt), rp.prompt);
+  ok('W1. the wait step schema carries alive and pid', !!(rp.opts.schema.properties.alive && rp.opts.schema.properties.pid), JSON.stringify(rp.opts.schema.properties));
+  // W14 (p-wait D1): a long slot queue is not the environment; a refusal of the queue (77/78) or a vanished waiter is.
+  ok('W14. tester prompt: no "no memory slot within your time"; the environment is a refused queue (77, 78) or a vanished waiter; a live queue is waited for',
+    !/within your time/.test(pOf(x, 'test')) && /77/.test(pOf(x, 'test')) && /78/.test(pOf(x, 'test')) && /alive in the queue/.test(pOf(x, 'test')), pOf(x, 'test'));
+  ok('W14. programmer schema: status environment names the refused queue (77, 78), not "no slot"',
+    /77/.test(x.prompts.find((p) => p.role === 'prog').opts.schema.properties.status.description) && !/no slot/.test(x.prompts.find((p) => p.role === 'prog').opts.schema.properties.status.description));
+  // H2 (p-wait D2): every sentence of every prompt that names heavy.sh says run_in_background.
+  const heavyBlocking = (ps) => ps.flatMap((p) => p.prompt.split(/(?<=[.:])\s+(?=[A-Z0-9])|\n/).filter((sen) => /heavy\.sh/.test(sen) && !/run_in_background/.test(sen)).map((sen) => p.label + ': ' + sen));
+  ok('H2. one run: every sentence that names heavy.sh says run_in_background', !heavyBlocking(x.prompts).length, heavyBlocking(x.prompts).join(' | '));
   ok('tester prompt (one run): reuses the workflow full run log, runs no full run itself',
     pOf(x, 'test').includes('exit 0; summary /d/wait.log') && /do NOT run the full guard run/i.test(pOf(x, 'test')) && !/a full run only after your own commits/.test(pOf(x, 'test')), pOf(x, 'test'));
   ok('the task base reaches guards-select when given', /--base 'origin-x'/.test(pOf(await run(G1(), Object.assign({}, T, { base: 'origin-x' }), { config: ONE }), 'prog')));
   x = await run(G1());
   ok('without guardSubsetCommand: no full run step, the programmer runs the full run itself as before',
     !runsOf(x).length && /full run \/p\/scripts\/guards-all\.sh w in the background/.test(pOf(x, 'prog')) && /a full run only after your own commits/.test(pOf(x, 'test')), x.full);
+  ok('H2. without guardSubsetCommand: every sentence that names heavy.sh says run_in_background', !heavyBlocking(x.prompts).length, heavyBlocking(x.prompts).join(' | '));
 
   x = await run({ pre: [PRE], prog: [PROG, Object.assign({}, PROG, { head: 'P2' })], run: [RUN_RED, RUN_OK], test: [{ verdict: 'green', summary: '' }], review: [D] }, T, { config: ONE });
   ok('a red full run -> a programmer round with its log -> the full run again -> tester',
     x.r.status === 'done' && x.full === 'pre>prog>run:x:full-1>prog>run:x:full-1f>test>diff:x:tester>left:x:tester>review>diff:x:reviewer>left:x:end', x.full);
   ok('the fix round gets the exit code, the summary and the copied full log', /exited 1/.test(pOf(x, 'prog', 1)) && pOf(x, 'prog', 1).includes('/d/wait-full-1.log') && pOf(x, 'prog', 1).includes('/d/wait-full-1.guards.txt'), pOf(x, 'prog', 1));
+  ok('C3. the fix round after a red full run: no "selected guards" (the workflow runs the full run again)', !/selected guards/.test(pOf(x, 'prog', 1)), pOf(x, 'prog', 1));
+  ok('W14. the fix round: the environment is a refused queue (77, 78), not "no slot"', !/no slot/.test(pOf(x, 'prog', 1)) && /77/.test(pOf(x, 'prog', 1)), pOf(x, 'prog', 1));
   ok('the tester post-check starts from the HEAD of the fix', / --since P2 --role tester/.test(pOf(x, 'diff')), pOf(x, 'diff'));
   x = await run({ pre: [PRE], prog: [PROG, PROG], run: [RUN_RED], test: [{ verdict: 'green', summary: '' }], review: [D] }, T, { config: ONE });
   ok('a red full run the programmer explains without a commit -> no second run, the tester gets the red log',
@@ -457,6 +481,22 @@ async function run(script, task = T, extra = {}) {
     x.r.status === 'done' && runsOf(x).length === 2 && runsOf(x)[1].label === 'run:x:full-1#retry' && runsOf(x)[1].opts.model === undefined && /--reuse/.test(runsOf(x)[1].prompt) && !/--reuse/.test(runsOf(x)[0].prompt), x.full);
   x = await run({ pre: [PRE], prog: [PROG], run: [{ done: true, rc: null, log: '/d/l', error: 'the process ended without an exit code' }, { done: true, rc: null, log: '/d/l', error: 'the process ended without an exit code' }] }, T, { config: ONE });
   ok('no exit code twice -> stopped for the coordinator (could not run), no programmer round', x.r.status === 'stopped' && /could not run/.test(x.r.why) && x.trace === 'pre>prog', JSON.stringify(x.r));
+  // W6-W8 (p-wait D1): the deadline of the wait step (124) and a refusal of the slot queue before the run (77 slot
+  // directory, 78 config/swap/main checkout, 72/73 no ps/pgrep or mktemp - coordinator, BRIEF 2026-10-24) are the
+  // environment: the task stops for the coordinator, no programmer round #nf, no tester, no repeat of the step.
+  for (const rc of [124, 77, 78, 72, 73]) {
+    x = await run({ pre: [PRE], prog: [PROG], run: [{ done: true, rc, seconds: 14401, log: '/d/wait-full-1.log', tail: 'position 3', error: rc === 124 ? 'deadline of 14400 s passed' : '' }] }, T, { config: ONE });
+    ok(`W6-8. full run exit ${rc} -> stopped with environment, the log in the reason, no programmer round, no tester`,
+      x.r.status === 'stopped' && x.trace === 'pre>prog' && runsOf(x).length === 1 && /environment/.test(x.r.why) && new RegExp(`exit ${rc}`).test(x.r.why)
+        && x.r.why.includes('/d/wait-full-1.log') && !!x.r.environment, JSON.stringify(x.r) + ' ' + x.full);
+  }
+  x = await run({ pre: [PRE], prog: [PROG, Object.assign({}, PROG, { head: 'P2' })], run: [RUN_RED, { done: true, rc: 124, seconds: 14401, log: '/d/wait-full-1f.log', tail: '', error: 'deadline' }] }, T, { config: ONE });
+  ok('W6. the deadline on the run after a fix round -> stopped with environment, no third programmer round',
+    x.r.status === 'stopped' && x.trace === 'pre>prog>prog' && /environment/.test(x.r.why), JSON.stringify(x.r) + ' ' + x.full);
+  x = await run({ pre: [PRE], prog: [PROG, PROG], run: [Object.assign({}, RUN_RED, { rc: 2 })], test: [{ verdict: 'green', summary: '' }], review: [D] }, T, { config: ONE });
+  ok('W9. any other non-zero exit (2) is the product: a programmer round with the log', x.r.status === 'done' && x.trace === 'pre>prog>prog>test>review', x.full);
+  x = await run({ pre: [PRE], prog: [PROG], run: [{ done: true, rc: 77, seconds: 3, log: '/d/l', tail: '' }] }, Object.assign({}, T, { mode: 'light' }), { config: ONE });
+  ok('W7. light mode: a refused queue -> stopped with environment, no review', x.r.status === 'stopped' && x.trace === 'pre>prog' && /environment/.test(x.r.why), JSON.stringify(x.r));
 
   x = await run({ pre: [PRE], prog: [PROG, PROG], test: [{ verdict: 'green', summary: '' }, { verdict: 'green', summary: '' }], review: [{ verdict: 'rejected', docsOnly: false, summary: 'r' }, D] }, T, { config: ONE });
   ok('a review fix on the HEAD whose full run is done (no new commit) -> no second full run', runsOf(x).length === 1 && x.r.status === 'done', x.full);
@@ -485,6 +525,8 @@ async function run(script, task = T, extra = {}) {
     x.r.status === 'stopped' && !x.trace.includes('analyst') && /full mode/.test(x.r.why) && /r2/.test(x.r.review || ''), JSON.stringify(x.r));
   x = await run({ pre: [PRE], prog: [PROG, Object.assign({}, PROG, { head: 'P2' })], run: [RUN_RED, RUN_OK], review: [D] }, L, { config: ONE });
   ok('light: a red full run -> programmer round with the log -> full run -> review', x.r.status === 'done' && x.full === 'pre>prog>run:x:full-1>prog>run:x:full-1f>review>diff:x:reviewer>left:x:end', x.full);
+  ok('C2. light (one run): the Order line runs no selection and no full run, then the own acceptance',
+    !/guards-select/.test(orderOf(lp0)) && !/heavy\.sh zsh -c/.test(orderOf(lp0)) && /includes the selected guards/.test(orderOf(lp0)) && /your own acceptance/.test(orderOf(lp0)), orderOf(lp0));
   x = await run({ pre: [PRE], prog: [PROG], review: [D] }, L);
   ok('light without guardSubsetCommand: no run step, the programmer-checker runs the full run itself',
     x.r.status === 'done' && !runsOf(x).length && /full run \/p\/scripts\/guards-all\.sh w in the background/.test(pOf(x, 'prog')), x.full);
@@ -505,6 +547,19 @@ async function run(script, task = T, extra = {}) {
   ok('every marked line of rules/multi-agent.md is in RULE_LIST', !missing.length, missing.join(','));
   const orphan = ids.filter((i) => !i.startsWith('local-') && !marked.includes(i));
   ok('every rule (except local-*) has a marker in rules/multi-agent.md', !orphan.length, orphan.join(','));
+  const ruleOf = (id) => (ruleList.find((r) => r[0] === id) || ['', ''])[1];
+  // H1 (p-wait D2): heavy.sh and guards-all.sh only through Bash run_in_background - the Bash timeout kills a blocking
+  // waiter, its ticket is dropped by the trap and it rejoins the queue at the end (24 heavy single jobs with rc 143).
+  ok('H1. rule slots: heavy.sh and guards-all.sh only through Bash run_in_background, Monitor slices, never a blocking Bash call',
+    /run_in_background/.test(ruleOf('slots')) && /never (as )?a blocking Bash call/.test(ruleOf('slots')) && /270 s/.test(ruleOf('slots')), ruleOf('slots'));
+  // P3 (p-wait D3): the pause rule says what the chain accepts: a role does not end its work to wait.
+  ok('P3. rule pauses: no "finish" for a long wait; a role keeps waiting while its process is alive and does not end its work to wait',
+    !/finish/.test(ruleOf('pauses')) && /while your (own )?process is alive/.test(ruleOf('pauses')) && /do not end your work to wait/.test(ruleOf('pauses')) && /270 s/.test(ruleOf('pauses')), ruleOf('pauses'));
+  const ruleListOne = await new AsyncFunction('args', SRC.slice(0, SRC.indexOf('const PRE_SCHEMA')) + '\nreturn RULE_LIST(TASKS[0])')({ owner: 'o', config: ONE, tasks: [T] });
+  const onerunOne = (ruleListOne.find((r) => r[0] === 'onerun') || ['', ''])[1];
+  ok('C5. rule onerun (one run): the programmer runs no selection, the tester runs it after its own commits',
+    /programmer runs only its new guards and mutations/.test(onerunOne) && /tester, after its own commits, runs[^.]*selection/.test(onerunOne), onerunOne);
+  ok('C6. meta phases: the programmer runs no selected guards', !/selected guards/.test(SRC.match(/title: 'Programmer', detail: '([^']*)'/)[1]), SRC.match(/title: 'Programmer', detail: '([^']*)'/)[1]);
   x = await run({ pre: [PRE], prog: [PROG, PROG, PROG], test: Array(3).fill({ verdict: 'green', summary: '' }), analyst: [AN, AN],
     review: [{ verdict: 'rejected', docsOnly: false, summary: '' }, { verdict: 'rejected', docsOnly: false, summary: '' }, { verdict: 'done', docsOnly: false, summary: '' }] },
     bare({ analystFirst: true }));

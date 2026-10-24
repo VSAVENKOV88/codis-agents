@@ -18,6 +18,9 @@ try {
   ok('start: started, detached, pid recorded', r.started === true && r.pid > 0 && fs.existsSync(id('a') + '.json'), JSON.stringify(r));
   r = ws('wait', '--id', id('a'), '--max', '0');
   ok('wait --max 0 while it runs: done=false', r.done === false && r.rc === null, JSON.stringify(r));
+  // W1 (p-wait): liveness is data in the JSON, not a guess from the tail - the waiting agent keeps waiting while alive.
+  const ma = JSON.parse(fs.readFileSync(id('a') + '.json', 'utf8'));
+  ok('W1. wait while it runs: alive true and the pid of the run', r.alive === true && r.pid === ma.pid, JSON.stringify(r));
   const again = ws('start', '--id', id('a'), '--', 'echo second');
   ok('start again while it runs: attached, not doubled', again.attached === true && again.started === false, JSON.stringify(again));
   r = ws('wait', '--id', id('a'), '--max', '20');
@@ -29,6 +32,17 @@ try {
   ok('start on a finished run: archived and started anew', r.started === true && fs.existsSync(id('a') + '.prev.log'), JSON.stringify(r));
   r = ws('wait', '--id', id('a'), '--max', '20');
   ok('the new run has its own result', r.done === true && r.rc === 0 && r.tail === 'fourth', JSON.stringify(r));
+
+  ok('W1. a finished run: alive false', r.alive === false, JSON.stringify(r));
+
+  // W2 (p-wait): a silent live run (a queue that prints nothing new) - two waits in a row, both done=false, alive=true:
+  // wait-step judges nothing by the tail.
+  ws('start', '--id', id('q'), '--', 'sleep 6');
+  const w1 = ws('wait', '--id', id('q'), '--max', '1');
+  const w2 = ws('wait', '--id', id('q'), '--max', '1');
+  ok('W2. a silent live run: two waits in a row with the same empty tail stay done=false, alive=true',
+    [w1, w2].every((w) => w.done === false && w.rc === null && w.alive === true && w.tail === '' && !w.error), JSON.stringify([w1, w2]));
+  try { process.kill(-JSON.parse(fs.readFileSync(id('q') + '.json', 'utf8')).pid, 'SIGKILL'); } catch { /* gone */ }
 
   r = ws('wait', '--id', id('none'));
   ok('wait without start: done with an error, not an endless wait', r.done === true && r.rc === null && /start was not run/.test(r.error), JSON.stringify(r));
