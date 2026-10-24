@@ -456,7 +456,8 @@ async function run(script, task = T, extra = {}) {
   ok('a red full run -> a programmer round with its log -> the full run again -> tester',
     x.r.status === 'done' && x.full === 'pre>prog>run:x:full-1>prog>run:x:full-1f>test>diff:x:tester>left:x:tester>review>diff:x:reviewer>left:x:end', x.full);
   ok('the fix round gets the exit code, the summary and the copied full log', /exited 1/.test(pOf(x, 'prog', 1)) && pOf(x, 'prog', 1).includes('/d/wait-full-1.log') && pOf(x, 'prog', 1).includes('/d/wait-full-1.guards.txt'), pOf(x, 'prog', 1));
-  ok('C3. the fix round after a red full run: no "selected guards" (the workflow runs the full run again)', !/selected guards/.test(pOf(x, 'prog', 1)), pOf(x, 'prog', 1));
+  const nfLine = (pOf(x, 'prog', 1).match(/^The full guard run the workflow ran.*$/m) || [''])[0];
+  ok('C3. the fix round after a red full run: no "selected guards" (the workflow runs the full run again)', nfLine && !/selected guards/.test(nfLine) && /mutations after the commit/.test(nfLine), nfLine);
   ok('W14. the fix round: the environment is a refused queue (77, 78), not "no slot"', !/no slot/.test(pOf(x, 'prog', 1)) && /77/.test(pOf(x, 'prog', 1)), pOf(x, 'prog', 1));
   ok('the tester post-check starts from the HEAD of the fix', / --since P2 --role tester/.test(pOf(x, 'diff')), pOf(x, 'diff'));
   x = await run({ pre: [PRE], prog: [PROG, PROG], run: [RUN_RED], test: [{ verdict: 'green', summary: '' }], review: [D] }, T, { config: ONE });

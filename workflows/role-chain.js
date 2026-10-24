@@ -5,7 +5,7 @@ export const meta = {
   phases: [
     { title: 'Preconditions', detail: 'brief, worktree, branch, open questions' },
     { title: 'Analyst', detail: 'matrix of cases or a diagnosis (before the programmer, after the second rejection, or after the second red tester round)' },
-    { title: 'Programmer', detail: 'red guard -> code -> mutations -> selected guards (or the full guard run without guardSubsetCommand)' },
+    { title: 'Programmer', detail: 'red guard -> code -> mutations (-> its own full guard run without guardSubsetCommand)' },
     { title: 'Full run', detail: 'one full guard run on the programmer\'s last HEAD, run by the workflow as a wait step' },
     { title: 'Tester', detail: 'independent inventory, own guards, acceptance in the real environment' },
     { title: 'Reviewer', detail: 'read only, tries to refute' },
@@ -77,8 +77,10 @@ const ENV = {
 }
 const sq = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`
 // One full guard run per task (rules: "One full guard run per task"): with guardSubsetCommand in the project config the
-// programmer runs only the selected guards and the workflow runs ONE full run after its last commit; without the key
-// the programmer runs the full run itself, as before.
+// workflow runs ONE full run after the programmer's last commit, and that run includes the selection (the contract of
+// the key: it narrows guardCommand to the selected guards of the same suite), so the programmer runs only its new guards
+// and mutations (p-wait, owner 2026-10-24: its selection in a heavy slot was most of its waiting); the tester runs the
+// selection after its own commits. Without the key the programmer runs the full run itself, as before.
 const ONE_RUN = typeof CFG.guardSubsetCommand === 'string' && CFG.guardSubsetCommand.trim() !== ''
 const baseArg = (t) => (nonBlankS(t.base) ? sq(t.base.trim()) : '<the branch or commit this task started from>')
 const selectCmd = (t) => `node ${SCRIPTS}/guards-select.js --wt ${sq(t.wt)} --base ${baseArg(t)} --command`
@@ -91,12 +93,12 @@ const RULE_LIST = (t) => [
   ['local-task', `Task "${t.title}". Brief: ${t.dir}/BRIEF.md (read all of it and the sections it refers to). Worktree ${t.wt}, branch ${t.branch}.${t.specs.length ? ` Arc specification (context of the surface; it is not this task's analysis): ${t.specs.join(', ')}.` : ''}${t.uc ? ` Use cases of the feature (actors, flows, alternative flows, errors): ${t.uc}.` : ''}`],
   ['scope', `The owner asked: "${OWNER}". Do only the task "${t.title}"; refuse neighbouring tasks and do not touch other worktrees.`],
   ['decisions', 'Only the coordinator writes the owner\'s decisions. An open question goes into your own report as a line "❓ coordinator: ..."; do not decide it yourself.'],
-  ['pauses', 'Pauses: never wait longer than 270 s at a time - run anything long through Bash run_in_background and wait with Monitor in slices; an agent with no output for 10 minutes is killed.'],
+  ['pauses', 'Pauses: never wait longer than 270 s at a time - run anything long through Bash run_in_background and wait with Monitor in slices; an agent with no output for 10 minutes is killed. While your own process waits in a slot queue or runs, keep waiting in slices while your process is alive: do not end your work to wait (the chain has no status for it; the one full guard run is waited for by the workflow, not by you).'],
   ['context', 'Context: past ~200k finish the current stage, write the report with "Next step: ..." and stop - a fresh agent continues.'],
-  ['slots', `Heavy work goes through memory slots: ${SCRIPTS}/heavy.sh <cmd>, ${SCRIPTS}/medium.sh <cmd>, full guard run ${SCRIPTS}/guards-all.sh ${t.gdir}.`],
+  ['slots', `Heavy work goes through memory slots: ${SCRIPTS}/heavy.sh <cmd>, ${SCRIPTS}/medium.sh <cmd>, full guard run ${SCRIPTS}/guards-all.sh ${t.gdir}; run heavy.sh and guards-all.sh only through Bash run_in_background and wait with Monitor in slices of at most 270 s, never as a blocking Bash call (the Bash timeout kills the waiter, its ticket is dropped and it rejoins the queue at the end).`],
   ['rerun', `New reds of a full run: ${SCRIPTS}/guards-all.sh reruns each one alone in the same slot. Red again alone - a new red (a regression); green alone - flaky: not a regression, name it in your report under "Flaky guards" for the coordinator, who puts it into the project backlog.${CFG.guardBaseline ? ` Known reds listed in ${CFG.guardBaseline} (config guardBaseline) are subtracted first and never rerun ("N known red"): not a regression; a fix that turns one green removes its entry in the same commit.` : ''} A full run on the same HEAD with a clean tracked tree that ended green is reused ("reused, HEAD <sha>"); --force runs again.`],
   ['onerun', ONE_RUN
-    ? `One full guard run per task: the workflow runs ${SCRIPTS}/guards-all.sh ${t.gdir} once after the programmer's last commit (a wait step) and hands its log to the next role; no role runs the full suite itself. Roles run their new guards and the selection printed by ${selectCmd(t)} (changed guards, guards that import a changed file or name it, the project's guardAlways), in a heavy slot: ${SCRIPTS}/heavy.sh zsh -c '<printed command>'; exit 3 - nothing selected, run your new guards directly.`
+    ? `One full guard run per task: the workflow runs ${SCRIPTS}/guards-all.sh ${t.gdir} once after the programmer's last commit (a wait step) and hands its log to the next role; no role runs the full suite itself. That full run includes the selected guards, so the programmer runs only its new guards and mutations, no selection. The tester, after its own commits, runs its guards and the selection printed by ${selectCmd(t)} (changed guards, guards that import a changed file or name it, the project's guardAlways) in a heavy slot through Bash run_in_background: ${SCRIPTS}/heavy.sh zsh -c '<printed command>'; exit 3 - nothing selected, run your new guards directly.`
     : `One full guard run per task: the project config has no guardSubsetCommand, so the programmer runs the full run (${SCRIPTS}/guards-all.sh ${t.gdir}) and the tester reuses its log; ${SCRIPTS}/guards-select.js --wt ${sq(t.wt)} --base ${baseArg(t)} lists the guards a change touches.`],
   ['docker', `Docker: ${CFG.ownerStackReadOnly ? `the owner's stack ${CFG.ownerStackReadOnly}` : 'the owner\'s stack'} is read-only (docker cp out is fine); never write into its containers; only a tester runs its own stack, and only when the brief asks, then removes it with its images and volumes (docker compose -p <stack> down -v --rmi all). Never remove the owner's stack or its images; other images and the build cache are not yours to clean. A post-check after you removes what the task left (its stack, processes in its worktree, the slots they hold) and reports it.`],
   ['stand', CFG.stand && CFG.stand.project
@@ -132,19 +134,19 @@ const USECASES_SCHEMA = { type: 'object', properties: {
   summary: { type: 'string' },
 }, required: ['ready', 'useCases', 'questions', 'summary'] }
 const PROG_SCHEMA = { type: 'object', properties: {
-  status: { type: 'string', enum: ['ready', 'blocked', 'environment'], description: 'blocked - an answer of the coordinator or owner is needed; environment - the red of the full run is the environment\'s (cut off before its tally, no slot, disk or swap), not the product\'s: the task stops for the coordinator' },
+  status: { type: 'string', enum: ['ready', 'blocked', 'environment'], description: 'blocked - an answer of the coordinator or owner is needed; environment - the red is the environment\'s, not the product\'s (a full run cut off before its tally, the slot queue refused your job - exit 77 or 78 - or your waiting process vanished without an exit code, disk or swap exhausted; a long queue while your process is alive is not one): the task stops for the coordinator' },
   changedFiles: { type: 'array', items: { type: 'string' }, description: 'paths changed in this round (git diff --name-only from the start of the round)' },
   commits: { type: 'array', items: { type: 'string' } },
   head: { type: 'string', description: 'git rev-parse HEAD of the worktree after your commits' },
   mutations: { type: 'string', description: 'table: mutant -> guard result -> after checkout' },
-  fullRun: { type: 'string', description: 'result of the full guard run (or, when the workflow runs it, of the selected guards): N green, N new red (repeated alone), N flaky (green alone), N known red' },
+  fullRun: { type: 'string', description: 'result of your full guard run: N green, N new red (repeated alone), N flaky (green alone), N known red; when the workflow runs the full run (the prompt says so), "the workflow runs it" and the result of your new guards' },
   acceptance: { type: 'string', description: 'light mode only: the acceptance scenario run by you - result and where its evidence is (test.md, test-* files)' },
   questions: { type: 'array', items: { type: 'string' } },
   summary: { type: 'string' },
 }, required: ['status', 'changedFiles', 'commits', 'head', 'mutations', 'fullRun', 'questions', 'summary'] }
 const TEST_SCHEMA = { type: 'object', properties: {
   verdict: { type: 'string', enum: ['green', 'red', 'environment'], description: 'environment - red caused by the environment, not by the product: the task stops for the coordinator' },
-  environment: { type: 'string', description: 'with verdict environment: the cause and its evidence (a cut-off full run, no slot, disk or swap, Docker down)' },
+  environment: { type: 'string', description: 'with verdict environment: the cause and its evidence (a cut-off full run, a refused slot queue, disk or swap, Docker down)' },
   head: { type: 'string', description: 'git rev-parse HEAD of the worktree after your commits' },
   summary: { type: 'string', description: 'acceptance numbers per profile/environment, own guards and mutations, red with file:line' },
 }, required: ['verdict', 'head', 'summary'] }
@@ -215,7 +217,10 @@ const leftFail = (st, when, l) => {
 
 // The full run step (ONE_RUN). A long deterministic step runs between role agents: a cheap service agent starts it with
 // scripts/wait-step.js and waits with blocking calls of at most 270 s (its context is tiny, so a wake-up costs almost
-// nothing; under the cache lifetime and the 10-minute silence limit); the next role gets the log as a file. A step
+// nothing; under the cache lifetime and the 10-minute silence limit); the next role gets the log as a file. The agent
+// keeps waiting while the run is alive ("alive":true), whatever its tail: 24 of 37 repeats in one window (2026-10-22..24)
+// came from a cheap waiter that gave up on a run waiting 25-64 min in the heavy slot queue ("the tail has not changed").
+// wait-step itself ends a hung run at its deadline (rc 124). A step
 // without a numeric exit code is repeated once by the default model with --reuse, which attaches to the run or keeps its
 // result instead of starting it twice. A numeric exit code means the step ran, whatever its outcome: a red run goes to
 // the programmer with its log (in the wait steps experiment a red run whose agent wrote a description into error was
@@ -224,7 +229,7 @@ const leftFail = (st, when, l) => {
 // 80 % of their new reds were the environment or flaky guards.
 const RUN_SCHEMA = { type: 'object', properties: {
   done: { type: 'boolean' }, rc: { type: ['number', 'null'] }, seconds: { type: 'number' }, log: { type: 'string' },
-  tail: { type: 'string' }, error: { type: 'string' },
+  tail: { type: 'string' }, alive: { type: 'boolean' }, pid: { type: 'number' }, error: { type: 'string' },
 }, required: ['done', 'rc', 'log'] }
 const gname = (t) => String(t.gdir).replace(/\/+$/, '').split('/').pop()
 const runStep1 = (t, step, cmd, retry) => {
@@ -232,12 +237,27 @@ const runStep1 = (t, step, cmd, retry) => {
   return agent(`This is a wait step of the codis-agents process the project owner set up: a long deterministic command runs in the background and you only wait for it, so that the role agents do not. Running it is the expected step, not a decision for you to make; change nothing, analyse nothing.
 1. Run once: node ${SCRIPTS}/wait-step.js start --id ${sq(id)} --cwd ${sq(t.wt)}${retry ? ' --reuse' : ''} -- ${sq(cmd)}
 2. Run: node ${SCRIPTS}/wait-step.js wait --id ${sq(id)} --max 270
-   (Bash with timeout 300000 ms; it blocks up to 270 s and prints JSON). While the JSON says "done":false, run the same command 2 again, nothing else in between. Never run the command of step 1 twice.
-3. When it says "done":true, return its fields (done, rc, seconds, log, tail, error) exactly as printed - do not describe or judge the result.
+   (Bash with timeout 300000 ms; it blocks up to 270 s and prints JSON). While the JSON says "done":false (the run is alive: "alive":true), run the same command 2 again, nothing else in between, whatever the tail, the queue position or the time that has passed: an unchanged tail, a long wait or a queue position that does not move is not a reason to stop - the run may wait hours for a memory slot, and wait-step itself ends a hung run at its deadline. Never run the command of step 1 twice.
+3. Return the schema only once the JSON says "done":true: its fields (done, rc, seconds, log, tail, alive, pid, error) exactly as printed - do not describe or judge the result. Never return "done":false yourself, except when a command printed no JSON:
 If a command fails without JSON - done=false, rc=null, log=${sq(id + '.log')}, error = the error text.`,
   checkOpts(`run:${t.key}:${step}`, 'Full run', RUN_SCHEMA, retry))
 }
 const ranStep = (r) => !!(r && typeof r.rc === 'number')
+// Exit codes of the full run step that are the environment, not the product (p-wait D1; coordinator 2026-10-24): the
+// step's deadline, and the refusals of the slot queue before the run (scripts/slots.zsh, guards-all.sh). A project
+// runner that itself exits with one of them is taken for the environment too (README). Without this they went to the
+// programmer as a red run (#nf) with nothing to fix.
+const ENV_RC = {
+  124: 'the deadline of the wait step passed - the run was killed with its process group',
+  77: 'the slot queue refused the run: the slot directory is not writable',
+  78: 'the run was refused before it started: slot or project config, swap below its floor, or the main working copy',
+  72: 'the run was refused before it started: no ps or pgrep',
+  73: 'the run was refused before it started: mktemp failed',
+}
+const envFull = (tag, r) => {
+  const why = `exit ${r.rc}: ${ENV_RC[r.rc]}${r.error ? ` (${r.error})` : ''}; log ${r.log}`
+  return { fail: `full run after programmer ${tag}: red from the environment, not the product - ${why}`, environment: why, full: fullLine(r) }
+}
 const runStep = async (t, step, cmd) => (await checkTwice(t, `wait step ${step}`, ranStep, (retry) => runStep1(t, step, cmd, retry))).res
 // '' when the step ran (any numeric exit code), otherwise why it could not: that goes to the coordinator.
 const runFail = (step, r) => (!r ? `the wait step ${step} returned no result`
@@ -348,10 +368,10 @@ Write the use cases of the feature before any matrix of cases or spec. One secti
 End the file with "Open questions to the owner": one numbered list, each question with your recommendation; put the same list into questions. ready=true when every use case has all sections. Do not write a matrix of cases and do not answer the questions yourself: the task stops here, and the coordinator reviews the use cases with the owner.${note('analyst')}`,
   Object.assign({ label: `usecases:${t.key}`, phase: 'Analyst', schema: USECASES_SCHEMA, agentType: roleType('analyst') }, modelOf('analyst')))
 
-// What the programmer runs after the mutations: the selection (ONE_RUN, the workflow runs the full run after it) or the
-// full run itself.
+// What the programmer runs after the mutations: nothing more (ONE_RUN: the workflow's full run includes the selection) or
+// the full run itself.
 const guardsPart = (t) => (ONE_RUN
-  ? `selected guards: ${selectCmd(t)} prints the command (exit 3: nothing selected - run your new guards directly), run it with ${SCRIPTS}/heavy.sh zsh -c '<printed command>' -> stop: do NOT run the full guard run yourself - after you return, the workflow runs ${SCRIPTS}/guards-all.sh ${t.gdir} once on your HEAD and hands you the log only if it is red (fullRun = the selected guards' result)`
+  ? `no selection of guards and no full run of your own: do NOT run the full guard run yourself - after you return, the workflow runs ${SCRIPTS}/guards-all.sh ${t.gdir} once on your HEAD (it includes the selected guards) and hands you the log only if it is red (fullRun = "the workflow runs it" and the result of your new guards)`
   : `full run ${SCRIPTS}/guards-all.sh ${t.gdir} in the background -> analysis of new reds that repeated alone (flaky ones go into prog.md for the backlog)`)
 const prog = (t, task, n) => (t.light ? progLight(t, task, n) : agent(`You are the PROGRAMMER. ${RULES(t)} Report: ${t.dir}/prog.md (round ${n}).
 ${analysisLine(t.an)}
@@ -373,7 +393,7 @@ const test = (t, n, st) => agent(`You are the TESTER. You do not change product 
 3. Acceptance in the real environment: ${t.accept}${standSteps(t)}${t.stack ? ` ${CFG.stand && CFG.stand.project ? 'Only when the stand does not fit, your' : 'Your'} own stack: docker compose -p ${t.stack}; afterwards remove it with its images and volumes: docker compose -p ${t.stack} down -v --rmi all.` : ''} Evidence (logs, numbers, screenshots) goes into ${t.dir} with the prefix test-.${t.uc ? ` Build the acceptance along the flows of the use cases (the main flow, every alternative flow, all errors): ${t.uc}.` : ''}
 4. ${ONE_RUN ? `Do NOT run the full guard run: the workflow ran it once on the programmer's HEAD (${fullLine(st && st.full)}); reuse its log. Run your new and touched guards and mutations; if you commit guards, run them and the selection (${selectCmd(t)}), not the full suite.` : "Do not repeat the programmer's full run: new and touched guards and mutations; a full run only after your own commits."}
 green - only if the brief's acceptance is met in full. red - the product fails a guard or the acceptance.
-environment - red that the product did not cause, so a programmer has nothing to fix: your or the programmer's full run cut off before its tally (killed, timed out, out of memory), no memory slot within your time, disk or swap exhausted (node ${SCRIPTS}/env-check.js --path ${sq(t.wt)} --min-disk-gb ${ENV.minFreeDiskGB} --min-swap-mb ${ENV.swapMinMB}), Docker or your stack down for a reason outside the task's code. Put the cause and its evidence into environment; the task stops for the coordinator. Never use it for a red that the product causes.${note('tester')}`,
+environment - red that the product did not cause, so a programmer has nothing to fix: your or the programmer's full run cut off before its tally (killed, timed out, out of memory), the slot queue refused your heavy job (heavy.sh or guards-all.sh exited 77 or 78) or your waiting process vanished without an exit code - while your heavy.sh, started with run_in_background, is alive in the queue, keep waiting in slices: a long queue is not the environment -, disk or swap exhausted (node ${SCRIPTS}/env-check.js --path ${sq(t.wt)} --min-disk-gb ${ENV.minFreeDiskGB} --min-swap-mb ${ENV.swapMinMB}), Docker or your stack down for a reason outside the task's code. Put the cause and its evidence into environment; the task stops for the coordinator. Never use it for a red that the product causes.${note('tester')}`,
   Object.assign({ label: `test:${t.key}#${n}`, phase: 'Tester', schema: TEST_SCHEMA, agentType: roleType('tester') }, modelOf('tester')))
 
 const review = (t, n, scope) => agent(`You are the REVIEWER (read only; you may rerun guards). ${RULES(t)} Report: ${t.dir}/review.md (round ${n}).
@@ -444,8 +464,9 @@ async function progStep(t, st, task, n) {
     st.full = full; st.fullAt = st.head
     log(`${t.title}: full run after programmer ${tag} - exit ${full.rc}`)
     if (full.rc === 0) return { p: merged }
+    if (ENV_RC[full.rc]) return envFull(tag, full)
     if (k === MAX_FULL_FIX) return { fail: `the full guard run is still red after ${k} programmer rounds with its log (exit ${full.rc}, ${full.log})`, full: fullLine(full) }
-    const p2 = await prog(t, `The full guard run the workflow ran on your HEAD after round ${tag} exited ${full.rc}: summary ${full.log}, full log ${full.guards}. Analyse every new red that repeated alone: fix what your change caused (commit, mutations after the commit, the selected guards); a known red or a flaky guard - explain it in prog.md and change nothing; a red from the environment (the run cut off before its tally, no slot, disk or swap) - status=environment with the evidence. Do not run the full run yourself: if you commit, the workflow runs it again.\n${full.tail || ''}`, `${tag}f`)
+    const p2 = await prog(t, `The full guard run the workflow ran on your HEAD after round ${tag} exited ${full.rc}: summary ${full.log}, full log ${full.guards}. Analyse every new red that repeated alone: fix what your change caused (commit, mutations after the commit, your new guards); a known red or a flaky guard - explain it in prog.md and change nothing; a red from the environment (the run cut off before its tally, a refusal of the slot queue - exit 77 or 78 - disk or swap) - status=environment with the evidence. Do not run the full run yourself: if you commit, the workflow runs it again.\n${full.tail || ''}`, `${tag}f`)
     if (!p2) return { fail: 'the programmer returned no result' }
     if (p2.status === 'blocked') return { fail: 'programmer: an answer is needed', questions: p2.questions }
     if (p2.status === 'environment') return envProg(`${tag}f`, p2)

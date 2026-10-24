@@ -77,9 +77,9 @@ const CHECKS = [
   [[README], 'W8. a project runner that itself exits 77 or 78 is taken for the environment', /runner[^.]*itself exits 77 or 78[^.]*environment/],
   [[README], 'W5. the waiter keeps waiting while the run is alive, whatever its tail', /keeps waiting while the run is alive[^.]*whatever its tail/],
   // D2 (H3): heavy.sh only in the background.
-  [[README, 'agents/programmer.md', 'agents/tester.md'], 'H3. heavy.sh only through Bash run_in_background', /heavy\.sh`?[^.]*run_in_background/],
+  [[README, 'agents/programmer.md', 'agents/tester.md'], 'H3. heavy.sh only through Bash run_in_background', /heavy\.sh`?(?:[^.]|\.(?:sh|md)\b)*run_in_background/],
   // D3 (P1, P2): the pause rule says what the chain accepts.
-  [[README], 'P2. every role prompt: keep waiting while its own process is alive, do not end the work to wait', /[Ee]very role prompt carries[^.]*while (its|their) own process is alive/],
+  [[README], 'P2. every role prompt: keep waiting while its own process is alive, do not end the work to wait', /[Ee]very role prompt carries(?:[^.]|\.(?:sh|md)\b)*while (its|their) own process is alive/],
   [[RULES], 'why: 3.9 full runs per task, 81 min, 37 % of the calendar; ~80 % of new reds from the environment', /3\.9 full runs[^.]*81 min[^.]*37 %[^\n]*80 %/],
   [[RULES, COORD], 'after a merge a full run only at a seam of shared files, otherwise the branch CI decides', /full guard run only at a seam[^.]*same files[^.]*CI/],
   [[RULES, CHAIN, README, COORD], 'light mode: task field mode "light"', /`mode: "light"`/],
@@ -109,7 +109,7 @@ ok('C5. rules: the old "the programmer runs only its new guards and the selectio
 ok('C6. agents/programmer.md: no selection of its own with guardSubsetCommand', !/run your new guards and the selection/.test(read('agents/programmer.md')) && /includes the selection/.test(read('agents/programmer.md')));
 ok('C6. README: guards-select.js is the tester\'s selection, not "the guards a programmer runs instead of the full suite"', !/guards a programmer runs instead of the full suite/.test(read(README)));
 ok('rules: the one-run line is marked role:onerun', /[Oo]ne full guard run per task[^\n]*<!-- role:onerun -->/.test(rules));
-ok('RULE_LIST onerun: the workflow runs the full run, roles run selected guards', /\['onerun',[\s\S]{0,800}guards-select\.js/.test(wf));
+ok('RULE_LIST onerun: the workflow runs the full run, roles run selected guards', /\['onerun',[\s\S]{0,1200}guards-select\.js/.test(wf));
 ok('rules: the rerun line is marked role:rerun', /flaky[^\n]*<!-- role:rerun -->/.test(rules));
 ok('RULE_LIST rerun: guards-all reruns alone, flaky to the report for the backlog', /\['rerun', [^\n]*guards-all\.sh reruns each one alone[^\n]*Flaky guards[^\n]*backlog/.test(wf));
 // Docker cleanup (owner 2026-10-14, after old test stacks filled the disk): the role:docker line reaches every role.

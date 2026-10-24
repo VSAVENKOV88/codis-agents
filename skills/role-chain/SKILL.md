@@ -67,14 +67,15 @@ role agents are unavailable).
 ## 4. After the run
 
 - Each task returns `done` or `stopped` with the reason, questions, proposed split or review findings. A stop with
-  `environment` is a red the product did not cause (a cut-off full run, no slot, disk or swap, Docker): free the
+  `environment` is a red the product did not cause (a cut-off full run, a refused slot queue, disk or swap, Docker): free the
   machine and relaunch the task with `start` pointing to its report, without a programmer round. Relay them to the
   owner; write the owner's answers into the brief yourself (verbatim, dated) before the next run.
 - A light task (`mode: "light"`) stopped after a second rejection goes to the coordinator with the proposal of the
   full mode: relaunch it without `mode` (tester, analyst after a second rejection), `start` pointing to its reports.
 - With `guardSubsetCommand` in the config the workflow runs one full guard run per task after the programmer's last
-  commit (phase "Full run"); a stop with "could not run" means the run left no exit code (killed, deadline): free the
-  machine and relaunch the task with `start`.
+  commit (phase "Full run"); its waiter keeps waiting while the run is alive. A stop with "could not run" means the run
+  left no exit code (killed); exit 124 (the step's deadline) or a refusal of the slot queue before the run (77, 78; 72,
+  73) stops the task with `environment`. Either way: free the machine and relaunch the task with `start`.
 - Cost: `node "${CLAUDE_PLUGIN_ROOT}/scripts/chain-cost.js" <directory with the run's agent transcripts>...` prints the
   input-equivalent cost per task and flags tasks above twice `medianTaskIE`; give it the transcript directories of all
   runs of a split feature, and it sums the parts that carry the same `feature` and flags the feature above

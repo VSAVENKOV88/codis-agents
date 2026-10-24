@@ -13,7 +13,9 @@
 //     repeat of a service agent that ran the step but returned nothing must not run a 40-minute step twice).
 //   wait-step.js wait --id <prefix> [--max <s>] [--deadline <s>]
 //     Blocks until the run ends or --max seconds pass (default 270, at most 270). Prints JSON
-//     {done, rc, seconds, log, tail, error?}: done=false while it runs. A run older than --deadline seconds (default
+//     {done, rc, seconds, log, tail, alive, pid, error?}: done=false while it runs, and then alive=true - the process is
+//     there, in a slot queue or running: liveness is data, not a guess from the tail (a queue or a 75 repeat may print
+//     nothing new for an hour; a cheap waiter once took an unchanged tail for a stall and gave up). A run older than --deadline seconds (default
 //     14400) is killed with its process group and ends with rc 124 and an error. A run that vanished without an exit
 //     code ends with rc null and an error. Exit code 0 always when JSON was printed (the JSON carries the verdict).
 const fs = require('fs');
@@ -68,7 +70,7 @@ const m = meta();
 if (!m) { out({ done: true, rc: null, seconds: 0, log: F.log, tail: '', error: `no run with id ${id} (start was not run)` }); process.exit(0); }
 const t0 = Date.now();
 const finish = (rc, error) => {
-  const o = { done: true, rc, seconds: now() - m.started, log: F.log, tail: tail(25) };
+  const o = { done: true, rc, seconds: now() - m.started, log: F.log, tail: tail(25), alive: false, pid: m.pid };
   if (error) o.error = error;
   out(o); process.exit(0);
 };
@@ -85,7 +87,7 @@ const finish = (rc, error) => {
     return finish(124, `deadline of ${deadline} s passed - the run was killed with its process group`);
   }
   if (Date.now() - t0 >= max * 1000) {
-    out({ done: false, rc: null, seconds: now() - m.started, log: F.log, tail: tail(3) });
+    out({ done: false, rc: null, seconds: now() - m.started, log: F.log, tail: tail(3), alive: true, pid: m.pid });
     process.exit(0);
   }
   setTimeout(tick, Math.min(2000, Math.max(50, max * 1000 - (Date.now() - t0))));

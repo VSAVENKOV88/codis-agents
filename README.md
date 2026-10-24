@@ -94,6 +94,8 @@ it. Agents do not replace that.
 | agents were killed while their run waited for a heavy slot | reports are written as you go and end with "Next step"; a fresh agent continues |
 | a role recorded "owner's answers" the owner never gave | only the coordinator writes decisions into a brief |
 | idle waits over five minutes cost 21 % of all tokens | wait in slices of at most 270 s; the rule sits in every role prompt (21 % -> 7.4 %) |
+| a cheap waiter gave up on a full run waiting in the heavy slot queue ("the tail has not changed"): 24 of 37 repeats in one window, each repeat on an expensive model | the waiter keeps waiting while the run is alive, whatever its tail; only the step's deadline or a refused queue ends it, as `environment` |
+| a role waited for its own selection of guards in a heavy slot, inside its large context | the one full run includes the selection, so the programmer runs none; heavy commands only in the background |
 | a resumed run of parallel tasks replayed one task's cached results into another, and both chains stopped | never `resumeFromRunId` for a multi-task run; relaunch each unfinished task alone with `start` |
 | two parallel branches, each green alone, gave six red guards after the second merge | after merging the second of parallel branches over the same files: the guards of both tasks, then the full guard run |
 | several container stacks at once pushed a 16 GB machine into swap | at most two chains with acceptance in Docker at once |
@@ -123,7 +125,7 @@ read.
 | `scripts/slot-journal.js` | summary of the slot journal: queue wait and hold per class and per worktree |
 | `scripts/guards-all.sh` | a full guard run of one worktree in a heavy slot, with a shared worker budget; new reds rerun alone (`guardRerun`); a run on the same HEAD with a clean tracked tree that ended with exit 0 is not repeated ("reused, HEAD <sha>" and the saved summary; `--force` runs anyway); the main working copy of a repository is refused with 78 (`--main-checkout` runs it, for a project without worktrees) |
 | `scripts/main-checkout.js` | is a directory the main working copy of its repository (git-dir == git-common-dir)? 78 with the reason and `wt-setup.sh`, 0 for a linked worktree or with `--main-checkout`; `GIT_*` variables are ignored, and a git error inside a tree with `.git` above it is 78 with git's error; used by `guards-all.sh` and `env-check.js --worktree` |
-| `scripts/guards-select.js` | the guards a programmer runs instead of the full suite: changed guards, guards that import a changed file or name it, `guardAlways`; `--command` fills `guardSubsetCommand` |
+| `scripts/guards-select.js` | the guards a tester runs after its own commits instead of the full suite: changed guards, guards that import a changed file or name it, `guardAlways`; `--command` fills `guardSubsetCommand` |
 | `scripts/wait-step.js` | a long deterministic step (the one full guard run of a task) run detached by the workflow between role agents; `wait` blocks at most 270 s and reports JSON |
 | `scripts/wt-setup.sh` | creates a task worktree and clones (not symlinks) git-ignored data into it |
 | `scripts/wt-remove-check.js` | before a worktree or data directory is removed: prints its ignored data with sizes, the path named in code and the symbolic links that lead into it; removes nothing |
@@ -191,8 +193,8 @@ node <plugin>/scripts/config.js check
 | `guardBaseline` | known reds of the project: path, relative to the worktree, of a JSON file `{"<guard name>": "<reason>"}` committed with the project (it changes in the same commit as the fix). Needs `guardRerun`: after a red full run the names that `newRedPattern` finds and the file lists are subtracted before `maxReruns` is counted and never rerun; only known reds - exit 0 and "N known red"; a known name not red in a finished run is named ("known red not red now: X — remove it from the baseline"); a missing or broken file is an error line and the runner's exit code stands, never "all known" in silence |
 | `guardExclusive` | which guards share a machine resource and run one at a time under the exclusive lock (`heavy.sh`): `glob` (zsh patterns of the file name, matched with `extendedglob`; `config.js check` refuses one zsh cannot compile, such as `test_[.py`) and `marker` (the line-comment marker, literal), e.g. `{"glob": ["test_*.py"], "marker": "#"}` for a line `# guards:exclusive — <reason>`. Left out: `*-run.js`, `*-run.mjs` and `//`; given, both are required and replace the default |
 | `guardFiles` | globs of the project's guard files for `scripts/guards-select.js` (default `*-run.js`, `*-run.mjs`, `*-run.cjs` at any depth) |
-| `guardAlways` | guards always in the programmer's selection: a guard whose path contains an entry (scanners of the diff such as secrets or semgrep) |
-| `guardSubsetCommand` | runs the selected guards (zsh; `{wt}`, `{onlyArgs}` = `--only <guard>` per guard). When set: one full guard run per task, run by the workflow after the programmer's last commit, and the programmer runs only the selection; without it the programmer runs the full run itself |
+| `guardAlways` | guards always in the selection: a guard whose path contains an entry (scanners of the diff such as secrets or semgrep) |
+| `guardSubsetCommand` | runs the selected guards (zsh; `{wt}`, `{onlyArgs}` = `--only <guard>` per guard). Contract: it narrows `guardCommand` to the selected guards of the same suite, so the full run includes every guard it selects. When set: one full guard run per task, run by the workflow after the programmer's last commit, which covers the selection, so the programmer runs only its new guards and mutations; the tester runs the selection after its own commits. Without it the programmer runs the full run itself |
 | `worktreeSetup` | `scan` directories whose ignored data is copied into a new worktree; `skip` and `link` globs (everything else is an APFS clone) |
 | `slots` | machine settings, read from the machine file (below); a project config may still carry `medium`, `heavy`, `total`, `lockDir`, `legacyLock`, `jobsAlone`, `jobsShared` until `config.js migrate` |
 | `reportLanguage` | language of role reports (prompts stay in English) |
@@ -308,13 +310,18 @@ review findings.
   `analysis` the phase logs the reused report, with `noAnalysis` the reason. With `useCasesFirst` it writes only the
   use cases and the task stops for the owner's review.
 - **Programmer** commits a red guard, then the code, then mutation-tests the guards after the commit and runs the full
-  guard suite in a heavy slot - or, with `guardSubsetCommand` in the config, only its new guards and the guards that
-  import a changed file or name it, plus `guardAlways` (`scripts/guards-select.js`).
+  guard suite in a heavy slot - or, with `guardSubsetCommand` in the config, the programmer runs only its new guards and
+  mutations: the one full run of the workflow includes the selection.
 - **One full guard run per task, run by the workflow after the programmer's last commit** (with `guardSubsetCommand`):
   a cheap agent starts `guards-all.sh` through `scripts/wait-step.js` and waits in slices of at most 270 s; red goes back
   to the programmer with its log (at most two rounds, then the coordinator), green goes to the tester, who reuses the
-  log. A HEAD whose full run is done, or a fix of docs and guards only, is not run again. A step without an exit code
-  stops the task for the coordinator; a red run is a step that ran.
+  log and, after its own commits, runs its guards and their selection: guards that import a changed file or name it,
+  plus `guardAlways` (`scripts/guards-select.js`). A HEAD whose full run is done, or a fix of docs and guards only, is not
+  run again. The cheap agent keeps waiting while the run is alive (`"alive": true`), whatever its tail: a run may wait
+  hours for a heavy slot. Exit 124 (the deadline of the step, 4 h) and the refusals of the slot queue before the run
+  (exit 77, 78, and 72, 73: no ps or pgrep, no mktemp) stop the task with `environment` for the coordinator, not a
+  programmer round; a project runner that itself exits 77 or 78 is taken for the environment too, so a runner should exit
+  0 or 1. A step without an exit code stops the task for the coordinator; any other red run is a step that ran.
 - **Light mode** (`mode: "light"`, chosen by the coordinator for up to ~100 lines of product in one subsystem, off the
   attack surface, without a Docker acceptance): one programmer-checker (red guard, code, mutations, its own acceptance
   with evidence in `test.md`) -> the one full run -> one reviewer; no tester role. A second rejection stops the task for
@@ -324,7 +331,7 @@ review findings.
   second one (any cells) brings the analyst into the same run - a matrix of cases from the tester's findings in
   `test.md` and their cause in `prog.md` - then one round programmer -> tester -> review on it; a red tester round
   after that analyst stops the task for the coordinator (`tester red after analyst`). A red from the environment (a cut-off full
-  run, no slot, disk or swap exhausted, Docker down) is the verdict `environment`: the task stops with its cause for the
+  run, a refused slot queue, disk or swap exhausted, Docker down) is the verdict `environment`: the task stops with its cause for the
   coordinator, not for a programmer.
 - **Reviewer** reads only and tries to refute. With `security: true` a security reviewer follows; done needs both.
 - **Rejection**: a fix round, then a second review. A rejection only for docs, guard wording or comments skips the
@@ -344,13 +351,16 @@ review findings.
   when set; label `...#retry`, logged) and the
   second answer decides: the cheap agent that runs it sometimes answers without running the script, and the scripts
   are deterministic, so a real violation or real leftovers still stop the task.
-- Every role prompt carries the marked rules of `rules/multi-agent.md`: wait at most 270 s at a time, hand over past
-  ~200k of context, open questions go to the coordinator, living specs change with the behaviour, stage by path,
+- Every role prompt carries the marked rules of `rules/multi-agent.md`: wait at most 270 s at a time and keep waiting
+  in slices while its own process is alive (a role does not end its work to wait), run `heavy.sh` and `guards-all.sh`
+  only through Bash `run_in_background`, hand over past ~200k of context, open questions go to the coordinator, living specs change with the behaviour, stage by path,
   never push.
 
 ## Memory slots
 
-Heavy work runs through `scripts/heavy.sh <cmd>` and `scripts/medium.sh <cmd>` (or `guards-all.sh <worktree>`):
+Heavy work runs through `scripts/heavy.sh <cmd>` and `scripts/medium.sh <cmd>` (or `guards-all.sh <worktree>`). A role
+runs `heavy.sh` and `guards-all.sh` only through Bash `run_in_background`: a blocking call is killed by the Bash timeout
+while it waits in the queue, its ticket is dropped and it rejoins the queue at the end.
 
 - **medium** (tsc, one bundler build without a browser): `slots.medium` slots (2);
 - **heavy** (browsers, full guard runs, image builds): `slots.heavy` slots (2), one more only while the minimum free
