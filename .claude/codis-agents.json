@@ -3,5 +3,6 @@
   "repoDir": ".",
   "worktreeRoot": "..",
   "sharedDir": "..",
+  "guardCommand": "cd {wt} && node tests/run.js",
   "standingPush": { "branches": ["main"], "check": "node tests/hygiene.test.js" }
 }
