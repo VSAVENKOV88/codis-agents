@@ -22,6 +22,8 @@
 //   T-13 the ssh of git push fails with escapes in its stderr: 69, the reason kept, no control characters here, no run.
 //   T-14 a REMOTE-RESULT that is not JSON, with escapes: 69 with "environment:" in the log, no control characters here.
 //   T-15 a result object whose key carries C1 (the env-check object goes into the error as JSON): no C1 here.
+//   T-16 every poll answers a REMOTE-RESULT that is not JSON, with escapes: one more try, then 69, no control characters.
+//   T-17 one such poll answer, then the runner's own: the run goes on and ends with the runner's result.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -68,12 +70,24 @@ fs.appendFileSync(${JSON.stringify(sshLog)}, JSON.stringify(a) + '\\n');
 // runner (node -) answers with this stdout and exit 0: a hostile runner (T-13..T-15).
 const isPush = a.some((x) => /git-receive-pack/.test(x));
 if (isPush && process.env.FAKE_PUSH_SSH_STDERR) { process.stderr.write(process.env.FAKE_PUSH_SSH_STDERR + '\\n'); process.exit(255); }
-if (!isPush && process.env.FAKE_SSH_RESULT) { try { fs.readFileSync(0); } catch {} process.stdout.write(process.env.FAKE_SSH_RESULT + '\\n'); process.exit(0); }
+if (!isPush && process.env.FAKE_SSH_RESULT && !process.env.FAKE_SSH_RESULT_OP) { try { fs.readFileSync(0); } catch {} process.stdout.write(process.env.FAKE_SSH_RESULT + '\\n'); process.exit(0); }
+// FAKE_SSH_RESULT_OP - only that op of the runner answers FAKE_SSH_RESULT, the others run for real; with
+// FAKE_SSH_RESULT_ONCE (a flag file) only while the flag exists, and the first such answer removes it (T-16, T-17).
+let input = null;
+if (!isPush && process.env.FAKE_SSH_RESULT_OP) {
+  input = fs.readFileSync(0);
+  const flag = process.env.FAKE_SSH_RESULT_ONCE;
+  if (input.toString('utf8').includes('module.exports.cli(' + JSON.stringify(process.env.FAKE_SSH_RESULT_OP) + ',') && (!flag || fs.existsSync(flag))) {
+    if (flag) fs.rmSync(flag, { force: true });
+    fs.appendFileSync(${JSON.stringify(sshLog)} + '.fake', process.env.FAKE_SSH_RESULT_OP + '\\n');
+    process.stdout.write(process.env.FAKE_SSH_RESULT + '\\n'); process.exit(0);
+  }
+}
 const withArg = new Set(['-F', '-i', '-o', '-p', '-l', '-E', '-b', '-c', '-D', '-e', '-I', '-J', '-L', '-m', '-O', '-Q', '-R', '-S', '-W', '-w']);
 let i = 0; while (i < a.length && a[i].startsWith('-')) i += withArg.has(a[i]) ? 2 : 1;
 const cmd = a.slice(i + 1).join(' ');
 const env = Object.assign({ PATH: process.env.PATH, HOME: ${JSON.stringify(S)} }, JSON.parse(process.env.FAKE_SERVER_ENV || '{}'));
-const r = spawnSync('sh', ['-c', cmd], { stdio: 'inherit', env, cwd: ${JSON.stringify(S)} });
+const r = spawnSync('sh', ['-c', cmd], input === null ? { stdio: 'inherit', env, cwd: ${JSON.stringify(S)} } : { input, stdio: ['pipe', 'inherit', 'inherit'], env, cwd: ${JSON.stringify(S)} });
 process.exit(r.status === null ? 255 : r.status);
 `, { mode: 0o755 });
 
@@ -249,6 +263,29 @@ process.exit(r.status === null ? 255 : r.status);
     const o15 = x.stdout + x.stderr;
     ok('T-15: an env-check result with C1 in a key - exit 69, the env-check named, no control characters here or in the log',
       x.status === 69 && o15.includes("the runner's env-check failed") && !CTRL.test(o15) && !CTRL.test(out('aw')), `${x.status} ${JSON.stringify(o15.slice(-400))} | ${JSON.stringify(out('aw').slice(0, 300))}`);
+
+    // T-16: the poll (not the first op) answers a REMOTE-RESULT that is not JSON, with escapes, every time: b8941b4 made
+    // it an environment error of the poll - one more try, then 69 with "environment:" in the log, never an uncaught
+    // SyntaxError, and no control characters here or in the log, in the retry line included.
+    const pollBad = { FAKE_SSH_RESULT_OP: 'poll', FAKE_SSH_RESULT: 'REMOTE-RESULT \u001b]0;pwn\u0007\u001b[2J\u009b2J{' };
+    reset('TOTAL: 1 green\n'); fs.rmSync(sshLog + '.fake', { force: true });
+    x = gaE(pollBad, '--force', 'aw');
+    const o16 = x.stdout + x.stderr, fakes16 = lines(sshLog + '.fake');
+    ok('T-16: every poll answers non-JSON with escapes - one more try, then exit 69, the log starts "environment:" and names the poll',
+      x.status === 69 && /^environment: /.test(out('aw')) && out('aw').includes("the runner's answer to poll is not JSON") && meta('aw').rc === 69
+        && fakes16.length === 2 && (o16.match(/did not answer the poll/g) || []).length === 1 && !/SyntaxError/.test(o16),
+      `${x.status} fakes:${fakes16.length} ${JSON.stringify(o16.slice(-600))} | ${JSON.stringify(out('aw').slice(0, 300))}`);
+    ok('T-16: no control characters here or in the log (the retry line included); the readable rest of the answer stays',
+      !CTRL.test(o16) && !CTRL.test(out('aw')) && out('aw').includes(']0;pwn[2J2J{'), `${JSON.stringify(o16.slice(-600))} | ${JSON.stringify(out('aw').slice(0, 300))}`);
+    // T-17: one poll answers non-JSON, the next one is the runner's own: the run goes on and ends with the runner's result.
+    const flag17 = path.join(T, 'once17');
+    reset('TOTAL: 1 green\n'); fs.rmSync(sshLog + '.fake', { force: true }); fs.writeFileSync(flag17, '');
+    x = gaE(Object.assign({ FAKE_SSH_RESULT_ONCE: flag17 }, pollBad), '--force', 'aw');
+    const o17 = x.stdout + x.stderr;
+    ok('T-17: one poll answers non-JSON - one more try, the run ends 0 with the runner\'s log, no control characters',
+      x.status === 0 && lines(sshLog + '.fake').length === 1 && !fs.existsSync(flag17) && /^ran on runner /.test(out('aw')) && meta('aw').rc === 0
+        && (o17.match(/did not answer the poll/g) || []).length === 1 && !CTRL.test(o17) && !CTRL.test(out('aw')),
+      `${x.status} fakes:${lines(sshLog + '.fake').length} ${JSON.stringify(o17.slice(-600))} | ${JSON.stringify(out('aw').slice(0, 300))}`);
 
     // ---- T-5: --local keeps the run here even with the remote key ----
     reset('TOTAL: 1 green\n');
