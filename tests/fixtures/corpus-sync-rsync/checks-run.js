@@ -9,7 +9,8 @@
 // Cells: T-1 content changed with the same size and mtime (C-4: the donor equals the manifest after a sync);
 // T-2 names with a space, a newline, a leading dash, non-ASCII (C-4: they arrive and are deleted);
 // T-4 a link to a directory outside the corpus (C-7: neither the link nor its target arrives);
-// T-5 copy <name> over an existing copy (C-10: the copy equals the donor, no file of an older donor stays).
+// T-5 copy <name> over an existing copy (C-10: the copy equals the donor, no file of an older donor stays);
+// T-6/T-7/T-8 the removal of the earlier copy never reaches outside wt/<name> (a link inside it, wt/<name> a link, another copy).
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -85,6 +86,24 @@ HOME="$FAKE_SERVER_HOME" exec sh -c "$*"
   r = run(['copy', 'r1']);
   const wt = path.join(server, 'codis-runs', 'wt', 'r1');
   ok('T-5 copy over an existing copy equals the donor (no file of the older donor stays)', r.status === 0 && JSON.stringify(files(wt)) === JSON.stringify(files(donor)), out(r) + files(wt).join(' | '));
+  // Round 2 (the earlier copy is removed before cp): T-6 a link an earlier run left in its copy is removed, its target
+  // outside is not; T-7 wt/<name> that is itself a link is refused and its target untouched; T-8 another run's copy stays.
+  const victim = path.join(dir, 'victim'); fs.mkdirSync(victim); fs.writeFileSync(path.join(victim, 'keep.txt'), 'keep');
+  fs.symlinkSync(victim, path.join(wt, 'link-out'));
+  fs.writeFileSync(path.join(wt, 'guard-write.json'), 'x');
+  r = run(['copy', 'r2']);
+  const wt2 = path.join(server, 'codis-runs', 'wt', 'r2');
+  fs.writeFileSync(path.join(wt2, 'r2-own.json'), 'r2');
+  r = run(['copy', 'r1']);
+  ok('T-6 an earlier copy with a link outside: the link and the earlier writes are gone, the copy equals the donor', r.status === 0 && JSON.stringify(files(wt)) === JSON.stringify(files(donor)), out(r) + files(wt).join(' | '));
+  ok('T-6 the target of that link outside is not touched', read(path.join(victim, 'keep.txt')) === 'keep', files(victim).join(' | '));
+  ok('T-8 copy r1 leaves another run\'s copy r2 as it was', read(path.join(wt2, 'r2-own.json')) === 'r2', files(wt2).join(' | '));
+  const wt3 = path.join(server, 'codis-runs', 'wt', 'r3');
+  fs.symlinkSync(victim, wt3);
+  r = run(['copy', 'r3']);
+  ok('T-7 wt/<name> that is a link: refused (69), nothing removed or copied through it', r.status === 69 && /not a directory/.test(r.stderr)
+    && JSON.stringify(files(victim)) === JSON.stringify(['keep.txt']) && fs.lstatSync(wt3).isSymbolicLink(), out(r) + files(victim).join(' | '));
+  fs.unlinkSync(wt3);
   // T-1: the same size and the same mtime (whole seconds, as rsync compares them), other content.
   const a = path.join(main, 'app/data/a.json'), t = fs.statSync(a).mtime;
   fs.writeFileSync(a, 'AAAA'); fs.utimesSync(a, t, t);
