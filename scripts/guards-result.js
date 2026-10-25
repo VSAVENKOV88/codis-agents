@@ -20,12 +20,15 @@
 //    start and at the end, the guard command template, the final exit code. A full run on the same HEAD with a clean
 //    tracked tree, the same command and a final exit code 0 is not repeated (guards-all.sh prints "reused, HEAD <sha>"
 //    and the saved summary; --force runs anyway). Untracked files do not count: guard runs and probes leave them.
+//    The record names the environment of the run (env: "remote:<host>" for a run on the remote runner,
+//    scripts/guards-remote.js; a record without it is a run on this machine, "local"): a result is reused only in the
+//    environment it came from - a green run here says nothing of the runner and the other way round.
 //
 // usage: guards-result.js rerun <wt> <log> <runner rc> <guardRerun JSON> [<guardBaseline>]
 //          -> summary on stdout, appended to the log; exit = final code
-//        guards-result.js meta-start <wt> <log> <command template>
+//        guards-result.js meta-start <wt> <log> <command template> [<env>]
 //        guards-result.js meta-end <wt> <log> <final rc>
-//        guards-result.js reuse <wt> <log> <command template>             -> exit 0 and the message when reusable,
+//        guards-result.js reuse <wt> <log> <command template> [<env>]     -> exit 0 and the message when reusable,
 //                                                                            exit 1 and the reason otherwise
 const fs = require('fs');
 const path = require('path');
@@ -114,23 +117,26 @@ function gitState(wt) {
   const s = spawnSync('git', ['-C', wt, 'status', '--porcelain', '--untracked-files=no'], { encoding: 'utf8' });
   return { head: h.stdout.trim(), clean: s.status === 0 && s.stdout.trim() === '' };
 }
-function metaStart(wt, log, command) {
+// env: left out for a run on this machine (the record stays as it always was), "remote:<host>" for the runner.
+function metaStart(wt, log, command, env) {
   const g = gitState(wt);
-  fs.writeFileSync(metaFile(log), JSON.stringify({ v: 1, head: g.head, cleanStart: g.clean, command, startedAt: new Date().toISOString() }, null, 1) + '\n');
+  fs.writeFileSync(metaFile(log), JSON.stringify(Object.assign({ v: 1, head: g.head, cleanStart: g.clean, command, startedAt: new Date().toISOString() }, env && env !== 'local' ? { env } : {}), null, 1) + '\n');
 }
-function metaEnd(wt, log, rc) {
+function metaEnd(wt, log, rc, extra) {
   let m = {};
   try { m = JSON.parse(fs.readFileSync(metaFile(log), 'utf8')); } catch { /* no start record: stays unusable */ }
   const g = gitState(wt);
-  Object.assign(m, { headEnd: g.head, cleanEnd: g.clean, rc: Number(rc), finishedAt: new Date().toISOString() });
+  Object.assign(m, extra || {}, { headEnd: g.head, cleanEnd: g.clean, rc: Number(rc), finishedAt: new Date().toISOString() });
   fs.writeFileSync(metaFile(log), JSON.stringify(m, null, 1) + '\n');
 }
 // {reuse, reason, head?, text?}
-function reusable(wt, log, command) {
+function reusable(wt, log, command, env = 'local') {
   const no = (reason) => ({ reuse: false, reason });
   let m;
   try { m = JSON.parse(fs.readFileSync(metaFile(log), 'utf8')); } catch { return no('no record of an earlier run'); }
   if (!fs.existsSync(log)) return no('the log of the earlier run is gone');
+  const was = m.env || 'local';
+  if (was !== (env || 'local')) return no(`environment changed (${was} -> ${env || 'local'})`);
   if (m.rc === undefined) return no('the earlier run did not finish');
   if (!m.head) return no('the worktree is not a git worktree');
   if (m.rc !== 0) return no(`the earlier run ended with exit ${m.rc}`);
@@ -152,10 +158,10 @@ if (require.main === module) {
     const r = rerun({ wt, log, rc: Number(x), cfg: JSON.parse(y), baseline: z || '' });
     if (r.text) process.stdout.write('\n' + r.text);
     process.exit(r.rc > 255 ? 1 : r.rc);
-  } else if (cmd === 'meta-start') metaStart(wt, log, x);
+  } else if (cmd === 'meta-start') metaStart(wt, log, x, y);
   else if (cmd === 'meta-end') metaEnd(wt, log, x);
   else if (cmd === 'reuse') {
-    const r = reusable(wt, log, x);
+    const r = reusable(wt, log, x, y || 'local');
     console.log(r.reuse ? r.text : `full run: ${r.reason}`);
     process.exit(r.reuse ? 0 : 1);
   } else { console.error('usage: guards-result.js rerun|meta-start|meta-end|reuse <wt> <log> ...'); process.exit(64); }

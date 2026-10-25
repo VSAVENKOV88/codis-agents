@@ -13,6 +13,17 @@
     "maxReruns": 10
   },
   "guardBaseline": "server/known-red.json",
+  "remoteRun": {
+    "command": "cd {wt}/server && npm run guards -- --all --concurrency {jobs} --concurrency-file {limitFile} --no-font",
+    "commandLegacy": "cd {wt}/server && npm run guards -- --all --concurrency {jobs} --no-font",
+    "deps": [
+      { "files": ["server/package.json", "server/package-lock.json"], "install": "npm ci", "link": { "server/node_modules": "node_modules" } },
+      { "files": ["client/package.json", "client/package-lock.json"], "install": "npm ci", "link": { "client/node_modules": "node_modules" } }
+    ],
+    "prepare": ["cd server && npx playwright install chromium webkit"],
+    "localPattern": "^skipped \\(needs-font\\): \\d+ — (.+)$",
+    "localCommand": "cd {wt}/server && npm run guards -- --all {onlyArgs}"
+  },
   "worktreeSetup": {
     "scan": ["server", "client"],
     "skip": ["*.DS_Store"],

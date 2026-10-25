@@ -186,6 +186,19 @@ Larger changes run as a chain of agents, each in its own role:
   `sessions/`) refuses the sync. An empty source never empties the donor; an interrupted sync marks it
   incomplete and no run copies it until a full sync. The donor is wiped only by its list, in two commands.
   Why: the corpus is the owner's data with the project's secrets next to it, and a guard once wiped a corpus it could reach.
+- **With a remote runner, the full guard run goes there** (`guards-all.sh` through `scripts/guards-remote.js`: machine
+  key `remote` and project key `remoteRun`; without either nothing changes). Only the committed HEAD runs there
+  (tracked changes are refused with 78): it is pushed over the pinned ssh into the runner's bare repository at
+  `refs/runs/<name>/<sha>`, never a branch or a tag and never forced. The runner makes its own worktree with its own
+  copy of the donor and dependencies from a cache keyed by the lock files, runs its own `guards-all.sh` detached from
+  ssh and reruns new reds there; this machine holds no slot while it waits (one journal line of class `remote`), and
+  the guards the runner cannot run (`remoteRun.localPattern`) run here afterwards in a heavy slot, the worse exit code
+  being the run's. The log keeps its name and starts "ran on runner <host>, HEAD <sha>, workers N"; its meta names the
+  environment, and a result is never reused across environments. A red of the environment (runner unreachable, host
+  key mismatch, another plugin version there, a push refused, dependencies failing, the run vanished) is exit 69 with
+  the first log line `environment: <reason>`; there is no fallback to this machine.
+  Why: full runs held a heavy slot of a 16 GB machine for about 37 % of a task's calendar; a runner with its own memory
+  takes them, and a red found on its Linux must stay red there, not turn green alone on the Mac.
 - **No full guard run in the main working copy.** `guards-all.sh` and the preconditions of the chain
   (`scripts/env-check.js --worktree`) refuse with 78 a directory that is the main working copy of its repository
   (`git rev-parse --git-dir` equals `--git-common-dir`, `scripts/main-checkout.js`) and name `wt-setup.sh`; a project

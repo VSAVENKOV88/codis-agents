@@ -116,6 +116,29 @@
       },
       "description": "The project's shared stand: one Docker stack that tasks take in turn by ticket (scripts/stand.sh) instead of building their own. The plugin only calls these commands, with zsh in stand.cwd (repoDir without it); what they do is the project's."
     },
+    "remoteRun": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "command": { "type": "string", "description": "The guard command on the runner (default guardCommand); placeholders as guardCommand, must contain {wt}. E.g. guardCommand plus a runner flag that skips the guards the runner cannot run." },
+        "commandLegacy": { "type": "string", "description": "The command on the runner for worktrees where guardAdaptiveProbe fails (default guardCommandLegacy)." },
+        "deps": {
+          "type": "array",
+          "items": {
+            "type": "object", "additionalProperties": false, "required": ["files", "install", "link"],
+            "properties": {
+              "files": { "type": "array", "minItems": 1, "items": { "type": "string", "pattern": "^(?![/~])(?!.*(^|/)\\.{1,2}(/|$))[^'\\n\\\\]+$" }, "description": "Files relative to the worktree (distinct base names) copied into the cache directory: the package manifest and its lock file." },
+              "install": { "type": "string", "minLength": 1, "description": "Runs in the cache directory once per hash, in a medium slot of the runner (zsh), e.g. npm ci." },
+              "link": { "type": "object", "minProperties": 1, "additionalProperties": { "type": "string" }, "description": "{\"<path in the worktree>\": \"<path inside the cache directory, empty for the directory itself>\"}, relative paths without ..; each link leads to its real path in one step." }
+            }
+          },
+          "description": "Dependencies installed on the runner into a cache shared by runs: one directory <root>/deps/<hash> per hash of the files' base names and contents, the install command, the node major version, platform and arch."
+        },
+        "prepare": { "type": "array", "items": { "type": "string" }, "description": "Commands run in the runner's worktree before the run, in a medium slot (zsh), e.g. a browser install." },
+        "localPattern": { "type": "string", "description": "Regular expression over the lines of the runner's log; capture group 1 is a ', '-separated list of guards the runner did not run. They run on this machine after it, in a heavy slot, by localCommand, as a section of the same log; the worse exit code is the run's." },
+        "localCommand": { "type": "string", "description": "Runs those guards on this machine (zsh; {wt}, {onlyArgs} = --only <guard> per guard, shell-quoted); default guardSubsetCommand." }
+      },
+      "description": "The full guard run on the remote runner of the machine file (scripts/guards-remote.js through guards-all.sh): what the runner needs that this machine has by other means. Left out: the runs stay on this machine even when the machine file names a runner."
+    },
     "standingPush": {
       "type": "object", "additionalProperties": false, "required": ["branches", "check"],
       "properties": {

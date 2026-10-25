@@ -31,15 +31,23 @@
 #   (git-dir == git-common-dir) is refused with 78 before any slot - its ignored data is the only original and a guard
 #   run there once wiped a corpus; task worktrees hold clones (wt-setup.sh). --main-checkout runs it anyway, for a
 #   project that has no worktrees (a flag, not an environment variable, so it is never inherited silently).
-# usage: guards-all.sh [--force] [--main-checkout] <worktree>   (a name under worktreeRoot, or a path) -> log in <sharedDir>/guards-<name>.txt
+# Remote runner (machine key remote, project key remoteRun; scripts/guards-remote.js): the run goes to the runner instead
+#   of a heavy slot here - only the committed HEAD (tracked changes: 78), pushed over pinned ssh; the log comes back to
+#   the same <sharedDir>/guards-<name>.txt with the header "ran on runner <host>, HEAD <sha>, workers N", its meta with
+#   env "remote:<host>" (reuse never crosses environments); this machine writes one journal line of class remote and
+#   holds no slot while it waits; guards the runner does not run (remoteRun.localPattern) run here afterwards in a heavy
+#   slot, and the worse exit code is the run's. Environment problems: exit 69, the log's first line "environment: ...".
+#   A remote key without remoteRun in the project keeps the run here, with a note. --local runs here regardless (the
+#   runner itself calls its guards-all.sh so).
+# usage: guards-all.sh [--force] [--main-checkout] [--local] <worktree>   (a name under worktreeRoot, or a path) -> log in <sharedDir>/guards-<name>.txt
 #   A worktree directly under worktreeRoot (by name or by path) logs as guards-<name>.txt; any other path as
 #   guards-<basename>-<cksum of its resolved path>.txt, so two worktrees with the same basename never share a log and
 #   its reuse record.
 H=${0:A:h}
-FORCE=0 MAINOK=(); typeset -a POS
-for a in "$@"; do if [[ $a == --force ]]; then FORCE=1; elif [[ $a == --main-checkout ]]; then MAINOK=(--main-checkout); else POS+=("$a"); fi; done
+FORCE=0 LOCAL=0 MAINOK=(); typeset -a POS
+for a in "$@"; do if [[ $a == --force ]]; then FORCE=1; elif [[ $a == --local ]]; then LOCAL=1; elif [[ $a == --main-checkout ]]; then MAINOK=(--main-checkout); else POS+=("$a"); fi; done
 set -- "${POS[@]}"
-[[ -n $1 ]] || { print -u2 "usage: guards-all.sh [--force] [--main-checkout] <worktree name or path>"; exit 64; }
+[[ -n $1 ]] || { print -u2 "usage: guards-all.sh [--force] [--main-checkout] [--local] <worktree name or path>"; exit 64; }
 cfg() { node "$H/config.js" get "$1" 2>/dev/null }
 source "$H/slots.zsh" || exit $?
 [[ -n $CODIS_WORKTREE_ROOT && -n $CODIS_SHARED_DIR ]] || { print -u2 "guards-all: no project config (.claude/codis-agents.json) found"; exit 78; }
@@ -58,8 +66,20 @@ mode=fixed; [[ $CMD == *'{jobs}'* ]] || mode=whole; [[ $CMD == *'{limitFile}'* ]
 kind=full; [[ $mode == whole ]] && kind=whole
 RERUN=$(cfg guardRerun); [[ $RERUN == null ]] && RERUN=   # config get prints null for an unset object key
 BASELINE=$(cfg guardBaseline)
-if (( ! FORCE )) && node "$H/guards-result.js" reuse "$WT" "$OUT" "$CMD" > /dev/null 2>&1; then
-  tail -40 "$OUT"; print -r -- ""; node "$H/guards-result.js" reuse "$WT" "$OUT" "$CMD"; exit 0
+ENVID=local
+if (( ! LOCAL )) && RHOST=$(cfg remote.host) && [[ -n $RHOST ]]; then
+  if RCMD=$(cfg remoteRun.command) && [[ -n $RCMD ]]; then ENVID=remote:$RHOST CMD=$RCMD
+  else print -u2 -r -- "guards-all: note: the machine file names the remote runner $RHOST, but the project config has no remoteRun - the run stays on this machine"; fi
+fi
+if (( ! FORCE )) && node "$H/guards-result.js" reuse "$WT" "$OUT" "$CMD" "$ENVID" > /dev/null 2>&1; then
+  tail -40 "$OUT"; print -r -- ""; node "$H/guards-result.js" reuse "$WT" "$OUT" "$CMD" "$ENVID"; exit 0
+fi
+if [[ $ENVID == remote:* ]]; then
+  treq=$(_slot_now)
+  node "$H/guards-remote.js" run "$WT" "$OUT" "$NAME"; rc=$?
+  # one line of class remote for the whole run (no slot here: acquire = request), in the worktree's name
+  ( cd "$WT" 2>/dev/null; SLOT_LABEL="guards-all $NAME on $RHOST" _slot_journal $treq $treq $(_slot_now) remote - full $rc guards-all )
+  exit $rc
 fi
 RCF=$(_slot_tmp guardsrc) || { print -u2 "guards-all: no temporary file in ${TMPDIR:-/tmp} (mktemp failed)"; exit 73; }
 trap 'rm -f $RCF' EXIT

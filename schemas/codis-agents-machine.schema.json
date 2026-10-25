@@ -118,12 +118,12 @@
         "knownHosts",
         "root"
       ],
-      "description": "The remote runner of this machine (scripts/corpus-sync.js): ssh as user@host with only this key and only this known_hosts file, strict host key checking. Left out: no script contacts a runner.",
+      "description": "The remote runner of this machine (scripts/corpus-sync.js, and the full guard run of scripts/guards-remote.js when the project sets remoteRun): ssh as user@host with only this key and only this known_hosts file, strict host key checking. Left out: no script contacts a runner.",
       "properties": {
         "host": {
           "type": "string",
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9.:-]*$",
-          "description": "Host name or address of the runner."
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9.-]*$",
+          "description": "Host name or IPv4 address of the runner; no ':' (git and rsync split user@host:path at the first colon)."
         },
         "user": {
           "type": "string",
@@ -143,7 +143,12 @@
         "root": {
           "type": "string",
           "pattern": "^(/|~/)[A-Za-z0-9._/-]+$",
-          "description": "The runner's directory of the donor (corpus/, corpus.state, corpus.manifest.json) and the run copies (wt/<name>); absolute or ~/... (~ only as that leading ~/), without .., never the home or / itself."
+          "description": "The runner's directory of the donor (corpus/, corpus.state, corpus.manifest.json, corpus.lock), the run copies and worktrees (wt/<name>), the bare repository of the runs (repo.git), the dependency cache (deps/) and the runs (runs/<name>); absolute or ~/... (~ only as that leading ~/), without .., never the home or / itself."
+        },
+        "plugin": {
+          "type": "string",
+          "pattern": "^(/|~/)[A-Za-z0-9._/-]+$",
+          "description": "The directory of this plugin on the runner, of the same version (default ~/.claude/plugins/marketplaces/codis-agents); the runner's guards-all.sh, slots and env-check run from it."
         }
       }
     }

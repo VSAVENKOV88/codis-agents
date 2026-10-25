@@ -78,6 +78,9 @@ const SPEC = {
   standingPush: ['object', null],
   preconditions: ['object', null],
   stand: ['object', null],
+  // The full run on the remote runner of the machine file (scripts/guards-remote.js): what the runner needs that this
+  // machine has by other means. Left out - the runs stay on this machine even with a runner set.
+  remoteRun: ['object', null],
   $schema: ['string', ''],
 };
 const REQUIRED = ['repoDir', 'worktreeRoot', 'sharedDir'];
@@ -109,6 +112,18 @@ const STAND_SPEC = {
   memLimitMB: ['number', null], cwd: ['path', ''],
 };
 const STAND_REQUIRED = ['project', 'up', 'deploy', 'reset', 'status', 'down'];
+// remoteRun (scripts/guards-remote.js): command / commandLegacy - the guard command on the runner (default guardCommand /
+// guardCommandLegacy; placeholders as guardCommand); deps - [{files, install, link}]: files (relative to the worktree,
+// distinct base names) are copied into a cache directory <root>/deps/<hash of their contents, install and the node
+// version>, install runs there once per hash (medium slot of the runner), link maps worktree paths to paths inside that
+// directory ("" = the directory itself), each a link straight to its real path; prepare - commands run in the runner's
+// worktree before the run (medium slot); localPattern - a regexp over the runner's log lines, group 1 a ", "-separated
+// list of guards the runner did not run: they run on this machine after it in a heavy slot by localCommand ({wt},
+// {onlyArgs}; default guardSubsetCommand), and the worse exit code is the run's.
+const REMOTE_RUN_SPEC = { command: ['string', ''], commandLegacy: ['string', ''], deps: ['any', []], prepare: ['string[]', []], localPattern: ['string', ''], localCommand: ['string', ''] };
+const DEP_SPEC = { files: ['string[]', undefined], install: ['string', undefined], link: ['object', undefined] };
+// A path inside the worktree or the cache directory: relative, no .., no empty or . segment, no quote or newline.
+const relPath = (p, emptyOk) => typeof p === 'string' && (p === '' ? !!emptyOk : !path.isAbsolute(p) && !/^~/.test(p) && !/['\n\0\\]/.test(p) && p.split('/').every((x) => x && x !== '.' && x !== '..'));
 const ROLES = ['analyst', 'programmer', 'tester', 'reviewer', 'security-reviewer'];
 // The model aliases of the Workflow agent() option model; roleModels keys: the roles, the preconditions agent, and wait
 // (the repeat of a post-check or wait step; their first attempt always runs on haiku).
@@ -128,25 +143,34 @@ const MACHINE_SPEC = {
 // known_hosts file (both on this machine: absolute or ~); root - the runner's directory of donor and run copies, on the
 // runner (absolute or ~/..., never the home or / itself: the wipe removes what lies under it). Left out - null, and no
 // script contacts a runner.
-const REMOTE_SPEC = { host: ['string', undefined], user: ['string', undefined], key: ['string', undefined], knownHosts: ['string', undefined], root: ['string', undefined] };
+// plugin - the directory of this plugin on the runner (scripts/guards-remote.js runs its guards-all.sh there; the
+// runner's plugin must have the same version as this one). The remote full run also needs the project key remoteRun.
+const REMOTE_SPEC = { host: ['string', undefined], user: ['string', undefined], key: ['string', undefined], knownHosts: ['string', undefined], root: ['string', undefined],
+  plugin: ['string', '~/.claude/plugins/marketplaces/codis-agents'] };
+const REMOTE_REQUIRED = ['host', 'user', 'key', 'knownHosts', 'root'];
 // Values go into ssh and rsync arguments and into the -e string of rsync (single quotes there): no quote, no newline,
 // and a host or user never starts with a dash (it would be read as an option).
 function remoteErrors(r, errs) {
-  for (const [k] of Object.entries(REMOTE_SPEC)) if (r[k] === undefined) errs.push(`remote.${k}: required`);
+  for (const k of REMOTE_REQUIRED) if (r[k] === undefined) errs.push(`remote.${k}: required`);
   const bad = (v) => typeof v === 'string' && /['\n\0]/.test(v);
-  if (typeof r.host === 'string' && !/^[A-Za-z0-9][A-Za-z0-9.:-]*$/.test(r.host)) errs.push(`remote.host: a host name or address (letters, digits, . : -, not starting with -), not ${JSON.stringify(r.host)}`);
+  // No ":": git and rsync take user@host:path apart at the first colon (an IPv6 address would need brackets there).
+  if (typeof r.host === 'string' && !/^[A-Za-z0-9][A-Za-z0-9.-]*$/.test(r.host)) errs.push(`remote.host: a host name or IPv4 address (letters, digits, . -, not starting with -, no ":"), not ${JSON.stringify(r.host)}`);
   if (typeof r.user === 'string' && !/^[A-Za-z_][A-Za-z0-9_.-]*$/.test(r.user)) errs.push(`remote.user: a user name (letters, digits, _ . -, not starting with -), not ${JSON.stringify(r.user)}`);
   for (const k of ['key', 'knownHosts']) {
     if (typeof r[k] === 'string' && (!absOrTilde(r[k]) || bad(r[k]))) errs.push(`remote.${k}: an absolute path or one starting with ~, without quotes, not ${JSON.stringify(r[k])}`);
   }
-  if (typeof r.root === 'string') {
-    const tilde = /^~\//.test(r.root);
-    const norm = tilde ? path.posix.normalize(r.root.slice(2)) : path.posix.normalize(r.root);
-    // rsync hands the destination to the runner's shell: only characters no shell reads specially, and ~ only as the
-    // leading ~/ (~name would be another user's home there, while corpus-remote.js reads it literally).
-    if (!(tilde || r.root.startsWith('/')) || !/^[A-Za-z0-9._\/-]+$/.test(tilde ? r.root.slice(2) : r.root) || r.root.split('/').includes('..') || norm === '/' || norm === '.' || norm === '') {
-      errs.push(`remote.root: a directory on the runner, absolute or ~/..., of letters, digits and . _ - / only (~ only as the leading ~/), without .., not the home or / itself - not ${JSON.stringify(r.root)}`);
-    }
+  // rsync and git hand these paths to the runner's shell: only characters no shell reads specially, and ~ only as the
+  // leading ~/ (~name would be another user's home there, while the runner's scripts read it literally).
+  const runnerDir = (v) => {
+    const tilde = /^~\//.test(v);
+    const norm = tilde ? path.posix.normalize(v.slice(2)) : path.posix.normalize(v);
+    return (tilde || v.startsWith('/')) && /^[A-Za-z0-9._\/-]+$/.test(tilde ? v.slice(2) : v) && !v.split('/').includes('..') && norm !== '/' && norm !== '.' && norm !== '';
+  };
+  if (typeof r.root === 'string' && !runnerDir(r.root)) {
+    errs.push(`remote.root: a directory on the runner, absolute or ~/..., of letters, digits and . _ - / only (~ only as the leading ~/), without .., not the home or / itself - not ${JSON.stringify(r.root)}`);
+  }
+  if (typeof r.plugin === 'string' && !runnerDir(r.plugin)) {
+    errs.push(`remote.plugin: the plugin directory on the runner, absolute or ~/..., of letters, digits and . _ - / only, without .. - not ${JSON.stringify(r.plugin)}`);
   }
 }
 const MACHINE_SLOT_SPEC = Object.assign({}, SLOT_SPEC, { extraHeavy: ['any', null] });
@@ -321,6 +345,37 @@ function resolve(raw, opts = {}) {
   c.maxDockerChains = mv.maxDockerChains;
   c.coordinatorContextK = mv.coordinatorContextK;
   c.machine = { path: m.path, exists: m.exists, source: m.source };
+  c.remote = mv.remote || null;
+  if (c.remoteRun) {
+    const x = c.remoteRun = level(REMOTE_RUN_SPEC, c.remoteRun, 'remoteRun.', errors);
+    if (!x.command) x.command = c.guardCommand;
+    if (!x.commandLegacy) x.commandLegacy = c.guardCommandLegacy;
+    if (x.command && !x.command.includes('{wt}')) errors.push('remoteRun.command: must contain {wt} (the worktree directory)');
+    if (!Array.isArray(x.deps)) { errors.push('remoteRun.deps: expected an array of {files, install, link}'); x.deps = []; }
+    x.deps = x.deps.map((d, i) => {
+      const w = `remoteRun.deps[${i}].`;
+      if (!typeOk('object', d)) { errors.push(`remoteRun.deps[${i}]: expected an object {files, install, link}`); return { files: [], install: '', link: {} }; }
+      const e = level(DEP_SPEC, d, w, errors);
+      for (const k of Object.keys(DEP_SPEC)) if (e[k] === undefined) errors.push(`${w}${k}: required`);
+      const files = e.files || [];
+      if (e.files && (!files.length || files.some((f) => !relPath(f)) || new Set(files.map((f) => path.posix.basename(f))).size !== files.length)) {
+        errors.push(`${w}files: one or more files relative to the worktree (no .., no quote), with distinct base names - not ${JSON.stringify(files)}`);
+      }
+      if (typeof e.install === 'string' && !e.install.trim()) errors.push(`${w}install: required`);
+      const link = e.link || {};
+      if (e.link && (!Object.keys(link).length || Object.entries(link).some(([k, v]) => !relPath(k) || !relPath(v, true)))) {
+        errors.push(`${w}link: {"<path in the worktree>": "<path in the cache directory, \"\" for itself>"}, relative paths without .. - not ${JSON.stringify(link)}`);
+      }
+      return { files, install: e.install || '', link };
+    });
+    if (x.localPattern) {
+      try { if (new RegExp(x.localPattern + '|').exec('').length < 2) errors.push('remoteRun.localPattern: needs a capture group (the list of guards)'); }
+      catch (e) { errors.push('remoteRun.localPattern: bad regular expression'); }
+      if (!x.localCommand) x.localCommand = c.guardSubsetCommand;
+      if (!x.localCommand) errors.push('remoteRun.localPattern: needs remoteRun.localCommand or guardSubsetCommand (the command that runs those guards here)');
+      else for (const k of ['wt', 'onlyArgs']) if (!x.localCommand.includes(`{${k}}`)) errors.push(`remoteRun.localCommand: must contain {${k}}`);
+    }
+  }
   if (c.guardAdaptiveProbe) {
     c.guardAdaptiveProbe = level(PROBE_SPEC, c.guardAdaptiveProbe, 'guardAdaptiveProbe.', errors);
     if (!c.guardAdaptiveProbe.file || !c.guardAdaptiveProbe.contains) errors.push('guardAdaptiveProbe: file and contains are required');
@@ -546,7 +601,7 @@ function shellLines(c) {
   return Object.entries(v).map(([k, x]) => (x === '' ? `[[ -v ${k} ]] || ${k}=''` : `: \${${k}:=${q(x)}}`)).join('\n');
 }
 
-module.exports = { find, load, resolve, branches, anonUrl, remoteHead, pushBranches, shellLines, machinePath, loadMachine, MACHINE_SPEC, MACHINE_SLOT_SPEC, REMOTE_SPEC, EXTRA_SPEC, MACHINE_VERSION, SPEC, SLOT_SPEC, RERUN_SPEC, EXCL_SPEC, EXCL_DEFAULT, STAND_SPEC, STAND_REQUIRED, WT_SPEC, PROBE_SPEC, HOOKS_SPEC, STANDING_SPEC, PRE_SPEC, ROLES, MODEL_ALIASES, MODEL_ROLES, expand };
+module.exports = { find, load, resolve, branches, anonUrl, remoteHead, pushBranches, shellLines, machinePath, loadMachine, MACHINE_SPEC, MACHINE_SLOT_SPEC, REMOTE_SPEC, REMOTE_RUN_SPEC, DEP_SPEC, EXTRA_SPEC, MACHINE_VERSION, SPEC, SLOT_SPEC, RERUN_SPEC, EXCL_SPEC, EXCL_DEFAULT, STAND_SPEC, STAND_REQUIRED, WT_SPEC, PROBE_SPEC, HOOKS_SPEC, STANDING_SPEC, PRE_SPEC, ROLES, MODEL_ALIASES, MODEL_ROLES, expand };
 
 if (require.main === module) {
   const [cmd, ...rest] = process.argv.slice(2);

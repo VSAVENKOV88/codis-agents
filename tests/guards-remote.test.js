@@ -187,7 +187,7 @@ process.exit(r.status === null ? 255 : r.status);
       fs.writeFileSync(path.join(T, 'full.log'), LOG(skipped)); fs.writeFileSync(path.join(T, 'full.rc'), String(rc)); fs.writeFileSync(path.join(T, 'local.rc'), '0');
       fs.writeFileSync(path.join(T, 'red.txt'), red.map((x) => x + '\n').join('')); fs.writeFileSync(path.join(T, 'full.sleep'), sleepS ? String(sleepS) : '');
       for (const c of ['full.count', 'one.count', 'local.count', 'prepare.count']) fs.rmSync(path.join(T, c), { force: true });
-      fs.rmSync(sshLog, { force: true });
+      fs.rmSync(sshLog, { force: true }); fs.rmSync(path.join(T, 'slots', 'journal.tsv'), { force: true });
     };
     const journal = () => (read(path.join(T, 'slots', 'journal.tsv')) || '').split('\n').filter(Boolean).map((l) => l.split('\t'));
     const out = (n) => read(path.join(shared, `guards-${n}.txt`)) || '';
