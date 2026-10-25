@@ -150,11 +150,13 @@ const of = (x, role) => x.prompts.filter((p) => p.role === role);
   try { j = JSON.parse(s.stdout); } catch { /* checked below */ }
   ok('S1. clean worktree -> exit 0, {ok:true, diff.ok, left.ok}', s.status === 0 && j && j.ok === true && j.diff && j.diff.ok === true && j.left && j.left.ok === true, s.stdout + s.stderr);
   fs.writeFileSync(path.join(wt, 'a.js'), '2\n');
+  fs.rmSync(logf, { force: true });
   s = post(); j = null;
   try { j = JSON.parse(s.stdout); } catch { /* checked below */ }
   ok('S2. product file changed by the tester -> exit 1, diff.ok false with the path, left still ran',
     s.status === 1 && j && j.ok === false && j.diff.ok === false && (j.diff.offending || []).includes('a.js') && j.left && j.left.ok === true && Array.isArray(j.left.removed), s.stdout + s.stderr);
-  ok('S3. --log reaches the leftovers check (leftovers.md written)', fs.existsSync(logf), logf);
+  ok('S3. the leftovers check really ran after the failed diff check: its own fields (wt, skipped) and leftovers.md written by this run',
+    !!(j && j.left && j.left.wt && Array.isArray(j.left.skipped)) && fs.existsSync(logf), logf + ' ' + s.stdout);
   s = spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'role-post-check.js'), '--wt', wt, '--since', since, '--role', 'tester'], { encoding: 'utf8' });
   j = null; try { j = JSON.parse(s.stdout); } catch { /* checked below */ }
   ok('S4. the diff script\'s own refusal (no --allow) comes through as diff.ok false with its error', s.status === 1 && j && j.diff.ok === false && /no testerWritable/.test(j.diff.error || ''), s.stdout + s.stderr);
