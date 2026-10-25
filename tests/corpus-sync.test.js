@@ -56,7 +56,7 @@ fs.writeFileSync(path.join(fake, 'ssh'), `#!${process.execPath}
 const fs = require('fs'); const { spawnSync } = require('child_process');
 const a = process.argv.slice(2);
 fs.appendFileSync(process.env.SSH_LOG, JSON.stringify(a) + '\\n');
-if (process.env.FAKE_SSH_FAIL) { process.stderr.write('ssh: connect to host runner.test port 22: Connection refused\\n'); process.exit(255); }
+if (process.env.FAKE_SSH_FAIL) { process.stderr.write('ssh: connect to host example.org port 22: Connection refused\\n'); process.exit(255); }
 const withArg = new Set(['-F', '-i', '-o', '-p', '-l', '-E', '-b', '-c', '-D', '-e', '-I', '-J', '-L', '-m', '-O', '-Q', '-R', '-S', '-W', '-w']);
 let i = 0; while (i < a.length && a[i].startsWith('-')) i += withArg.has(a[i]) ? 2 : 1;
 const cmd = a.slice(i + 1).join(' ');
@@ -65,7 +65,7 @@ process.exit(r.status === null ? 255 : r.status);
 `, { mode: 0o755 });
 // rsync: logs its arguments and the file list; copies every listed regular file (a listed symlink is skipped, as rsync
 // without -l/-L does) from the source to the destination path in the server home. FAKE_RSYNC_DIE_AFTER=n - n files,
-// then exit 20 (killed); FAKE_RSYNC_TOUCH=<file> - appends to that source file after the copy (the source changed).
+// then exit 20 (killed); FAKE_RSYNC_LIE=1 - exit 0 without copying anything; FAKE_RSYNC_TOUCH=<file> - appends to that source file after the copy (the source changed).
 fs.writeFileSync(path.join(fake, 'rsync'), `#!${process.execPath}
 const fs = require('fs'); const path = require('path');
 const a = process.argv.slice(2);
@@ -81,6 +81,7 @@ fs.appendFileSync(process.env.RSYNC_LOG, JSON.stringify({ args: a, list: names }
 const [src, dst] = pos;
 const m = /^[^@:]+@[^:]+:(.*)$/.exec(dst);
 const to = path.resolve(process.env.FAKE_SERVER_HOME, m[1]);
+if (process.env.FAKE_RSYNC_LIE) process.exit(0);
 let n = 0; const die = process.env.FAKE_RSYNC_DIE_AFTER;
 for (const p of names) {
   if (die !== undefined && n >= Number(die)) { process.stderr.write('rsync error: received SIGINT, SIGTERM, or SIGHUP (code 20)\\n'); process.exit(20); }
@@ -93,9 +94,9 @@ if (process.env.FAKE_RSYNC_TOUCH) fs.appendFileSync(process.env.FAKE_RSYNC_TOUCH
 `, { mode: 0o755 });
 
 const key = path.join(dir, 'id_runner'), kh = path.join(dir, 'known_hosts_runner');
-fs.writeFileSync(key, 'not a key'); fs.writeFileSync(kh, 'runner.test ssh-ed25519 AAAA');
+fs.writeFileSync(key, 'not a key'); fs.writeFileSync(kh, 'example.org ssh-ed25519 AAAA');
 const machine = path.join(dir, 'machine.json');
-const remote = { host: 'runner.test', user: 'runner', key, knownHosts: kh, root: '~/codis-runs' };
+const remote = { host: 'example.org', user: 'runner', key, knownHosts: kh, root: '~/codis-runs' };
 fs.writeFileSync(machine, JSON.stringify({ configVersion: 1, remote }));
 const noRemote = path.join(dir, 'machine-none.json');
 fs.writeFileSync(noRemote, JSON.stringify({ configVersion: 1 }));
@@ -160,7 +161,7 @@ try {
   ok('C-4 one rsync with the manifest as its file list', rs.length === 1 && JSON.stringify([...rs[0].list].sort()) === JSON.stringify(corpus), JSON.stringify(rs.map((x) => x.list)));
   const pinned = (args) => args.includes('-F') && args[args.indexOf('-F') + 1] === 'none' && args.includes('-i') && args[args.indexOf('-i') + 1] === key
     && ['StrictHostKeyChecking=yes', `UserKnownHostsFile=${kh}`, 'IdentitiesOnly=yes', 'BatchMode=yes'].every((o) => args.some((x, i) => x === o && args[i - 1] === '-o'))
-    && !args.join(' ').includes('accept-new') && args.includes('runner@runner.test');
+    && !args.join(' ').includes('accept-new') && args.includes('runner@example.org');
   ok('ssh: the pinned key and known_hosts, strict host key checking, no config file', ss.length > 0 && ss.every(pinned), JSON.stringify(ss[0]));
   const e = rs[0] ? rs[0].args[rs[0].args.indexOf('-e') + 1] || '' : '';
   ok('rsync: the same pinned ssh in -e', /^ssh /.test(e) && e.includes('-F none') && e.includes(`-i '${key}'`) && e.includes('StrictHostKeyChecking=yes')
@@ -226,8 +227,11 @@ try {
   reset();
   r = run(['sync'], { FAKE_RSYNC_DIE_AFTER: '0' });
   st = status();
-  ok('C-13 rsync cut off: environment (69), "donor marked incomplete"', r.status === 69 && /donor marked incomplete/.test(r.stderr), out(r));
+  ok('C-13 rsync cut off: environment (69), "rsync failed", "donor marked incomplete"', r.status === 69 && /rsync failed \(exit 20\)/.test(r.stderr) && /donor marked incomplete/.test(r.stderr), out(r));
   ok('C-13 the donor state is incomplete', st.state === 'incomplete', JSON.stringify(st));
+  reset();
+  r = run(['sync'], { FAKE_RSYNC_LIE: '1' });
+  ok('C-13 rsync says done but the donor scan differs: environment (69), donor stays incomplete', r.status === 69 && /does not match/.test(r.stderr) && status().state === 'incomplete', out(r));
   r = run(['copy', 't0']);
   ok('C-13 copy for a run refused while incomplete (69), nothing copied', r.status === 69 && /incomplete/.test(r.stderr) && !fs.existsSync(path.join(server, 'codis-runs', 'wt', 't0')), out(r));
   reset();
@@ -256,8 +260,9 @@ try {
   fs.writeFileSync(path.join(wt, 'app/data/a.json'), 'written by a guard'); fs.rmSync(path.join(wt, 'app/data/new.json'), { force: true }); fs.writeFileSync(path.join(wt, 'app/data/orphan'), 'o');
   st = status();
   ok('C-11 writes in the copy leave the donor and its manifest as they were', st.matches === true && st.scanId === stBefore.scanId && read(path.join(donor, 'app/data/a.json')) === '{"a":2}', JSON.stringify(st));
+  reset();
   r = run(['copy', '../x']);
-  ok('copy: a name with a path in it is refused (64)', r.status === 64 && !fs.existsSync(path.join(server, 'codis-runs', 'x')), out(r));
+  ok('copy: a name with a path in it is refused (64) before ssh', r.status === 64 && !fs.existsSync(path.join(server, 'codis-runs', 'x')) && !fs.existsSync(sshLog), out(r));
 
   // ---- C-14: not enough disk for the copy - environment before copying, with the numbers
   fs.mkdirSync(path.join(server, '.config', 'codis-agents'), { recursive: true });
