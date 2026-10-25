@@ -11,6 +11,8 @@
 // T-4 a link to a directory outside the corpus (C-7: neither the link nor its target arrives);
 // T-5 copy <name> over an existing copy (C-10: the copy equals the donor, no file of an older donor stays);
 // T-6/T-7/T-8 the removal of the earlier copy never reaches outside wt/<name> (a link inside it, wt/<name> a link, another copy).
+// T-9 rsync's filters no wider than gate (look-alikes of sessions and .env arrive, the donor completes); T-10 every name this
+// disk opens as sessions/ (measured by inode) is left out, refused by gate and never reaches the donor (C-6).
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -113,6 +115,38 @@ HOME="$FAKE_SERVER_HOME" exec sh -c "$*"
   r = run(['sync']);
   ok('T-1 the next sync does not stay stuck on it', r.status === 0 && status().state === 'complete', out(r));
   ok('T-1 the donor holds the new content and is complete', read(path.join(donor, 'app/data/a.json')) === 'AAAA' && st.state === 'complete' && st.matches === true, read(path.join(donor, 'app/data/a.json')) + ' ' + JSON.stringify(st));
+
+  // Round 3 (sessions/ in any case, rsync filters of letter classes). T-9: the filters are no wider than gate - names
+  // that only look like sessions or .env reach the donor through the real rsync and the donor ends complete (a filter
+  // that dropped a listed file would leave the donor incomplete on every sync, as D-1 did).
+  const near = ['app/data/sessionsX/a.json', 'app/data/my-sessions/b.json', 'app/data/sessions.json', 'app/data/Sess/c.json',
+    'app/data/env/d.json', 'app/data/a.env', 'app/data/x.ENV.json', 'app/data/envx.json'];
+  for (const p of near) put(p, 'near');
+  r = run(['sync']);
+  st = status();
+  ok('T-9 look-alike names of sessions and .env arrive through the real rsync filters, the donor is complete',
+    r.status === 0 && near.every((p) => read(path.join(donor, p)) === 'near') && st.state === 'complete' && st.matches === true,
+    out(r) + files(donor).join(' | ') + ' ' + JSON.stringify(st));
+  // T-10: every name this disk opens as sessions/ (measured here: lstat of the name gives the inode of a sessions/
+  // directory; on a case-insensitive APFS that is Sessions, SESSIONS, long-s forms) is a sessions/ folder for the
+  // manifest, for gate() and for the transfer. On a case-sensitive disk only sessions itself opens it.
+  const probe = path.join(dir, 'probe'); fs.mkdirSync(path.join(probe, 'sessions'), { recursive: true });
+  const ino = fs.lstatSync(path.join(probe, 'sessions')).ino;
+  const cands = ['sessions', 'Sessions', 'SESSIONS', 'SeSSioNS', 'ſessions', 'ſeſſions', 'seſsions', 'SESSIONs'];
+  const alias = cands.filter((n) => { try { return fs.lstatSync(path.join(probe, n)).ino === ino; } catch { return false; } });
+  const CS = require(SCRIPT);
+  const gated = (p) => { try { CS.gate({ files: [{ path: p }] }); return false; } catch (e) { return e.code === 65; } };
+  ok('T-10 every alias of sessions/ on this disk is a sessions/ folder (excludedWhy, gate)', alias.length >= 1
+    && alias.every((n) => CS.excludedWhy('app/data/' + n, true, { skip: [], link: [] }, false) === 'sessions' && gated(`app/data/${n}/s.json`)),
+    'aliases here: ' + JSON.stringify(alias));
+  // Distinct parents: on a case-insensitive disk two aliases in one directory would be one directory.
+  const sess = alias.map((n, i) => `app/data/s${i}/${n}/state.json`);
+  for (const p of sess) put(p, 'session');
+  r = run(['sync']);
+  st = status();
+  ok('T-10 none of them reaches the donor through the real rsync, the sync completes',
+    r.status === 0 && !files(server).some((f) => f.split('/').some((s) => alias.includes(s))) && st.state === 'complete',
+    out(r) + files(server).join(' | '));
 
 } finally {
   fs.rmSync(dir, { recursive: true, force: true });
