@@ -256,6 +256,33 @@ process.exit(r.status === null ? 255 : r.status);
     ok('R2-4: the runner\'s stderr in an error - exit 69, the text kept, no control characters here or in the log',
       es.status === 69 && /boom \]0;title \[2J cleared {2}back/.test(es.stdout + es.stderr) && !/[\x00-\x08\x0b-\x1f\x7f-\x9f]/.test(es.stdout + es.stderr + out('xw')), JSON.stringify(es.stdout + es.stderr));
 
+    // D1-D4: the runner's receiver refuses the push (its pre-receive hook) - git passes the hook's stderr (sideband
+    // "remote: ..." lines) through with ESC, BEL, CR and C1 intact; the error must show it without control characters.
+    const repoGit = path.join(R, 'repo.git'), hook = path.join(repoGit, 'hooks', 'pre-receive');
+    if (!fs.existsSync(path.join(repoGit, 'HEAD'))) spawnSync('git', ['init', '--bare', '-q', repoGit]);
+    fs.mkdirSync(path.dirname(hook), { recursive: true });
+    const refuse = (bytes) => {
+      fs.writeFileSync(hook, `#!/bin/sh\nprintf '${bytes}\\n' >&2\nexit 1\n`, { mode: 0o755 });
+      setMachine(remote); set(0, [], false);
+      return spawnSync('zsh', [path.join(ROOT, 'scripts', 'guards-all.sh'), '--force', 'xw'], { encoding: 'utf8', timeout: 60000, env: env() });
+    };
+    const CTRL = /[\x00-\x08\x0b-\x1f\x7f-\x9f]/;
+    const sha12 = head(xw).slice(0, 12);
+    let d = refuse('reason-text \\033]0;t\\007 \\033[2J x \\r back');
+    const dAll = d.stdout + d.stderr;
+    ok('D1: the push refused by the runner (hook prints ESC, OSC, BEL, CSI, CR) - exit 69, the reason shown, no control characters here or in the log',
+      d.status === 69 && dAll.includes(`git push of ${sha12} to the runner was refused`) && dAll.includes('reason-text') && !CTRL.test(dAll) && !CTRL.test(out('xw')),
+      JSON.stringify(dAll) + ' | ' + JSON.stringify(out('xw')));
+    const dm = meta('xw');
+    ok('D3: the refused push - meta rc 69, env remote:example.org, the log starts "environment: git push of"',
+      dm.rc === 69 && dm.env === 'remote:example.org' && out('xw').startsWith('environment: git push of'), JSON.stringify(dm) + ' ' + JSON.stringify(out('xw').split('\n')[0]));
+    ok('D4: the refused push - no run on the runner (no runs/xw, the runner\'s guards never ran)', !fs.existsSync(path.join(R, 'runs', 'xw')) && count('full.count') === 0);
+    d = refuse('c1-text \\302\\233c \\302\\205 nel');
+    const d2 = d.stdout + d.stderr;
+    ok('D2: the refused push, the hook prints C1 in UTF-8 (CSI U+009B, NEL U+0085) - exit 69, the text shown, no C1 here or in the log',
+      d.status === 69 && d2.includes('c1-text') && d2.includes('nel') && !CTRL.test(d2) && !CTRL.test(out('xw')), JSON.stringify(d2) + ' | ' + JSON.stringify(out('xw')));
+    fs.rmSync(hook, { force: true }); fs.rmSync(path.join(T, 'push.log'), { force: true }); // D5: the main flow counts its own push only
+
     // The main flow: B2a-6, 8, 10-17, 21, 22.
     setMachine(remote); set(1, ['srv/a-run.js'], false);
     const sha = head(xw);
