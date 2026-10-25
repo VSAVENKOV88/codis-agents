@@ -198,6 +198,13 @@ process.exit(r.status === null ? 255 : r.status);
     fs.mkdirSync(path.join(R, 'corpus', 'pkg', 'data'), { recursive: true }); fs.writeFileSync(path.join(R, 'corpus', 'pkg', 'data', 'big.json'), '{"corpus":1}\n');
     cr('finish', { expectId: cr('scan').id });
     const donorId = cr('status').scanId;
+    // B2a-14 (C tail): a copy reads the donor only under corpus.lock - a holder of the lock (a sync's begin) delays it.
+    const held = path.join(T, 'corpus-held');
+    const lockHolder = spawn(process.execPath, ['-e', `require(${JSON.stringify(path.join(ROOT, 'scripts', 'corpus-remote.js'))}).withLock(${JSON.stringify(path.join(R, 'corpus.lock'))}, { timeoutS: 10 }, () => { require('fs').writeFileSync(${JSON.stringify(held)}, '1'); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1500); })`], { stdio: 'ignore' });
+    until(() => fs.existsSync(held), 10);
+    const tc = Date.now(); const cp = cr('copy', { name: 'locktest' }); const waited = Date.now() - tc;
+    ok('B2a-14: the donor copy waits for corpus.lock held by another job, then copies', waited >= 1000 && cp.files === 1, `${waited} ms ${JSON.stringify(cp)}`);
+    lockHolder.kill(); fs.rmSync(path.join(R, 'wt', 'locktest'), { recursive: true, force: true });
 
     // B2a-1: no key remote - the run stays here as before, ssh is never called.
     setMachine(); setCfg(); set(0, [], false);
