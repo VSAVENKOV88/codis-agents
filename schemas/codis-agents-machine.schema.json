@@ -107,6 +107,45 @@
           ]
         }
       }
+    },
+    "remote": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "host",
+        "user",
+        "key",
+        "knownHosts",
+        "root"
+      ],
+      "description": "The remote runner of this machine (scripts/corpus-sync.js): ssh as user@host with only this key and only this known_hosts file, strict host key checking. Left out: no script contacts a runner.",
+      "properties": {
+        "host": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9.:-]*$",
+          "description": "Host name or address of the runner."
+        },
+        "user": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_.-]*$",
+          "description": "The ssh user on the runner."
+        },
+        "key": {
+          "type": "string",
+          "pattern": "^(/|~/)[^'\\n]*$",
+          "description": "The private key for that user, on this machine; absolute or ~."
+        },
+        "knownHosts": {
+          "type": "string",
+          "pattern": "^(/|~/)[^'\\n]*$",
+          "description": "A known_hosts file holding the runner's pinned host key, on this machine; absolute or ~."
+        },
+        "root": {
+          "type": "string",
+          "pattern": "^(/|~/)[A-Za-z0-9._/-]+$",
+          "description": "The runner's directory of the donor (corpus/, corpus.state, corpus.manifest.json) and the run copies (wt/<name>); absolute or ~/... (~ only as that leading ~/), without .., never the home or / itself."
+        }
+      }
     }
   }
 }

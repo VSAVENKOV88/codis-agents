@@ -179,6 +179,13 @@ Larger changes run as a chain of agents, each in its own role:
   the real image (an own compose project, torn down after).
 - **Worktrees get their own copy of ignored data** (an APFS clone, `scripts/wt-setup.sh`), never a symlink to the main
   checkout: with a symlink, guards in the worktree write into the main data.
+- **A remote runner gets the corpus one way only** (`scripts/corpus-sync.js`, machine key `remote`): from the main
+  checkout to a donor on the runner, and from the donor a real copy per run; nothing comes back, and the donor never
+  changes during a run. Secrets and sessions never leave the machine: the ready file list is checked before any
+  transfer, and a `.env*` or a `sessions/` folder in it (in any case: a case-insensitive disk opens `Sessions/` as
+  `sessions/`) refuses the sync. An empty source never empties the donor; an interrupted sync marks it
+  incomplete and no run copies it until a full sync. The donor is wiped only by its list, in two commands.
+  Why: the corpus is the owner's data with the project's secrets next to it, and a guard once wiped a corpus it could reach.
 - **No full guard run in the main working copy.** `guards-all.sh` and the preconditions of the chain
   (`scripts/env-check.js --worktree`) refuse with 78 a directory that is the main working copy of its repository
   (`git rev-parse --git-dir` equals `--git-common-dir`, `scripts/main-checkout.js`) and name `wt-setup.sh`; a project

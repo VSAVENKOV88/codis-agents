@@ -122,8 +122,33 @@ const MACHINE_VERSION = 1;
 const MACHINE_DEFAULTS_NOTE = 'defaults measured on a 16 GB Mac of the source project';
 const MACHINE_SPEC = {
   configVersion: ['number', undefined], source: ['string', ''], swapMinMB: ['number', 4000], minFreeDiskGB: ['number', 10],
-  maxDockerChains: ['number', 2], coordinatorContextK: ['number', 700], slots: ['object', null], $schema: ['string', ''],
+  maxDockerChains: ['number', 2], coordinatorContextK: ['number', 700], slots: ['object', null], remote: ['object', null], $schema: ['string', ''],
 };
+// The remote runner of this machine (scripts/corpus-sync.js): ssh as user@host with only this key and only this
+// known_hosts file (both on this machine: absolute or ~); root - the runner's directory of donor and run copies, on the
+// runner (absolute or ~/..., never the home or / itself: the wipe removes what lies under it). Left out - null, and no
+// script contacts a runner.
+const REMOTE_SPEC = { host: ['string', undefined], user: ['string', undefined], key: ['string', undefined], knownHosts: ['string', undefined], root: ['string', undefined] };
+// Values go into ssh and rsync arguments and into the -e string of rsync (single quotes there): no quote, no newline,
+// and a host or user never starts with a dash (it would be read as an option).
+function remoteErrors(r, errs) {
+  for (const [k] of Object.entries(REMOTE_SPEC)) if (r[k] === undefined) errs.push(`remote.${k}: required`);
+  const bad = (v) => typeof v === 'string' && /['\n\0]/.test(v);
+  if (typeof r.host === 'string' && !/^[A-Za-z0-9][A-Za-z0-9.:-]*$/.test(r.host)) errs.push(`remote.host: a host name or address (letters, digits, . : -, not starting with -), not ${JSON.stringify(r.host)}`);
+  if (typeof r.user === 'string' && !/^[A-Za-z_][A-Za-z0-9_.-]*$/.test(r.user)) errs.push(`remote.user: a user name (letters, digits, _ . -, not starting with -), not ${JSON.stringify(r.user)}`);
+  for (const k of ['key', 'knownHosts']) {
+    if (typeof r[k] === 'string' && (!absOrTilde(r[k]) || bad(r[k]))) errs.push(`remote.${k}: an absolute path or one starting with ~, without quotes, not ${JSON.stringify(r[k])}`);
+  }
+  if (typeof r.root === 'string') {
+    const tilde = /^~\//.test(r.root);
+    const norm = tilde ? path.posix.normalize(r.root.slice(2)) : path.posix.normalize(r.root);
+    // rsync hands the destination to the runner's shell: only characters no shell reads specially, and ~ only as the
+    // leading ~/ (~name would be another user's home there, while corpus-remote.js reads it literally).
+    if (!(tilde || r.root.startsWith('/')) || !/^[A-Za-z0-9._\/-]+$/.test(tilde ? r.root.slice(2) : r.root) || r.root.split('/').includes('..') || norm === '/' || norm === '.' || norm === '') {
+      errs.push(`remote.root: a directory on the runner, absolute or ~/..., of letters, digits and . _ - / only (~ only as the leading ~/), without .., not the home or / itself - not ${JSON.stringify(r.root)}`);
+    }
+  }
+}
 const MACHINE_SLOT_SPEC = Object.assign({}, SLOT_SPEC, { extraHeavy: ['any', null] });
 const EXTRA_SPEC = { freePct: ['number', 50], swapGrowMB: ['number', 256], windowS: ['number', 300] };
 // Machine keys a project config may still carry (until config.js migrate): project key -> machine key, and the
@@ -206,6 +231,11 @@ function loadMachine(env = process.env) {
     if (w !== undefined && typeof w === 'string' && !absOrTilde(w) && !(k === 'legacyLock' && w === '')) errs.push(`slots.${k}: an absolute path or one starting with ~, not ${JSON.stringify(w)}`);
   }
   v.slots = level(MACHINE_SLOT_SPEC, v.slots, 'slots.', errs);
+  if (v.remote !== null) {
+    v.remote = level(REMOTE_SPEC, v.remote, 'remote.', errs);
+    remoteErrors(v.remote, errs);
+    for (const k of ['key', 'knownHosts']) if (typeof v.remote[k] === 'string') v.remote[k] = expand(v.remote[k]);
+  }
   for (const k of ['medium', 'heavy', 'total', 'jobsAlone', 'jobsShared']) {
     if (typeof v.slots[k] === 'number' && !(Number.isInteger(v.slots[k]) && v.slots[k] >= 1)) errs.push(`slots.${k}: expected a positive integer`);
   }
@@ -516,7 +546,7 @@ function shellLines(c) {
   return Object.entries(v).map(([k, x]) => (x === '' ? `[[ -v ${k} ]] || ${k}=''` : `: \${${k}:=${q(x)}}`)).join('\n');
 }
 
-module.exports = { find, load, resolve, branches, anonUrl, remoteHead, pushBranches, shellLines, machinePath, loadMachine, MACHINE_SPEC, MACHINE_SLOT_SPEC, EXTRA_SPEC, MACHINE_VERSION, SPEC, SLOT_SPEC, RERUN_SPEC, EXCL_SPEC, EXCL_DEFAULT, STAND_SPEC, STAND_REQUIRED, WT_SPEC, PROBE_SPEC, HOOKS_SPEC, STANDING_SPEC, PRE_SPEC, ROLES, MODEL_ALIASES, MODEL_ROLES, expand };
+module.exports = { find, load, resolve, branches, anonUrl, remoteHead, pushBranches, shellLines, machinePath, loadMachine, MACHINE_SPEC, MACHINE_SLOT_SPEC, REMOTE_SPEC, EXTRA_SPEC, MACHINE_VERSION, SPEC, SLOT_SPEC, RERUN_SPEC, EXCL_SPEC, EXCL_DEFAULT, STAND_SPEC, STAND_REQUIRED, WT_SPEC, PROBE_SPEC, HOOKS_SPEC, STANDING_SPEC, PRE_SPEC, ROLES, MODEL_ALIASES, MODEL_ROLES, expand };
 
 if (require.main === module) {
   const [cmd, ...rest] = process.argv.slice(2);
