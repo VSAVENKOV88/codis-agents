@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 'use strict';
-// Tester guard of remote-runs-c: scripts/corpus-sync.js with the REAL rsync of this machine (openrsync on a Mac, rsync on
+// Tester guard of remote-runs-c (a fixture: the tester may write only guards and fixtures; tests/corpus-sync-rsync.test.js
+// is to run it as part of the suite): scripts/corpus-sync.js with the REAL rsync of this machine (openrsync on a Mac, rsync on
 // Linux) at both ends. Only ssh is a fake: it drops its options and the destination and runs the remote command with sh
 // in a temporary "server" home, so rsync speaks its own protocol to `rsync --server` and corpus-remote.js runs under
 // `node -` as on the runner. tests/corpus-sync.test.js fakes rsync itself (it copies every listed file), so rsync's own
@@ -13,9 +14,9 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const { ok, skip, has, done } = require('./lib');
+const { ok, skip, has, done } = require('../../lib');
 
-const ROOT = path.join(__dirname, '..');
+const ROOT = path.join(__dirname, '..', '..', '..');
 const SCRIPT = path.join(ROOT, 'scripts', 'corpus-sync.js');
 const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'corpus-rsync-')));
 const main = path.join(dir, 'main'), shared = path.join(dir, 'shared'), server = path.join(dir, 'server'), fake = path.join(dir, 'fakebin');
@@ -61,7 +62,7 @@ HOME="$FAKE_SERVER_HOME" exec sh -c "$*"
   g('init', '-q', '-b', 'main'); g('config', 'user.email', 't@t'); g('config', 'user.name', 't');
   put('.gitignore', 'data/\n.DS_Store\n'); put('app/src.js', '1');
   g('add', '.gitignore', 'app/src.js'); g('commit', '-qm', 'base');
-  const odd = ['app/data/with space.json', 'app/data/new\nline.json', 'app/data/-dash.json', 'app/data/юникод.json'];
+  const odd = ['app/data/with space.json', 'app/data/new\nline.json', 'app/data/-dash.json', 'app/data/\u044e\u043d\u0438\u043a\u043e\u0434.json'];
   put('app/data/a.json', 'aaaa'); put('app/data/sub/b.json', 'b');
   for (const p of odd) put(p, 'odd');
   const outside = path.join(dir, 'outside'); fs.mkdirSync(outside); fs.writeFileSync(path.join(outside, 'id_secret'), 'outside');
