@@ -14,6 +14,7 @@
 //       commit itself tracks is not refused.
 //   T-5 --local with the remote key runs here: no ssh, a local meta (no env).
 //   T-6 a job that writes rc and exits between the poll's read of rc and its process check is done, not vanished.
+//   T-7 the other states of a poll around that fix: live with no rc is running, rc with a live job is done, neither is vanished.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -191,6 +192,36 @@ process.exit(r.status === null ? 255 : r.status);
     let p6;
     try { p6 = H.OPS.poll(L, { name: 'pw', id: 'pw@1', offset: 0 }); } finally { fs.readFileSync = orig; }
     ok('T-6: the rc written just after the poll read it and the job gone - state done with its rc, not vanished', raced && p6 && p6.state === 'done' && p6.rc === 0, JSON.stringify(p6));
+  }
+
+  // ---- T-7 (round 2): around the fix of T-6 the other three states of a poll stay as they were. A live job with no
+  // rc is running (the second read of rc never turns it into done or vanished); a job that wrote rc and is still
+  // alive is done with that rc; no process and no rc after both reads is vanished.
+  {
+    const H = require(path.join(ROOT, 'scripts', 'guards-remote-host.js'));
+    const L = H.layout({ root: path.join(T, 'r7') });
+    const { spawn } = require('child_process');
+    const kid = spawn('sleep', ['30'], { stdio: 'ignore' });
+    const pst = spawnSync('ps', ['-o', 'lstart=', '-p', String(kid.pid)], { encoding: 'utf8' }).stdout.trim().replace(/\s+/g, ' ');
+    const mk = (name, pid, ps, rc) => {
+      const d = path.join(L.runs, name);
+      fs.mkdirSync(d, { recursive: true });
+      fs.writeFileSync(path.join(d, 'run.json'), JSON.stringify({ id: `${name}@1`, name, sha: 'b'.repeat(40), pid, pstart: ps }));
+      fs.writeFileSync(path.join(d, 'out.txt'), 'phase: full run\n');
+      if (rc !== undefined) fs.writeFileSync(path.join(d, 'rc'), JSON.stringify({ rc, at: new Date().toISOString() }));
+    };
+    const dead = spawnSync(process.execPath, ['-e', '0']).pid;
+    mk('live', kid.pid, pst);
+    mk('livedone', kid.pid, pst, 3);
+    mk('gonenorc', dead, 'gone');
+    try {
+      const pl = H.OPS.poll(L, { name: 'live', id: 'live@1', offset: 0 });
+      ok('T-7: a live job with no rc - running, with its output', pl.state === 'running' && /phase: full run/.test(pl.text) && pl.rc === undefined, JSON.stringify(pl));
+      const pd = H.OPS.poll(L, { name: 'livedone', id: 'livedone@1', offset: 0 });
+      ok('T-7: a job that wrote rc and has not exited yet - done with its rc', pd.state === 'done' && pd.rc === 3, JSON.stringify(pd));
+      const pv = H.OPS.poll(L, { name: 'gonenorc', id: 'gonenorc@1', offset: 0 });
+      ok('T-7: no process and no rc after both reads - vanished', pv.state === 'vanished' && pv.rc === undefined, JSON.stringify(pv));
+    } finally { try { kid.kill('SIGKILL'); } catch { /* gone */ } }
   }
 } catch (e) {
   ok('no exception', false, e && e.stack);
