@@ -134,6 +134,7 @@ read.
 | `scripts/corpus-remote.js` | the runner's half of `corpus-sync.js`, sent over ssh to `node -` (the ssh command never carries a path); runs there as `node corpus-remote.js <op> '<json>'` too |
 | `scripts/wt-remove-check.js` | before a worktree or data directory is removed: prints its ignored data with sizes, the path named in code and the symbolic links that lead into it; removes nothing |
 | `scripts/role-diff-check.js` | git post-check of the tester and reviewers |
+| `scripts/role-post-check.js` | the post-check after the tester in one command: `role-diff-check.js` and `role-leftovers-check.js` together, one JSON `{ok, diff, left}` - one service agent per tester round instead of two |
 | `scripts/role-leftovers-check.js` | post-check after the tester and at the end of a task: Docker resources of the task's stack (by the compose project label), processes in its worktree, slots they hold; `--fix` removes only those, never the owner's stack |
 | `scripts/chain-cost.js` | cost of chain runs per task from the agent transcripts, and per feature (parts summed by `feature`, across runs) |
 | `scripts/detect.js` | the facts of a repository for onboarding, read only, as JSON: git (default branch from origin/HEAD, main/master, tag shapes, remotes without passwords, hooksPath), GitHub workflow files, stacks by manifest, venvs, compose services (`docker compose config`, no daemon), ignored data with sizes, what an earlier onboarding left; the contract is in its header |
@@ -344,7 +345,9 @@ review findings.
   after that analyst stops the task for the coordinator (`tester red after analyst`). A red from the environment (a cut-off full
   run, a refused slot queue, disk or swap exhausted, Docker down) is the verdict `environment`: the task stops with its cause for the
   coordinator, not for a programmer.
-- **Reviewer** reads only and tries to refute. With `security: true` a security reviewer follows; done needs both.
+- **Reviewer** reads only and tries to refute. With `security: true` the reviewer and the security reviewer run in
+  parallel on the same HEAD, with one git post-check after both; done needs both, a rejection by either is a rejection,
+  and a change of the worktree by either stops the task.
 - **Rejection**: a fix round, then a second review. A rejection only for docs, guard wording or comments skips the
   tester: the second review reads the diff of the fix; when the fix touches files outside docs and guards, that review
   confirms it changes no behaviour (`fixBehaviourUnchanged`), and only an unconfirmed fix gets a tester round. A second rejection for code brings the analyst into the same run for one more round; after that the
@@ -358,6 +361,8 @@ review findings.
   running - containers, networks, volumes and images labelled with its compose project (`stack`), processes whose cwd
   or argv lies in its worktree, the memory slots they hold - and names them in the result and in `<task>/leftovers.md`.
   It never touches the owner's stack (`ownerStackReadOnly`) or another task; what it cannot remove stops the task.
+  After the tester both checks run as one command, `role-post-check.js` (one JSON `{ok, diff, left}`), so a tester
+  round costs one service agent instead of two; at the end of the task only the leftovers check runs.
 - A failed post-check (ok=false or no result) is repeated once by the default model (`roleModels.wait`, else `roleModel`,
   when set; label `...#retry`, logged) and the
   second answer decides: the cheap agent that runs it sometimes answers without running the script, and the scripts

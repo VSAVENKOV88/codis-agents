@@ -129,6 +129,10 @@ Larger changes run as a chain of agents, each in its own role:
   roles' model when the project config names one) and
   the second answer decides: a cheap agent sometimes reports a failure without running the script, while the script
   itself gives the same answer twice.
+- **One post-check agent after the tester; the reviewers together.** After the tester one service agent runs the git post-check and the leftovers post-check in one command (`scripts/role-post-check.js`, one JSON with both answers); with security work the reviewer and the security reviewer run at the same time on the same HEAD, and one git post-check after both: neither may change the worktree, a change by either stops the task, a rejection by either is a rejection. <!-- role:postcheck -->
+  Why (plugin audit 2026-10-24, P2 and P3): two service agents per tester round each paid a system prompt and the tool
+  descriptions for one deterministic command, and the security reviewer waited for the reviewer and its post-check
+  although both only read.
 - **Do not resume a multi-task workflow run with `resumeFromRunId`.** Cached agent results replay by call order; with
   tasks in parallel the order differs, so results land in the wrong task (after a pause one task's programmer HEAD
   became another task's base, and the post-check stopped both chains on files their testers never touched). Relaunch

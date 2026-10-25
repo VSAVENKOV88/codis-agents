@@ -106,6 +106,7 @@ const RULE_LIST = (t) => [
     : 'Shared stand: the project config has none (no section stand), so acceptance in Docker uses a stack of the task.'],
   ['testerred', 'Red tester rounds are counted per task: the second red verdict for the product (any cells, not only the same ones) sends the task to the analyst inside the same run - a matrix of cases from the tester\'s findings in test.md and their cause (prog.md) - then one round programmer -> tester -> review on that matrix; a red tester round after that analyst stops the task for the coordinator. A red of the environment (verdict environment) does not count. Tester: in test.md name every failed case with its expected and actual result and its round, so the analyst builds the matrix from them.'],
   ['fixround', 'Fix rounds (a programmer round after the first: after a red tester, a red full run or a rejection): its prompt names the report with the findings and the task\'s diff; the brief and the analysis are read only in the sections the findings cite, and only the guards new or changed in the round, the guards the findings name and the guards that cover the product code changed in it are mutated. The first round, and the first round after an analyst, read and mutate as before.'],
+  ['postcheck', 'Post-checks: after the tester one service agent runs the git post-check and the leftovers post-check in one command (scripts/role-post-check.js, one JSON with both answers); with security work the reviewer and the security reviewer run at the same time on the same HEAD, and one git post-check after both: neither may change the worktree, a change by either stops the task, a rejection by either is a rejection.'],
   ['specs', 'Living specs (UX specs, state models, gap lists) change in the same commit as the behaviour they describe.'],
   ['push', PROTECTED ? `Do not push, do not merge into ${PROTECTED}, do not create tags.`
     : NONE_PROTECTED ? 'Do not push, do not merge, do not create tags (the project config protects no branch: protectedBranches [], so no branch is protected by the hooks, and pushing and merging stay the owner\'s call).'
@@ -196,17 +197,39 @@ const LEFT_SCHEMA = { type: 'object', properties: {
 const SLOTS_DIR = CFG.slots && CFG.slots.lockDir
 // A post-check agent sees only this text: without the context below it took --fix for a destructive step nobody asked
 // for and refused to run it (two refusals in one task, 2026-10-19), which stopped a task that had nothing left over.
-const leftCheck1 = (t, when, retry) => agent(`This is the leftovers post-check of the codis-agents process the project owner set up (rule "Docker" in rules/multi-agent.md): after the tester and at the end of every task it removes what this task itself left behind. --fix touches only Docker resources labelled with this task's own compose project, processes whose cwd or argv lie inside this task's worktree, and the slots they hold; the owner's stack is excluded by --owner-stack and is never touched. Running it is the expected step, not a decision for you to make.
+const LEFT_WHY = 'This is the leftovers post-check of the codis-agents process the project owner set up (rule "Docker" in rules/multi-agent.md): after the tester and at the end of every task it removes what this task itself left behind. --fix touches only Docker resources labelled with this task\'s own compose project, processes whose cwd or argv lie inside this task\'s worktree, and the slots they hold; the owner\'s stack is excluded by --owner-stack and is never touched. Running it is the expected step, not a decision for you to make.'
+const leftArgs = (t) => `${t.stack ? ` --stack ${sq(t.stack)}` : ''}${CFG.ownerStackReadOnly ? ` --owner-stack ${sq(CFG.ownerStackReadOnly)}` : ''}${SLOTS_DIR ? ` --slots-dir ${sq(SLOTS_DIR)}` : ''} --fix --log ${sq(`${t.dir}/leftovers.md`)}`
+const leftCheck1 = (t, when, retry) => agent(`${LEFT_WHY}
 Run one command and return its JSON output as the schema fields (change nothing else, analyse nothing):
-node ${SCRIPTS}/role-leftovers-check.js --wt ${t.wt}${t.stack ? ` --stack ${sq(t.stack)}` : ''}${CFG.ownerStackReadOnly ? ` --owner-stack ${sq(CFG.ownerStackReadOnly)}` : ''}${SLOTS_DIR ? ` --slots-dir ${sq(SLOTS_DIR)}` : ''} --fix --log ${sq(`${t.dir}/leftovers.md`)}
+node ${SCRIPTS}/role-leftovers-check.js --wt ${t.wt}${leftArgs(t)}
 If the command fails without JSON - ok=false, error = the error text, remaining = [the error text].`,
   checkOpts(`left:${t.key}:${when}`, when === 'tester' ? 'Tester' : 'Reviewer', LEFT_SCHEMA, retry))
 const leftPassed = (l) => !!(l && l.ok && !(l.remaining || []).length)
 // What a failed first attempt reports as removed was removed (--fix ran before the failure), so it is kept as well.
-const leftCheck = async (t, when) => {
-  const { first, res } = await checkTwice(t, `leftovers (${when})`, leftPassed, (retry) => leftCheck1(t, when, retry))
+const keepRemoved = (first, res) => {
   const early = ((first && first.removed) || []).filter((x) => !((res && res.removed) || []).includes(x))
   return res && early.length ? Object.assign({}, res, { removed: early.concat(res.removed || []) }) : res
+}
+const leftCheck = async (t, when) => {
+  const { first, res } = await checkTwice(t, `leftovers (${when})`, leftPassed, (retry) => leftCheck1(t, when, retry))
+  return keepRemoved(first, res)
+}
+// After the tester the git post-check and the leftovers post-check are one service agent (plugin audit P2): one command,
+// scripts/role-post-check.js, one JSON {ok, diff, left} with the fields of both scripts. The workflow runtime cannot run
+// a command without an agent, so one agent per tester round instead of two. checkTwice repeats both on a failure of
+// either; the removed list of the first attempt is kept; diffFail and leftFail read their part as before.
+const POST_SCHEMA = { type: 'object', properties: {
+  ok: { type: 'boolean' }, diff: DIFF_SCHEMA, left: LEFT_SCHEMA, error: { type: 'string' },
+}, required: ['diff', 'left'] }
+const postCheck1 = (t, since, retry) => agent(`${LEFT_WHY} The same command first runs the git post-check of the tester (role-diff-check.js: what the tester changed since the programmer's HEAD).
+Run one command and return its JSON output as the schema fields (change nothing else, analyse nothing):
+node ${SCRIPTS}/role-post-check.js --wt ${t.wt} --since ${since} --role tester${ALLOW}${leftArgs(t)}
+If the command fails without JSON - ok=false, error = the error text, diff = {ok: false, offending: [], error: the error text}, left = {ok: false, found: [], removed: [], remaining: [the error text], error: the error text}.`,
+  checkOpts(`post:${t.key}:tester`, 'Tester', POST_SCHEMA, retry))
+const postPassed = (p) => !!(p && p.diff && p.diff.ok && leftPassed(p.left))
+const postCheck = async (t, since) => {
+  const { first, res } = await checkTwice(t, 'tester and leftovers (tester)', postPassed, (retry) => postCheck1(t, since, retry))
+  return res && Object.assign({}, res, { left: keepRemoved(first && first.left, res.left) })
 }
 // '' when nothing remains (removed ones are kept in st.leftovers), otherwise the reason to stop.
 const leftFail = (st, when, l) => {
@@ -416,24 +439,22 @@ The brief marks the task as security work. Read BRIEF.md, ${CFG.threatModel ? `t
 async function testChecked(t, st, n) {
   const tr = await test(t, n, st)
   if (!tr) return { fail: 'the tester returned no result' }
-  const f = diffFail('tester', await diffCheck(t, 'tester', st.head))
-  if (f) return { fail: f }
-  const lf = leftFail(st, 'tester', await leftCheck(t, 'tester'))
-  if (lf) return { fail: lf }
+  const pc = await postCheck(t, st.head)
+  const lf = leftFail(st, 'tester', pc && pc.left)
+  const f = diffFail('tester', pc && pc.diff)
+  if (f || lf) return { fail: f || lf }
   st.head = tr.head
   return { tr }
 }
-// With t.security the review is reviewer + security reviewer; done only if both are done.
+// With t.security the review is reviewer + security reviewer, run together (plugin audit P3: both only read), and one
+// git post-check of the reviewers after both, from the same HEAD; done only if both are done.
 async function reviewChecked(t, st, n, scope) {
-  const rv = await review(t, n, scope)
+  const [rv, sv] = await Promise.all([review(t, n, scope), t.security ? secReview(t, n, scope) : null])
   if (!rv) return { fail: 'the reviewer returned no result' }
-  const f = diffFail('reviewer', await diffCheck(t, 'reviewer', st.head))
+  if (t.security && !sv) return { fail: 'the security reviewer returned no result' }
+  const f = diffFail(t.security ? 'reviewer or the security reviewer' : 'reviewer', await diffCheck(t, 'reviewer', st.head))
   if (f) return { fail: f }
   if (!t.security) return { rv }
-  const sv = await secReview(t, n, scope)
-  if (!sv) return { fail: 'the security reviewer returned no result' }
-  const fs = diffFail('security reviewer', await diffCheck(t, 'reviewer', st.head))
-  if (fs) return { fail: fs }
   const bad = [rv, sv].filter((v) => v.verdict !== 'done')
   return { rv: {
     verdict: bad.length ? 'rejected' : 'done',

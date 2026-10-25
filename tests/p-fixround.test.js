@@ -41,6 +41,7 @@ async function run(script, task = T, cfg = CFG) {
     prompts.push({ role, label: opts.label, prompt });
     if (role === 'diff') return { ok: true, offending: [] };
     if (role === 'left') return { ok: true, found: [], removed: [], remaining: [] };
+    if (role === 'post') return { ok: true, diff: { ok: true, offending: [] }, left: { ok: true, found: [], removed: [], remaining: [] } };
     if (role === 'run') return q.run && q.run.length ? q.run.shift() : { done: true, rc: 0, seconds: 1, log: '/d/wait.log', tail: 'all green' };
     if (!q[role] || !q[role].length) throw new Error('extra call ' + role);
     const v = q[role].shift();

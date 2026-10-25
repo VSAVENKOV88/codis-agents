@@ -47,9 +47,10 @@ async function run(script, task = T, extra = {}) {
   const agent = async (prompt, opts) => {
     const role = opts.label.split(':')[0];
     prompts.push({ role, label: opts.label, prompt, opts });
-    full.push(role === 'diff' || role === 'left' || role === 'run' ? opts.label : role);
+    full.push(['diff', 'left', 'post', 'run'].includes(role) ? opts.label : role);
     if (role === 'diff') return { ok: true, offending: [] };
     if (role === 'left') return { ok: true, found: [], removed: [], remaining: [] };
+    if (role === 'post') return { ok: true, diff: { ok: true, offending: [] }, left: { ok: true, found: [], removed: [], remaining: [] } };
     if (role === 'run') return q.run && q.run.length ? q.run.shift() : RUN_OK;
     trace.push(role);
     if (!q[role] || !q[role].length) throw new Error('extra call ' + role + ' after ' + trace.join('>'));
@@ -64,7 +65,7 @@ async function run(script, task = T, extra = {}) {
 const pOf = (x, role, i = 0) => (x.prompts.filter((p) => p.role === role)[i] || { prompt: '' }).prompt;
 const runsOf = (x) => x.prompts.filter((p) => p.role === 'run');
 // Sentences (or lines) of the role prompts that name heavy.sh without run_in_background.
-const heavyBlocking = (ps) => ps.filter((p) => !['diff', 'left', 'run'].includes(p.role)).flatMap((p) => p.prompt
+const heavyBlocking = (ps) => ps.filter((p) => !['diff', 'left', 'post', 'run'].includes(p.role)).flatMap((p) => p.prompt
   .split(/(?<=[.:;])\s+(?=[A-Z0-9(])|\n/).filter((s) => /heavy\.sh/.test(s) && !/run_in_background/.test(s)).map((s) => `${p.label}: ${s}`));
 
 (async () => {

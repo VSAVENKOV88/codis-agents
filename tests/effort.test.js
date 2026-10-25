@@ -29,6 +29,7 @@ const ANSWER = {
   sec: { verdict: 'done', docsOnly: false, summary: '' },
   diff: { ok: true, offending: [] },
   left: { ok: true, found: [], removed: [], remaining: [] },
+  post: { ok: true, diff: { ok: true, offending: [] }, left: { ok: true, found: [], removed: [], remaining: [] } },
 };
 (async () => {
   const calls = [];

@@ -26,7 +26,8 @@ const DOCS = Object.assign({}, PROG, { changedFiles: ['docs/GAPS.md'] });
 const AN = { ready: true, cells: 10, subsystems: 1, split: [], questions: [], summary: 'a' };
 
 // script: a queue of answers per role; trace - the order of calls.
-// A tester verdict without head gets head 'T'; the post-check (diff), the leftovers check and the wait step of the full
+// A tester verdict without head gets head 'T'; the post-check (diff), the leftovers check, the combined post-check of
+// the tester (post: its diff part from the diff queue, its left part from the left queue) and the wait step of the full
 // guard run (run, green by default) are not in trace (their order is in full).
 async function run(script, task = T, extra = {}) {
   const trace = [], full = [], prompts = [], logs = [];
@@ -34,9 +35,12 @@ async function run(script, task = T, extra = {}) {
   const agent = async (prompt, opts) => {
     const role = opts.label.split(':')[0];
     prompts.push({ role, label: opts.label, prompt, opts });
-    full.push(role === 'diff' || role === 'left' || role === 'run' ? opts.label : role);
-    if (role === 'diff') return q.diff && q.diff.length ? q.diff.shift() : { ok: true, offending: [] };
-    if (role === 'left') return q.left && q.left.length ? q.left.shift() : { ok: true, found: [], removed: [], remaining: [] };
+    full.push(['diff', 'left', 'post', 'run'].includes(role) ? opts.label : role);
+    const nextDiff = () => (q.diff && q.diff.length ? q.diff.shift() : { ok: true, offending: [] });
+    const nextLeft = () => (q.left && q.left.length ? q.left.shift() : { ok: true, found: [], removed: [], remaining: [] });
+    if (role === 'diff') return nextDiff();
+    if (role === 'left') return nextLeft();
+    if (role === 'post') { const d = nextDiff(), l = nextLeft(); return d === null && l === null ? null : { ok: !!(d && d.ok && l && l.ok), diff: d, left: l }; }
     if (role === 'run') { const v = q.run && q.run.length ? q.run.shift() : { done: true, rc: 0, seconds: 1, log: '/d/wait.log', tail: 'all green' }; return v; }
     trace.push(role);
     if (!q[role] || !q[role].length) throw new Error('extra call ' + role + ' after ' + trace.join('>'));
@@ -64,7 +68,7 @@ async function run(script, task = T, extra = {}) {
   x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'environment', environment: 'full run killed at 40 %, disk 100 %', summary: 's' }] });
   ok('tester environment -> stopped with the cause, no second programmer, no review',
     x.r.status === 'stopped' && x.trace === 'pre>prog>test' && /environment/.test(x.r.why) && /disk 100 %/.test(x.r.why) && x.r.environment === 'full run killed at 40 %, disk 100 %', JSON.stringify(x.r));
-  ok('tester environment: the post-checks still ran (cleanup)', x.full === 'pre>prog>test>diff:x:tester>left:x:tester>left:x:end', x.full);
+  ok('tester environment: the post-checks still ran (cleanup)', x.full === 'pre>prog>test>post:x:tester>left:x:end', x.full);
   x = await run({ pre: [PRE], prog: [PROG, PROG], test: [{ verdict: 'green', summary: '' }, { verdict: 'environment', environment: 'docker daemon down', summary: '' }],
     review: [{ verdict: 'rejected', docsOnly: false, summary: 'r' }] });
   ok('tester environment after the review fix -> stopped with the cause, no second review',
@@ -215,7 +219,7 @@ async function run(script, task = T, extra = {}) {
   x = await run(G, bare({ analysis: '/d/diagnosis.md', spec: SPEC }));
   ok('analysis inside the task folder with a separate spec -> done', x.r.status === 'done' && x.trace === 'pre>prog>test>review' && x.r.analysis.path === '/d/diagnosis.md', JSON.stringify(x.r));
   ok('spec: every role prompt names the arc specification as context, not the analysis',
-    x.prompts.filter((p) => !['diff', 'left'].includes(p.role)).every((p) => p.prompt.includes(`Arc specification (context of the surface; it is not this task's analysis): ${SPEC}.`)), x.full);
+    x.prompts.filter((p) => !['diff', 'left', 'post'].includes(p.role)).every((p) => p.prompt.includes(`Arc specification (context of the surface; it is not this task's analysis): ${SPEC}.`)), x.full);
   ok('spec: the preconditions check it exists', x.prompts[0].prompt.includes(`the arc specification ${SPEC} exists`), x.prompts[0].prompt);
   ok('analysis: the preconditions check it is a matrix or diagnosis of this task, not an arc specification',
     /\/d\/diagnosis\.md exists, is non-empty and is a matrix of cases or a diagnosis written for this task[^;]*not a specification of the whole arc/.test(x.prompts[0].prompt), x.prompts[0].prompt);
@@ -271,7 +275,7 @@ async function run(script, task = T, extra = {}) {
   x = await run(Object.assign({}, G, { analyst: [AN] }), bare({ analystFirst: true, useCases: UCP, feature: 'feat' }));
   ok('useCases in the feature folder + analystFirst -> analyst (matrix) > prog > test > review, done', x.r.status === 'done' && x.trace === 'pre>analyst>prog>test>review' && x.r.useCases === UCP, JSON.stringify(x.r));
   ok('useCases: every role prompt names the use cases as context',
-    x.prompts.filter((p) => !['diff', 'left'].includes(p.role)).every((p) => p.prompt.includes(`Use cases of the feature (actors, flows, alternative flows, errors): ${UCP}.`)), x.full);
+    x.prompts.filter((p) => !['diff', 'left', 'post'].includes(p.role)).every((p) => p.prompt.includes(`Use cases of the feature (actors, flows, alternative flows, errors): ${UCP}.`)), x.full);
   ok('useCases: the preconditions check the file exists and has no open questions to the owner', new RegExp(`the use cases ${UCP} exist[^;]*no open questions`).test(roleP(x, 'pre')), roleP(x, 'pre'));
   ok('useCases: every cell of the analyst matrix cites its use case', /every cell cites its use case/.test(roleP(x, 'analyst')), roleP(x, 'analyst'));
   ok('useCases: the tester builds the acceptance along the flows', /acceptance along the flows of the use cases[^.]*main[^.]*alternative[^.]*errors/.test(roleP(x, 'test')), roleP(x, 'test'));
@@ -285,12 +289,13 @@ async function run(script, task = T, extra = {}) {
   // Git post-check: after every tester and reviewer, from the HEAD of the previous committing role.
   const D0 = { verdict: 'done', docsOnly: false, summary: '' };
   x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [{ verdict: 'done', docsOnly: false, summary: '' }] });
-  const dp = x.prompts.filter((p) => p.role === 'diff');
-  ok('post-check after the tester and the reviewer', x.full === 'pre>prog>test>diff:x:tester>left:x:tester>review>diff:x:reviewer>left:x:end', x.full);
+  const dp = x.prompts.filter((p) => p.role === 'post' || p.role === 'diff');
+  ok('post-check after the tester and the reviewer', x.full === 'pre>prog>test>post:x:tester>review>diff:x:reviewer>left:x:end', x.full);
   ok('tester checked from the programmer HEAD, reviewer from the tester HEAD',
     dp.length === 2 && / --since P --role tester/.test(dp[0].prompt) && / --since T --role reviewer( |\n|$)/.test(dp[1].prompt), dp.map((p) => p.prompt).join(' | '));
   ok('post-check runs the plugin script with the tester allow-list from the config',
-    dp[0].prompt.includes("node /p/scripts/role-diff-check.js --wt /w ") && dp[0].prompt.includes("--allow '-run\\.js$'") && !dp[1].prompt.includes('--allow'), dp[0].prompt);
+    dp[0].prompt.includes("node /p/scripts/role-post-check.js --wt /w ") && dp[0].prompt.includes("--allow '-run\\.js$'")
+      && dp[1].prompt.includes("node /p/scripts/role-diff-check.js --wt /w ") && !dp[1].prompt.includes('--allow'), dp[0].prompt);
 
   x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], diff: [{ ok: false, offending: ['src/a.ts'] }, { ok: false, offending: ['src/a.ts'] }] });
   ok('tester changed product code -> stop, no review', x.r.status === 'stopped' && !x.trace.includes('review') && /src\/a\.ts/.test(x.r.why), JSON.stringify(x.r));
@@ -304,9 +309,9 @@ async function run(script, task = T, extra = {}) {
 
   // Leftovers post-check (scripts/role-leftovers-check.js --fix): after every tester and at the end of the task.
   x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D0] }, Object.assign({}, T, { stack: 'k-test' }));
-  const lp = x.prompts.filter((p) => p.role === 'left');
-  ok('leftovers: runs the plugin script with --fix, the stack, the owner stack, the slots dir and the task log',
-    lp.length === 2 && lp.every((p) => p.prompt.includes('node /p/scripts/role-leftovers-check.js --wt /w ') && p.prompt.includes("--stack 'k-test'")
+  const lp = x.prompts.filter((p) => p.role === 'left' || p.role === 'post');
+  ok('leftovers: runs the plugin script with --fix, the stack, the owner stack, the slots dir and the task log (after the tester inside role-post-check.js)',
+    lp.length === 2 && lp[0].prompt.includes('node /p/scripts/role-post-check.js --wt /w ') && lp[1].prompt.includes('node /p/scripts/role-leftovers-check.js --wt /w ') && lp.every((p) => p.prompt.includes("--stack 'k-test'")
       && p.prompt.includes("--owner-stack 'own'") && p.prompt.includes("--slots-dir '/slots'") && p.prompt.includes('--fix') && p.prompt.includes("--log '/d/leftovers.md'")), lp.map((p) => p.prompt).join(' | '));
   ok('leftovers: a cheap agent like the git post-check', lp.every((p) => p.opts.agentType === 'general-purpose' && p.opts.model === 'haiku'));
   x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D0],
@@ -333,8 +338,8 @@ async function run(script, task = T, extra = {}) {
   x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D0], diff: [NOTRUN, { ok: true, offending: [] }] });
   ok('diff post-check: ok=false then ok=true on the repeat -> the chain goes on to done', x.r.status === 'done' && x.trace === 'pre>prog>test>review', JSON.stringify(x.r));
   ok('diff post-check repeat: label #retry, same command, default model',
-    x.full === 'pre>prog>test>diff:x:tester>diff:x:tester#retry>left:x:tester>review>diff:x:reviewer>left:x:end'
-      && retries(x).length === 1 && retries(x)[0].opts.model === undefined && retries(x)[0].prompt === x.prompts.find((p) => p.label === 'diff:x:tester').prompt, x.full);
+    x.full === 'pre>prog>test>post:x:tester>post:x:tester#retry>review>diff:x:reviewer>left:x:end'
+      && retries(x).length === 1 && retries(x)[0].opts.model === undefined && retries(x)[0].prompt === x.prompts.find((p) => p.label === 'post:x:tester').prompt, x.full);
   ok('diff post-check repeat is logged', x.logs.some((m) => /X: .*tester.*post-check.*repeat/i.test(m)), x.logs.join(' | '));
   x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D0], diff: [null, { ok: true, offending: [] }] });
   ok('diff post-check: no result then ok=true -> done', x.r.status === 'done', JSON.stringify(x.r));
@@ -345,8 +350,8 @@ async function run(script, task = T, extra = {}) {
   x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D0], left: [LNOTRUN, LOK] });
   ok('leftovers post-check: ok=false then ok=true on the repeat -> the chain goes on to done', x.r.status === 'done' && x.trace === 'pre>prog>test>review', JSON.stringify(x.r));
   ok('leftovers post-check repeat: label #retry, same command, default model',
-    x.full === 'pre>prog>test>diff:x:tester>left:x:tester>left:x:tester#retry>review>diff:x:reviewer>left:x:end'
-      && retries(x).length === 1 && retries(x)[0].opts.model === undefined && retries(x)[0].prompt === x.prompts.find((p) => p.label === 'left:x:tester').prompt, x.full);
+    x.full === 'pre>prog>test>post:x:tester>post:x:tester#retry>review>diff:x:reviewer>left:x:end'
+      && retries(x).length === 1 && retries(x)[0].opts.model === undefined && retries(x)[0].prompt === x.prompts.find((p) => p.label === 'post:x:tester').prompt, x.full);
   ok('leftovers post-check repeat is logged', x.logs.some((m) => /X: .*leftovers.*post-check.*repeat/i.test(m)), x.logs.join(' | '));
   x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D0], left: [LOK, null, LOK] });
   ok('leftovers at the end: no result then ok=true -> done', x.r.status === 'done' && retries(x).length === 1 && retries(x)[0].label === 'left:x:end#retry', x.full);
@@ -355,10 +360,10 @@ async function run(script, task = T, extra = {}) {
   x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D0] });
   ok('passing post-checks are not repeated', !retries(x).length, x.full);
 
-  // Security reviewer (t.security): after the reviewer, with its own post-check; done only if both are done.
+  // Security reviewer (t.security): together with the reviewer (p-review P3), one post-check after both; done only if both are done.
   const TS = Object.assign({}, T, { security: true });
   x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D], sec: [D] }, TS);
-  ok('security: review>sec, both post-checks -> done', x.r.status === 'done' && x.full === 'pre>prog>test>diff:x:tester>left:x:tester>review>diff:x:reviewer>sec>diff:x:reviewer>left:x:end', x.full);
+  ok('security: review and sec together, one post-check after both -> done', x.r.status === 'done' && x.full === 'pre>prog>test>post:x:tester>review>sec>diff:x:reviewer>left:x:end', x.full);
   ok('security reviewer reads the threat model from the config', x.prompts.some((p) => p.role === 'sec' && p.prompt.includes('/w/ACCESS.md')));
   x = await run({ pre: [PRE], prog: [PROG, PROG], test: [{ verdict: 'green', summary: '' }, { verdict: 'green', summary: '' }],
     review: [D, D], sec: [{ verdict: 'rejected', docsOnly: false, summary: 'leak' }, D] }, TS);
@@ -371,7 +376,7 @@ async function run(script, task = T, extra = {}) {
   const types = Object.fromEntries(x.prompts.map((p) => [p.role, p.opts.agentType]));
   ok('agent types: codis-agents:<role> for roles, general-purpose for pre and diff',
     types.prog === 'codis-agents:programmer' && types.test === 'codis-agents:tester' && types.review === 'codis-agents:reviewer'
-    && types.sec === 'codis-agents:security-reviewer' && types.pre === 'general-purpose' && types.diff === 'general-purpose', JSON.stringify(types));
+    && types.sec === 'codis-agents:security-reviewer' && types.pre === 'general-purpose' && types.diff === 'general-purpose' && types.post === 'general-purpose', JSON.stringify(types));
   x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D] }, T, { agentTypePrefix: '' });
   ok('agentTypePrefix "" -> every role general-purpose', x.prompts.every((p) => p.opts.agentType === 'general-purpose'));
 
@@ -389,7 +394,7 @@ async function run(script, task = T, extra = {}) {
   x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D] }, Object.assign({}, T, { stack: 'k-test' }));
   const tp = x.prompts.find((p) => p.role === 'test').prompt;
   ok('tester prompt: own stack torn down with images and volumes (docker compose -p <stack> down -v --rmi all)', tp.includes('docker compose -p k-test down -v --rmi all'), tp);
-  ok('every role prompt: the owner\'s stack images are never removed, nor other images or the build cache', x.prompts.filter((p) => !['diff', 'left'].includes(p.role)).every((p) => /[Nn]ever remove[^.]*owner's stack[^.]*other images[^.]*build cache/.test(p.prompt)));
+  ok('every role prompt: the owner\'s stack images are never removed, nor other images or the build cache', x.prompts.filter((p) => !['diff', 'left', 'post'].includes(p.role)).every((p) => /[Nn]ever remove[^.]*owner's stack[^.]*other images[^.]*build cache/.test(p.prompt)));
   // The project's shared stand: the tester checks image-diff, takes the ticket in the background, deploys, releases.
   const STANDCFG = Object.assign({}, CFG, { stand: { project: 'p-dev', ports: [3101] } });
   const xst = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D] }, T, { config: STANDCFG });
@@ -403,7 +408,7 @@ async function run(script, task = T, extra = {}) {
   const tst2 = xst2.prompts.find((p) => p.role === 'test').prompt;
   ok('tester prompt with a stand and a stack: own stack only when the stand does not fit', /Only when the stand does not fit, your own stack: docker compose -p k-test/.test(tst2), tst2);
   ok('tester prompt without a stand: no stand steps', !/stand\.sh/.test(tp));
-  ok('every role prompt with a stand names it in the stand rule', xst.prompts.filter((p) => !['diff', 'left'].includes(p.role)).every((p) => /Shared stand: acceptance in Docker goes to the project's stand p-dev/.test(p.prompt)));
+  ok('every role prompt with a stand names it in the stand rule', xst.prompts.filter((p) => !['diff', 'left', 'post'].includes(p.role)).every((p) => /Shared stand: acceptance in Docker goes to the project's stand p-dev/.test(p.prompt)));
   // One full guard run per task (owner 2026-10-20: "yes, we make both changes"): with guardSubsetCommand in the config
   // the programmer runs only the selected guards (scripts/guards-select.js), the workflow runs ONE full run on its last
   // HEAD as a wait step (scripts/wait-step.js, a cheap agent), a red run goes back to the programmer with its log, the
@@ -416,7 +421,7 @@ async function run(script, task = T, extra = {}) {
   const pOf = (x, role, i = 0) => (x.prompts.filter((p) => p.role === role)[i] || {}).prompt || '';
   x = await run(G1(), T, { config: ONE });
   ok('one run: pre > prog > the full run step > tester > review, done',
-    x.r.status === 'done' && x.full === 'pre>prog>run:x:full-1>test>diff:x:tester>left:x:tester>review>diff:x:reviewer>left:x:end', x.full);
+    x.r.status === 'done' && x.full === 'pre>prog>run:x:full-1>test>post:x:tester>review>diff:x:reviewer>left:x:end', x.full);
   const rp = runsOf(x)[0];
   ok('the full run step: a cheap agent runs wait-step.js start with guards-all.sh on the worktree, then waits in slices of at most 270 s',
     rp && rp.opts.model === 'haiku' && rp.opts.agentType === 'general-purpose' && rp.prompt.includes("node /p/scripts/wait-step.js start --id '/d/wait-full-1' --cwd '/w'")
@@ -454,15 +459,15 @@ async function run(script, task = T, extra = {}) {
 
   x = await run({ pre: [PRE], prog: [PROG, Object.assign({}, PROG, { head: 'P2' })], run: [RUN_RED, RUN_OK], test: [{ verdict: 'green', summary: '' }], review: [D] }, T, { config: ONE });
   ok('a red full run -> a programmer round with its log -> the full run again -> tester',
-    x.r.status === 'done' && x.full === 'pre>prog>run:x:full-1>prog>run:x:full-1f>test>diff:x:tester>left:x:tester>review>diff:x:reviewer>left:x:end', x.full);
+    x.r.status === 'done' && x.full === 'pre>prog>run:x:full-1>prog>run:x:full-1f>test>post:x:tester>review>diff:x:reviewer>left:x:end', x.full);
   ok('the fix round gets the exit code, the summary and the copied full log', /exited 1/.test(pOf(x, 'prog', 1)) && pOf(x, 'prog', 1).includes('/d/wait-full-1.log') && pOf(x, 'prog', 1).includes('/d/wait-full-1.guards.txt'), pOf(x, 'prog', 1));
   const nfLine = (pOf(x, 'prog', 1).match(/^The full guard run the workflow ran.*$/m) || [''])[0];
   ok('C3. the fix round after a red full run: no "selected guards" (the workflow runs the full run again)', nfLine && !/selected guards/.test(nfLine) && /mutations after the commit/.test(nfLine), nfLine);
   ok('W14. the fix round: the environment is a refused queue (77, 78), not "no slot"', !/no slot/.test(pOf(x, 'prog', 1)) && /77/.test(pOf(x, 'prog', 1)), pOf(x, 'prog', 1));
-  ok('the tester post-check starts from the HEAD of the fix', / --since P2 --role tester/.test(pOf(x, 'diff')), pOf(x, 'diff'));
+  ok('the tester post-check starts from the HEAD of the fix', / --since P2 --role tester/.test(pOf(x, 'post')), pOf(x, 'post'));
   x = await run({ pre: [PRE], prog: [PROG, PROG], run: [RUN_RED], test: [{ verdict: 'green', summary: '' }], review: [D] }, T, { config: ONE });
   ok('a red full run the programmer explains without a commit -> no second run, the tester gets the red log',
-    x.r.status === 'done' && x.full === 'pre>prog>run:x:full-1>prog>test>diff:x:tester>left:x:tester>review>diff:x:reviewer>left:x:end' && /exit 1/.test(pOf(x, 'test')), x.full);
+    x.r.status === 'done' && x.full === 'pre>prog>run:x:full-1>prog>test>post:x:tester>review>diff:x:reviewer>left:x:end' && /exit 1/.test(pOf(x, 'test')), x.full);
   x = await run({ pre: [PRE], prog: [PROG, Object.assign({}, PROG, { head: 'P2' }), Object.assign({}, PROG, { head: 'P3' })], run: [RUN_RED, RUN_RED, RUN_RED] }, T, { config: ONE });
   ok('the full run still red after two fix rounds -> stopped for the coordinator, no tester',
     x.r.status === 'stopped' && !x.trace.includes('test') && /full guard run.*red/.test(x.r.why) && runsOf(x).length === 3, JSON.stringify(x.r) + ' ' + x.full);
@@ -564,11 +569,11 @@ async function run(script, task = T, extra = {}) {
   x = await run({ pre: [PRE], prog: [PROG, PROG, PROG], test: Array(3).fill({ verdict: 'green', summary: '' }), analyst: [AN, AN],
     review: [{ verdict: 'rejected', docsOnly: false, summary: '' }, { verdict: 'rejected', docsOnly: false, summary: '' }, { verdict: 'done', docsOnly: false, summary: '' }] },
     bare({ analystFirst: true }));
-  const roles = new Set(x.prompts.filter((p) => !['diff', 'left'].includes(p.role)).map((p) => p.role));
+  const roles = new Set(x.prompts.filter((p) => !['diff', 'left', 'post'].includes(p.role)).map((p) => p.role));
   const xs = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D], sec: [D] }, TS);
   const secLack = xs.prompts.filter((p) => p.role === 'sec').flatMap((p) => ruleList.filter((r) => !p.prompt.includes(r[1])).map((r) => p.label + ':' + r[0]));
   ok('the security reviewer prompt carries every rule', xs.prompts.some((p) => p.role === 'sec') && !secLack.length, secLack.join(','));
-  const lacking = x.prompts.filter((p) => !['diff', 'left'].includes(p.role)).flatMap((p) => ruleList.filter((r) => !p.prompt.includes(r[1])).map((r) => p.label + ':' + r[0]));
+  const lacking = x.prompts.filter((p) => !['diff', 'left', 'post'].includes(p.role)).flatMap((p) => ruleList.filter((r) => !p.prompt.includes(r[1])).map((r) => p.label + ':' + r[0]));
   ok('the prompt of every role (pre, analyst, prog, test, review) carries every rule', roles.size === 5 && !lacking.length, [...roles].join(',') + ' ' + lacking.join(','));
 
   // roleModel / roleModels (owner 2026-10-22: the coordinator on one model, the role agents no higher than the one the
@@ -576,14 +581,16 @@ async function run(script, task = T, extra = {}) {
   // checks keep 'haiku' on their first attempt, and their repeat gets the model of 'wait'; without the keys no role
   // agent gets a model (it inherits the main session's, as before).
   const ROLE_LABELS = ['pre', 'analyst', 'usecases', 'prog', 'test', 'review', 'sec'];
-  const SERVICE = ['diff', 'left', 'run'];
+  const SERVICE = ['post', 'diff', 'left', 'run'];
   // Every kind of agent in one task: analyst first, a security review, the one-run step and a repeat of each check.
   const allAgents = async (cfgExtra, task) => {
     const cfg = Object.assign({}, CFG, { guardSubsetCommand: 'cd {wt}/server && npm run guards -- --all {onlyArgs}' }, cfgExtra);
     const y = await run({ pre: [PRE], analyst: [AN], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D], sec: [D],
       run: [{ done: false, rc: null, log: '/d/l', error: 'no JSON' }, { done: true, rc: 0, seconds: 1, log: '/d/l', tail: 'ok' }],
-      diff: [{ ok: false, offending: [], error: 'not run' }, { ok: true, offending: [] }],
-      left: [{ ok: false, found: [], removed: [], remaining: ['x'], error: 'not run' }, { ok: true, found: [], removed: [], remaining: [] }] },
+      // the tester's post (diff + left, then its repeat), the reviewers' diff and its repeat, the end's left and its repeat
+      diff: [{ ok: false, offending: [], error: 'not run' }, { ok: true, offending: [] }, { ok: false, offending: [], error: 'not run' }, { ok: true, offending: [] }],
+      left: [{ ok: false, found: [], removed: [], remaining: ['x'], error: 'not run' }, { ok: true, found: [], removed: [], remaining: [] },
+        { ok: false, found: [], removed: [], remaining: ['x'], error: 'not run' }, { ok: true, found: [], removed: [], remaining: [] }] },
     task || bare({ analystFirst: true, security: true }), { config: cfg });
     const uc = await run({ pre: [PRE], usecases: [{ ready: true, useCases: 1, questions: [], summary: 'u' }] },
       bare({ analystFirst: true, useCasesFirst: true }), { config: cfg });
