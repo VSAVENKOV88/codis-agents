@@ -111,6 +111,8 @@ const run = (args, extra = {}) => spawnSync(process.execPath, [SCRIPT, ...args],
   CODIS_AGENTS_CONFIG: cfg, CODIS_AGENTS_MACHINE: machine, PATH: fake + path.delimiter + process.env.PATH,
   FAKE_SERVER_HOME: server, SSH_LOG: sshLog, RSYNC_LOG: rsyncLog }, extra) });
 const out = (r) => r.stdout + r.stderr;
+// sessions/ in any case: rsync's filters have no case-insensitive match, so every letter is a class.
+const SESS = '[sS][eE][sS][sS][iI][oO][nN][sS]';
 const status = () => { const r = run(['status']); try { return JSON.parse(r.stdout.trim().split('\n').pop()); } catch { return { raw: out(r) }; } };
 
 try {
@@ -167,7 +169,7 @@ try {
   ok('rsync: the same pinned ssh in -e', /^ssh /.test(e) && e.includes('-F none') && e.includes(`-i '${key}'`) && e.includes('StrictHostKeyChecking=yes')
     && e.includes(`UserKnownHostsFile='${kh}'`) && e.includes('IdentitiesOnly=yes') && !e.includes('accept-new'), e);
   ok('C-7 rsync: links not followed, secrets and sessions excluded at rsync level too', rs[0] && !rs[0].args.some((x) => /^(-L|--copy-links|--copy-unsafe-links|-a|--archive|-r|--recursive|--delete.*)$/.test(x) || /^-[a-zA-Z]*L/.test(x))
-    && rs[0].args.includes('--exclude=.env*') && rs[0].args.includes('--exclude=sessions/'), rs[0] && rs[0].args.join(' '));
+    && ['.[eE][nN][vV]*', `/${SESS}/**`, `**/${SESS}/**`].every((x) => rs[0].args.includes('--exclude=' + x)), rs[0] && rs[0].args.join(' '));
   ok('C-6 no sessions/ at any depth on the server', !files(path.join(server)).some((f) => f.split('/').includes('sessions')));
   ok('C-5 no .env* on the server', !files(path.join(server)).some((f) => /^\.env/i.test(path.basename(f))));
   ok('C-7 neither the symlinks nor what they point to on the server', !files(server).some((f) => /linked|file-link|\.deps|secret\.txt/.test(f)));
@@ -206,6 +208,54 @@ try {
   r = run(['sync']);
   ok('C-5 the check ignores case (.ENV)', r.status === 65 && r.stderr.includes('app/data/.ENV') && !fs.existsSync(rsyncLog), out(r));
   fs.rmSync(path.join(main, 'app/data/.ENV'));
+
+  // ---- C-6 in another case: on a case-insensitive disk (APFS of a Mac) Sessions/, SESSIONS/ and \u017Fessions/ (long s,
+  // U+017F, folds to s) open the same directory as sessions/ - each is a sessions/ folder and never leaves this machine.
+  // Distinct parents: on such a disk two of these names in one directory would be one directory.
+  const odd = ['plug/SESSIONS/s3/.preview-secret', 'plug/data/Sessions/s4/state.json', 'app/data/sub/\u017Fessions/s5/state.json'];
+  for (const f of odd) put(f, 'session in another case');
+  put('.gitignore', '.env*\nnode_modules\ndist\n.deps\ndata/\nsessions/\nSESSIONS/\n.DS_Store\nout.log\n');
+  r = run(['manifest']);
+  const mo = JSON.parse(read(path.join(shared, 'corpus-manifest.json')) || '{}');
+  const whyO = Object.fromEntries((mo.excluded || []).map((e) => [e.path, e.why]));
+  ok('C-6 Sessions/, SESSIONS/ (top-level entry of git) and \u017Fessions/ left out of the manifest as sessions',
+    r.status === 0 && !(mo.files || []).some((f) => /essions/i.test(f.path)) && whyO['plug/SESSIONS'] === 'sessions'
+    && whyO['plug/data/Sessions'] === 'sessions' && whyO['app/data/sub/\u017Fessions'] === 'sessions', out(r) + JSON.stringify(whyO));
+  reset();
+  r = run(['sync']);
+  ok('C-6 none of them reaches the server', r.status === 0 && !files(server).some((f) => /essions/i.test(f)), out(r) + files(server).join(' '));
+  for (const f of ['plug/SESSIONS', 'plug/data/Sessions', 'app/data/sub/\u017Fessions']) fs.rmSync(path.join(main, f), { recursive: true });
+  put('.gitignore', '.env*\nnode_modules\ndist\n.deps\ndata/\nsessions/\n.DS_Store\nout.log\n');
+  const CS = require(SCRIPT);
+  const globs0 = { skip: [], link: [] };
+  ok('C-6 excludedWhy folds case: Sessions, SESSIONS, \u017Fessions at the top and nested',
+    ['Sessions', 'SESSIONS', '\u017Fessions', 'react-render-server/Sessions', 'a/b/SeSsIoNs', 'a/\u017Fessions'].every((p) => CS.excludedWhy(p, true, globs0, false) === 'sessions')
+    && CS.excludedWhy('a/sessionsX', true, globs0, false) === null && CS.excludedWhy('a/my-sessions', true, globs0, false) === null);
+  const gated = (p) => { try { CS.gate({ files: [{ path: p }] }); return false; } catch (e) { return e.code === 65; } };
+  ok('C-6 gate refuses a sessions/ folder in any case before transfer (top level and nested)',
+    ['Sessions/a/.preview-secret', 'react-render-server/Sessions/a/.preview-secret', 'x/builds.nosync/SESSIONS/abc/state.json', 'x/\u017Fessions/a.json'].every(gated)
+    && !gated('x/sessionsX/a.json') && !gated('x/data/a.json'));
+  // The second fence behind gate(): the filters handed to rsync, run by the real rsync of this machine on a local list.
+  const rsyncBin = spawnSync('rsync', ['--version'], { encoding: 'utf8' });
+  if (rsyncBin.status === 0) {
+    const ls = path.join(dir, 'fence-src'), ld = path.join(dir, 'fence-dst'), lf = path.join(dir, 'fence-list');
+    const fl = ['ok.txt', 'Sessions/a/s.json', 'x/SESSIONS/b.json', 'x/y/sessions/c.json', 'sessions/d.json', 'x/.ENV', 'x/.env.local'];
+    // sessions/ at the top and Sessions/ at the top are one folder on a case-insensitive disk: the top one sits in its own source.
+    const src2 = path.join(ls, 'top');
+    for (const f of fl) {
+      const base = f === 'sessions/d.json' ? src2 : path.join(ls, 'main');
+      fs.mkdirSync(path.dirname(path.join(base, f)), { recursive: true }); fs.writeFileSync(path.join(base, f), f);
+    }
+    const fence = (from, list) => {
+      fs.rmSync(ld, { recursive: true, force: true }); fs.mkdirSync(ld);
+      fs.writeFileSync(lf, list.map((p) => p + '\0').join(''));
+      const x = spawnSync('rsync', [`--files-from=${lf}`, '--from0', '--times', ...(CS.RSYNC_FILTERS || []), from + '/', ld + '/'], { encoding: 'utf8' });
+      return { status: x.status, got: files(ld) };
+    };
+    const f1 = fence(path.join(ls, 'main'), fl.filter((f) => f !== 'sessions/d.json')), f2 = fence(src2, ['sessions/d.json']);
+    ok('C-6, C-5 the rsync filters drop sessions/ in any case (top and nested) and .env* in any case; the rest goes',
+      JSON.stringify(f1.got) === JSON.stringify(['ok.txt']) && f2.got.length === 0, JSON.stringify([f1, f2]));
+  }
 
   // ---- C-8: an empty source never empties a full donor; C-9: repoDir unreachable
   const empty = path.join(dir, 'empty');
@@ -298,6 +348,14 @@ try {
   ok('remote: key and knownHosts absolute or ~', /remote\.key/.test(check(Object.assign({}, remote, { key: 'id_rsa' }))));
   ok('remote: root is not the home or / itself', /remote\.root/.test(check(Object.assign({}, remote, { root: '~' }))) && /remote\.root/.test(check(Object.assign({}, remote, { root: '/' })))
     && /remote\.root/.test(check(Object.assign({}, remote, { root: '~/a/../..' }))));
+  // S-2: every field that reaches the runner's shell or ssh's option parsing is refused on its own condition.
+  ok('remote: root of shell characters refused (; space $( ) `)', ['/a;b', '~/a b', '~/$(id)', '~/a`id`', '/a|b', "/a'b"].every((v) => /remote\.root/.test(check(Object.assign({}, remote, { root: v })))));
+  ok('remote: a user that looks like an option is refused', /remote\.user/.test(check(Object.assign({}, remote, { user: '-oProxyCommand=x' }))));
+  ok('remote: a quote in key or knownHosts is refused', /remote\.key/.test(check(Object.assign({}, remote, { key: "/a'b" })))
+    && /remote\.knownHosts/.test(check(Object.assign({}, remote, { knownHosts: "~/k'h" }))));
+  // S-3: ~ only as a leading ~/ (rsync's destination would read ~root as another user's home).
+  ok('remote: ~ inside root is refused', ['~/~root/x', '/a/~b', '~root/x', '~/a~'].every((v) => /remote\.root/.test(check(Object.assign({}, remote, { root: v })))));
+  ok('remote: plain roots still accepted', ['~/codis-runs', '/srv/codis-runs', '~/a.b/c_d-e'].every((v) => check(Object.assign({}, remote, { root: v })) === ''));
   ok('remote: unknown key named', /remote\.port: unknown key/.test(check(Object.assign({}, remote, { port: 22 }))));
 } finally {
   fs.rmSync(dir, { recursive: true, force: true });
