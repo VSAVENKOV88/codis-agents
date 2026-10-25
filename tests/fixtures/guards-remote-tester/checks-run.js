@@ -19,6 +19,9 @@
 //       refused (T-8), the same content with another mode is (T-9), an untracked donor file is corpus data (T-10).
 //   T-11 a .env* of the donor copy is refused before the dependency install (project code), not only before prepare.
 //   T-12 C1 control characters (U+0080..U+009F: CSI, NEL, DCS) of the runner never reach this machine's output or log.
+//   T-13 the ssh of git push fails with escapes in its stderr: 69, the reason kept, no control characters here, no run.
+//   T-14 a REMOTE-RESULT that is not JSON, with escapes: 69 with "environment:" in the log, no control characters here.
+//   T-15 a result object whose key carries C1 (the env-check object goes into the error as JSON): no C1 here.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -61,6 +64,11 @@ try {
 const fs = require('fs'); const { spawnSync } = require('child_process');
 const a = process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(sshLog)}, JSON.stringify(a) + '\\n');
+// FAKE_PUSH_SSH_STDERR - the ssh of git push (its receive-pack) fails with this stderr; FAKE_SSH_RESULT - an op of the
+// runner (node -) answers with this stdout and exit 0: a hostile runner (T-13..T-15).
+const isPush = a.some((x) => /git-receive-pack/.test(x));
+if (isPush && process.env.FAKE_PUSH_SSH_STDERR) { process.stderr.write(process.env.FAKE_PUSH_SSH_STDERR + '\\n'); process.exit(255); }
+if (!isPush && process.env.FAKE_SSH_RESULT) { try { fs.readFileSync(0); } catch {} process.stdout.write(process.env.FAKE_SSH_RESULT + '\\n'); process.exit(0); }
 const withArg = new Set(['-F', '-i', '-o', '-p', '-l', '-E', '-b', '-c', '-D', '-e', '-I', '-J', '-L', '-m', '-O', '-Q', '-R', '-S', '-W', '-w']);
 let i = 0; while (i < a.length && a[i].startsWith('-')) i += withArg.has(a[i]) ? 2 : 1;
 const cmd = a.slice(i + 1).join(' ');
@@ -207,6 +215,40 @@ process.exit(r.status === null ? 255 : r.status);
     const o12 = x.stdout + x.stderr + out('aw');
     ok('T-12: C1 control characters of the runner never reach the output or the log here; the text and the tab stay',
       x.status === 0 && !/[\u0080-\u009f]/.test(o12) && /csi 31mred0m nel {2}dcs q\tend/.test(out('aw')), JSON.stringify(out('aw').slice(0, 400)));
+
+    // ---- T-13..T-15 (round after the analyst of the second rejection, D1-D6): every text of the runner that reaches an
+    // error of this machine, not only the receiver's hooks of D1-D2 (README: what the runner sends back is shown here
+    // without control characters) ----
+    const CTRL = /[\x00-\x08\x0b-\x1f\x7f-\x9f]/;
+    const gaE = (extra, ...a) => spawnSync('zsh', [path.join(ROOT, 'scripts', 'guards-all.sh'), ...a], { encoding: 'utf8', env: Object.assign({}, env, extra), timeout: 180000 });
+    // T-13: the ssh client of git push itself fails with escapes in its stderr (the runner's banner or sshd text), the
+    // other half of the push stderr next to the hooks of D1: a commit the runner does not have yet.
+    fs.writeFileSync(path.join(main, 'fresh.txt'), 'fresh\n');
+    git(main, 'checkout', '-q', '-b', 'fresh'); git(main, 'add', 'fresh.txt'); git(main, 'commit', '-q', '-m', 'fresh'); git(main, 'checkout', '-q', 'trunk');
+    git(main, 'worktree', 'add', '-q', '--detach', path.join(wts, 'fw'), 'fresh');
+    const fsha = git(path.join(wts, 'fw'), 'rev-parse', 'HEAD').stdout.trim();
+    reset('TOTAL: 1 green\n');
+    x = gaE({ FAKE_PUSH_SSH_STDERR: 'banner-text \u001b]0;t\u0007 \u001b[2J x \r back \u009bc1' }, '--force', 'fw');
+    const o13 = x.stdout + x.stderr;
+    ok('T-13: the ssh of the push fails with escapes - exit 69, the reason shown, no control characters here or in the log, no run',
+      x.status === 69 && o13.includes(`git push of ${fsha.slice(0, 12)} to the runner was refused`) && o13.includes('banner-text') && !CTRL.test(o13) && !CTRL.test(out('fw'))
+        && meta('fw').rc === 69 && !fs.existsSync(path.join(T, 'full.count')), JSON.stringify(o13) + ' | ' + JSON.stringify(out('fw')));
+    // T-14: the runner answers an op with a REMOTE-RESULT line that is not JSON and carries escapes: an environment
+    // error of the runner (69, the log starting "environment:"), and its bytes never reach a terminal here (JSON.parse
+    // quotes the input in its message raw).
+    const VER = JSON.parse(read(path.join(ROOT, 'package.json'))).version;
+    reset('TOTAL: 1 green\n');
+    x = gaE({ FAKE_SSH_RESULT: 'REMOTE-RESULT \u001b]0;pwn\u0007\u001b[2J{' }, '--force', 'aw');
+    const o14 = x.stdout + x.stderr;
+    ok('T-14: a REMOTE-RESULT that is not JSON, with escapes - exit 69, the log starts "environment:", no control characters here or in the log',
+      x.status === 69 && /^environment: /.test(out('aw')) && !CTRL.test(o14) && !CTRL.test(out('aw')), `${x.status} ${JSON.stringify(o14.slice(-600))} | ${JSON.stringify(out('aw').slice(0, 300))}`);
+    // T-15: a result whose object key carries C1 (U+009B is CSI to a terminal): deep() cleans values; the env-check
+    // object goes into the error as JSON, and JSON.stringify leaves U+0080..U+009F as they are.
+    reset('TOTAL: 1 green\n');
+    x = gaE({ FAKE_SSH_RESULT: 'REMOTE-RESULT ' + JSON.stringify({ version: VER, plugin: 'p', node: 'v', cpus: 1, envCheck: { ok: false, 'key\u009b2J\u0085nel': 1 } }) }, '--force', 'aw');
+    const o15 = x.stdout + x.stderr;
+    ok('T-15: an env-check result with C1 in a key - exit 69, the env-check named, no control characters here or in the log',
+      x.status === 69 && o15.includes("the runner's env-check failed") && !CTRL.test(o15) && !CTRL.test(out('aw')), `${x.status} ${JSON.stringify(o15.slice(-400))} | ${JSON.stringify(out('aw').slice(0, 300))}`);
 
     // ---- T-5: --local keeps the run here even with the remote key ----
     reset('TOTAL: 1 green\n');
