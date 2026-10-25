@@ -350,7 +350,8 @@ try {
     && /remote\.root/.test(check(Object.assign({}, remote, { root: '~/a/../..' }))));
   // S-2: every field that reaches the runner's shell or ssh's option parsing is refused on its own condition.
   ok('remote: root of shell characters refused (; space $( ) `)', ['/a;b', '~/a b', '~/$(id)', '~/a`id`', '/a|b', "/a'b"].every((v) => /remote\.root/.test(check(Object.assign({}, remote, { root: v })))));
-  ok('remote: a user that looks like an option is refused', /remote\.user/.test(check(Object.assign({}, remote, { user: '-oProxyCommand=x' }))));
+  // -v and -q are of the user's own characters: only the "not starting with -" condition refuses them.
+  ok('remote: a user that looks like an option is refused', ['-oProxyCommand=x', '-v', '-q.x'].every((v) => /remote\.user/.test(check(Object.assign({}, remote, { user: v })))));
   ok('remote: a quote in key or knownHosts is refused', /remote\.key/.test(check(Object.assign({}, remote, { key: "/a'b" })))
     && /remote\.knownHosts/.test(check(Object.assign({}, remote, { knownHosts: "~/k'h" }))));
   // S-3: ~ only as a leading ~/ (rsync's destination would read ~root as another user's home).
