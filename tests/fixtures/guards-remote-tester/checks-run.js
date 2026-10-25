@@ -15,6 +15,10 @@
 //   T-5 --local with the remote key runs here: no ssh, a local meta (no env).
 //   T-6 a job that writes rc and exits between the poll's read of rc and its process check is done, not vanished.
 //   T-7 the other states of a poll around that fix: live with no rc is running, rc with a live job is done, neither is vanished.
+//   T-8..T-10 the committed-tree check after the donor copy: a tracked path with the committed content and mode is not
+//       refused (T-8), the same content with another mode is (T-9), an untracked donor file is corpus data (T-10).
+//   T-11 a .env* of the donor copy is refused before the dependency install (project code), not only before prepare.
+//   T-12 C1 control characters (U+0080..U+009F: CSI, NEL, DCS) of the runner never reach this machine's output or log.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -158,6 +162,51 @@ process.exit(r.status === null ? 255 : r.status);
     ok('T-4: .ENV.local in the donor copy - exit 69, refused before any guard, the file named',
       x.status === 69 && /^environment: /.test(out('ew')) && out('ew').includes('.ENV.local') && !fs.existsSync(path.join(T, 'full.count')), `${x.status}\n${out('ew')}`);
     donorWith();
+
+    // ---- T-8..T-12 (round after review): the check of the committed tree after the donor copy, the .env* check
+    // before the dependency install, control characters outside C0 ----
+    const ranOk = (n) => meta(n).rc === 0 && /^ran on runner /.test(out(n));
+    // T-8: a donor path the commit tracks, with the committed content and mode - the tree is still HEAD: not refused.
+    donorWith({ 'pkg/package.json': '{"name":"pkg"}\n' });
+    fs.chmodSync(path.join(R, 'corpus', 'pkg', 'package.json'), 0o644);
+    reset('TOTAL: 1 green\n');
+    x = ga('--force', 'aw');
+    ok('T-8: the donor holds a tracked path with the committed content and mode - no refusal, the run goes (exit 0)', x.status === 0 && ranOk('aw') && lines(path.join(T, 'full.count')).length === 1, `${x.status}\n${out('aw')}`);
+    // T-9: the same content, another mode (cp -a keeps it) - the runner would test a tree that is not HEAD: refused.
+    donorWith({ 'pkg/package.json': '{"name":"pkg"}\n' });
+    fs.chmodSync(path.join(R, 'corpus', 'pkg', 'package.json'), 0o755);
+    reset('TOTAL: 1 green\n');
+    x = ga('--force', 'aw');
+    ok('T-9: a tracked path of the donor with only another mode - exit 69, the path named, no guard ran',
+      x.status === 69 && /^environment: /.test(out('aw')) && out('aw').split('\n')[0].includes('pkg/package.json') && !fs.existsSync(path.join(T, 'full.count')), `${x.status}\n${out('aw')}`);
+    // T-10: a donor path the commit neither tracks nor ignores (an untracked file, not a committed one) is corpus data,
+    // not a change of HEAD: the run goes.
+    donorWith({ 'extra/notes.txt': 'not ignored, not tracked\n' });
+    reset('TOTAL: 1 green\n');
+    x = ga('--force', 'aw');
+    ok('T-10: an untracked, not ignored donor file - no refusal, the run goes (exit 0)', x.status === 0 && ranOk('aw'), `${x.status}\n${out('aw')}`);
+    // T-11: a .env* of the donor is refused before the dependency install (the install runs the project's code);
+    // the cache is emptied first, so the install would run for this hash.
+    donorWith({ 'pkg/data/.env': 'SECRET=1\n' });
+    fs.rmSync(path.join(R, 'deps'), { recursive: true, force: true });
+    const cfg0 = read(cfgFile), c11 = JSON.parse(cfg0);
+    c11.remoteRun.deps[0].install = `echo x >> ${T}/deps.count; ` + c11.remoteRun.deps[0].install;
+    fs.writeFileSync(cfgFile, JSON.stringify(c11));
+    fs.rmSync(path.join(T, 'deps.count'), { force: true });
+    reset('TOTAL: 1 green\n');
+    x = ga('--force', 'ew');
+    ok('T-11: a .env of the donor copy - exit 69 before the dependency install and any guard, the file named',
+      x.status === 69 && /^environment: /.test(out('ew')) && out('ew').includes('pkg/data/.env') && !fs.existsSync(path.join(T, 'deps.count')) && !fs.existsSync(path.join(T, 'full.count')),
+      `${x.status} deps:${fs.existsSync(path.join(T, 'deps.count'))}\n${out('ew')}`);
+    fs.writeFileSync(cfgFile, cfg0);
+    donorWith();
+    // T-12: 8-bit control characters (C1: U+009B is CSI to a terminal, U+0085 NEL, U+0090 DCS) of the runner's log never
+    // reach this machine's output or log; the text around them, tab and newline stay.
+    reset('Guards to run: 1\ncsi \u009b31mred\u009b0m nel \u0085 dcs \u0090q\u009c\tend\nTOTAL: 1 green\n');
+    x = ga('--force', 'aw');
+    const o12 = x.stdout + x.stderr + out('aw');
+    ok('T-12: C1 control characters of the runner never reach the output or the log here; the text and the tab stay',
+      x.status === 0 && !/[\u0080-\u009f]/.test(o12) && /csi 31mred0m nel {2}dcs q\tend/.test(out('aw')), JSON.stringify(out('aw').slice(0, 400)));
 
     // ---- T-5: --local keeps the run here even with the remote key ----
     reset('TOTAL: 1 green\n');
