@@ -6,6 +6,7 @@
 // outside; T-5 (C-10) copy <name> over an existing copy equals the donor.
 const path = require('path');
 const { spawnSync } = require('child_process');
+require('./lib'); // the fixture and its children never see the real machine file (machine.test.js H1)
 
 const r = spawnSync(process.execPath, [path.join(__dirname, 'fixtures', 'corpus-sync-rsync', 'checks-run.js')], { encoding: 'utf8' });
 process.stdout.write(r.stdout || '');
