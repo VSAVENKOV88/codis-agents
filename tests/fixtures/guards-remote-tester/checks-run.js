@@ -13,6 +13,7 @@
 //   T-4 a .env* in another case (.ENV.local) inside the donor copy is refused before any guard runs (69); a .env* the
 //       commit itself tracks is not refused.
 //   T-5 --local with the remote key runs here: no ssh, a local meta (no env).
+//   T-6 a job that writes rc and exits between the poll's read of rc and its process check is done, not vanished.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -162,6 +163,34 @@ process.exit(r.status === null ? 255 : r.status);
     x = ga('--force', '--local', 'aw');
     ok('T-5: --local with the remote key - exit 0, the guard command ran here, no ssh', x.status === 0 && lines(path.join(T, 'full.count'))[0] === aw && !fs.existsSync(sshLog), `${x.status} ssh:${fs.existsSync(sshLog)} ${x.stdout}${x.stderr}`);
     ok('T-5: the meta of that run is local (no env) and the log has no runner header', meta('aw').env === undefined && !/^ran on runner/.test(out('aw')), JSON.stringify(meta('aw')));
+  }
+
+  // ---- T-6: a job that writes its rc and exits between the poll's read of rc and its check of the process is done,
+  // not vanished (seen as a flaky T-4: "the run ... vanished on the runner" for a run that had refused and written 69).
+  // Deterministic: the first read of rc misses and the "job" writes it right then; its pid is already dead.
+  {
+    const H = require(path.join(ROOT, 'scripts', 'guards-remote-host.js'));
+    const R6 = path.join(T, 'r6');
+    const L = H.layout({ root: R6 });
+    const dir6 = path.join(L.runs, 'pw');
+    fs.mkdirSync(dir6, { recursive: true });
+    const dead = spawnSync(process.execPath, ['-e', '0']).pid;
+    fs.writeFileSync(path.join(dir6, 'run.json'), JSON.stringify({ id: 'pw@1', name: 'pw', sha: 'a'.repeat(40), pid: dead, pstart: 'gone' }));
+    fs.writeFileSync(path.join(dir6, 'out.txt'), 'phase: full run\n');
+    const rcFile = path.join(dir6, 'rc');
+    const orig = fs.readFileSync;
+    let raced = false;
+    fs.readFileSync = function (f, ...rest) {
+      if (!raced && String(f) === rcFile) {
+        raced = true;
+        fs.writeFileSync(rcFile, JSON.stringify({ rc: 0, at: new Date().toISOString() }));
+        const e = new Error(`ENOENT: no such file or directory, open '${rcFile}'`); e.code = 'ENOENT'; throw e;
+      }
+      return orig.call(fs, f, ...rest);
+    };
+    let p6;
+    try { p6 = H.OPS.poll(L, { name: 'pw', id: 'pw@1', offset: 0 }); } finally { fs.readFileSync = orig; }
+    ok('T-6: the rc written just after the poll read it and the job gone - state done with its rc, not vanished', raced && p6 && p6.state === 'done' && p6.rc === 0, JSON.stringify(p6));
   }
 } catch (e) {
   ok('no exception', false, e && e.stack);
