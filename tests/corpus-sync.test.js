@@ -135,7 +135,8 @@ try {
   ok('no remote key: no ssh and no rsync', !fs.existsSync(sshLog) && !fs.existsSync(rsyncLog));
 
   // ---- C-1, C-2: the manifest; the main checkout is only read
-  const before = snapshot(main), gitBefore = g('status', '--porcelain', '--ignored').stdout;
+  // git status of the test itself may refresh the index: it runs before the snapshot, and after the snapshot below.
+  const gitBefore = g('status', '--porcelain', '--ignored').stdout, before = snapshot(main);
   r = run(['manifest']);
   const mf = JSON.parse(read(path.join(shared, 'corpus-manifest.json')) || '{}');
   const paths = (mf.files || []).map((f) => f.path).sort();
@@ -153,8 +154,8 @@ try {
   ok('C-4 first sync: done, reported with the manifest id', r.status === 0 && r.stdout.includes('corpus synced ' + mf.id), out(r));
   ok('C-2 sync and manifest leave the main checkout as it was (files, mtimes, git status)', snapshot(main) === before && g('status', '--porcelain', '--ignored').stdout === gitBefore);
   ok('C-4 donor = the manifest', JSON.stringify(files(donor)) === JSON.stringify(corpus), files(donor).join(' '));
-  ok('C-4 donor content and mtime as in the source', read(path.join(donor, 'app/data/a.json')) === '{"a":1}'
-    && fs.statSync(path.join(donor, 'app/data/a.json')).mtimeMs === fs.statSync(path.join(main, 'app/data/a.json')).mtimeMs);
+  ok('C-4 donor content and mtime (to the second, as rsync -t keeps it) as in the source', read(path.join(donor, 'app/data/a.json')) === '{"a":1}'
+    && Math.floor(fs.statSync(path.join(donor, 'app/data/a.json')).mtimeMs / 1000) === Math.floor(fs.statSync(path.join(main, 'app/data/a.json')).mtimeMs / 1000));
   const rs = lines(rsyncLog), ss = lines(sshLog);
   ok('C-4 one rsync with the manifest as its file list', rs.length === 1 && JSON.stringify([...rs[0].list].sort()) === JSON.stringify(corpus), JSON.stringify(rs.map((x) => x.list)));
   const pinned = (args) => args.includes('-F') && args[args.indexOf('-F') + 1] === 'none' && args.includes('-i') && args[args.indexOf('-i') + 1] === key
