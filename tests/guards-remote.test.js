@@ -139,6 +139,9 @@ const env = Object.assign({ PATH: process.env.PATH, HOME: ${JSON.stringify(S)} }
 const r = spawnSync('sh', ['-c', cmd], { stdio: 'inherit', env, cwd: ${JSON.stringify(S)} });
 process.exit(r.status === null ? 255 : r.status);
 `, { mode: 0o755 });
+    // git: the real one; the arguments of every push are logged (owner decision 2: no force, no tags).
+    const realGit = spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
+    fs.writeFileSync(path.join(bin, 'git'), `#!/bin/sh\nfor a in "$@"; do [ "$a" = push ] && { printf '%s\\n' "$*" >> ${JSON.stringify(path.join(T, 'push.log'))}; break; }; done\nexec ${JSON.stringify(realGit)} "$@"\n`, { mode: 0o755 });
     // The project: a runner that logs its arguments and the worktree it runs in, prints full.log and exits full.rc
     // (after full.sleep seconds); one.sh - a single rerun (red when listed in red.txt); local.sh - the subset runner
     // of this machine.
@@ -149,6 +152,8 @@ process.exit(r.status === null ? 255 : r.status);
     put('pkg/package.json', '{"name":"pkg"}\n'); put('pkg/package-lock.json', '{"lockfileVersion":3}\n');
     put('tool/package.json', '{"name":"tool"}\n'); put('tool/package-lock.json', '{"lockfileVersion":3,"t":1}\n');
     put('.gitignore', 'pkg/data/\npkg/node_modules\npkg/.deps\n');
+    // a tracked file whose path a donor may also hold (ignored in another checkout, tracked in this commit)
+    put('fix/a.txt', 'COMMIT\n');
     git(main, 'init', '-q', '-b', 'trunk'); git(main, 'add', '.'); git(main, 'commit', '-q', '-m', 'project');
     git(main, 'config', 'core.hooksPath', path.join(ROOT, 'scripts', 'git-hooks'));
     for (const n of ['xw', 'yw']) git(main, 'worktree', 'add', '-q', '--detach', path.join(wts, n));
@@ -258,6 +263,10 @@ process.exit(r.status === null ? 255 : r.status);
     ok('B2a-6: every ssh call goes to runner@example.org', calls.every((a) => a.includes('runner@example.org')));
     ok('B2a-8: the HEAD went by git push over that ssh (receive-pack), into refs/runs/<name>/<sha> of <root>/repo.git, with the plugin\'s pre-push hook on',
       calls.some((a) => a.join(' ').includes('git-receive-pack')) && spawnSync('git', ['--git-dir', path.join(R, 'repo.git'), 'rev-parse', `refs/runs/xw/${sha}`], { encoding: 'utf8' }).stdout.trim() === sha);
+    const pushes = (read(path.join(T, 'push.log')) || '').split('\n').filter(Boolean).map((l) => l.split(' '));
+    ok('B2a-8: one push, --no-follow-tags, no force, mirror, tags or all; the refspec is exactly <sha>:refs/runs/xw/<sha> (no +)',
+      pushes.length === 1 && pushes[0].includes('--no-follow-tags') && !pushes[0].some((a) => /^(-f|--force.*|--mirror|--tags|--all|--follow-tags|--delete|-d)$/.test(a))
+        && pushes[0][pushes[0].length - 1] === `${sha}:refs/runs/xw/${sha}`, JSON.stringify(pushes));
     ok('B2a-8: no branch or tag was created in the runner\'s repository', spawnSync('git', ['--git-dir', path.join(R, 'repo.git'), 'for-each-ref', '--format=%(refname)', 'refs/heads', 'refs/tags'], { encoding: 'utf8' }).stdout.trim() === '');
     const swt = path.join(R, 'wt', 'xw');
     ok('B2a-10: <root>/wt/xw is a linked worktree of repo.git on that SHA', head(swt) === sha && fs.realpathSync(path.resolve(swt, git(swt, 'rev-parse', '--git-common-dir').stdout.trim())) === fs.realpathSync(path.join(R, 'repo.git')));
@@ -346,6 +355,29 @@ process.exit(r.status === null ? 255 : r.status);
         setCfg({ prepare: ['touch pkg/.env.local'] }); set(0, [], false);
         z = ga('--force', 'xw');
         ok('B2a-15: a .env* appears in the runner\'s worktree - exit 69 before any guard, the file named', z.status === 69 && /^environment: .*\.env/.test(out('xw')) && /pkg\/\.env\.local/.test(out('xw')) && count('full.count') === 0, `${z.status} ${out('xw')}`);
+        // R2: the donor holds a path the commit tracks (ignored in the checkout the donor came from) - its copy would
+        // replace the committed file and the runner would test a tree that is not HEAD: exit 69, the path named, before
+        // the prepare commands and any guard; the result is not reused.
+        const donorWith = (files) => { cr('begin', { id: 'r2' }); fs.rmSync(path.join(R, 'corpus', 'fix'), { recursive: true, force: true });
+          for (const [f, c] of Object.entries(files)) { fs.mkdirSync(path.dirname(path.join(R, 'corpus', f)), { recursive: true }); fs.writeFileSync(path.join(R, 'corpus', f), c); }
+          cr('finish', { expectId: cr('scan').id }); };
+        donorWith({ 'fix/a.txt': 'DONOR\n' });
+        setCfg(); set(0, [], false);
+        z = ga('--force', 'xw');
+        ok('R2-1: the donor copy changes a committed file - exit 69, the log starts "environment:" and names fix/a.txt, no prepare and no guard ran',
+          z.status === 69 && /^environment: .*commit/.test(out('xw')) && /fix\/a\.txt/.test(out('xw').split('\n')[0]) && count('full.count') === 0 && count('prepare.count') === 0, `${z.status} ${out('xw')}`);
+        ok('R2-1: the refused run is remembered as environment (rc 69), never reused', meta('xw').rc === 69);
+        // R2: a .env* in the donor copy is refused before the prepare commands (project code) run.
+        donorWith({ 'fix/.env.prod': 'S=1\n' });
+        set(0, [], false);
+        z = ga('--force', 'xw');
+        ok('R2-3: a .env* from the donor copy - exit 69 before the prepare commands', z.status === 69 && /fix\/\.env\.prod/.test(out('xw')) && count('prepare.count') === 0 && count('full.count') === 0, `${z.status} ${out('xw')}`);
+        donorWith({});
+        // R2: control characters of the runner (terminal escapes) never reach this machine's output or the log.
+        setCfg({ prepare: ["printf 'esc \\033[31mred\\033[0m bell \\007 cr \\015 end\\n'"] }); set(0, [], false);
+        z = ga('--force', 'xw');
+        const zo = z.stdout + z.stderr;
+        ok('R2-4: the runner\'s output is shown without control characters (ESC, BEL, CR), the text stays', z.status === 0 && /esc \[31mred\[0m bell {2}cr {2}end/.test(zo) && !/[\x00-\x08\x0b-\x1f\x7f-\x9f]/.test(zo) && !/[\x00-\x08\x0b-\x1f\x7f-\x9f]/.test(out('xw')), JSON.stringify(zo.slice(-600)));
         setCfg(); set(0, [], false, 5);
         const v = gaBg('--force', 'xw');
         const vDone = collect(v);
