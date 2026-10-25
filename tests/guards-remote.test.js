@@ -145,7 +145,7 @@ process.exit(r.status === null ? 255 : r.status);
     const put = (f, s, mode) => { fs.mkdirSync(path.dirname(path.join(main, f)), { recursive: true }); fs.writeFileSync(path.join(main, f), s); if (mode) fs.chmodSync(path.join(main, f), mode); };
     put('full.sh', `#!/bin/sh\necho "$PWD $*" >> "${T}/full.count"\n[ -s "${T}/full.sleep" ] && sleep "$(cat "${T}/full.sleep")"\ncat "${T}/full.log"\nexit $(cat "${T}/full.rc")\n`, 0o755);
     put('one.sh', `#!/bin/sh\necho "$PWD $1" >> "${T}/one.count"\ngrep -qxF -- "$1" "${T}/red.txt" && exit 1\nexit 0\n`, 0o755);
-    put('local.sh', `#!/bin/sh\necho "$PWD $*" >> "${T}/local.count"\necho "local runner: $*"\nexit $(cat "${T}/local.rc")\n`, 0o755);
+    put('local.sh', `#!/bin/sh\necho "$PWD $*" >> "${T}/local.count"\necho "local runner: $*"\n[ -s "${T}/local.log" ] && cat "${T}/local.log"\nexit $(cat "${T}/local.rc")\n`, 0o755);
     put('pkg/package.json', '{"name":"pkg"}\n'); put('pkg/package-lock.json', '{"lockfileVersion":3}\n');
     put('tool/package.json', '{"name":"tool"}\n'); put('tool/package-lock.json', '{"lockfileVersion":3,"t":1}\n');
     put('.gitignore', 'pkg/data/\npkg/node_modules\npkg/.deps\n');
@@ -161,7 +161,10 @@ process.exit(r.status === null ? 255 : r.status);
     // The runner's own machine file: its slots, no remote (a runner never forwards a run).
     fs.mkdirSync(path.join(S, '.config', 'codis-agents'), { recursive: true });
     fs.writeFileSync(path.join(S, '.config', 'codis-agents', 'machine.json'), JSON.stringify({ configVersion: 1, swapMinMB: 0, minFreeDiskGB: 0, slots: { lockDir: path.join(S, 'slots'), heavy: 2, medium: 2, total: 4, jobsAlone: 4, jobsShared: 2 } }));
-    const install = (n) => `mkdir -p node_modules && echo ok > node_modules/marker && echo "${n} $PWD" >> "${T}/install.count"`;
+    // pkg's install leaves node_modules as a link to another directory (as builder/.deps leads elsewhere on a Mac): the
+    // worktree's link must still lead to the real directory in one step.
+    const install = (n) => n === 'pkg' ? `mkdir -p nm.real && echo ok > nm.real/marker && ln -s nm.real node_modules && echo "${n} $PWD" >> "${T}/install.count"`
+      : `mkdir -p node_modules && echo ok > node_modules/marker && echo "${n} $PWD" >> "${T}/install.count"`;
     const remoteRun = (x) => Object.assign({
       command: 'cd {wt} && ./full.sh {jobs} --no-font',
       deps: [
@@ -308,6 +311,13 @@ process.exit(r.status === null ? 255 : r.status);
     ok('B2a-23: runner 0, local 1 - exit 1, a separate section in the same log', x.status === 1 && /==== on this machine: /.test(out('xw')) && /local runner: --only srv\/font-run\.js/.test(out('xw')), `${x.status} ${out('xw')}`);
     ok('B2a-23: the local section took one heavy slot here (after the remote run)', journal().filter((l) => l[4] === 'heavy').length === 1);
     ok('B2a-23: meta rc = the worse code', meta('xw').rc === 1);
+    // A new red of the part here that is green alone: flaky by guardRerun here too - exit 0.
+    set(0, [], true);
+    fs.writeFileSync(path.join(T, 'local.rc'), '1'); fs.writeFileSync(path.join(T, 'local.log'), 'X srv/font-run.js  (1.0s, code 1)\nTOTAL: 0 green, 1 NEW red, 0 known red\n');
+    x = ga('--force', 'xw');
+    fs.rmSync(path.join(T, 'local.log'));
+    ok('B2a-23: the part here reruns its new reds alone (guardRerun): green alone - flaky, exit 0', x.status === 0 && /flaky, red under load, green alone: srv\/font-run\.js/.test(out('xw'))
+      && (read(path.join(T, 'one.count')) || '').startsWith(xw + ' '), `${x.status} ${out('xw')}`);
 
     // B2a-18 and B2a-21: two tasks at once - both reach the end in their own worktrees and run directories.
     set(0, [], false, 1);
