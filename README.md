@@ -328,6 +328,10 @@ review findings.
   (exit 77, 78, and 72, 73: no ps or pgrep, no mktemp) stop the task with `environment` for the coordinator, not a
   programmer round; a project runner that itself exits 77 or 78 is taken for the environment too, so a runner should exit
   0 or 1. A step without an exit code stops the task for the coordinator; any other red run is a step that ran.
+- **Fix rounds** (a programmer round after the first: after a red tester, a red full run or a rejection) read the
+  findings of the round (`test.md`, `review.md` or the log of the full run) and the task's diff, the brief and the
+  analysis only in the sections the findings cite, and mutate only the guards new or changed in this round. The first
+  round, and the first round after an analyst, read and mutate as before.
 - **Light mode** (`mode: "light"`, chosen by the coordinator for up to ~100 lines of product in one subsystem, off the
   attack surface, without a Docker acceptance): one programmer-checker (red guard, code, mutations, its own acceptance
   with evidence in `test.md`) -> the one full run -> one reviewer; no tester role. A second rejection stops the task for

@@ -81,7 +81,7 @@ const fixOk = (p, report, before) => {
     run: [{ done: true, rc: 1, seconds: 1, log: '/d/full.log', tail: '1 new red' }, { done: true, rc: 0, seconds: 1, log: '/d/w2', tail: 'ok' }] }, T, ONE);
   ps = progs(x);
   ok('F4. a red full run: round 1f is a fix round - the run log, mutations of git diff P..HEAD',
-    ps.length === 2 && !isFix(ps[0]) && isFix(ps[1]) && fixOk(ps[1], '/d/full.log', 'P') && fixLine(ps[1]).includes('/d/wait-1.guards.txt'), fixLine(ps[1]));
+    ps.length === 2 && !isFix(ps[0]) && isFix(ps[1]) && fixOk(ps[1], '/d/full.log', 'P') && fixLine(ps[1]).includes('/d/wait-full-1.guards.txt'), fixLine(ps[1]));
 
   // F5: light mode.
   const L = Object.assign({}, T, { mode: 'light' });

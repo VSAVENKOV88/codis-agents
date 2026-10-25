@@ -105,6 +105,7 @@ const RULE_LIST = (t) => [
     ? `Shared stand: acceptance in Docker goes to the project's stand ${CFG.stand.project} by ticket (${SCRIPTS}/stand.sh take|deploy|release|status), not to a stack of your own, unless the task's commits change its image files (${SCRIPTS}/stand.sh image-diff, exit 1 -> own stack as before). The take process is the holder: keep it running in the background until release. Call every stand.sh command from one directory: its project config is found from there (take, deploy and status print it), not from your worktree. Never bring the stand up or down, never release another worktree's ticket.`
     : 'Shared stand: the project config has none (no section stand), so acceptance in Docker uses a stack of the task.'],
   ['testerred', 'Red tester rounds are counted per task: the second red verdict for the product (any cells, not only the same ones) sends the task to the analyst inside the same run - a matrix of cases from the tester\'s findings in test.md and their cause (prog.md) - then one round programmer -> tester -> review on that matrix; a red tester round after that analyst stops the task for the coordinator. A red of the environment (verdict environment) does not count. Tester: in test.md name every failed case with its expected and actual result and its round, so the analyst builds the matrix from them.'],
+  ['fixround', 'Fix rounds (a programmer round after the first: after a red tester, a red full run or a rejection): its prompt names the report with the findings and the task\'s diff; the brief and the analysis are read only in the sections the findings cite, and only the guards new or changed in the round are mutated. The first round, and the first round after an analyst, read and mutate as before.'],
   ['specs', 'Living specs (UX specs, state models, gap lists) change in the same commit as the behaviour they describe.'],
   ['push', PROTECTED ? `Do not push, do not merge into ${PROTECTED}, do not create tags.`
     : NONE_PROTECTED ? 'Do not push, do not merge, do not create tags (the project config protects no branch: protectedBranches [], so no branch is protected by the hooks, and pushing and merging stay the owner\'s call).'
@@ -373,15 +374,20 @@ End the file with "Open questions to the owner": one numbered list, each questio
 const guardsPart = (t) => (ONE_RUN
   ? `no selection of guards and no full run of your own: do NOT run the full guard run yourself - after you return, the workflow runs ${SCRIPTS}/guards-all.sh ${t.gdir} once on your HEAD (it includes the selected guards) and hands you the log only if it is red (fullRun = "the workflow runs it" and the result of your new guards)`
   : `full run ${SCRIPTS}/guards-all.sh ${t.gdir} in the background -> analysis of new reds that repeated alone (flaky ones go into prog.md for the backlog)`)
-const prog = (t, task, n) => (t.light ? progLight(t, task, n) : agent(`You are the PROGRAMMER. ${RULES(t)} Report: ${t.dir}/prog.md (round ${n}).
+// A fix round (p-fixround, audit P5: a fix round is a new agent that reread the brief, analyst.md, prog.md and test.md
+// - 33 % of its input; its mutations covered every guard again): it reads the findings and the task's diff, the brief and
+// analysis only in the cited sections, and mutates only the guards of this round. fix = { report, before }: the report
+// with the findings and the HEAD before the round (the previous role's); the first round passes none.
+const fixPart = (t, n, fix) => (fix ? `\nFix round ${n} (not the first): do not reread the whole task. Read the findings of this round in ${fix.report} and the task's diff (git -C ${sq(t.wt)} log --oneline ${baseArg(t)}..HEAD, git -C ${sq(t.wt)} diff ${baseArg(t)}..HEAD); read BRIEF.md, the analysis and the arc specification only in the sections the findings cite, and of prog.md only its last round. Mutations in this round only for the guards new or changed in it (git -C ${sq(t.wt)} diff --name-only ${fix.before ? sq(fix.before) : '<the HEAD before this round>'}..HEAD after your commits): a table of this round's mutants; the tables of earlier rounds stay as they are.` : '')
+const prog = (t, task, n, fix) => (t.light ? progLight(t, task, n, fix) : agent(`You are the PROGRAMMER. ${RULES(t)} Report: ${t.dir}/prog.md (round ${n}).
 ${analysisLine(t.an)}
-${task}
+${task}${fixPart(t, n, fix)}
 Order: red guard -> commit -> code -> commit -> mutations AFTER the commit (table in prog.md) -> ${guardsPart(t)}. status=blocked if you cannot go on without the owner's answer.${note('programmer')}`,
   Object.assign({ label: `prog:${t.key}#${n}`, phase: 'Programmer', schema: PROG_SCHEMA, agentType: roleType('programmer') }, modelOf('programmer'))))
 // Light mode: one programmer-checker does the programmer's work and the tester's acceptance; the reviewer follows.
-const progLight = (t, task, n) => agent(`You are the PROGRAMMER-CHECKER of a task in the light mode: there is no tester role, so you also run the acceptance. ${RULES(t)} Reports: ${t.dir}/prog.md (round ${n}) and ${t.dir}/test.md (your acceptance, round ${n}; keep earlier rounds).
+const progLight = (t, task, n, fix) => agent(`You are the PROGRAMMER-CHECKER of a task in the light mode: there is no tester role, so you also run the acceptance. ${RULES(t)} Reports: ${t.dir}/prog.md (round ${n}) and ${t.dir}/test.md (your acceptance, round ${n}; keep earlier rounds).
 ${analysisLine(t.an)}
-${task}
+${task}${fixPart(t, n, fix)}
 Order: red guard -> commit -> code -> commit -> mutations AFTER the commit (table in prog.md) -> ${guardsPart(t)} -> your own acceptance in the real environment: ${t.accept} Evidence (logs, numbers, screenshots) goes into ${t.dir}/test.md and files with the prefix test-; put the result and where its evidence is into acceptance. status=ready only when the acceptance is met; status=blocked if you cannot go on without the owner's answer.${note('programmer')}`,
   Object.assign({ label: `prog:${t.key}#${n}`, phase: 'Programmer', schema: PROG_SCHEMA, agentType: roleType('programmer') }, modelOf('programmer')))
 
@@ -448,8 +454,8 @@ const docsOrGuardOnly = (p) => (p.changedFiles || []).length > 0 && p.changedFil
 // (fix and commit, or explain and change nothing), then the run again, at most MAX_FULL_FIX rounds. No new run on a
 // HEAD whose full run is done (st.fullAt), and none after a fix of docs and guard files only once a full run was done:
 // the product did not change and the programmer ran the touched guards.
-async function progStep(t, st, task, n) {
-  const p = await prog(t, task, n)
+async function progStep(t, st, task, n, report) {
+  const p = await prog(t, task, n, report ? { report, before: st.head } : null)
   if (!p) return { fail: 'the programmer returned no result' }
   if (p.status === 'blocked') return { fail: 'programmer: an answer is needed', questions: p.questions }
   if (p.status === 'environment') return envProg(n, p)
@@ -466,7 +472,7 @@ async function progStep(t, st, task, n) {
     if (full.rc === 0) return { p: merged }
     if (ENV_RC[full.rc]) return envFull(tag, full)
     if (k === MAX_FULL_FIX) return { fail: `the full guard run is still red after ${k} programmer rounds with its log (exit ${full.rc}, ${full.log})`, full: fullLine(full) }
-    const p2 = await prog(t, `The full guard run the workflow ran on your HEAD after round ${tag} exited ${full.rc}: summary ${full.log}, full log ${full.guards}. Analyse every new red that repeated alone: fix what your change caused (commit, mutations after the commit, your new guards); a known red or a flaky guard - explain it in prog.md and change nothing; a red from the environment (the run cut off before its tally, a refusal of the slot queue - exit 77 or 78 - disk or swap) - status=environment with the evidence. Do not run the full run yourself: if you commit, the workflow runs it again.\n${full.tail || ''}`, `${tag}f`)
+    const p2 = await prog(t, `The full guard run the workflow ran on your HEAD after round ${tag} exited ${full.rc}: summary ${full.log}, full log ${full.guards}. Analyse every new red that repeated alone: fix what your change caused (commit, mutations after the commit, your new guards); a known red or a flaky guard - explain it in prog.md and change nothing; a red from the environment (the run cut off before its tally, a refusal of the slot queue - exit 77 or 78 - disk or swap) - status=environment with the evidence. Do not run the full run yourself: if you commit, the workflow runs it again.\n${full.tail || ''}`, `${tag}f`, { report: `${full.log} (summary) and ${full.guards} (full log)`, before: st.head })
     if (!p2) return { fail: 'the programmer returned no result' }
     if (p2.status === 'blocked') return { fail: 'programmer: an answer is needed', questions: p2.questions }
     if (p2.status === 'environment') return envProg(`${tag}f`, p2)
@@ -502,7 +508,7 @@ async function buildAndTest(t, st, firstTask, tag, maxRounds) {
     const red = testerRed(t, st, `${tag}${r}`, tr)
     if (red) return red
     if (r === maxRounds) return { fail: `${maxRounds} red tester rounds`, test: tr.summary }
-    const s = await progStep(t, st, `Tester round ${tag}${r} - red. Fix according to ${t.dir}/test.md:\n${tr.summary}`, `${tag}${r + 1}`)
+    const s = await progStep(t, st, `Tester round ${tag}${r} - red. Fix according to ${t.dir}/test.md:\n${tr.summary}`, `${tag}${r + 1}`, `${t.dir}/test.md`)
     if (s.fail) return s
   }
 }
@@ -518,7 +524,7 @@ async function reviewLoop(t, st, tag) {
   log(`${t.title}: review ${tag}1 - ${r1.verdict}`)
   if (r1.verdict === 'done') return { ok: r1 }
   const before = st.head
-  const sp = await progStep(t, st, `Review ${tag}1 - rejected${r1.docsOnly ? ' for docs only: fix the docs, guard wording or comments it names and change no behaviour' : ''}. Fix according to ${t.dir}/review.md:\n${r1.summary}`, `${tag}r`)
+  const sp = await progStep(t, st, `Review ${tag}1 - rejected${r1.docsOnly ? ' for docs only: fix the docs, guard wording or comments it names and change no behaviour' : ''}. Fix according to ${t.dir}/review.md:\n${r1.summary}`, `${tag}r`, `${t.dir}/review.md`)
   if (sp.fail) return sp
   const p = sp.p
   const testAfter = async () => {
@@ -638,7 +644,7 @@ async function light(t, st) {
   log(`${t.title}: review 1 (light) - ${x1.rv.verdict}`)
   if (x1.rv.verdict === 'done') return { task: t.key, status: 'done', review: x1.rv.summary }
   const before = st.head
-  const s2 = await progStep(t, st, `Review 1 - rejected${x1.rv.docsOnly ? ' for docs only: fix the docs, guard wording or comments it names and change no behaviour' : ''}. Fix according to ${t.dir}/review.md, and run the acceptance again if the fix touches what it checks:\n${x1.rv.summary}`, 'r')
+  const s2 = await progStep(t, st, `Review 1 - rejected${x1.rv.docsOnly ? ' for docs only: fix the docs, guard wording or comments it names and change no behaviour' : ''}. Fix according to ${t.dir}/review.md, and run the acceptance again if the fix touches what it checks:\n${x1.rv.summary}`, 'r', `${t.dir}/review.md`)
   if (s2.fail) return stop(t, s2.fail, Object.assign({}, s2, { review: x1.rv.summary }))
   const x2 = await reviewChecked(t, st, '2', `the fix after review 1 (git diff ${before}..${st.head}) and whether review 1 is answered`)
   if (x2.fail) return stop(t, x2.fail, x2)
