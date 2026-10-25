@@ -146,9 +146,13 @@ const OPS = {
         text = buf.toString('utf8'); offset = size;
       }
     } catch { /* no output yet */ }
-    const rc = readJSON(path.join(dir, 'rc'));
+    // The job writes rc and then exits, so rc is read again once the process is gone: between the first read and the
+    // process check the job may have written rc and exited (a run that is done, not vanished). One process check only.
+    let rc = readJSON(path.join(dir, 'rc'));
+    const live = rc ? true : alive(run);
+    if (!rc && !live) rc = readJSON(path.join(dir, 'rc'));
     if (rc) return { state: 'done', rc: rc.rc, text, offset };
-    return { state: alive(run) ? 'running' : 'vanished', text, offset };
+    return { state: live ? 'running' : 'vanished', text, offset };
   },
   // The result of a finished run, once: the log, the single reruns, the job's output and the workers it got.
   fetch(R, input) {
