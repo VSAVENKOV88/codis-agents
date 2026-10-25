@@ -283,7 +283,7 @@ try {
   ok('C-17 wipe with another list\'s token: refused (65), nothing removed', r.status === 65 && fs.existsSync(donor) && fs.existsSync(wt), out(r));
   r = run(['wipe', '--confirm', token]);
   ok('C-17 wipe with the token: donor, its state and the run copies removed', r.status === 0 && !fs.existsSync(donor) && !fs.existsSync(wt)
-    && !fs.readdirSync(path.join(server, 'codis-runs')).some((n) => n.startsWith('corpus')), out(r));
+    && fs.existsSync(path.join(server, 'codis-runs')) && !fs.readdirSync(path.join(server, 'codis-runs')).some((n) => n.startsWith('corpus')), out(r));
   ok('C-17 wipe leaves everything else of the server', read(path.join(server, 'codis-runs', 'keep', 'k.txt')) === 'k' && read(path.join(server, 'home.txt')) === 'h');
 
   // ---- the key remote in the machine file is validated
