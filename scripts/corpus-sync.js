@@ -146,8 +146,10 @@ function rsync(r, c, list) {
   fs.writeFileSync(lf, list.map((p) => p + '\0').join(''));
   try {
     // No -a, -r, -l or -L: exactly the listed regular files, never a link; times and modes kept; secrets and sessions
-    // excluded by rsync too (a second fence behind gate()).
-    return spawnSync('rsync', ['-e', sshE(r), `--files-from=${lf}`, '--from0', '--times', '--perms', '--exclude=.env*', '--exclude=sessions/', `${c.repoDir}/`, rsyncDest(r)],
+    // excluded by rsync too (a second fence behind gate()). --ignore-times: the list holds only files whose sha256
+    // differs from the donor's, so rsync's quick check by size and mtime must not skip one (same size and mtime, other
+    // content: the donor would never match the manifest and every later sync would end incomplete).
+    return spawnSync('rsync', ['-e', sshE(r), `--files-from=${lf}`, '--from0', '--ignore-times', '--times', '--perms', '--exclude=.env*', '--exclude=sessions/', `${c.repoDir}/`, rsyncDest(r)],
       { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 1 << 28 });
   } finally { fs.rmSync(path.dirname(lf), { recursive: true, force: true }); }
 }

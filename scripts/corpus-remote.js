@@ -149,7 +149,9 @@ const OPS = {
     const r1 = (b) => Math.round((b / GB) * 10) / 10;
     if (free < bytes + floor * GB) throw env(`not enough disk for the copy: ${r1(free)} GB free on ${R.wt}, the copy needs ${r1(bytes)} GB plus the floor of ${floor} GB (minFreeDiskGB) - no copy made`);
     const target = path.join(R.wt, name);
-    notLink(target); fs.mkdirSync(target, { recursive: true });
+    // A copy of the same name is replaced, never copied over: files the donor no longer has and writes of the earlier
+    // run's guards would stay. rmSync removes links inside, it never follows them.
+    notLink(target); fs.rmSync(target, { recursive: true, force: true }); fs.mkdirSync(target, { recursive: true });
     const t0 = process.hrtime.bigint();
     // A reflink where the file system has one, a plain copy otherwise (GNU cp); without GNU cp, a plain cp -pR.
     let r = spawnSync('cp', ['-a', '--reflink=auto', `${R.donor}/.`, `${target}/`], { encoding: 'utf8' });
