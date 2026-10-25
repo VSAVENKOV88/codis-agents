@@ -190,7 +190,9 @@ Larger changes run as a chain of agents, each in its own role:
   key `remote` and project key `remoteRun`; without either nothing changes). Only the committed HEAD runs there
   (tracked changes are refused with 78): it is pushed over the pinned ssh into the runner's bare repository at
   `refs/runs/<name>/<sha>`, never a branch or a tag and never forced. The runner makes its own worktree with its own
-  copy of the donor and dependencies from a cache keyed by the lock files, runs its own `guards-all.sh` detached from
+  copy of the donor (a copy that changes a file the commit holds, or brings a `.env*` the commit does not hold, is
+  refused with 69 before any project code runs) and dependencies from a cache keyed by the lock files, runs its own
+  `guards-all.sh` detached from
   ssh and reruns new reds there; this machine holds no slot while it waits (one journal line of class `remote`), and
   the guards the runner cannot run (`remoteRun.localPattern`) run here afterwards in a heavy slot, the worse exit code
   being the run's. The log keeps its name and starts "ran on runner <host>, HEAD <sha>, workers N"; its meta names the

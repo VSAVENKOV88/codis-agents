@@ -212,6 +212,13 @@ function job(R, input, name, sha, dir, say) {
     phase('corpus: own copy of the donor');
     const c = CR.OPS.copy(R, { name, into: 'worktree' });
     say(`corpus: ${c.files} files, ${c.bytes} bytes copied in ${c.seconds} s (manifest ${c.id})`);
+    // Only the committed HEAD runs: a donor path that the commit tracks (ignored in the checkout the donor came from,
+    // tracked here: a .gitignore change, a git add -f) would replace the committed file. Refused, the paths named.
+    const st = git(['-C', wt, 'status', '--porcelain', '-z', '--untracked-files=no']);
+    if (st.status !== 0) throw env(`git status in ${wt} failed after the donor copy: ${tail(st.stderr, 3)}`);
+    const changed = st.stdout.split('\0').filter(Boolean).map((l) => l.slice(3));
+    if (changed.length) throw env(`the donor copy changed files the commit ${sha} holds: ${changed.slice(0, 20).join(', ')}${changed.length > 20 ? ` and ${changed.length - 20} more` : ''} - the runner would not test HEAD; refused before any guard (those paths are ignored where the donor came from and tracked in the commit)`);
+    noSecrets(wt, sha, 'the donor copy');
   }
 
   for (const d of input.deps || []) {
@@ -252,7 +259,16 @@ function job(R, input, name, sha, dir, say) {
     medium(cmd, wt, 'prepare command');
   }
 
-  // Nothing secret reaches a run: the checkout holds the commit only, the donor no .env*; anything else is refused.
+  noSecrets(wt, sha, 'the prepare commands');
+
+  phase('full run: guards-all.sh of the runner');
+  const g = spawnSync('zsh', [path.join(plugin, 'scripts', 'guards-all.sh'), '--force', '--local', wt], { cwd: wt, env: childEnv, stdio: ['ignore', 'inherit', 'inherit'] });
+  return g.status === null ? 69 : g.status;
+}
+
+// Nothing secret reaches a run: the checkout holds the commit only, the donor no .env*; anything else is refused. Checked
+// after the donor copy (before any project code runs: the dependency install, the prepare commands) and after prepare.
+function noSecrets(wt, sha, after) {
   const tracked = new Set(git(['-C', wt, 'ls-files', '-z']).stdout.split('\0').filter(Boolean));
   const secrets = [];
   (function walk(rel) {
@@ -263,11 +279,7 @@ function job(R, input, name, sha, dir, say) {
       if (st.isDirectory()) walk(r);
     }
   })('');
-  if (secrets.length) throw env(`.env* in the run's worktree that the commit does not hold: ${secrets.join(', ')} - refused before any guard`);
-
-  phase('full run: guards-all.sh of the runner');
-  const g = spawnSync('zsh', [path.join(plugin, 'scripts', 'guards-all.sh'), '--force', '--local', wt], { cwd: wt, env: childEnv, stdio: ['ignore', 'inherit', 'inherit'] });
-  return g.status === null ? 69 : g.status;
+  if (secrets.length) throw env(`.env* in the run's worktree that the commit ${sha.slice(0, 12)} does not hold (after ${after}): ${secrets.join(', ')} - refused before any guard`);
 }
 
 function cli(op, input) {

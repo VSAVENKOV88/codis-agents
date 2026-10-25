@@ -38,6 +38,11 @@ const env = (msg) => new Stop(69, `environment: ${msg}`);
 const say = (s) => process.stdout.write(s + '\n');
 const sleepS = (s) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, s * 1000);
 const q = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
+// What the runner sends is shown in terminals and read by roles: control characters (terminal escapes, BEL, CR) are
+// dropped, tab and newline stay. deep() does it for every string of a result.
+const clean = (s) => String(s).replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, '');
+const deep = (v) => (typeof v === 'string' ? clean(v) : Array.isArray(v) ? v.map(deep)
+  : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, deep(x)])) : v);
 const tail = (s, n) => String(s || '').trim().split('\n').slice(-n).join('\n');
 const VERSION = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8')).version;
 // corpus-remote.js wrapped as a module ahead of the runner's half: one script on stdin, no file of this plugin needed
@@ -49,6 +54,7 @@ const BUNDLE = `'use strict';\nconst __codisCorpus = (function () { const module
 function remoteOp(r, op, input) {
   const script = `${BUNDLE}\n;module.exports.cli(${JSON.stringify(op)}, ${JSON.stringify(Object.assign({ root: r.root }, input || {}))});\n`;
   const p = spawnSync('ssh', [...sshOpts(r), `${r.user}@${r.host}`, 'node -'], { input: script, encoding: 'utf8', maxBuffer: 1 << 29 });
+  p.stderr = clean(p.stderr || '');
   const line = (p.stdout || '').split('\n').filter((l) => l.startsWith('REMOTE-RESULT ')).pop();
   if (p.error) throw env(`remote runner unreachable: ${p.error.message}`);
   if (!line) {
@@ -57,7 +63,7 @@ function remoteOp(r, op, input) {
     throw env(`remote runner unreachable: ${err}`);
   }
   if (p.status !== 0) throw new Stop(p.status === 64 ? 64 : 69, (p.stderr || '').trim() || `environment: remote ${op} failed (exit ${p.status})`);
-  return JSON.parse(line.slice('REMOTE-RESULT '.length));
+  return deep(JSON.parse(line.slice('REMOTE-RESULT '.length)));
 }
 
 function gitState(wt) {
