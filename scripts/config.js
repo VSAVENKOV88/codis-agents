@@ -142,9 +142,10 @@ function remoteErrors(r, errs) {
   if (typeof r.root === 'string') {
     const tilde = /^~\//.test(r.root);
     const norm = tilde ? path.posix.normalize(r.root.slice(2)) : path.posix.normalize(r.root);
-    // rsync hands the destination to the runner's shell: only characters no shell reads specially.
-    if (!(tilde || r.root.startsWith('/')) || !/^[A-Za-z0-9._~\/-]+$/.test(r.root) || r.root.split('/').includes('..') || norm === '/' || norm === '.' || norm === '') {
-      errs.push(`remote.root: a directory on the runner, absolute or ~/..., of letters, digits and . _ - / only, without .., not the home or / itself - not ${JSON.stringify(r.root)}`);
+    // rsync hands the destination to the runner's shell: only characters no shell reads specially, and ~ only as the
+    // leading ~/ (~name would be another user's home there, while corpus-remote.js reads it literally).
+    if (!(tilde || r.root.startsWith('/')) || !/^[A-Za-z0-9._\/-]+$/.test(tilde ? r.root.slice(2) : r.root) || r.root.split('/').includes('..') || norm === '/' || norm === '.' || norm === '') {
+      errs.push(`remote.root: a directory on the runner, absolute or ~/..., of letters, digits and . _ - / only (~ only as the leading ~/), without .., not the home or / itself - not ${JSON.stringify(r.root)}`);
     }
   }
 }

@@ -142,8 +142,8 @@
         },
         "root": {
           "type": "string",
-          "pattern": "^(/|~/)[A-Za-z0-9._~/-]+$",
-          "description": "The runner's directory of the donor (corpus/, corpus.state, corpus.manifest.json) and the run copies (wt/<name>); absolute or ~/..., without .., never the home or / itself."
+          "pattern": "^(/|~/)[A-Za-z0-9._/-]+$",
+          "description": "The runner's directory of the donor (corpus/, corpus.state, corpus.manifest.json) and the run copies (wt/<name>); absolute or ~/... (~ only as that leading ~/), without .., never the home or / itself."
         }
       }
     }

@@ -7,7 +7,7 @@
 //   - .env* named by git as an ignored entry (where a project keeps its secrets) - left out by this rule; a .env* found
 //     inside ignored data is not expected there and stops the sync before any transfer (exit 65, the files named): the
 //     check runs on the ready file list itself, not only on the rule that builds it;
-//   - sessions/ at any depth (users' sessions), node_modules, dist and .deps (installed on the runner), the "skip" and
+//   - sessions/ at any depth and in any case (users' sessions), node_modules, dist and .deps (installed on the runner), the "skip" and
 //     "link" globs of worktreeSetup, and every symbolic link (neither the link nor what it points to: the walk never
 //     follows one, and rsync gets only regular files, without -L).
 // The main checkout is only read: git status runs with --no-optional-locks (no index refresh is written) and files are
@@ -49,11 +49,19 @@ function globRe(g) {
   return new RegExp('^' + s + '$');
 }
 const SECRET = /^\.env/i;
+// sessions/ in any case: on a case-insensitive disk (APFS of a Mac) Sessions, SESSIONS and \u017Fessions (long s, U+017F)
+// open the same directory as sessions. toUpperCase().toLowerCase() folds the long s too (a plain toLowerCase() does not);
+// a name that folds to sessions on no disk is left out as well - leaving out more is never a leak.
+const isSessions = (s) => s.normalize('NFC').toUpperCase().toLowerCase().normalize('NFC') === 'sessions';
+// The second fence behind gate(), in rsync's filters: they have no case-insensitive match, so every letter is a class;
+// a directory named in --files-from is matched by <dir>/** (a bare "sessions/" never matches a listed file's parent).
+const SESS_GLOB = '[sS][eE][sS][sS][iI][oO][nN][sS]';
+const RSYNC_FILTERS = ['--exclude=.[eE][nN][vV]*', `--exclude=/${SESS_GLOB}/**`, `--exclude=**/${SESS_GLOB}/**`];
 const DEPS = new Set(['node_modules', 'dist', '.deps']);
 // Why a path never goes to the runner, or null. top: the path is an entry git named itself (git status --ignored).
 function excludedWhy(rel, isDir, globs, top) {
   const parts = rel.split('/'), base = parts[parts.length - 1];
-  if (parts.includes('sessions')) return 'sessions';
+  if (parts.some(isSessions)) return 'sessions';
   if (parts.some((p) => DEPS.has(p))) return 'dependencies';
   if (globs.skip.some((re) => re.test(rel))) return 'skip';
   if (globs.link.some((re) => re.test(rel))) return 'link';
@@ -112,7 +120,7 @@ function manifest(c) {
 
 // The ready file list itself is checked: no .env* and no sessions/ ever leaves this machine.
 function gate(m) {
-  const bad = m.files.map((f) => f.path).filter((p) => p.split('/').some((s) => SECRET.test(s) || s === 'sessions'));
+  const bad = m.files.map((f) => f.path).filter((p) => p.split('/').some((s) => SECRET.test(s) || isSessions(s)));
   if (bad.length) throw new Stop(65, `refused before transfer: ${bad.join(', ')} - a .env* or sessions/ in the file list (secrets and sessions never leave this machine); move it out of the corpus and sync again`);
 }
 
@@ -149,7 +157,7 @@ function rsync(r, c, list) {
     // excluded by rsync too (a second fence behind gate()). --ignore-times: the list holds only files whose sha256
     // differs from the donor's, so rsync's quick check by size and mtime must not skip one (same size and mtime, other
     // content: the donor would never match the manifest and every later sync would end incomplete).
-    return spawnSync('rsync', ['-e', sshE(r), `--files-from=${lf}`, '--from0', '--ignore-times', '--times', '--perms', '--exclude=.env*', '--exclude=sessions/', `${c.repoDir}/`, rsyncDest(r)],
+    return spawnSync('rsync', ['-e', sshE(r), `--files-from=${lf}`, '--from0', '--ignore-times', '--times', '--perms', ...RSYNC_FILTERS, `${c.repoDir}/`, rsyncDest(r)],
       { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 1 << 28 });
   } finally { fs.rmSync(path.dirname(lf), { recursive: true, force: true }); }
 }
@@ -222,7 +230,7 @@ function main(argv) {
   throw new Stop(64, USAGE);
 }
 
-module.exports = { manifest, gate, globRe, excludedWhy, sshOpts, sshE, rsyncDest };
+module.exports = { manifest, gate, globRe, excludedWhy, isSessions, RSYNC_FILTERS, sshOpts, sshE, rsyncDest };
 
 if (require.main === module) {
   try { process.exitCode = main(process.argv.slice(2)); } catch (e) {
