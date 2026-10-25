@@ -39,7 +39,8 @@ const say = (s) => process.stdout.write(s + '\n');
 const sleepS = (s) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, s * 1000);
 const q = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
 // What the runner sends is shown in terminals and read by roles: control characters (terminal escapes, BEL, CR) are
-// dropped, tab and newline stay. deep() does it for every string of a result.
+// dropped, tab and newline stay. deep() does it for every string of a result; the stderr of ssh and of git push (the
+// receiver's hooks print into it, and git passes their bytes through) is cleaned too.
 const clean = (s) => String(s).replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, '');
 const deep = (v) => (typeof v === 'string' ? clean(v) : Array.isArray(v) ? v.map(deep)
   : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, deep(x)])) : v);
@@ -112,7 +113,7 @@ function run(c, wt, log, name) {
       say(`push ${sha.slice(0, 12)} -> ${r.host} ${ref}`);
       const p = spawnSync('git', ['-C', wt, 'push', '--no-follow-tags', '--', url, `${sha}:${ref}`],
         { encoding: 'utf8', env: Object.assign({}, process.env, { GIT_SSH_COMMAND: sshE(r), GIT_SSH_VARIANT: 'ssh' }), maxBuffer: 1 << 26 });
-      if (p.status !== 0) throw env(`git push of ${sha.slice(0, 12)} to the runner was refused (exit ${p.status}): ${tail(p.stderr, 5)}`);
+      if (p.status !== 0) throw env(`git push of ${sha.slice(0, 12)} to the runner was refused (exit ${p.status}): ${clean(tail(p.stderr, 5))}`);
     } else say(`commit ${sha.slice(0, 12)} already on ${r.host} - nothing sent`);
     const job = { plugin: r.plugin, corpus: c.worktreeSetup.scan.length > 0, deps: x.deps, prepare: x.prepare, config: runnerConfig(c) };
     const st = remoteOp(r, 'start', { name, sha, bundle: BUNDLE, job });
