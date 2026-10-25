@@ -10,7 +10,10 @@
 //   F4. a red full run -> round 1f names the log of the run and the diff of the round from the programmer's HEAD;
 //   F5. light mode: round 1 has no block, the round after a rejection has it;
 //   F6. the first round after the analyst of the second red tester round is not a fix round;
-//   F7. the rule: a marked line role:fixround in rules/multi-agent.md, a RULE_LIST entry, README names it.
+//   F7. the rule: a marked line role:fixround in rules/multi-agent.md, a RULE_LIST entry, README names it;
+//   F8. (review 1) the narrowing does not forbid what a fix needs: the guards the findings name (a rejection "guard G of
+//       round 1 has no mutation evidence") and the guards that cover product code changed in the round are mutated too,
+//       in the prompt of every fix round (full and light), the rule, RULE_LIST and README.
 // usage: node tests/p-fixround.test.js
 const fs = require('fs');
 const path = require('path');
@@ -104,5 +107,21 @@ const fixOk = (p, report, before) => {
   ok('F7. RULE_LIST has the entry fixround', /\['fixround', /.test(SRC));
   const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
   ok('F7. README names the fix-round rule', /fix round/i.test(readme) && /changed in (it|this round)/.test(readme));
+
+  // F8: the guards the findings name and the guards over the code changed in the round are mutated as well.
+  const NAMED = /the guards the findings name/, COVER = /the guards that cover (the )?product code changed in (it|this round)/;
+  const wide = (t) => NAMED.test(t) && COVER.test(t);
+  x = await run({ pre: [PRE], prog: [PROG, P2], test: [GREEN, GREEN], review: [REJ, D] });
+  ps = progs(x);
+  ok('F8. full mode fix round: mutations also for the guards the findings name and the guards over changed product code',
+    isFix(ps[1]) && wide(fixLine(ps[1])), fixLine(ps[1]));
+  x = await run({ pre: [PRE], prog: [PROG, P2], review: [REJ, D] }, L, ONE);
+  ps = progs(x);
+  ok('F8. light mode fix round: the same widening', isFix(ps[1]) && wide(fixLine(ps[1])), fixLine(ps[1]));
+  ok('F8. rules/multi-agent.md role:fixround names both', wide(line), line);
+  const entry = (SRC.match(/\['fixround', [^\n]*/) || [''])[0];
+  ok('F8. RULE_LIST fixround names both', wide(entry), entry);
+  const rme = (readme.match(/\*\*Fix rounds\*\*[\s\S]*?\n- /) || [''])[0].replace(/\s+/g, ' ');
+  ok('F8. README Fix rounds names both', wide(rme), rme);
   done();
 })().catch((e) => { console.log('  FAIL crashed: ' + e.stack); process.exit(1); });
