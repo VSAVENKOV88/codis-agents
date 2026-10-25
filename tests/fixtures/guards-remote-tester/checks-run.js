@@ -277,6 +277,9 @@ process.exit(r.status === null ? 255 : r.status);
       `${x.status} fakes:${fakes16.length} ${JSON.stringify(o16.slice(-600))} | ${JSON.stringify(out('aw').slice(0, 300))}`);
     ok('T-16: no control characters here or in the log (the retry line included); the readable rest of the answer stays',
       !CTRL.test(o16) && !CTRL.test(out('aw')) && out('aw').includes(']0;pwn[2J2J{'), `${JSON.stringify(o16.slice(-600))} | ${JSON.stringify(out('aw').slice(0, 300))}`);
+    // The job on the "server" outlives a poll that gave up: let it finish before the next cell resets full.count.
+    const settle = () => { const end = Date.now() + 30000; while (Date.now() < end && !fs.existsSync(path.join(T, 'full.count'))) spawnSync('sleep', ['0.2']); spawnSync('sleep', ['1']); };
+    settle();
     // T-17: one poll answers non-JSON, the next one is the runner's own: the run goes on and ends with the runner's result.
     const flag17 = path.join(T, 'once17');
     reset('TOTAL: 1 green\n'); fs.rmSync(sshLog + '.fake', { force: true }); fs.writeFileSync(flag17, '');
@@ -286,6 +289,7 @@ process.exit(r.status === null ? 255 : r.status);
       x.status === 0 && lines(sshLog + '.fake').length === 1 && !fs.existsSync(flag17) && /^ran on runner /.test(out('aw')) && meta('aw').rc === 0
         && (o17.match(/did not answer the poll/g) || []).length === 1 && !CTRL.test(o17) && !CTRL.test(out('aw')),
       `${x.status} fakes:${lines(sshLog + '.fake').length} ${JSON.stringify(o17.slice(-600))} | ${JSON.stringify(out('aw').slice(0, 300))}`);
+    settle();
 
     // ---- T-5: --local keeps the run here even with the remote key ----
     reset('TOTAL: 1 green\n');
