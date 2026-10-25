@@ -131,6 +131,7 @@ try {
 const fs = require('fs'); const { spawnSync } = require('child_process');
 const a = process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(sshLog)}, JSON.stringify(a) + '\\n');
+if (process.env.FAKE_SSH_STDERR) { process.stderr.write(process.env.FAKE_SSH_STDERR + '\\n'); process.exit(255); }
 if (process.env.FAKE_SSH_FAIL) { process.stderr.write('ssh: connect to host example.org port 22: Connection refused\\n'); process.exit(255); }
 const withArg = new Set(['-F', '-i', '-o', '-p', '-l', '-E', '-b', '-c', '-D', '-e', '-I', '-J', '-L', '-m', '-O', '-Q', '-R', '-S', '-W', '-w']);
 let i = 0; while (i < a.length && a[i].startsWith('-')) i += withArg.has(a[i]) ? 2 : 1;
@@ -247,6 +248,13 @@ process.exit(r.status === null ? 255 : r.status);
     ok('B2a-7: plugin 0.0.1 on the runner - exit 69, both versions named, the log starts with "environment:"', x.status === 69 && (x.stdout + x.stderr).includes('0.0.1') && (x.stdout + x.stderr).includes(mine) && /^environment: /.test(out('xw')), `${x.status} ${x.stdout}${x.stderr}\n${out('xw')}`);
     ok('B2a-7: no push and no run on the runner', !sshCalls().some((a) => a.join(' ').includes('git-receive-pack')) && !fs.existsSync(path.join(R, 'runs')) && count('full.count') === 0);
     ok('B2a-7: the meta remembers the environment exit 69 (never reused)', meta('xw').rc === 69 && meta('xw').env === 'remote:example.org');
+
+    // R2-4: the runner's stderr (an error's text) is shown and logged without control characters.
+    setMachine(remote); set(0, [], false);
+    const es = spawnSync('zsh', [path.join(ROOT, 'scripts', 'guards-all.sh'), '--force', 'xw'], { encoding: 'utf8', timeout: 60000,
+      env: env({ FAKE_SSH_STDERR: 'boom \x1b]0;title\x07 \x1b[2J cleared \r back' }) });
+    ok('R2-4: the runner\'s stderr in an error - exit 69, the text kept, no control characters here or in the log',
+      es.status === 69 && /boom \]0;title \[2J cleared {2}back/.test(es.stdout + es.stderr) && !/[\x00-\x08\x0b-\x1f\x7f-\x9f]/.test(es.stdout + es.stderr + out('xw')), JSON.stringify(es.stdout + es.stderr));
 
     // The main flow: B2a-6, 8, 10-17, 21, 22.
     setMachine(remote); set(1, ['srv/a-run.js'], false);
