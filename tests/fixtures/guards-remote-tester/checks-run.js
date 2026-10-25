@@ -222,6 +222,20 @@ process.exit(r.status === null ? 255 : r.status);
       const pv = H.OPS.poll(L, { name: 'gonenorc', id: 'gonenorc@1', offset: 0 });
       ok('T-7: no process and no rc after both reads - vanished', pv.state === 'vanished' && pv.rc === undefined, JSON.stringify(pv));
     } finally { try { kid.kill('SIGKILL'); } catch { /* gone */ } }
+
+    // T-7b: the race at the process check itself - the job writes rc right as the poll looks for its process (and it
+    // is gone by then). Any read of rc made before that check misses; only a read after it sees the rc.
+    const d7 = path.join(L.runs, 'atcheck');
+    mk('atcheck', dead, 'gone');
+    const realKill = process.kill;
+    let hit = false;
+    process.kill = function (pid, sig) {
+      if (!hit && pid === dead && sig === 0) { hit = true; fs.writeFileSync(path.join(d7, 'rc'), JSON.stringify({ rc: 1, at: new Date().toISOString() })); }
+      return realKill.call(process, pid, sig);
+    };
+    let pk;
+    try { pk = H.OPS.poll(L, { name: 'atcheck', id: 'atcheck@1', offset: 0 }); } finally { process.kill = realKill; }
+    ok('T-7b: rc written while the poll checks the process (gone) - done with that rc, not vanished', hit && pk && pk.state === 'done' && pk.rc === 1, JSON.stringify(pk));
   }
 } catch (e) {
   ok('no exception', false, e && e.stack);
