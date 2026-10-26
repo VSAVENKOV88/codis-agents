@@ -106,7 +106,7 @@ try {
   }
   // ---- the command is named where it is used
   {
-    const r = cfg(['no-such-command', proj()], mfile());
+    const r = cfg(['no-such-command', proj()], null);
     ok('P-1h. the usage line names migrate', r.status === 64 && /migrate/.test(r.stderr), all(r));
     const c = cfg(['check', proj(OLD)], null);
     ok('P-1h. the warning of check (no machine file) names migrate and --write', c.status === 0 && /config\.js migrate/.test(c.stderr) && /--write/.test(c.stderr), all(c));

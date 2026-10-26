@@ -246,6 +246,8 @@ project config prints the machine's slot lines alone. An older machine key in a 
 migrate`. `swapMinMB`, `slots.extraHeavy`, `maxDockerChains` and `coordinatorContextK` in a project config are always
 an error. The hooks read neither: a broken machine file never changes what they decide about branches and tags.
 
+`node <plugin>/scripts/config.js migrate [project config] [--write]` moves those older keys into the machine file, in its units (`minSwapGB` x 1024 as `swapMinMB`): without `--write` it prints the machine file it would write, with `--write` it writes it (creating the file and its directory, or adding to the existing file, whose own keys stay). migrate never edits the project config: it names the keys to remove there. migrate refuses on two values, writing nothing (exit 1): the machine file sets another value, or sets none and its default differs (writing it would change that value for every other project on the machine; change the machine file by hand if it should); also for a value a machine file cannot take (a relative `lockDir`, a `minSwapGB` that is not a whole number of MB, a wrong type) and for a broken machine file. A value the machine file already sets equally is left as it is.
+
 Recommended in the project's `CLAUDE.md`, so the coordinator session follows the rules:
 
 ```markdown

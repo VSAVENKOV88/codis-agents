@@ -16,6 +16,9 @@
 //        config.js get <key.path> [file]
 //        config.js default-branch [file] -> the default branch (exit 0); when it cannot be derived, the reason with the
 //                                         fix on stdout and exit 78 (scripts/wt-setup.sh prints it)
+//        config.js migrate [file] [--write] -> the older machine keys of the project config moved into the machine
+//                                         file: shown, or written with --write; the project config is never edited
+//                                         (the keys to remove are named); two values - exit 1, nothing written
 //
 // The machine file (owner 2026-10-21, U2a): settings of the machine shared by every project on it - slot counts and
 // their lock directory, the swap and disk floors, the limit of chains with acceptance in Docker, the coordinator's
@@ -23,7 +26,7 @@
 // (a relative XDG_CONFIG_HOME is ignored, as the XDG Base Directory specification says). No file: the built-in
 // defaults, with a note. A project config may still carry the older machine keys (slots.*, preconditions.*): equal
 // to the machine file - a warning, different - an error (two queues, two ceilings); with no machine file the project's
-// values apply, with a warning to run config.js migrate. The newer machine keys are never read from a project.
+// values apply, with a warning to run config.js migrate (below). The newer machine keys are never read from a project.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -245,6 +248,12 @@ function loadMachine(env = process.env) {
     else if (e.code === 'ENOENT' || e.code === 'ENOTDIR') m.notes.push(`note: no machine file at ${p}: ${MACHINE_DEFAULTS_NOTE}`);
     else m.errors.push(`${p}: ${e.message}`);
   }
+  return judgeMachine(m, raw);
+}
+
+// Validates the parsed machine file raw into m (a loadMachine() record): fills m.errors, m.notes, m.values, m.source.
+function judgeMachine(m, raw) {
+  const p = m.path;
   const errs = [];
   if (m.exists && !m.errors.length && !typeOk('object', raw)) { errs.push('expected a JSON object'); raw = {}; }
   const v = level(MACHINE_SPEC, raw, '', errs);
@@ -338,7 +347,7 @@ function resolve(raw, opts = {}) {
       const pv = conv(getPath(c, pk));
       if (mk.startsWith('slots.')) merged.slots[mk.slice(6)] = pv; else merged[mk] = pv;
     }
-    if (given.length && !m.errors.length) warnings.push(`warning: machine settings in ${here} (${given.map(([pk]) => pk).join(', ')}) and no machine file at ${m.path}: the project's values apply - run config.js migrate`);
+    if (given.length && !m.errors.length) warnings.push(`warning: machine settings in ${here} (${given.map(([pk]) => pk).join(', ')}) and no machine file at ${m.path}: the project's values apply - run config.js migrate to see the move, with --write to make it`);
   }
   c.slots = merged.slots;
   c.preconditions = { minFreeDiskGB: merged.minFreeDiskGB, swapMinMB: merged.swapMinMB };
@@ -575,6 +584,65 @@ function find(cwd = process.cwd(), env = process.env) {
   return null;
 }
 
+// config.js migrate (ENV-6d): moves the older machine keys of a project config (MOVED) into the machine file. Without
+// write it only shows the machine file it would write; with write it writes it (creating it and its directory, or
+// adding to the existing one, whose own keys stay). It never edits the project config: it names the keys to remove
+// there. Refused, with nothing written, where config.js check would see two values of a machine setting - the machine
+// file sets another value, or sets none and its default differs (writing it would change that value for every other
+// project on the machine) - and for a value a machine file cannot take. Returns {status, out, err} (lines).
+function migrate(file, opts = {}) {
+  const out = [], err = [];
+  const refuse = (lines) => ({ status: 1, out: [], err: lines.concat([`nothing written; the project config ${file} is not changed`]) });
+  let raw;
+  try { raw = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { return refuse([`${file}: ${e.message}`]); }
+  if (!typeOk('object', raw)) return refuse([`${file}: expected a JSON object`]);
+  const given = MOVED.filter(([pk]) => getPath(raw, pk) !== undefined);
+  if (!given.length) { out.push(`no machine settings in the project config ${file}: nothing to move`); return { status: 0, out, err }; }
+  const m = loadMachine(opts.env || process.env);
+  const p = m.path;
+  if (m.errors.length && !m.missing) return refuse(m.errors.concat([`fix the machine file ${p} first`]));
+  const exists = m.exists;
+  // The project's values in the machine's units, as a machine file of their own: validated as one.
+  const setIn = (o, mk, v) => { if (mk.startsWith('slots.')) (o.slots = o.slots || {})[mk.slice(6)] = v; else o[mk] = v; };
+  const fromProject = {};
+  const problems = [];
+  for (const [pk, mk, conv] of given) {
+    const v = getPath(raw, pk), mv = conv(v);
+    if (pk === 'preconditions.minSwapGB' && typeof v === 'number' && !Number.isInteger(mv)) problems.push(`${pk}: ${v} GB is ${mv} MB, not a whole number - set swapMinMB in the machine file ${p} by hand`);
+    setIn(fromProject, mk, mv);
+  }
+  const probe = judgeMachine({ path: 'the project config', explicit: false, exists: true, missing: false, source: '', errors: [], notes: [], values: null }, fromProject);
+  problems.push(...probe.errors.map((e) => `${e} - a machine file cannot take it`));
+  if (problems.length) return refuse(problems);
+  // Against the machine file: two values refuse; an equal value it already sets needs nothing; an equal default is added.
+  let target = {};
+  if (exists) { try { target = JSON.parse(fs.readFileSync(p, 'utf8')); } catch (e) { return refuse([`${p}: ${e.message}`]); } }
+  const added = [], two = [];
+  for (const [pk, mk] of given) {
+    const pv = getPath(fromProject, mk), want = getPath(m.values, mk);
+    if (!exists) { added.push(pk); continue; }
+    if (!sameValue(mk, typeof pv === 'string' ? expand(pv) : pv, want)) {
+      two.push(`${pk}: the project sets ${show(pv)}${mk === pk ? '' : ` (${mk})`}, the machine file ${p} ${getPath(target, mk) === undefined ? `sets none (its default ${show(want)})` : `sets ${show(want)}`} - two values of a machine setting; change the machine file by hand if this machine should take the project's value, or remove it from the project config`);
+    } else if (getPath(target, mk) === undefined) added.push(pk);
+  }
+  if (two.length) return refuse(two);
+  const result = exists ? JSON.parse(JSON.stringify(target)) : { configVersion: MACHINE_VERSION, source: `moved by config.js migrate from the project config ${file}` };
+  for (const pk of added) { const [, mk] = MOVED.find(([k]) => k === pk); setIn(result, mk, getPath(fromProject, mk)); }
+  const text = JSON.stringify(result, null, 2) + '\n';
+  const removeLine = `then remove from the project config ${file} (config.js migrate never edits it): ${given.map(([pk]) => pk).join(', ')}`;
+  if (!added.length) out.push(`the machine file ${p} already sets every one of these values: nothing to write`);
+  else if (!opts.write) out.push(`the machine file ${p} would be (config.js migrate --write writes it):`, text.trimEnd());
+  else {
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    const tmp = `${p}.tmp-${process.pid}`;
+    fs.writeFileSync(tmp, text);
+    fs.renameSync(tmp, p);
+    out.push(`${exists ? 'added to' : 'wrote'} the machine file ${p}: ${added.join(', ')}`);
+  }
+  out.push(removeLine);
+  return { status: 0, out, err };
+}
+
 function load(file, opts = {}) {
   let raw;
   try { raw = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { return { config: null, errors: [`${file}: ${e.message}`], warnings: [] }; }
@@ -601,11 +669,12 @@ function shellLines(c) {
   return Object.entries(v).map(([k, x]) => (x === '' ? `[[ -v ${k} ]] || ${k}=''` : `: \${${k}:=${q(x)}}`)).join('\n');
 }
 
-module.exports = { find, load, resolve, branches, anonUrl, remoteHead, pushBranches, shellLines, machinePath, loadMachine, MACHINE_SPEC, MACHINE_SLOT_SPEC, REMOTE_SPEC, REMOTE_RUN_SPEC, DEP_SPEC, EXTRA_SPEC, MACHINE_VERSION, SPEC, SLOT_SPEC, RERUN_SPEC, EXCL_SPEC, EXCL_DEFAULT, STAND_SPEC, STAND_REQUIRED, WT_SPEC, PROBE_SPEC, HOOKS_SPEC, STANDING_SPEC, PRE_SPEC, ROLES, MODEL_ALIASES, MODEL_ROLES, expand };
+module.exports = { find, load, resolve, migrate, branches, anonUrl, remoteHead, pushBranches, shellLines, machinePath, loadMachine, MACHINE_SPEC, MACHINE_SLOT_SPEC, REMOTE_SPEC, REMOTE_RUN_SPEC, DEP_SPEC, EXTRA_SPEC, MACHINE_VERSION, SPEC, SLOT_SPEC, RERUN_SPEC, EXCL_SPEC, EXCL_DEFAULT, STAND_SPEC, STAND_REQUIRED, WT_SPEC, PROBE_SPEC, HOOKS_SPEC, STANDING_SPEC, PRE_SPEC, ROLES, MODEL_ALIASES, MODEL_ROLES, expand };
 
 if (require.main === module) {
   const [cmd, ...rest] = process.argv.slice(2);
-  const fileArg = cmd === 'get' ? rest[1] : rest[0];
+  if (cmd === 'migrate' && rest.some((a) => a.startsWith('--') && a !== '--write')) { console.error('usage: config.js migrate [file] [--write]'); process.exit(64); }
+  const fileArg = cmd === 'get' ? rest[1] : cmd === 'migrate' ? rest.find((a) => a !== '--write') : rest[0];
   const file = fileArg ? path.resolve(fileArg) : find();
   if (!file && cmd === 'shell') {
     // A job outside any project (a scratchpad) still queues in the machine's slots.
@@ -616,6 +685,12 @@ if (require.main === module) {
   }
   if (!file) { console.error(`codis-agents: no ${FILE} found (set CODIS_AGENTS_CONFIG or create it in the project root)`); process.exit(1); }
   if (cmd === 'path') { console.log(file); process.exit(0); }
+  if (cmd === 'migrate') {
+    const r = migrate(file, { write: rest.includes('--write') });
+    for (const l of r.out) console.log(l);
+    for (const l of r.err) console.error('codis-agents config: ' + l);
+    process.exit(r.status);
+  }
   const { config, errors, warnings, machineMissing } = load(file);
   if (cmd === 'check') {
     for (const e of errors) console.error('codis-agents config: ' + e);
@@ -637,7 +712,7 @@ if (require.main === module) {
     const v = rest[0].split('.').reduce((o, k) => (o == null ? undefined : o[k]), config);
     if (v === undefined) process.exit(1);
     console.log(typeof v === 'object' ? JSON.stringify(v) : String(v));
-  } else { console.error('usage: config.js path|check|json|shell|get <key>|default-branch'); process.exit(64); }
+  } else { console.error('usage: config.js path|check|json|shell|get <key>|default-branch|migrate [--write]'); process.exit(64); }
 }
 
 // For hooks: the project config when there is one (even with validation errors, defaults fill the gaps), else the
