@@ -38,7 +38,7 @@ const LOG = (skipped) => [
   'X srv/b-run.js  (2.0s, code 1)',
   '',
   'TOTAL: 2 green, 2 NEW red, 0 known red',
-  ...(skipped ? ['skipped (needs-font): 1 — srv/font-run.js'] : []),
+  ...(Array.isArray(skipped) ? skipped : skipped ? ['skipped (needs-font): 1 — srv/font-run.js'] : []),
 ].join('\n') + '\n';
 let asyncDone = false;
 const RERUN = { command: 'cd {wt} && ./one.sh {name}', newRedPattern: '^[XT] (\\S+(?: \\S+)*?)  \\(', tallyPattern: '^TOTAL: ' };
@@ -362,6 +362,18 @@ process.exit(r.status === null ? 255 : r.status);
     fs.rmSync(path.join(T, 'local.log'));
     ok('B2a-23: the part here reruns its new reds alone (guardRerun): green alone - flaky, exit 0', x.status === 0 && /flaky, red under load, green alone: srv\/font-run\.js/.test(out('xw'))
       && (read(path.join(T, 'one.count')) || '').startsWith(xw + ' '), `${x.status} ${out('xw')}`);
+
+    // P-2 (ENV-6d): two skip lines of the runner (needs-font and needs-mac) under one localPattern with an alternative -
+    // the names of both lines, a name given twice once, and one part here (one local run, one heavy slot).
+    setCfg({ localPattern: '^skipped \\((?:needs-font|needs-mac)\\): \\d+ — (.+)$' });
+    set(0, [], ['skipped (needs-font): 2 — srv/font-run.js, srv/both-run.js', 'skipped (needs-mac): 2 — srv/mac-run.js, srv/both-run.js']);
+    x = ga('--force', 'xw');
+    const lc2 = (read(path.join(T, 'local.count')) || '').split('\n').filter(Boolean);
+    ok('P-2: two skip lines under one localPattern - one local run with the names of both lines, a repeated name once',
+      x.status === 0 && lc2.length === 1 && lc2[0] === `${xw} --only srv/font-run.js --only srv/both-run.js --only srv/mac-run.js`, `${x.status} ${JSON.stringify(lc2)} ${x.stdout}${x.stderr}`);
+    ok('P-2: ... one section here naming all three, one heavy slot here', (out('xw').match(/==== on this machine: /g) || []).length === 1
+      && out('xw').includes('(remoteRun.localPattern): srv/font-run.js, srv/both-run.js, srv/mac-run.js ====') && journal().filter((l) => l[4] === 'heavy').length === 1, out('xw'));
+    setCfg();
 
     // B2a-18 and B2a-21: two tasks at once - both reach the end in their own worktrees and run directories.
     set(0, [], false, 1);
