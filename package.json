@@ -1,6 +1,6 @@
 {
   "name": "codis-agents",
-  "version": "0.4.8",
+  "version": "0.4.9",
   "private": true,
   "description": "A multi-agent delivery process for Claude Code, packaged as a plugin.",
   "license": "MIT",
