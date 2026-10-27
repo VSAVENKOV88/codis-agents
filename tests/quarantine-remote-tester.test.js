@@ -7,6 +7,8 @@
 // quarantine that run never subtracted (D5: a dropped entry is never reused). R5 a guard written here by another run
 // while the remote run was going: the earlier entry stays, and the meta does not take the hash of a file it did not
 // read. R6 no quarantine file and nothing flaky: the file appearing later refuses the reuse.
+// Round 3: R9 (K12) a --no-quarantine call joining a run begun with none - no key, reused; R10 (K8 x flaky) a
+// --no-quarantine call joining a run begun with entries that finds a guard flaky - nothing written here, the mark.
 // No network: ssh is a fake on PATH that runs the remote command with sh in a temporary "server" home (the fixture of
 // tests/quarantine-remote.test.js; the full run can be made slow to catch it running).
 const fs = require('fs');
@@ -218,6 +220,47 @@ process.exit(r.status === null ? 255 : r.status);
       fs.rmSync(path.join(T, 'full.count'), { force: true });
       x = ga({}, 'xw');
       ok('R8: the next call is reused (no second run on the runner)', x.status === 0 && /reused, HEAD /.test(x.stdout) && lines('full.count').length === 0, x.all.slice(-400));
+    }
+
+    // R9 (round 3, cell K12): a run begun with --no-quarantine (the host answers quarantine null), joined by another
+    // --no-quarantine call - neither subtracted anything: no "another quarantine" line, the meta has no quarantine key,
+    // and the next call with the quarantine on the same HEAD is reused (a green without subtraction stands for it).
+    fs.writeFileSync(QF, '{"srv/a-run.js": "flaky: earlier"}\n');
+    set(1, []); fs.writeFileSync(path.join(T, 'full.sleep'), '4');
+    {
+      const p = spawn('zsh', [GA, '--force', '--no-quarantine', 'xw'], { env: env(), cwd: T, stdio: 'ignore', detached: true });
+      kids.push(p);
+      const started = until(() => lines('full.count').length > 0, 60000);
+      try { process.kill(-p.pid, 'SIGKILL'); } catch { /* gone */ }
+      x = ga({}, '--force', '--no-quarantine', 'xw');
+      const m = meta();
+      ok('R9 (K12): --no-quarantine attaches to a run begun with none - exit 0, no "another quarantine" line, no quarantine key', started && /attached to the run /.test(x.all) && x.status === 0
+        && !/another quarantine/.test(x.all) && !('quarantine' in m) && m.rc === 0, `${x.status} ${JSON.stringify(m)}\n${x.all.slice(-800)}`);
+      ok('R9 (K12): nothing sent, nothing written here', JSON.parse(sentQ() || '{}').quarantine === undefined && read(QF) === '{"srv/a-run.js": "flaky: earlier"}\n', `${sentQ()} ${read(QF)}`);
+      fs.writeFileSync(path.join(T, 'full.sleep'), ''); fs.rmSync(path.join(T, 'full.count'), { force: true }); fs.rmSync(sshLog, { force: true });
+      x = ga({}, 'xw');
+      ok('R9 (K12): the next call with the quarantine is reused (ssh not called)', x.status === 0 && /reused, HEAD /.test(x.stdout) && lines('ssh.log').length === 0, `${lines('ssh.log').length}\n${x.all.slice(-400)}`);
+    }
+
+    // R10 (round 3, cell K8 x flaky): a --no-quarantine call attaches to a run begun with Q1 (a subtracted, red alone)
+    // that finds b flaky. The call has no quarantine: nothing is written here (not b either); the meta holds the mark,
+    // and even with Q1 unchanged the next call is not reused (the mark is never reused) - the runner runs again.
+    fs.writeFileSync(QF, '{"srv/a-run.js": "flaky: earlier"}\n');
+    set(1, ['srv/a-run.js']); fs.writeFileSync(path.join(T, 'full.sleep'), '4');
+    {
+      const p = spawn('zsh', [GA, '--force', 'xw'], { env: env(), cwd: T, stdio: 'ignore', detached: true });
+      kids.push(p);
+      const started = until(() => lines('full.count').length > 0, 60000);
+      try { process.kill(-p.pid, 'SIGKILL'); } catch { /* gone */ }
+      x = ga({}, '--force', '--no-quarantine', 'xw');
+      const m = meta();
+      ok('R10 (K8): attached, exit 0, the line names another quarantine and "this call has none"', started && /attached to the run /.test(x.all) && x.status === 0
+        && /begun with another quarantine than the one here now \(this call has none\) - its result is not reused/.test(x.all), `${x.status}\n${x.all.slice(-800)}`);
+      ok('R10 (K8): b found flaky is not written here, no "quarantined:" line', read(QF) === '{"srv/a-run.js": "flaky: earlier"}\n' && !/^quarantined: /m.test(out()), `${read(QF)}\n${out().slice(-400)}`);
+      ok('R10 (K8): the meta holds the mark (a key that is no hash)', typeof m.quarantine === 'string' && m.quarantine !== G.quarantineHash(QF) && m.quarantine !== 'none', JSON.stringify(m));
+      fs.writeFileSync(path.join(T, 'full.sleep'), ''); fs.rmSync(path.join(T, 'full.count'), { force: true });
+      x = ga({}, 'xw');
+      ok('R10 (K8): Q1 unchanged, the next call is still not reused (the runner runs again)', !/reused, HEAD /.test(x.stdout) && lines('full.count').length === 1, `${lines('full.count')}\n${x.all.slice(-600)}`);
     }
   }
 } finally {
