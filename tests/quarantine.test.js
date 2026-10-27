@@ -216,7 +216,7 @@ async function main() {
 
     // D2: concurrent writers -> every entry in the file
     quar(null);
-    const N = 8;
+    const N = 32;
     await Promise.all(Array.from({ length: N }, (_, i) => new Promise((res) => {
       const p = spawn(process.execPath, ['-e', `require(${JSON.stringify(path.join(ROOT, 'scripts', 'guards-result.js'))}).addQuarantine(${JSON.stringify(qf)}, {"g${i}": "flaky: p${i}"})`], { stdio: 'ignore' });
       p.on('exit', res);
