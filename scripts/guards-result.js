@@ -25,7 +25,9 @@
 //    (an error line, as for a broken baseline). A write that fails is an error line; the exit code does not change for
 //    it. Entries whose reason starts with "flaky:" are never named as "not red now" (they are green most of the time).
 //    The quarantine is on only with guardBaseline (otherwise "quarantine off: no guardBaseline ..." when a guard was
-//    flaky) and off on the remote runner (guards-all.sh --no-quarantine): its file belongs to this machine. The
+//    flaky). Its file belongs to this machine: a run on the remote runner (scripts/guards-remote.js) sends it with the
+//    run, the runner subtracts it read-only (guards-all.sh --quarantine-read-only) and this machine writes the flaky
+//    guards of the log that comes back (flakyInLog, writeFlaky); --no-quarantine neither reads nor writes it. The
 //    coordinator moves entries into guardBaseline and commits it (quarantine-take) or drops them after a fix
 //    (quarantine-drop). The hash of the quarantine file at the end of the run is kept in the meta: reuse refuses when
 //    the file changed since.
@@ -37,7 +39,8 @@
 //    scripts/guards-remote.js; a record without it is a run on this machine, "local"): a result is reused only in the
 //    environment it came from - a green run here says nothing of the runner and the other way round.
 //
-// usage: guards-result.js rerun <wt> <log> <runner rc> <guardRerun JSON> [<guardBaseline> [<quarantine file>]]
+// usage: guards-result.js rerun <wt> <log> <runner rc> <guardRerun JSON> [<guardBaseline> [<quarantine file> [ro]]]
+//          (ro: the quarantine is subtracted, never written - the remote runner, guards-all.sh --quarantine-read-only)
 //          -> summary on stdout, appended to the log; exit = final code
 //        guards-result.js meta-start <wt> <log> <command template> [<env>]
 //        guards-result.js meta-end <wt> <log> <final rc> [<quarantine file>]
@@ -181,7 +184,9 @@ const quarantineHash = (file) => { try { return sha256(fs.readFileSync(path.reso
 // appended to the log (empty for a green run without a baseline). quarantine: the path of the quarantine file, '' when
 // it is off. quarantineHash: the hash of the quarantine this run subtracted (read at its start; after its own write the
 // hash of the written file, but only when nobody changed the file between the read and the write), for the meta.
-function rerun({ wt, log, rc, cfg, baseline, quarantine }) {
+// readOnly: the quarantine is read and subtracted, never written (the remote runner: the machine that started the run
+// writes the flaky guards of the log it gets back, scripts/guards-remote.js).
+function rerun({ wt, log, rc, cfg, baseline, quarantine, readOnly }) {
   const res = { rc, repeated: [], flaky: [], known: [], quarantined: [], text: '' };
   const head = '==== rerun of new reds one by one (guardRerun) ====\n';
   const finish = (text) => { res.text = text; fs.appendFileSync(log, '\n' + text); return res; };
@@ -230,16 +235,12 @@ function rerun({ wt, log, rc, cfg, baseline, quarantine }) {
     if (res.flaky.length) {
       if (!baseline) qText = 'quarantine off: no guardBaseline in the project config\n';
       else if (!quarantine) qText = 'quarantine off on this run (--no-quarantine): nothing written\n';
+      else if (readOnly) qText = 'quarantine read-only on this run (the remote runner): the machine that started the run writes it\n';
       else {
-        const h = spawnSync('git', ['-C', wt, 'rev-parse', '--short=7', 'HEAD'], { encoding: 'utf8' });
-        const sha = h.status === 0 ? h.stdout.trim() : 'no-HEAD', day = new Date().toISOString().slice(0, 10);
-        const why = `flaky: ${path.basename(log)} ${sha}, green alone, ${day}`;
-        try {
-          const w = addQuarantineAt(quarantine, Object.fromEntries(res.flaky.map((n) => [n, why])));
-          if (w.before === ql.hash) res.quarantineHash = w.after;
-          res.quarantined = res.flaky.slice();
-          qText = `quarantined: ${res.quarantined.join(', ')} (${quarantine}) — the coordinator commits them into ${baseline} (guards-result.js quarantine-take)\n`;
-        } catch (e) { qText = `quarantine not written: ${e.message}\n`; }
+        const w = writeFlaky({ wt, log, names: res.flaky, quarantine, baseline, readHash: ql.hash });
+        if (w.hash !== undefined) res.quarantineHash = w.hash;
+        res.quarantined = w.quarantined;
+        qText = w.text;
       }
     }
     text = head + knownText
@@ -251,6 +252,31 @@ function rerun({ wt, log, rc, cfg, baseline, quarantine }) {
       + `single runs: ${details}\n`;
   }
   return finish(text);
+}
+
+// The reason of a quarantine entry written by the run of <log> in <wt>: "flaky: <log name> <sha7>, green alone, <date>".
+function flakyReason(wt, log) {
+  const h = spawnSync('git', ['-C', wt, 'rev-parse', '--short=7', 'HEAD'], { encoding: 'utf8' });
+  const sha = h.status === 0 ? h.stdout.trim() : 'no-HEAD', day = new Date().toISOString().slice(0, 10);
+  return `flaky: ${path.basename(log)} ${sha}, green alone, ${day}`;
+}
+// Writes the flaky guards into the quarantine -> {quarantined, text, hash?}: text is the summary line ("quarantined: ..."
+// or "quarantine not written: ..."); hash is that of the written file, only when nobody changed the file since the run
+// read it (readHash), for the meta.
+function writeFlaky({ wt, log, names, quarantine, baseline, readHash }) {
+  try {
+    const w = addQuarantineAt(quarantine, Object.fromEntries(names.map((n) => [n, flakyReason(wt, log)])));
+    return { quarantined: names.slice(), hash: w.before === readHash ? w.after : undefined,
+      text: `quarantined: ${names.join(', ')} (${quarantine}) — the coordinator commits them into ${baseline} (guards-result.js quarantine-take)\n` };
+  } catch (e) { return { quarantined: [], text: `quarantine not written: ${e.message}\n` }; }
+}
+// The guards a rerun found flaky, from the last rerun section of a log (a guard's own output before it never counts).
+function flakyInLog(text) {
+  const head = '==== rerun of new reds one by one (guardRerun) ====\n', i = String(text).lastIndexOf(head);
+  if (i < 0) return [];
+  const names = [];
+  for (const m of String(text).slice(i + head.length).matchAll(/^flaky, red under load, green alone: (.+)$/gm)) if (!names.includes(m[1])) names.push(m[1]);
+  return names;
 }
 
 const metaFile = (log) => `${log}.meta.json`;
@@ -296,12 +322,12 @@ function reusable(wt, log, command, env = 'local', quarantine = '') {
 }
 
 module.exports = { newReds, rerun, readBaseline, subst, metaStart, metaEnd, reusable, rerunLog,
-  quarantineFile, readQuarantine, addQuarantine, dropQuarantine, takeQuarantine, quarantineHash };
+  quarantineFile, readQuarantine, addQuarantine, dropQuarantine, takeQuarantine, quarantineHash, writeFlaky, flakyInLog };
 
 if (require.main === module) {
-  const [cmd, wt, log, x, y, z, u] = process.argv.slice(2);
+  const [cmd, wt, log, x, y, z, u, v] = process.argv.slice(2);
   if (cmd === 'rerun') {
-    const r = rerun({ wt, log, rc: Number(x), cfg: JSON.parse(y), baseline: z || '', quarantine: u || '' });
+    const r = rerun({ wt, log, rc: Number(x), cfg: JSON.parse(y), baseline: z || '', quarantine: u || '', readOnly: v === 'ro' });
     if (r.quarantineHash !== undefined) {
       try { const m = JSON.parse(fs.readFileSync(metaFile(log), 'utf8')); m.quarantine = r.quarantineHash; fs.writeFileSync(metaFile(log), JSON.stringify(m, null, 1) + '\n'); } catch { /* no start record: the run stays unusable */ }
     }

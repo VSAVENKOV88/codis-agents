@@ -25,7 +25,13 @@
 // cannot take); 69 environment - the runner unreachable, a host key mismatch, another plugin version there, its
 // env-check, a push refused, dependencies or prepare failing, the run vanished: the log then starts with
 // "environment: <reason>" and the meta keeps 69, so it is never reused.
-// usage: guards-remote.js run <worktree> <log> <name>
+//   7. The quarantine of flaky guards (guardBaseline; scripts/guards-result.js) belongs to this machine: it is read here
+//      before the runner is contacted and goes with the run (job.quarantine); the runner writes it into the run's
+//      directory and its guards-all.sh subtracts it read-only (--quarantine-read-only). The guards the runner found
+//      flaky (the last rerun section of its log) are written into the quarantine here ("quarantined: ..." in the log),
+//      and the meta keeps the hash of the quarantine the run used, so a changed quarantine is never reused. A broken
+//      quarantine here, or one the runner refuses or cannot write, is an environment red (69), never a run without it.
+// usage: guards-remote.js run <worktree> <log> <name> [<quarantine file>]   (guards-all.sh passes it; '' - off)
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
@@ -89,8 +95,10 @@ function runnerConfig(c) {
   return o;
 }
 
-function run(c, wt, log, name) {
+// qfile: the quarantine file of this machine (guards-all.sh passes it; '' - off); left out - the one of the config.
+function run(c, wt, log, name, qfile) {
   const r = c.remote, x = c.remoteRun, envId = `remote:${r.host}`;
+  if (qfile === undefined) qfile = c.guardBaseline ? G.quarantineFile(c.sharedDir) : '';
   const g = gitState(wt);
   if (!g.head) throw new Stop(78, `guards-remote: ${wt} is not a git worktree with a commit - nothing to run remotely`);
   if (!g.clean) throw new Stop(78, `guards-remote: tracked changes not committed - remote run tests HEAD only (${wt}); commit them, or set the machine key remote aside to run here`);
@@ -106,7 +114,15 @@ function run(c, wt, log, name) {
     G.metaEnd(wt, log, 69, { runner: { host: r.host, id } });
     return 69;
   };
+  let qhash;
   try {
+    // 7. the quarantine goes with the run: read once here, before the runner is contacted
+    let quarantine;
+    if (qfile) {
+      const ql = G.readQuarantine(qfile);
+      if (ql.error) throw env(`quarantine ${qfile}: ${ql.error} - the runner cannot subtract it; no run (fix the file or move it aside)`);
+      quarantine = ql.known; qhash = ql.hash;
+    }
     const pf = remoteOp(r, 'preflight', { plugin: r.plugin, version: VERSION });
     if (pf.version !== VERSION) throw env(`the plugin on the runner is version ${pf.version} (${pf.plugin}${pf.commit ? ` at ${pf.commit.slice(0, 7)}` : ''}), this machine's is ${VERSION} - update the runner's plugin to the same version; no run`);
     if (!pf.envCheck || !pf.envCheck.ok) throw env(`the runner's env-check failed: ${JSON.stringify(pf.envCheck)}`);
@@ -120,7 +136,8 @@ function run(c, wt, log, name) {
         { encoding: 'utf8', env: Object.assign({}, process.env, { GIT_SSH_COMMAND: sshE(r), GIT_SSH_VARIANT: 'ssh' }), maxBuffer: 1 << 26 });
       if (p.status !== 0) throw env(`git push of ${sha.slice(0, 12)} to the runner was refused (exit ${p.status}): ${clean(tail(p.stderr, 5))}`);
     } else say(`commit ${sha.slice(0, 12)} already on ${r.host} - nothing sent`);
-    const job = { plugin: r.plugin, corpus: c.worktreeSetup.scan.length > 0, deps: x.deps, prepare: x.prepare, config: runnerConfig(c) };
+    const job = Object.assign({ plugin: r.plugin, corpus: c.worktreeSetup.scan.length > 0, deps: x.deps, prepare: x.prepare, config: runnerConfig(c) },
+      quarantine ? { quarantine } : {});
     const st = remoteOp(r, 'start', { name, sha, bundle: BUNDLE, job });
     id = st.id;
     say(st.attached ? `attached to the run ${id} on ${r.host} (${st.state}): no second run` : `started the run ${id} on ${r.host}${st.stopped ? ` (stopped the earlier run ${st.stopped} of ${name})` : ''}`);
@@ -163,6 +180,13 @@ function run(c, wt, log, name) {
     }
     fs.writeFileSync(log, `ran on runner ${r.host}, HEAD ${sha}, workers ${f.workers === null ? '?' : f.workers} (run ${id}, plugin ${pf.version})\n${f.log}`);
     if (f.rerun !== null) fs.writeFileSync(G.rerunLog(log), f.rerun);
+    // 7. the runner subtracted the quarantine read-only; its flaky guards are written here
+    const flaky = qfile ? G.flakyInLog(f.log) : [];
+    if (flaky.length) {
+      const w = G.writeFlaky({ wt, log, names: flaky, quarantine: qfile, baseline: c.guardBaseline, readHash: qhash });
+      if (w.hash !== undefined) qhash = w.hash;
+      fs.appendFileSync(log, w.text);
+    }
     say(tail(fs.readFileSync(log, 'utf8'), 40));
     // 6. the guards the runner does not run, here
     const names = [];
@@ -180,7 +204,13 @@ function run(c, wt, log, name) {
           env: Object.assign({}, process.env, { SLOT_LABEL: `guards-all ${name} part here` }) });
       } finally { fs.closeSync(fd); }
       let lrc = lr.status === null ? 1 : lr.status;
-      if (c.guardRerun) lrc = G.rerun({ wt, log: local, rc: lrc, cfg: c.guardRerun, baseline: c.guardBaseline || '', quarantine: c.guardBaseline ? G.quarantineFile(c.sharedDir) : '' }).rc;
+      if (c.guardRerun) {
+        // the meta follows the part here only when the quarantine is still the one of this run (nobody changed it since)
+        const same = qfile && G.quarantineHash(qfile) === qhash;
+        const lres = G.rerun({ wt, log: local, rc: lrc, cfg: c.guardRerun, baseline: c.guardBaseline || '', quarantine: qfile });
+        lrc = lres.rc;
+        if (same && lres.quarantineHash !== undefined) qhash = lres.quarantineHash;
+      }
       const final = rc !== 0 ? rc : lrc;
       const section = `\n==== on this machine: guards the runner does not run (remoteRun.localPattern): ${names.join(', ')} ====\n${fs.readFileSync(local, 'utf8')}`
         + `\npart here: exit ${lrc}; the run's exit ${final} (the worse of the runner's ${rc} and this part's ${lrc})\n`;
@@ -188,7 +218,7 @@ function run(c, wt, log, name) {
       say(tail(section, 25));
       rc = final;
     }
-    G.metaEnd(wt, log, rc, { runner: { host: r.host, id, workers: f.workers } });
+    G.metaEnd(wt, log, rc, Object.assign({ runner: { host: r.host, id, workers: f.workers } }, qfile ? { quarantine: qhash } : {}));
     return rc;
   } catch (e) {
     if (e instanceof Stop && e.code === 69) return fail(e);
@@ -197,15 +227,15 @@ function run(c, wt, log, name) {
 }
 
 function main(argv) {
-  const [cmd, wt, log, name] = argv;
-  if (cmd !== 'run' || !wt || !log || !name) throw new Stop(64, 'usage: guards-remote.js run <worktree> <log> <name>');
+  const [cmd, wt, log, name, qfile] = argv;
+  if (cmd !== 'run' || !wt || !log || !name) throw new Stop(64, 'usage: guards-remote.js run <worktree> <log> <name> [<quarantine file>]');
   const file = C.find();
   if (!file) throw new Stop(78, 'guards-remote: no project config found (set CODIS_AGENTS_CONFIG)');
   const l = C.load(file);
   if (l.errors.length) throw new Stop(78, l.errors.map((e) => 'codis-agents config: ' + e).join('\n'));
   if (!l.config.remote) throw new Stop(78, `guards-remote: no key remote in the machine file ${l.config.machine.path} - no runner`);
   if (!l.config.remoteRun) throw new Stop(78, `guards-remote: no remoteRun in the project config ${file} - the runner does not know how to prepare this project`);
-  return run(l.config, wt, log, name);
+  return run(l.config, wt, log, name, qfile);
 }
 
 module.exports = { run, runnerConfig, BUNDLE, VERSION };

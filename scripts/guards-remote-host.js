@@ -18,8 +18,9 @@
 //   runs/<name>/           the current run of that name: run.json (id, sha, pid of the job and its start time), out.txt
 //                          (what the job prints: its phases, the slot queue, the workers), job.json (its input),
 //                          codis-agents.json (the project config of the run on the runner: its paths, the project's guard
-//                          command, rerun and baseline keys), host.js (the job), guards-<name>.txt and .meta.json (the
-//                          runner's log), rc (the final code, written last), fetched (the Mac took the result);
+//                          command, rerun and baseline keys), guards-quarantine.json (the quarantine of the machine
+//                          that started the run, subtracted read-only), host.js (the job), guards-<name>.txt and
+//                          .meta.json (the runner's log), rc (the final code, written last), fetched (the Mac took the result);
 //                          runs/<name>.lock serialises two starts of one name
 // A start of the same name and SHA while that run lives - or ended and was not fetched yet - attaches to it (a second
 // wait step, a new agent after a killed one); a start of another SHA stops the earlier run of that name first (its
@@ -183,6 +184,18 @@ const OPS = {
   },
 };
 
+// The quarantine of the machine that started the run (job.quarantine, {"<guard>": "<reason>"}), written into the run's
+// directory - the sharedDir of the runner's guards-all.sh, which subtracts it read-only. A quarantine that is not a flat
+// object of strings, or one that cannot be written, stops the run (environment): never a run without it in silence.
+function writeQuarantine(dir, q) {
+  if (!q || typeof q !== 'object' || Array.isArray(q) || Object.keys(q).some((k) => typeof q[k] !== 'string')) {
+    throw env('the quarantine sent with the run is not a JSON object {"<guard name>": "<reason>"} - no run');
+  }
+  try { fs.writeFileSync(path.join(dir, 'guards-quarantine.json'), JSON.stringify(q, null, 2) + '\n'); } catch (e) {
+    throw env(`the quarantine sent with the run could not be written on the runner (${e.message}) - no run`);
+  }
+}
+
 function job(R, input, name, sha, dir, say) {
   const plugin = pluginDir(input.plugin), wt = path.join(R.wt, name), t0 = Date.now();
   const cfgFile = path.join(dir, 'codis-agents.json');
@@ -190,6 +203,8 @@ function job(R, input, name, sha, dir, say) {
   const phase = (s) => say(`phase: ${s} (${Math.round((Date.now() - t0) / 1000)} s)`);
   // The project config of the run on the runner: its paths here, the project's guard keys.
   writeJSON(cfgFile, Object.assign({}, input.config || {}, { repoDir: R.repo, worktreeRoot: R.wt, sharedDir: dir }));
+  const withQ = input.quarantine !== undefined;
+  if (withQ) writeQuarantine(dir, input.quarantine);
   const medium = (cmd, cwd, what) => {
     const r = spawnSync('zsh', [path.join(plugin, 'scripts', 'medium.sh'), 'zsh', '-c', cmd], { cwd, env: childEnv, stdio: ['ignore', 'inherit', 'inherit'] });
     if (r.status !== 0) throw env(`${what} failed (exit ${r.status === null ? r.signal : r.status}): ${cmd}`);
@@ -254,7 +269,7 @@ function job(R, input, name, sha, dir, say) {
   noSecrets(wt, sha, 'the prepare commands');
 
   phase('full run: guards-all.sh of the runner');
-  const g = spawnSync('zsh', [path.join(plugin, 'scripts', 'guards-all.sh'), '--force', '--local', '--no-quarantine', wt], { cwd: wt, env: childEnv, stdio: ['ignore', 'inherit', 'inherit'] });
+  const g = spawnSync('zsh', [path.join(plugin, 'scripts', 'guards-all.sh'), '--force', '--local', withQ ? '--quarantine-read-only' : '--no-quarantine', wt], { cwd: wt, env: childEnv, stdio: ['ignore', 'inherit', 'inherit'] });
   return g.status === null ? 69 : g.status;
 }
 
@@ -343,7 +358,7 @@ function cli(op, input) {
   process.exitCode = code;
 }
 
-module.exports = { cli, OPS, layout, alive, pstart, depsCache };
+module.exports = { cli, OPS, layout, alive, pstart, depsCache, writeQuarantine };
 
 // The job: node host.js job <job.json>
 if (require.main === module && process.argv[2]) {

@@ -27,8 +27,10 @@
 #   Quarantine (with guardBaseline only): a flaky guard is written into <sharedDir>/guards-quarantine.json (same flat
 #   format, "flaky: <log> <sha7>, green alone, <date>"), outside the worktree so the tracked tree stays clean; every run
 #   subtracts it too, and the coordinator moves its entries into guardBaseline (guards-result.js quarantine-take) and
-#   commits them. The hash of that file as the run read it goes into the meta: a changed quarantine is never reused. --no-quarantine (the
-#   remote runner's own call) neither reads nor writes it: the quarantine belongs to this machine.
+#   commits them. The hash of that file as the run read it goes into the meta: a changed quarantine is never reused.
+#   The quarantine belongs to this machine: a remote run sends it with the run (scripts/guards-remote.js), the runner's
+#   own call has --quarantine-read-only (subtracted, never written) and this machine writes the flaky guards of the
+#   log that comes back; --no-quarantine neither reads nor writes it.
 # Reuse: HEAD, clean tracked tree, command and final code are kept next to the log (<log>.meta.json). The same HEAD,
 #   still clean, same command, final code 0 -> no new run: "reused, HEAD <sha>" and the saved summary, exit 0.
 #   --force runs anyway.
@@ -44,15 +46,15 @@
 #   slot, and the worse exit code is the run's. Environment problems: exit 69, the log's first line "environment: ...".
 #   A remote key without remoteRun in the project keeps the run here, with a note. --local runs here regardless (the
 #   runner itself calls its guards-all.sh so).
-# usage: guards-all.sh [--force] [--main-checkout] [--local] [--no-quarantine] <worktree>   (a name under worktreeRoot, or a path) -> log in <sharedDir>/guards-<name>.txt
+# usage: guards-all.sh [--force] [--main-checkout] [--local] [--no-quarantine] [--quarantine-read-only] <worktree>   (a name under worktreeRoot, or a path) -> log in <sharedDir>/guards-<name>.txt
 #   A worktree directly under worktreeRoot (by name or by path) logs as guards-<name>.txt; any other path as
 #   guards-<basename>-<cksum of its resolved path>.txt, so two worktrees with the same basename never share a log and
 #   its reuse record.
 H=${0:A:h}
-FORCE=0 LOCAL=0 NOQ=0 MAINOK=(); typeset -a POS
-for a in "$@"; do if [[ $a == --force ]]; then FORCE=1; elif [[ $a == --local ]]; then LOCAL=1; elif [[ $a == --no-quarantine ]]; then NOQ=1; elif [[ $a == --main-checkout ]]; then MAINOK=(--main-checkout); else POS+=("$a"); fi; done
+FORCE=0 LOCAL=0 NOQ=0 QRO= MAINOK=(); typeset -a POS
+for a in "$@"; do if [[ $a == --force ]]; then FORCE=1; elif [[ $a == --local ]]; then LOCAL=1; elif [[ $a == --no-quarantine ]]; then NOQ=1; elif [[ $a == --quarantine-read-only ]]; then QRO=ro; elif [[ $a == --main-checkout ]]; then MAINOK=(--main-checkout); else POS+=("$a"); fi; done
 set -- "${POS[@]}"
-[[ -n $1 ]] || { print -u2 "usage: guards-all.sh [--force] [--main-checkout] [--local] [--no-quarantine] <worktree name or path>"; exit 64; }
+[[ -n $1 ]] || { print -u2 "usage: guards-all.sh [--force] [--main-checkout] [--local] [--no-quarantine] [--quarantine-read-only] <worktree name or path>"; exit 64; }
 cfg() { node "$H/config.js" get "$1" 2>/dev/null }
 source "$H/slots.zsh" || exit $?
 [[ -n $CODIS_WORKTREE_ROOT && -n $CODIS_SHARED_DIR ]] || { print -u2 "guards-all: no project config (.claude/codis-agents.json) found"; exit 78; }
@@ -82,7 +84,7 @@ if (( ! FORCE )) && node "$H/guards-result.js" reuse "$WT" "$OUT" "$CMD" "$ENVID
 fi
 if [[ $ENVID == remote:* ]]; then
   treq=$(_slot_now)
-  node "$H/guards-remote.js" run "$WT" "$OUT" "$NAME"; rc=$?
+  node "$H/guards-remote.js" run "$WT" "$OUT" "$NAME" "$QFILE"; rc=$?
   # one line of class remote for the whole run (no slot here: acquire = request), in the worktree's name
   ( cd "$WT" 2>/dev/null; SLOT_LABEL="guards-all $NAME on $RHOST" _slot_journal $treq $treq $(_slot_now) remote - full $rc guards-all )
   exit $rc
@@ -92,7 +94,7 @@ trap 'rm -f $RCF' EXIT
 while true; do
   : > $RCF
   SLOT_KIND=$kind SLOT_RETRY_RC=75 SLOT_LABEL="guards-all $NAME" slot_run heavy zsh -c '
-    source "$1"; WT="$2"; OUT="$3"; CMD="$4"; mode="$5"; RCF="$6"; GR="$7"; RERUN="$8"; BASELINE="$9"; QFILE="${10}"
+    source "$1"; WT="$2"; OUT="$3"; CMD="$4"; mode="$5"; RCF="$6"; GR="$7"; RERUN="$8"; BASELINE="$9"; QFILE="${10}"; QRO="${11}"
     cd "$WT" || exit 1
     t0=$EPOCHSECONDS said=0
     while true; do
@@ -127,8 +129,8 @@ while true; do
     fi
     rm -f "$SLOT_PATH.jobs" "$SLOT_PATH.limit" "$SLOT_PATH.limit.tmp" "$SLOT_PATH.limit.active" "$SLOT_PATH.whole"
     tail -25 "$OUT"
-    if [[ -n $RERUN ]]; then node "$GR" rerun "$WT" "$OUT" "$(<$RCF)" "$RERUN" "$BASELINE" "$QFILE"; print -r -- $? > "$RCF"; fi
-    node "$GR" meta-end "$WT" "$OUT" "$(<$RCF)" "$QFILE"' guards-all "$H/slots.zsh" "$WT" "$OUT" "$CMD" "$mode" "$RCF" "$H/guards-result.js" "$RERUN" "$BASELINE" "$QFILE"
+    if [[ -n $RERUN ]]; then node "$GR" rerun "$WT" "$OUT" "$(<$RCF)" "$RERUN" "$BASELINE" "$QFILE" "$QRO"; print -r -- $? > "$RCF"; fi
+    node "$GR" meta-end "$WT" "$OUT" "$(<$RCF)" "$QFILE"' guards-all "$H/slots.zsh" "$WT" "$OUT" "$CMD" "$mode" "$RCF" "$H/guards-result.js" "$RERUN" "$BASELINE" "$QFILE" "$QRO"
   rc=$?
   [[ -s $RCF ]] && exit $(<$RCF)          # the runner ran: its code
   (( rc == 75 )) || exit $rc              # 75 without a run: no worker budget - queue again
