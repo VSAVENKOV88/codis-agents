@@ -30,7 +30,9 @@
 //      directory and its guards-all.sh subtracts it read-only (--quarantine-read-only). The guards the runner found
 //      flaky (the last rerun section of its log) are written into the quarantine here ("quarantined: ..." in the log),
 //      and the meta keeps the hash of the quarantine the run used, so a changed quarantine is never reused (a start that
-//      attaches to a run begun with another quarantine keeps that run's result, but its meta holds no hash). A broken
+//      attaches to a run begun with another quarantine keeps that run's result, but its meta holds no hash; so does a
+//      --no-quarantine call attached to a run that subtracted entries, and an attach to a runner that does not say which
+//      quarantine its run was begun with: never reused). A broken
 //      quarantine here, or one the runner refuses or cannot write, is an environment red (69), never a run without it.
 // usage: guards-remote.js run <worktree> <log> <name> [<quarantine file>]   (guards-all.sh passes it; '' - off)
 const fs = require('fs');
@@ -105,6 +107,19 @@ function sameQuarantine(a, b) {
   return x !== null && x === y;
 }
 
+// D5 x attach: the meta describes the quarantine the run subtracted, not the one of this call. A run attached to (st,
+// the host's answer) was begun with st.quarantine; true when the meta must hold the mark instead of a hash or no key:
+// a runner that does not say which quarantine it was begun with; a call with a quarantine whose entries are not the
+// run's; a call with --no-quarantine (qfile '') when the run subtracted anything (any answer but none or no entries).
+function attachedOther(st, qfile, quarantine) {
+  if (!st || !st.attached) return false;
+  if (!('quarantine' in st)) return true;
+  if (qfile) return !sameQuarantine(st.quarantine, quarantine);
+  const r = st.quarantine;
+  return !(r === null || (r && typeof r === 'object' && !Array.isArray(r) && Object.keys(r).length === 0));
+}
+const OTHER_Q = 'another quarantine (an attached run)';
+
 function run(c, wt, log, name, qfile) {
   const r = c.remote, x = c.remoteRun, envId = `remote:${r.host}`;
   if (qfile === undefined) qfile = c.guardBaseline ? G.quarantineFile(c.sharedDir) : '';
@@ -152,8 +167,9 @@ function run(c, wt, log, name, qfile) {
     say(st.attached ? `attached to the run ${id} on ${r.host} (${st.state}): no second run` : `started the run ${id} on ${r.host}${st.stopped ? ` (stopped the earlier run ${st.stopped} of ${name})` : ''}`);
     // D5: an attached run subtracts the quarantine it was begun with; when that is not the one read here, its result
     // stands for this call but the meta never takes the hash of a quarantine the run did not subtract (no reuse)
-    const otherQ = !!(qfile && st.attached && !sameQuarantine(st.quarantine, quarantine));
-    if (otherQ) say(`the run ${id} was begun with another quarantine than the one here now - its result is not reused`);
+    const otherQ = attachedOther(st, qfile, quarantine);
+    if (otherQ) say(!('quarantine' in st) ? `the runner did not say which quarantine the run ${id} was begun with - taken as another quarantine; its result is not reused`
+      : `the run ${id} was begun with another quarantine than the one here now${qfile ? '' : ' (this call has none)'} - its result is not reused`);
     const POLL = Number(process.env.GUARDS_REMOTE_POLL) > 0 ? Number(process.env.GUARDS_REMOTE_POLL) : 10;
     const SAY = Number(process.env.SLOT_SAY) > 0 ? Number(process.env.SLOT_SAY) : 30;
     const t0 = Date.now();
@@ -231,7 +247,7 @@ function run(c, wt, log, name, qfile) {
       say(tail(section, 25));
       rc = final;
     }
-    G.metaEnd(wt, log, rc, Object.assign({ runner: { host: r.host, id, workers: f.workers } }, qfile ? { quarantine: otherQ ? 'another quarantine (an attached run)' : qhash } : {}));
+    G.metaEnd(wt, log, rc, Object.assign({ runner: { host: r.host, id, workers: f.workers } }, otherQ ? { quarantine: OTHER_Q } : qfile ? { quarantine: qhash } : {}));
     return rc;
   } catch (e) {
     if (e instanceof Stop && e.code === 69) return fail(e);
@@ -251,7 +267,7 @@ function main(argv) {
   return run(l.config, wt, log, name, qfile);
 }
 
-module.exports = { run, runnerConfig, sameQuarantine, BUNDLE, VERSION };
+module.exports = { run, runnerConfig, sameQuarantine, attachedOther, BUNDLE, VERSION };
 
 if (require.main === module) {
   try { process.exitCode = main(process.argv.slice(2)); } catch (e) {
