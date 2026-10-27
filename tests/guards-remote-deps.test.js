@@ -96,17 +96,23 @@ try {
   call();
   ok('D-2: an entry the install did not make (and write bits) - installed again, read-only again', installs() === 3 && !fs.existsSync(path.join(cache, 'nm.real', '.vite-temp')) && writable(cache).length === 0, said.join(' | '));
 
+  // D-2: only a write bit back (the cache made writable by hand, nothing else changed) - no longer read-only: not trusted.
+  fs.chmodSync(path.join(cache, 'nm.real', 'vite', 'package.json'), 0o644);
+  const n0 = installs();
+  call();
+  ok('D-2: a write bit back on one file, contents the same - installed again, read-only again', installs() === n0 + 1 && writable(cache).length === 0, said.join(' | '));
+
   // D-2: a file of the same name and another size (a truncated file).
   chmodTree(cache);
   fs.writeFileSync(path.join(cache, 'nm.real', 'vite', 'package.json'), '{}');
   readOnly(cache);
   call();
-  ok('D-2: a file of another size - installed again', installs() === 4, said.join(' | '));
+  ok('D-2: a file of another size - installed again', installs() === 5, said.join(' | '));
 
   // An .ok of the earlier format (a time stamp, no manifest): completeness cannot be checked - installed again.
   fs.writeFileSync(`${cache}.ok`, new Date().toISOString() + '\n');
   call();
-  ok('D-2: an .ok without a manifest (earlier format) - installed again, the new .ok has the manifest', installs() === 5 && /"manifest"/.test(read(`${cache}.ok`) || ''), read(`${cache}.ok`));
+  ok('D-2: an .ok without a manifest (earlier format) - installed again, the new .ok has the manifest', installs() === 6 && /"manifest"/.test(read(`${cache}.ok`) || ''), read(`${cache}.ok`));
 
   // A failed reinstall: an environment error, no .ok left (the next run installs again, never "from the cache").
   fs.writeFileSync(`${cache}.ok`, 'stale\n');
@@ -114,7 +120,7 @@ try {
   try { call(install('; exit 3')); } catch (e) { err = e; }
   ok('a failed install throws and leaves no <hash>.ok', err && !fs.existsSync(`${cache}.ok`), err && err.message);
   call();
-  ok('after a failed install the next call installs again and succeeds', installs() === 7 && fs.existsSync(`${cache}.ok`) && writable(cache).length === 0);
+  ok('after a failed install the next call installs again and succeeds', installs() === 8 && fs.existsSync(`${cache}.ok`) && writable(cache).length === 0);
 
   // The cache path a link: refused (never chmod or remove through a link).
   const elsewhere = path.join(T, 'elsewhere'); fs.mkdirSync(path.join(elsewhere, 'keep'), { recursive: true });
