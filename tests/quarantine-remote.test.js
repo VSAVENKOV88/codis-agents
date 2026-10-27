@@ -205,6 +205,12 @@ process.exit(r.status === null ? 255 : r.status);
       try { st = H.OPS.start(hl, { name: 'qa', sha, bundle: '', job: { quarantine: {} } }); } catch (e) { st = { error: e.message }; }
       ok('D5 attach: the host answers an attach with the quarantine the run was begun with', st && st.attached === true
         && JSON.stringify(st.quarantine) === '{"srv/a-run.js":"flaky: earlier"}', JSON.stringify(st));
+      // the same for a run still going (its job is this process: alive)
+      fs.rmSync(path.join(dir, 'rc'));
+      fs.writeFileSync(path.join(dir, 'run.json'), JSON.stringify({ id: 'qa@2', name: 'qa', sha, pid: process.pid, pstart: H.pstart(process.pid) }));
+      try { st = H.OPS.start(hl, { name: 'qa', sha, bundle: '', job: { quarantine: {} } }); } catch (e) { st = { error: e.message }; }
+      ok('D5 attach: a running run answers with its quarantine too', st && st.attached === true && st.state === 'running'
+        && JSON.stringify(st.quarantine) === '{"srv/a-run.js":"flaky: earlier"}', JSON.stringify(st));
     }
 
     // F2: the living texts.
