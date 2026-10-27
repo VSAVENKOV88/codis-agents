@@ -183,6 +183,42 @@ process.exit(r.status === null ? 255 : r.status);
       x = ga({}, 'xw');
       ok('R3b: the following call is not reused (a fresh run: a red alone -> exit 1)', !/reused, HEAD /.test(x.stdout) && x.status === 1, `${x.status}\n${x.all.slice(-600)}`);
     }
+
+    // R7 (round 2): the attaching call has --no-quarantine. The run it joins was begun with Q1 (a, b subtracted, both
+    // red alone); its meta must not read as "a run without a quarantine" - after a and b are dropped (Q2) the next call
+    // with the quarantine must not reuse that green (D5).
+    fs.writeFileSync(QF, '{"srv/a-run.js": "flaky: earlier", "srv/b-run.js": "flaky: earlier"}\n');
+    set(1, ['srv/a-run.js', 'srv/b-run.js']); fs.writeFileSync(path.join(T, 'full.sleep'), '4');
+    {
+      const p = spawn('zsh', [GA, '--force', 'xw'], { env: env(), cwd: T, stdio: 'ignore', detached: true });
+      kids.push(p);
+      const started = until(() => lines('full.count').length > 0, 60000);
+      try { process.kill(-p.pid, 'SIGKILL'); } catch { /* gone */ }
+      x = ga({}, '--force', '--no-quarantine', 'xw');
+      ok('R7: --no-quarantine call attaches to the run begun with Q1', started && /attached to the run /.test(x.all) && lines('full.count').length === 1, `${lines('full.count')}\n${x.all.slice(-800)}`);
+      G.dropQuarantine(QF, ['srv/a-run.js', 'srv/b-run.js']);
+      fs.writeFileSync(path.join(T, 'full.sleep'), '');
+      x = ga({}, 'xw');
+      ok('R7: after the drop the next call with the quarantine is not reused on that green (a, b red alone -> exit 1)', !/reused, HEAD /.test(x.stdout) && x.status === 1, `${x.status} ${JSON.stringify(meta())}\n${x.all.slice(-600)}`);
+    }
+
+    // R8 (round 2): an attach to a run begun with the same entries (another key order in the file, so other bytes) -
+    // the same quarantine: the meta keeps the hash of the file here and the next call is reused.
+    fs.writeFileSync(QF, '{"srv/a-run.js": "flaky: earlier", "srv/b-run.js": "flaky: earlier"}\n');
+    set(1, ['srv/a-run.js', 'srv/b-run.js']); fs.writeFileSync(path.join(T, 'full.sleep'), '4');
+    {
+      const p = spawn('zsh', [GA, '--force', 'xw'], { env: env(), cwd: T, stdio: 'ignore', detached: true });
+      kids.push(p);
+      const started = until(() => lines('full.count').length > 0, 60000);
+      try { process.kill(-p.pid, 'SIGKILL'); } catch { /* gone */ }
+      fs.writeFileSync(QF, '{\n "srv/b-run.js": "flaky: earlier",\n "srv/a-run.js": "flaky: earlier"\n}\n');
+      x = ga({}, '--force', 'xw');
+      ok('R8: same entries in another order - attached, exit 0, no "another quarantine" line', started && /attached to the run /.test(x.all) && x.status === 0 && !/another quarantine/.test(x.all), `${x.status}\n${x.all.slice(-800)}`);
+      ok('R8: the meta keeps the hash of the quarantine file here', meta().quarantine === G.quarantineHash(QF), JSON.stringify(meta()));
+      fs.rmSync(path.join(T, 'full.count'), { force: true });
+      x = ga({}, 'xw');
+      ok('R8: the next call is reused (no second run on the runner)', x.status === 0 && /reused, HEAD /.test(x.stdout) && lines('full.count').length === 0, x.all.slice(-400));
+    }
   }
 } finally {
   for (const p of kids) { try { process.kill(-p.pid, 'SIGKILL'); } catch { /* gone */ } try { p.kill('SIGKILL'); } catch { /* gone */ } }
