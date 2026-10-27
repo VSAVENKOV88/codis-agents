@@ -27,7 +27,7 @@
 #   Quarantine (with guardBaseline only): a flaky guard is written into <sharedDir>/guards-quarantine.json (same flat
 #   format, "flaky: <log> <sha7>, green alone, <date>"), outside the worktree so the tracked tree stays clean; every run
 #   subtracts it too, and the coordinator moves its entries into guardBaseline (guards-result.js quarantine-take) and
-#   commits them. The hash of that file goes into the meta: a changed quarantine is never reused. --no-quarantine (the
+#   commits them. The hash of that file as the run read it goes into the meta: a changed quarantine is never reused. --no-quarantine (the
 #   remote runner's own call) neither reads nor writes it: the quarantine belongs to this machine.
 # Reuse: HEAD, clean tracked tree, command and final code are kept next to the log (<log>.meta.json). The same HEAD,
 #   still clean, same command, final code 0 -> no new run: "reused, HEAD <sha>" and the saved summary, exit 0.

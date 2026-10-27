@@ -66,16 +66,22 @@ function newReds(log, cfg) {
 
 const rerunLog = (log) => (log.endsWith('.txt') ? log.slice(0, -4) : log) + '.rerun.txt';
 
-// The known reds of the baseline file (path relative to wt): {known: {name: reason}} or {error}.
-function readBaseline(wt, rel) {
-  let o;
-  try { o = JSON.parse(fs.readFileSync(path.resolve(wt, rel), 'utf8')); } catch (e) {
-    return { error: e.code === 'ENOENT' ? 'no such file in the worktree' : `not readable as JSON (${e.message})` };
-  }
+const sha256 = (b) => crypto.createHash('sha256').update(b).digest('hex');
+// A flat known-red file (absolute path) -> {known: {name: reason}, hash} (hash: sha256 of the bytes read) or {error, code}.
+function readKnown(file) {
+  let raw, o;
+  try { raw = fs.readFileSync(file); } catch (e) { return { error: e.code === 'ENOENT' ? 'no such file' : `not readable (${e.message})`, code: e.code }; }
+  try { o = JSON.parse(raw.toString('utf8')); } catch (e) { return { error: `not readable as JSON (${e.message})` }; }
   if (!o || typeof o !== 'object' || Array.isArray(o)) return { error: 'expected a JSON object {"<guard name>": "<reason>"}' };
   const bad = Object.keys(o).filter((k) => typeof o[k] !== 'string');
   if (bad.length) return { error: `the reason of ${bad.join(', ')} is not a string (expected {"<guard name>": "<reason>"})` };
-  return { known: o };
+  return { known: o, hash: sha256(raw) };
+}
+// The known reds of the baseline file (path relative to wt): {known: {name: reason}} or {error}.
+function readBaseline(wt, rel) {
+  const r = readKnown(path.resolve(wt, rel));
+  if (r.code === 'ENOENT') return { error: 'no such file in the worktree' };
+  return r.error ? { error: r.error } : { known: r.known };
 }
 
 const QUARANTINE = 'guards-quarantine.json';
@@ -85,21 +91,33 @@ const FLAKY = /^flaky:/;
 // the prototype instead): a guard may be named so.
 const merge = (...objs) => { const o = {}; for (const s of objs) for (const k of Object.keys(s)) Object.defineProperty(o, k, { value: s[k], enumerable: true, writable: true, configurable: true }); return o; };
 
-// The quarantine file (absolute path): {known} - {} when it does not exist yet - or {error}.
+// The quarantine file (a relative path is taken from the cwd, once): {known, hash} - {} and hash "none" when it does
+// not exist yet - or {error}. hash is that of the bytes read (the same as quarantineHash of that content).
 function readQuarantine(file) {
-  if (!fs.existsSync(file)) return { known: {} };
-  return readBaseline(path.dirname(file), file);
+  const r = readKnown(path.resolve(file));
+  if (r.code === 'ENOENT') return { known: {}, hash: 'none' };
+  return r.error ? { error: r.error } : r;
 }
 const sleepMs = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-// Runs fn under <file>.lock (a directory: mkdir is atomic). A lock older than STALE is left by a dead writer and broken.
+// Runs fn under <file>.lock (a directory: mkdir is atomic). A lock older than STALE is left by a dead writer and broken
+// under a second lock <file>.lock.break, which rechecks the age first: a writer that saw the stale lock never removes a
+// fresh lock another writer took after breaking it (a break lock older than STALE is itself left by a dead breaker).
 // Throws "the lock <file>.lock was not taken in <ms> ms" when it cannot be taken in time.
 function withLock(file, fn) {
-  const lock = `${file}.lock`, wait = Number(process.env.CODIS_QUARANTINE_LOCK_MS) || 10000, STALE = 60000;
+  const lock = `${file}.lock`, brk = `${lock}.break`, wait = Number(process.env.CODIS_QUARANTINE_LOCK_MS) || 10000, STALE = 60000;
+  const stale = (p) => { try { return Date.now() - fs.statSync(p).mtimeMs > STALE; } catch { return false; } };
   const t0 = Date.now();
   for (;;) {
     try { fs.mkdirSync(lock); break; } catch (e) {
       if (e.code !== 'EEXIST') throw e;
-      try { if (Date.now() - fs.statSync(lock).mtimeMs > STALE) { fs.rmdirSync(lock); continue; } } catch { continue; }
+      if (stale(lock)) {
+        let held = false;
+        try { fs.mkdirSync(brk); held = true; } catch (b) { if (b.code !== 'EEXIST') throw b; if (stale(brk)) try { fs.rmdirSync(brk); } catch { /* gone */ } }
+        if (held) {
+          try { if (stale(lock)) fs.rmdirSync(lock); } catch { /* gone already */ } finally { try { fs.rmdirSync(brk); } catch { /* gone */ } }
+          continue;
+        }
+      }
       if (Date.now() - t0 >= wait) throw new Error(`the lock ${lock} was not taken in ${wait} ms`);
       sleepMs(50);
     }
@@ -110,19 +128,24 @@ const writeJson = (file, o) => {
   const t = `${file}.${process.pid}.tmp`;
   try { fs.writeFileSync(t, JSON.stringify(o, null, 2) + '\n'); fs.renameSync(t, file); } finally { fs.rmSync(t, { force: true }); }
 };
-// Adds the entries the file does not have yet; an existing entry keeps its reason. -> [names written]. Throws on a
-// broken file (never rewritten) or a failed write.
-function addQuarantine(file, entries) {
+// Adds the entries the file does not have yet; an existing entry keeps its reason. -> {add: [names written], before,
+// after}: the hash of the file under the lock before and after the write. Throws on a broken file (never rewritten) or
+// a failed write.
+function addQuarantineAt(file, entries) {
+  file = path.resolve(file);
   return withLock(file, () => {
     const q = readQuarantine(file);
     if (q.error) throw new Error(`the file is broken: ${q.error}`);
     const add = Object.keys(entries).filter((n) => !Object.hasOwn(q.known, n));
     if (add.length) writeJson(file, merge(q.known, merge(...add.map((n) => ({ [n]: entries[n] })))));
-    return add;
+    return { add, before: q.hash, after: add.length ? quarantineHash(file) : q.hash };
   });
 }
+// -> [names written]
+const addQuarantine = (file, entries) => addQuarantineAt(file, entries).add;
 // Removes the named entries -> {dropped, missing}.
 function dropQuarantine(file, names) {
+  file = path.resolve(file);
   return withLock(file, () => {
     const q = readQuarantine(file);
     if (q.error) throw new Error(`the quarantine ${file} is broken: ${q.error}`);
@@ -136,6 +159,7 @@ function dropQuarantine(file, names) {
 // keeps the reason of guardBaseline) and drops them from the quarantine -> {moved, missing}. Nothing changes when
 // either file is broken.
 function takeQuarantine(wt, baseline, file, names) {
+  file = path.resolve(file);
   return withLock(file, () => {
     const q = readQuarantine(file);
     if (q.error) throw new Error(`the quarantine ${file} is broken: ${q.error}`);
@@ -151,10 +175,12 @@ function takeQuarantine(wt, baseline, file, names) {
     return { moved, missing };
   });
 }
-const quarantineHash = (file) => { try { return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex'); } catch { return 'none'; } };
+const quarantineHash = (file) => { try { return sha256(fs.readFileSync(path.resolve(file))); } catch { return 'none'; } };
 
-// {rc, repeated: [{name, rc}], flaky: [names], known: [names], quarantined: [names], text}. text is appended to the log
-// (empty for a green run without a baseline). quarantine: the absolute path of the quarantine file, '' when it is off.
+// {rc, repeated: [{name, rc}], flaky: [names], known: [names], quarantined: [names], text, quarantineHash?}. text is
+// appended to the log (empty for a green run without a baseline). quarantine: the path of the quarantine file, '' when
+// it is off. quarantineHash: the hash of the quarantine this run subtracted (read at its start; after its own write the
+// hash of the written file, but only when nobody changed the file between the read and the write), for the meta.
 function rerun({ wt, log, rc, cfg, baseline, quarantine }) {
   const res = { rc, repeated: [], flaky: [], known: [], quarantined: [], text: '' };
   const head = '==== rerun of new reds one by one (guardRerun) ====\n';
@@ -165,6 +191,7 @@ function rerun({ wt, log, rc, cfg, baseline, quarantine }) {
     if (bl.error) return finish(`${head}guardBaseline ${baseline}: ${bl.error}: nothing is subtracted and nothing reruns, the runner's exit code ${rc} stands\n`);
     if (quarantine) {
       ql = readQuarantine(quarantine);
+      if (!ql.error) res.quarantineHash = ql.hash;
       if (ql.error) return finish(`${head}quarantine ${quarantine}: ${ql.error}: nothing is subtracted and nothing reruns, the runner's exit code ${rc} stands\n`);
     }
   }
@@ -208,7 +235,8 @@ function rerun({ wt, log, rc, cfg, baseline, quarantine }) {
         const sha = h.status === 0 ? h.stdout.trim() : 'no-HEAD', day = new Date().toISOString().slice(0, 10);
         const why = `flaky: ${path.basename(log)} ${sha}, green alone, ${day}`;
         try {
-          addQuarantine(quarantine, Object.fromEntries(res.flaky.map((n) => [n, why])));
+          const w = addQuarantineAt(quarantine, Object.fromEntries(res.flaky.map((n) => [n, why])));
+          if (w.before === ql.hash) res.quarantineHash = w.after;
           res.quarantined = res.flaky.slice();
           qText = `quarantined: ${res.quarantined.join(', ')} (${quarantine}) — the coordinator commits them into ${baseline} (guards-result.js quarantine-take)\n`;
         } catch (e) { qText = `quarantine not written: ${e.message}\n`; }
@@ -241,7 +269,8 @@ function metaEnd(wt, log, rc, extra) {
   let m = {};
   try { m = JSON.parse(fs.readFileSync(metaFile(log), 'utf8')); } catch { /* no start record: stays unusable */ }
   const g = gitState(wt);
-  Object.assign(m, extra || {}, { headEnd: g.head, cleanEnd: g.clean, rc: Number(rc), finishedAt: new Date().toISOString() });
+  // a quarantine hash the rerun recorded (the file it read) is kept over the one of the end of the run
+  Object.assign(m, extra || {}, m.quarantine !== undefined ? { quarantine: m.quarantine } : {}, { headEnd: g.head, cleanEnd: g.clean, rc: Number(rc), finishedAt: new Date().toISOString() });
   fs.writeFileSync(metaFile(log), JSON.stringify(m, null, 1) + '\n');
 }
 // {reuse, reason, head?, text?}
@@ -273,6 +302,9 @@ if (require.main === module) {
   const [cmd, wt, log, x, y, z, u] = process.argv.slice(2);
   if (cmd === 'rerun') {
     const r = rerun({ wt, log, rc: Number(x), cfg: JSON.parse(y), baseline: z || '', quarantine: u || '' });
+    if (r.quarantineHash !== undefined) {
+      try { const m = JSON.parse(fs.readFileSync(metaFile(log), 'utf8')); m.quarantine = r.quarantineHash; fs.writeFileSync(metaFile(log), JSON.stringify(m, null, 1) + '\n'); } catch { /* no start record: the run stays unusable */ }
+    }
     if (r.text) process.stdout.write('\n' + r.text);
     process.exit(r.rc > 255 ? 1 : r.rc);
   } else if (cmd === 'meta-start') metaStart(wt, log, x, y);
