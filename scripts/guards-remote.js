@@ -197,7 +197,7 @@ function run(c, wt, log, name, qfile) {
     const flaky = qfile ? G.flakyInLog(f.log) : [];
     if (flaky.length) {
       const w = G.writeFlaky({ wt, log, names: flaky, quarantine: qfile, baseline: c.guardBaseline, readHash: qhash });
-      if (w.hash !== undefined && !otherQ) qhash = w.hash;
+      if (w.hash !== undefined) qhash = w.hash;
       fs.appendFileSync(log, w.text);
     }
     say(tail(fs.readFileSync(log, 'utf8'), 40));
@@ -219,7 +219,7 @@ function run(c, wt, log, name, qfile) {
       let lrc = lr.status === null ? 1 : lr.status;
       if (c.guardRerun) {
         // the meta follows the part here only when the quarantine is still the one of this run (nobody changed it since)
-        const same = qfile && !otherQ && G.quarantineHash(qfile) === qhash;
+        const same = qfile && G.quarantineHash(qfile) === qhash;
         const lres = G.rerun({ wt, log: local, rc: lrc, cfg: c.guardRerun, baseline: c.guardBaseline || '', quarantine: qfile });
         lrc = lres.rc;
         if (same && lres.quarantineHash !== undefined) qhash = lres.quarantineHash;
