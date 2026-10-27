@@ -157,6 +157,12 @@ async function main() {
         r.rc === 1 && !calls().length && /quarantine [^\n]*guards-quarantine\.json: /.test(r.text) && !/\d+ known red/.test(r.text) && fs.readFileSync(qf, 'utf8') === body, r.text);
     }
 
+    // B5 on the write path itself (the file broken between the read and the write): addQuarantine throws, no rewrite
+    quar('{"x": ');
+    let thrown = '';
+    try { G.addQuarantine(qf, { 't/s.py::s': 'flaky: s' }); } catch (e) { thrown = e.message; }
+    ok('B5 addQuarantine on a broken file -> throws "broken", the file is not rewritten', /broken/.test(thrown) && fs.readFileSync(qf, 'utf8') === '{"x": ', thrown);
+
     // C6 + quarantine-drop / quarantine-take (Q2)
     known({}); quar({ 't/u.py::u': 'flaky: guards-x.txt abcdef1, green alone, 2026-10-01', 't/v.py::v': 'flaky: guards-x.txt abcdef1, green alone, 2026-10-02' });
     reset(['t/u.py::u'], ['t/u.py::u']);
