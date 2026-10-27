@@ -210,6 +210,7 @@ process.exit(r.status === null ? 255 : r.status);
     // T-11: a .env* of the donor is refused before the dependency install (the install runs the project's code);
     // the cache is emptied first, so the install would run for this hash.
     donorWith({ 'pkg/data/.env': 'SECRET=1\n' });
+    spawnSync('chmod', ['-R', 'u+w', path.join(R, 'deps')]); // the cache is read-only after its install (D-7)
     fs.rmSync(path.join(R, 'deps'), { recursive: true, force: true });
     const cfg0 = read(cfgFile), c11 = JSON.parse(cfg0);
     c11.remoteRun.deps[0].install = `echo x >> ${T}/deps.count; ` + c11.remoteRun.deps[0].install;
@@ -373,6 +374,7 @@ process.exit(r.status === null ? 255 : r.status);
   ok('no exception', false, e && e.stack);
 } finally {
   // The runner's detached jobs are done by now (every run above was waited for); the slots there are plain files.
+  spawnSync('chmod', ['-R', 'u+w', T]); // the dependency cache is read-only (D-7)
   try { fs.rmSync(T, { recursive: true, force: true }); } catch { /* best effort */ }
 }
 done();

@@ -12,8 +12,9 @@
 //                          links into the dependency cache; the next run of that name replaces it
 //   deps/<hash>/           a dependency cache directory (remoteRun.deps): the dependency files, then what their install
 //                          command made; <hash> = sha256 of the base names and contents of the files, the command, the
-//                          node major version, platform and arch; <hash>.ok is written after the install succeeded,
-//                          <hash>.lock serialises two runs that need the same new hash
+//                          node major version, platform and arch; read-only (a-w) after its install, then <hash>.ok
+//                          with its manifest (paths, types, modes, sizes, link targets): a reuse that no longer matches
+//                          it is installed again (u+w, removed, installed, a-w); <hash>.lock serialises two runs of it
 //   runs/<name>/           the current run of that name: run.json (id, sha, pid of the job and its start time), out.txt
 //                          (what the job prints: its phases, the slot queue, the workers), job.json (its input),
 //                          codis-agents.json (the project config of the run on the runner: its paths, the project's guard
@@ -231,16 +232,7 @@ function job(R, input, name, sha, dir, say) {
     });
     const hash = crypto.createHash('sha256').update(JSON.stringify({ node: process.versions.node.split('.')[0], platform: process.platform, arch: process.arch,
       install: d.install, files: files.map((f) => [f.base, f.sha256]) })).digest('hex').slice(0, 16);
-    fs.mkdirSync(R.deps, { recursive: true }); notLink(R.deps);
-    const cache = path.join(R.deps, hash);
-    withLock(`${cache}.lock`, { timeoutS: 3600 }, () => {
-      if (fs.existsSync(`${cache}.ok`)) { say(`dependencies ${hash}: from the cache (${d.files.join(', ')})`); return; }
-      phase(`dependencies ${hash}: install (${d.files.join(', ')})`);
-      notLink(cache); fs.rmSync(cache, { recursive: true, force: true }); fs.mkdirSync(cache);
-      for (const f of files) fs.copyFileSync(f.path, path.join(cache, f.base));
-      medium(d.install, cache, `dependency install ${hash}`);
-      fs.writeFileSync(`${cache}.ok`, new Date().toISOString() + '\n');
-    });
+    const cache = depsCache({ deps: R.deps, hash, files, install: d.install, run: (cmd, cwd) => medium(cmd, cwd, `dependency install ${hash}`), say, phase, what: d.files.join(', ') });
     for (const [p, sub] of Object.entries(d.link)) {
       let target;
       try { target = fs.realpathSync(sub ? path.join(cache, sub) : cache); } catch { throw env(`the dependency install ${hash} did not make ${sub || '(its directory)'} for ${p}`); }
@@ -264,6 +256,61 @@ function job(R, input, name, sha, dir, say) {
   phase('full run: guards-all.sh of the runner');
   const g = spawnSync('zsh', [path.join(plugin, 'scripts', 'guards-all.sh'), '--force', '--local', wt], { cwd: wt, env: childEnv, stdio: ['ignore', 'inherit', 'inherit'] });
   return g.status === null ? 69 : g.status;
+}
+
+// Every entry under dir, not following links, sorted: [relative path, lstat].
+function tree(dir) {
+  const out = [];
+  (function walk(rel) {
+    for (const n of fs.readdirSync(rel ? path.join(dir, rel) : dir).sort()) {
+      const r = rel ? `${rel}/${n}` : n, st = fs.lstatSync(path.join(dir, r));
+      out.push([r, st]);
+      if (st.isDirectory()) walk(r);
+    }
+  })('');
+  return out;
+}
+// Write bits of every entry and of dir itself (links are skipped: never chmod through one): off (a-w) or u+w back.
+function writeBits(dir, on) {
+  for (const [r, st] of [['', fs.lstatSync(dir)], ...tree(dir)]) {
+    if (st.isSymbolicLink()) continue;
+    fs.chmodSync(r ? path.join(dir, r) : dir, on ? (st.mode | 0o200) & 0o7777 : st.mode & ~0o222 & 0o7777);
+  }
+}
+// The manifest of a cache: every path with its type, mode, size and link target (no names are listed anywhere, a
+// changed tree is a changed digest); the digest and the entry count go into <hash>.ok.
+function depsManifest(dir) {
+  const lines = [['.', 'd', fs.lstatSync(dir).mode & 0o7777]].concat(tree(dir).map(([r, st]) => [r,
+    st.isSymbolicLink() ? 'l' : st.isDirectory() ? 'd' : st.isFile() ? 'f' : 'o', st.mode & 0o7777,
+    st.isFile() ? st.size : 0, st.isSymbolicLink() ? fs.readlinkSync(path.join(dir, r)) : '']));
+  return { entries: lines.length - 1, manifest: crypto.createHash('sha256').update(JSON.stringify(lines)).digest('hex') };
+}
+// The dependency cache <deps>/<hash> of one remoteRun.deps entry, under <hash>.lock. A reuse takes it only when it
+// still matches the manifest written at its install ("from the cache"); missing, incomplete or changed (an npm ci
+// through a link elsewhere emptied it, a tool wrote into it), it is installed again: write bits back, removed, the
+// files copied, the install run (run(cmd, cwd)), then read-only for everyone (a-w: a run's tools and a product's own
+// repair cannot write into what other runs read), then <hash>.ok with the manifest. Returns the cache directory.
+function depsCache({ deps, hash, files, install, run, say, phase, what }) {
+  fs.mkdirSync(deps, { recursive: true }); notLink(deps);
+  const cache = path.join(deps, hash), okFile = `${cache}.ok`, label = what || files.map((f) => f.base).join(', ');
+  withLock(`${cache}.lock`, { timeoutS: 3600 }, () => {
+    notLink(cache);
+    const okv = readJSON(okFile);
+    if (okv && fs.existsSync(cache)) {
+      const now = depsManifest(cache);
+      if (okv.v === 1 && okv.manifest === now.manifest) { say(`dependencies ${hash}: from the cache (${label}; ${now.entries} entries match the manifest)`); return; }
+      say(`dependencies ${hash}: the cache is incomplete or changed (${now.entries} entries now, ${okv.entries === undefined ? 'no manifest' : okv.entries} at its install) - installed again`);
+    }
+    phase(`dependencies ${hash}: install (${label})`);
+    fs.rmSync(okFile, { force: true });
+    if (fs.existsSync(cache)) writeBits(cache, true);
+    fs.rmSync(cache, { recursive: true, force: true }); fs.mkdirSync(cache);
+    for (const f of files) fs.copyFileSync(f.path, path.join(cache, f.base));
+    run(install, cache);
+    writeBits(cache, false);
+    writeJSON(okFile, Object.assign({ v: 1, at: new Date().toISOString() }, depsManifest(cache)));
+  });
+  return cache;
 }
 
 // Nothing secret reaches a run: the checkout holds the commit only, the donor no .env*; anything else is refused. Checked
@@ -296,7 +343,7 @@ function cli(op, input) {
   process.exitCode = code;
 }
 
-module.exports = { cli, OPS, layout, alive, pstart };
+module.exports = { cli, OPS, layout, alive, pstart, depsCache };
 
 // The job: node host.js job <job.json>
 if (require.main === module && process.argv[2]) {

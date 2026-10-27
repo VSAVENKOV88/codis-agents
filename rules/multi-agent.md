@@ -207,6 +207,12 @@ Larger changes run as a chain of agents, each in its own role:
   the first log line `environment: <reason>`; there is no fallback to this machine.
   Why: full runs held a heavy slot of a 16 GB machine for about 37 % of a task's calendar; a runner with its own memory
   takes them, and a red found on its Linux must stay red there, not turn green alone on the Mac.
+  The dependency cache is read-only after its install, and a reuse checks it against the manifest written then (paths,
+  types, modes, sizes, link targets); an incomplete or changed cache is installed again before any guard (write bits
+  back, removed, installed, read-only again). A manual clone on the runner (an agent's experiment) takes its
+  dependencies only by the layout of `remoteRun.deps` or from its own copy, and never links its `node_modules` into the
+  shared cache. Why: an `npm ci` in a manual clone whose `node_modules` was a link into the cache emptied the shared
+  cache through that link, its `.ok` stayed, and the next full run started on an empty cache with nine reds.
 - **No full guard run in the main working copy.** `guards-all.sh` and the preconditions of the chain
   (`scripts/env-check.js --worktree`) refuse with 78 a directory that is the main working copy of its repository
   (`git rev-parse --git-dir` equals `--git-common-dir`, `scripts/main-checkout.js`) and name `wt-setup.sh`; a project

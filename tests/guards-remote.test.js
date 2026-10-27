@@ -450,6 +450,8 @@ process.exit(r.status === null ? 255 : r.status);
 function cleanup() {
   // runner processes left by a failed check: every run.json pid group
   try { for (const n of fs.readdirSync(path.join(R, 'runs'))) { const r = JSON.parse(read(path.join(R, 'runs', n, 'run.json')) || '{}'); if (r.pid) { try { process.kill(-r.pid, 'SIGKILL'); } catch { /* gone */ } } } } catch { /* none */ }
+  // the runner's dependency cache is read-only (D-7): write bits back before the removal
+  spawnSync('chmod', ['-R', 'u+w', T]);
   fs.rmSync(T, { recursive: true, force: true });
 }
 if (!asyncDone) { cleanup(); done(); }
