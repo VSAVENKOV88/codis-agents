@@ -53,6 +53,10 @@ try {
     ok('T1 a new flaky next to a quarantined one -> exit 0, only the new one rerun', r.rc === 0 && JSON.stringify(calls()) === '["t/new.py::n"]', `${r.text} ${calls()}`);
     ok('T1 the old entry keeps its reason, the new one is added', q && q['t/old.py::o'] === 'flaky: guards-x.txt 1111111, green alone, 2026-10-01' && /^flaky: guards-wt\.txt [0-9a-f]{7}, green alone, \d{4}-\d{2}-\d{2}$/.test(q['t/new.py::n'] || ''), JSON.stringify(q));
     ok('T1 "quarantined:" names only the new one; the old one is a known red of the quarantine', /quarantined: t\/new\.py::n \(/.test(r.text) && !/quarantined: [^\n]*t\/old\.py::o/.test(r.text) && /known red \(quarantine [^\n]*\): t\/old\.py::o/.test(r.text), r.text);
+    // another run wrote the same name meanwhile (between this run's read and its write): the first reason stays
+    const added = G.addQuarantine(qf, { 't/old.py::o': 'flaky: later', 't/n2.py::n': 'flaky: n2' });
+    q = readJ(qf);
+    ok('T1 addQuarantine of a name already there keeps its reason and returns only the new names', added.join() === 't/n2.py::n' && q['t/old.py::o'] === 'flaky: guards-x.txt 1111111, green alone, 2026-10-01', `${added} ${JSON.stringify(q)}`);
 
     // T2
     quar({ 't/manual.py::m': 'BACKLOG #9' });
