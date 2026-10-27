@@ -180,7 +180,7 @@ function run(c, wt, log, name) {
           env: Object.assign({}, process.env, { SLOT_LABEL: `guards-all ${name} part here` }) });
       } finally { fs.closeSync(fd); }
       let lrc = lr.status === null ? 1 : lr.status;
-      if (c.guardRerun) lrc = G.rerun({ wt, log: local, rc: lrc, cfg: c.guardRerun, baseline: c.guardBaseline || '' }).rc;
+      if (c.guardRerun) lrc = G.rerun({ wt, log: local, rc: lrc, cfg: c.guardRerun, baseline: c.guardBaseline || '', quarantine: c.guardBaseline ? G.quarantineFile(c.sharedDir) : '' }).rc;
       const final = rc !== 0 ? rc : lrc;
       const section = `\n==== on this machine: guards the runner does not run (remoteRun.localPattern): ${names.join(', ')} ====\n${fs.readFileSync(local, 'utf8')}`
         + `\npart here: exit ${lrc}; the run's exit ${final} (the worse of the runner's ${rc} and this part's ${lrc})\n`;

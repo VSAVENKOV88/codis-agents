@@ -121,6 +121,13 @@ async function main() {
     reset(['x-run.js'], []);
     r = R(1);
     ok('A9 an exclusive guard flaky -> written like any other', r.rc === 0 && Object.keys(readJ(qf) || {}).join() === 'x-run.js', r.text);
+    // a guard named after an Object.prototype member: an own key, written and then known
+    reset(['__proto__'], []);
+    r = R(1);
+    ok('A1 a flaky guard named __proto__ -> an own key of the quarantine', Object.keys(readJ(qf) || {}).join() === 'x-run.js,__proto__', fs.readFileSync(qf, 'utf8'));
+    reset(['__proto__'], ['__proto__']);
+    r = R(1);
+    ok('A5 the quarantined __proto__ red again -> known, nothing reruns', r.rc === 0 && !calls().length, r.text);
 
     // B1: no guardBaseline -> quarantine off: one line, the file neither read nor written
     quar({ 't/q.py::q': 'flaky: x' });
