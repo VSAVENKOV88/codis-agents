@@ -187,6 +187,26 @@ process.exit(r.status === null ? 255 : r.status);
     try { H.writeQuarantine(hd, { 'srv/a-run.js': 'flaky: x' }); } catch { /* checked below */ }
     ok('transfer: a good quarantine is written as sent', (read(path.join(hd, 'guards-quarantine.json')) || '').replace(/\s/g, '') === '{"srv/a-run.js":"flaky:x"}', read(path.join(hd, 'guards-quarantine.json')));
 
+    // D5 x attach: a start that attaches answers with the quarantine the run was begun with (job.json), and this
+    // machine compares it with the one it read: only the same quarantine (key order aside) lets the meta keep its hash.
+    const RM = require('../scripts/guards-remote');
+    ok('D5 attach: the same quarantine in another key order is the same', typeof RM.sameQuarantine === 'function'
+      && RM.sameQuarantine({ a: 'x', b: 'y' }, { b: 'y', a: 'x' }) === true);
+    ok('D5 attach: another entry, another reason, or a run with no quarantine is another quarantine', typeof RM.sameQuarantine === 'function'
+      && RM.sameQuarantine({ a: 'x' }, { a: 'x', b: 'y' }) === false && RM.sameQuarantine({ a: 'x' }, { a: 'z' }) === false
+      && RM.sameQuarantine(undefined, {}) === false && RM.sameQuarantine(null, {}) === false);
+    {
+      const hl = H.layout({ root: path.join(T, 'hostattach') }), sha = 'a'.repeat(40), dir = path.join(hl.runs, 'qa');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'run.json'), JSON.stringify({ id: 'qa@1', name: 'qa', sha, pid: 999999 }));
+      fs.writeFileSync(path.join(dir, 'rc'), '0\n');
+      fs.writeFileSync(path.join(dir, 'job.json'), JSON.stringify({ quarantine: { 'srv/a-run.js': 'flaky: earlier' } }));
+      let st = null;
+      try { st = H.OPS.start(hl, { name: 'qa', sha, bundle: '', job: { quarantine: {} } }); } catch (e) { st = { error: e.message }; }
+      ok('D5 attach: the host answers an attach with the quarantine the run was begun with', st && st.attached === true
+        && JSON.stringify(st.quarantine) === '{"srv/a-run.js":"flaky: earlier"}', JSON.stringify(st));
+    }
+
     // F2: the living texts.
     const readme = read(path.join(ROOT, 'README.md')), rules = read(path.join(ROOT, 'rules', 'multi-agent.md'));
     ok('F2 rules: the rerun rule says the remote runner subtracts the quarantine and this machine writes it', /remote runner[^\n]*quarantine|quarantine[^\n]*remote runner/i.test(rules.split('\n').find((l) => /role:rerun/.test(l)) || ''));
