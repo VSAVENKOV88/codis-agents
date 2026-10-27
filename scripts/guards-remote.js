@@ -29,7 +29,8 @@
 //      before the runner is contacted and goes with the run (job.quarantine); the runner writes it into the run's
 //      directory and its guards-all.sh subtracts it read-only (--quarantine-read-only). The guards the runner found
 //      flaky (the last rerun section of its log) are written into the quarantine here ("quarantined: ..." in the log),
-//      and the meta keeps the hash of the quarantine the run used, so a changed quarantine is never reused. A broken
+//      and the meta keeps the hash of the quarantine the run used, so a changed quarantine is never reused (a start that
+//      attaches to a run begun with another quarantine keeps that run's result, but its meta holds no hash). A broken
 //      quarantine here, or one the runner refuses or cannot write, is an environment red (69), never a run without it.
 // usage: guards-remote.js run <worktree> <log> <name> [<quarantine file>]   (guards-all.sh passes it; '' - off)
 const fs = require('fs');
@@ -96,6 +97,14 @@ function runnerConfig(c) {
 }
 
 // qfile: the quarantine file of this machine (guards-all.sh passes it; '' - off); left out - the one of the config.
+// Two quarantines ({"<guard>": "<reason>"}) are the same when they hold the same entries, key order aside; a run
+// begun with none (null, undefined) is never the same as one sent.
+function sameQuarantine(a, b) {
+  const flat = (q) => (q && typeof q === 'object' && !Array.isArray(q) ? JSON.stringify(Object.keys(q).sort().map((k) => [k, q[k]])) : null);
+  const x = flat(a), y = flat(b);
+  return x !== null && x === y;
+}
+
 function run(c, wt, log, name, qfile) {
   const r = c.remote, x = c.remoteRun, envId = `remote:${r.host}`;
   if (qfile === undefined) qfile = c.guardBaseline ? G.quarantineFile(c.sharedDir) : '';
@@ -141,6 +150,10 @@ function run(c, wt, log, name, qfile) {
     const st = remoteOp(r, 'start', { name, sha, bundle: BUNDLE, job });
     id = st.id;
     say(st.attached ? `attached to the run ${id} on ${r.host} (${st.state}): no second run` : `started the run ${id} on ${r.host}${st.stopped ? ` (stopped the earlier run ${st.stopped} of ${name})` : ''}`);
+    // D5: an attached run subtracts the quarantine it was begun with; when that is not the one read here, its result
+    // stands for this call but the meta never takes the hash of a quarantine the run did not subtract (no reuse)
+    const otherQ = !!(qfile && st.attached && !sameQuarantine(st.quarantine, quarantine));
+    if (otherQ) say(`the run ${id} was begun with another quarantine than the one here now - its result is not reused`);
     const POLL = Number(process.env.GUARDS_REMOTE_POLL) > 0 ? Number(process.env.GUARDS_REMOTE_POLL) : 10;
     const SAY = Number(process.env.SLOT_SAY) > 0 ? Number(process.env.SLOT_SAY) : 30;
     const t0 = Date.now();
@@ -184,7 +197,7 @@ function run(c, wt, log, name, qfile) {
     const flaky = qfile ? G.flakyInLog(f.log) : [];
     if (flaky.length) {
       const w = G.writeFlaky({ wt, log, names: flaky, quarantine: qfile, baseline: c.guardBaseline, readHash: qhash });
-      if (w.hash !== undefined) qhash = w.hash;
+      if (w.hash !== undefined && !otherQ) qhash = w.hash;
       fs.appendFileSync(log, w.text);
     }
     say(tail(fs.readFileSync(log, 'utf8'), 40));
@@ -206,7 +219,7 @@ function run(c, wt, log, name, qfile) {
       let lrc = lr.status === null ? 1 : lr.status;
       if (c.guardRerun) {
         // the meta follows the part here only when the quarantine is still the one of this run (nobody changed it since)
-        const same = qfile && G.quarantineHash(qfile) === qhash;
+        const same = qfile && !otherQ && G.quarantineHash(qfile) === qhash;
         const lres = G.rerun({ wt, log: local, rc: lrc, cfg: c.guardRerun, baseline: c.guardBaseline || '', quarantine: qfile });
         lrc = lres.rc;
         if (same && lres.quarantineHash !== undefined) qhash = lres.quarantineHash;
@@ -218,7 +231,7 @@ function run(c, wt, log, name, qfile) {
       say(tail(section, 25));
       rc = final;
     }
-    G.metaEnd(wt, log, rc, Object.assign({ runner: { host: r.host, id, workers: f.workers } }, qfile ? { quarantine: qhash } : {}));
+    G.metaEnd(wt, log, rc, Object.assign({ runner: { host: r.host, id, workers: f.workers } }, qfile ? { quarantine: otherQ ? 'another quarantine (an attached run)' : qhash } : {}));
     return rc;
   } catch (e) {
     if (e instanceof Stop && e.code === 69) return fail(e);
@@ -238,7 +251,7 @@ function main(argv) {
   return run(l.config, wt, log, name, qfile);
 }
 
-module.exports = { run, runnerConfig, BUNDLE, VERSION };
+module.exports = { run, runnerConfig, sameQuarantine, BUNDLE, VERSION };
 
 if (require.main === module) {
   try { process.exitCode = main(process.argv.slice(2)); } catch (e) {

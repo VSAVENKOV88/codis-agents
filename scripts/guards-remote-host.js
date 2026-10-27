@@ -23,7 +23,7 @@
 //                          .meta.json (the runner's log), rc (the final code, written last), fetched (the Mac took the result);
 //                          runs/<name>.lock serialises two starts of one name
 // A start of the same name and SHA while that run lives - or ended and was not fetched yet - attaches to it (a second
-// wait step, a new agent after a killed one); a start of another SHA stops the earlier run of that name first (its
+// wait step, a new agent after a killed one) and answers with the quarantine that run was begun with; a start of another SHA stops the earlier run of that name first (its
 // worktree is about to be replaced; its HEAD is no longer the task's).
 // Output: messages on stderr, the result as the last stdout line `REMOTE-RESULT <json>`. Exit 0 done; 64 bad input; 69
 // environment (the first line of its message is "environment: <reason>").
@@ -114,8 +114,10 @@ const OPS = {
       notLink(dir);
       const run = readJSON(path.join(dir, 'run.json'));
       if (run && run.sha === sha) {
-        if (alive(run)) return { id: run.id, attached: true, state: 'running' };
-        if (fs.existsSync(path.join(dir, 'rc')) && !fs.existsSync(path.join(dir, 'fetched'))) return { id: run.id, attached: true, state: 'done' };
+        // an attach answers with the quarantine the run was begun with: the caller's may have changed since
+        const q = () => { const j = readJSON(path.join(dir, 'job.json')); return j && j.quarantine !== undefined ? j.quarantine : null; };
+        if (alive(run)) return { id: run.id, attached: true, state: 'running', quarantine: q() };
+        if (fs.existsSync(path.join(dir, 'rc')) && !fs.existsSync(path.join(dir, 'fetched'))) return { id: run.id, attached: true, state: 'done', quarantine: q() };
       }
       let stopped = null;
       if (run && alive(run)) { stopRun(run); stopped = run.id; }
