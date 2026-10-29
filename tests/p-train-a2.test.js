@@ -67,14 +67,15 @@ async function run(script, task = T, config = ONE) {
   return { r: res[0], trace: trace.join('>'), full: full.join('>'), prompts };
 }
 const pOf = (x, role, i = 0) => (x.prompts.filter((p) => p.role === role)[i] || { prompt: '' }).prompt;
-const runsOf = (x) => x.prompts.filter((p) => p.role === 'run');
+// the selection steps; a done task with guardSubsetCommand then rides the train (run:x:train-N, p-train-c3)
+const runsOf = (x) => x.prompts.filter((p) => p.role === 'run' && !/:train-/.test(p.label));
 const G1 = () => ({ pre: [PRE], prog: [PROG], test: [GREEN], review: [D] });
 
 async function partA() {
   // S1: the selection step after the programmer, never the full run
   let x = await run(G1());
   ok('S1. one run: pre > prog > the selection step > tester > review, done',
-    x.r.status === 'done' && x.full === 'pre>prog>run:x:select-1>test>post:x:tester>review>diff:x:reviewer>left:x:end', x.full);
+    x.r.status === 'done' && x.full === 'pre>prog>run:x:select-1>test>post:x:tester>review>diff:x:reviewer>run:x:train-1>left:x:end', x.full);
   const rp0 = runsOf(x)[0] || { prompt: '' };
   // the command is quoted once more for wait-step.js (sq): unquote '\'' for the checks
   const rp = Object.assign({}, rp0, { prompt: rp0.prompt.split("'\\''").join("'") });
@@ -93,7 +94,7 @@ async function partA() {
   // S3: red -> programmer with the log -> selection again on the new HEAD; at most MAX rounds
   x = await run({ pre: [PRE], prog: [PROG, P2], run: [REDR, OKR], test: [GREEN], review: [D] });
   ok('S3. a red selection -> a programmer round with its log -> the selection on the new HEAD -> tester',
-    x.r.status === 'done' && x.full === 'pre>prog>run:x:select-1>prog>run:x:select-1f>test>post:x:tester>review>diff:x:reviewer>left:x:end', x.full);
+    x.r.status === 'done' && x.full === 'pre>prog>run:x:select-1>prog>run:x:select-1f>test>post:x:tester>review>diff:x:reviewer>run:x:train-1>left:x:end', x.full);
   ok('S3. the fix round names the selection log and its copy, and says there is no full run to run',
     /selection/.test(pOf(x, 'prog', 1)) && pOf(x, 'prog', 1).includes('/d/wait-select-1.guards.txt') && /exited 1/.test(pOf(x, 'prog', 1)), pOf(x, 'prog', 1));
   x = await run({ pre: [PRE], prog: [PROG, P2, Object.assign({}, PROG, { head: 'P3' })], run: [REDR, REDR, REDR] });
@@ -123,7 +124,7 @@ async function partA() {
     x.r.status === 'done' && !runsOf(x).length && /full run \/p\/scripts\/guards-all\.sh w in the background/.test(pOf(x, 'prog')), x.full);
   // S17: light mode
   x = await run({ pre: [PRE], prog: [PROG], review: [D] }, Object.assign({}, T, { mode: 'light' }));
-  ok('S17. light: programmer-checker > the selection step > review', x.r.status === 'done' && x.full === 'pre>prog>run:x:select-1>review>diff:x:reviewer>left:x:end', x.full);
+  ok('S17. light: programmer-checker > the selection step > review', x.r.status === 'done' && x.full === 'pre>prog>run:x:select-1>review>diff:x:reviewer>run:x:train-1>left:x:end', x.full);
   // S18: fix rounds after a red tester and after a rejection
   x = await run({ pre: [PRE], prog: [PROG, P2], test: [RED, GREEN], review: [D] });
   ok('S18. a red tester -> programmer with a new HEAD -> the selection on it -> tester',

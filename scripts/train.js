@@ -13,18 +13,21 @@
 //                            green-unmerged | conflict | red | seam (the attribution of a red train, below). A result is
 //                            written before its queue entry is removed.
 //   lock/                    the dispatcher's lock: mkdir is atomic (macOS has no flock(1)); lock/owner.json names the
-//                            holder {pid, child, train, wt, since}. A holder whose pid and child are both gone is dead:
+//                            holder {pid, child, pgid, train, wt, since}. A holder whose pid, child and process group (any
+//                            process of it, unless it is the waiter's own group) are all gone is dead:
 //                            the next dispatcher breaks its lock under lock.break (a second mkdir lock naming its pid in
 //                            lock.break/owner.json, the holder rechecked inside, so a fresh lock is never removed; a break
 //                            lock is removed by others only when its pid is gone, or it has no pid and is older than 60 s)
 //                            by renaming it to lock.dead-<pid>-<ms>; then, under its own lock, it removes the dead train's
-//                            worktree and that directory, and departs - the passengers were never taken out of the queue.
+//                            worktree, its attribution refs refs/runs/train/<id>-<label> and that directory, and departs -
+//                            the passengers were never taken out of the queue.
 //   halt                     {reason, train, log, at, verdict?, guards?, attribution?}: the queue stands until the
 //                            coordinator runs `resume`. Written on the environment (the run's exit 69, 124, 77, 78, 72,
 //                            73, 64, 66, or a signal: no code or 128+n; a red exit whose log has no tally; the worktree
 //                            could not be made; an attribution run that could not run), on a git error while building
 //                            the train, on arc-red (verdict arc-red: `await` prints it), and on a red train the
-//                            attribution cannot decide. The passengers without a result stay in the queue.
+//                            attribution cannot decide (verdict coordinator: several red pairs, a guard now red now green,
+//                            more than three passengers, one passenger green alone, no repeated red named). The passengers without a result stay in the queue.
 //   trains/<id>.json, logs/<id>.txt   the record and the log of every train.
 // There is no daemon: the dispatcher is whoever takes the lock - the waiting step of a chain (`await`) or a `run`; after
 // its train it releases the lock and the next waiter takes it.
@@ -58,7 +61,11 @@
 //
 // usage: train.js enqueue --task <t> --branch <b> --head <sha> --base <arc> [--dir <task folder>]
 //          -> the entry (same task and head already queued: kept; another head of the task: replaced; a result for this
-//             task and head already there: printed, nothing queued)
+//             task and head already there: printed, nothing queued); refused before the queue (exit 65) when base is a
+//             protected branch or not a branch of the repository; a queue that cannot be written -> exit 74
+//        train.js ride (the same arguments)     -> the chain after the review (p-train-c3): enqueue + await, the exit code is
+//             the verdict: 0 green, 10 green-unmerged, 11 red, 12 seam (after the partner's own result: the fix starts on
+//             the arc head that holds it), 13 conflict, 14 arc-red, 15 coordinator, 75 the queue halted (environment)
 //        train.js run                         -> one dispatch; JSON {departed, train?, sha?, verdict?, passengers?, ...}
 //        train.js await --task <t> --head <sha> [--poll <s>]
 //          -> waits for the result of this entry, dispatching trains while it waits; prints the result JSON, or
@@ -95,6 +102,15 @@ const writeAtomic = (f, data) => {
   fs.renameSync(t, f);
 };
 const alive = (pid) => { if (!Number.isInteger(pid) || pid <= 0) return false; try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+// The process group of a pid (ps -o pgid=; node has no getpgid), or 0.
+const pgidOf = (pid) => { const r = spawnSync('ps', ['-o', 'pgid=', '-p', String(pid)], { encoding: 'utf8' }); const n = Number((r.stdout || '').trim()); return Number.isInteger(n) && n > 1 ? n : 0; };
+const OWN_PGID = pgidOf(process.pid);
+// A group lives while any of its processes does (kill(-pgid, 0)). The guard run of a dispatcher is not detached, so it
+// stays in the dispatcher's group: when the dispatcher and its zsh are killed, an orphaned guard worker still holds the
+// lock (coordinator's decision for c3). A group that is our own is no evidence: a waiter started from the same shell job
+// (a test, one terminal) shares it with the dead holder, and it would never let go.
+const groupAlive = (g) => { if (!Number.isInteger(g) || g <= 1 || g === OWN_PGID) return false; try { process.kill(-g, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+const holderAlive = (o) => !!o && (alive(o.pid) || alive(o.child) || groupAlive(o.pgid));
 const ageMs = (f) => { try { return Date.now() - fs.statSync(f).mtimeMs; } catch { return 0; } };
 const sleep = (ms) => new Promise((z) => setTimeout(z, ms));
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\n');
@@ -134,7 +150,7 @@ function entries(P) {
 // ---- the lock ----
 const ownerFile = (P) => path.join(P.LOCK, 'owner.json');
 function setOwner(P, extra) {
-  const o = Object.assign(readJ(ownerFile(P)) || { pid: process.pid, host: os.hostname(), since: new Date().toISOString() }, extra);
+  const o = Object.assign(readJ(ownerFile(P)) || Object.assign({ pid: process.pid, host: os.hostname(), since: new Date().toISOString() }, OWN_PGID ? { pgid: OWN_PGID } : {}), extra);
   writeAtomic(ownerFile(P), o);
 }
 function lockTake(P) {
@@ -143,7 +159,7 @@ function lockTake(P) {
   for (let i = 0; i < 3; i++) {
     try { fs.mkdirSync(P.LOCK); setOwner(P, {}); return { ok: true }; } catch (e) { if (e.code !== 'EEXIST') throw e; }
     const o = readJ(ownerFile(P));
-    if (o && (alive(o.pid) || alive(o.child))) return { busy: o };
+    if (holderAlive(o)) return { busy: o };
     if (!o && ageMs(P.LOCK) < STALE_MS) return { busy: { pid: null, note: 'a lock without its owner file yet' } };
     try { fs.mkdirSync(brk); } catch (e) {
       if (e.code !== 'EEXIST') throw e;
@@ -155,7 +171,7 @@ function lockTake(P) {
     try {
       writeAtomic(brkOwner, { pid: process.pid, since: new Date().toISOString() });
       const o2 = readJ(ownerFile(P));
-      const sameDead = o2 ? (o && o2.pid === o.pid && !alive(o2.pid) && !alive(o2.child)) : (!o && ageMs(P.LOCK) >= STALE_MS);
+      const sameDead = o2 ? (o && o2.pid === o.pid && !holderAlive(o2)) : (!o && ageMs(P.LOCK) >= STALE_MS);
       if (sameDead) {
         // a rename, not the removal of the dead train's worktree: that worktree (a cloned corpus) is removed by reapDead
         // under the breaker's own lock, so the break lock is held for milliseconds and nobody can break again meanwhile
@@ -178,6 +194,12 @@ function reapDead(P) {
     const dir = path.join(P.D, n), o = readJ(path.join(dir, 'owner.json'));
     const why = o && o.wt ? removeTrainWt(P, o.wt) : '';
     if (why && !why.startsWith('not a train worktree')) { process.stderr.write(`train: the dead train's worktree stays: ${why}\n`); continue; }
+    // the attribution refs refs/runs/train/<id>-<label> the dead train left (its own refs/runs/train/<id> is the record
+    // of the commit that ran and stays, as for every train)
+    if (o && typeof o.train === 'string' && TASK.test(o.train)) {
+      const refs = git(P, P.c.repoDir, ['for-each-ref', '--format=%(refname)', `refs/runs/train/${o.train}-*`]).out.split('\n').filter(Boolean);
+      for (const ref of refs) git(P, P.c.repoDir, ['update-ref', '-d', ref]);
+    }
     fs.rmSync(dir, { recursive: true, force: true });
   }
 }
@@ -398,7 +420,7 @@ async function redTrain(P, t) {
     if (al.length) { al.push(reason); writeA(); }
     copyAll();
     const x = Object.assign(al.length ? { attribution: alog } : {}, extra);
-    halt(P, reason, Object.assign({ train: id, log: logFile }, verdict === 'arc-red' ? { verdict } : {}, x));
+    halt(P, reason, Object.assign({ train: id, log: logFile }, verdict === 'arc-red' || verdict === 'coordinator' ? { verdict } : {}, x));
     record(Object.assign({ verdict, reason }, base0, x));
     return Object.assign({ departed: true, verdict, halted: true, reason }, base0, x);
   };
@@ -410,7 +432,7 @@ async function redTrain(P, t) {
   const why = !rr ? 'the project config has no guardRerun, so no repeated new red is named'
     : !R.length ? 'no repeated new red is named in its log (no "new red, red again alone")'
       : !P.c.guardSubsetCommand ? `the attribution of ${R.join(', ')} needs guardSubsetCommand (its selection mode)` : '';
-  if (why) return stop('red', `red train ${id} (guards-all.sh exit ${rc}): ${why} - not attributed, the coordinator decides; ${where}`);
+  if (why) return stop('coordinator', `red train ${id} (guards-all.sh exit ${rc}): ${why} - not attributed, the coordinator decides; ${where}`);
 
   const names = path.join(P.TR, `${id}.guards.json`);
   writeAtomic(names, R);
@@ -472,7 +494,7 @@ async function redTrain(P, t) {
   }
 
   // 3. green on every passenger alone: a seam
-  const coord = (w) => stop('red', `red train ${id}: ${R.join(', ')} ${w} - no automatic decision, the coordinator decides; ${where}; attribution ${alog}`, { guards: R });
+  const coord = (w) => stop('coordinator', `red train ${id}: ${R.join(', ')} ${w} - no automatic decision, the coordinator decides; ${where}; attribution ${alog}`, { guards: R });
   const unstable = (list) => list.filter((p) => p.a.flaky.length).map((p) => `${p.a.flaky.join(', ')} flaky (red, then green alone) on ${p.a.desc}`);
   if (riders.length === 1) return coord(`red in the train and on its rerun alone, but green alone on the same tree (arc + ${riders[0].task})`);
   if (riders.length > 3) return coord(`seam red, passengers {${riders.map((e) => e.task).join(', ')}}: green on each alone; a seam among more than three passengers is not searched`);
@@ -481,7 +503,7 @@ async function redTrain(P, t) {
   const seam = (earlier, laters, group, guards) => {
     const g = group.map((e) => e.task);
     for (const e of laters) {
-      give(e, { verdict: 'seam', partner: earlier.task, partnerBranch: earlier.branch, pair: g, guards,
+      give(e, { verdict: 'seam', partner: earlier.task, partnerBranch: earlier.branch, partnerHead: earlier.head, pair: g, guards,
         reason: `seam red: ${guards.join(', ')} red on arc ${base} + ${g.join(' + ')} together, green on each alone (train ${id}): ${earlier.task} arrived first and rides the next train; fix the seam with ${earlier.branch} on the arc head once it is merged` });
     }
     const note = `seam train ${id}: ${guards.join(', ')} on {${g.join(', ')}}; ${earlier.task} rides the next train, seam: ${laters.map((e) => e.task).join(', ')}`;
@@ -525,48 +547,89 @@ function args(list) {
   return o;
 }
 
-async function main() {
-  const [cmd, ...rest] = process.argv.slice(2);
-  const USAGE = 'usage: train.js enqueue --task <t> --branch <b> --head <sha> --base <arc> [--dir <folder>] | run | await --task <t> --head <sha> [--poll <s>] | status | resume';
-  if (!['enqueue', 'run', 'await', 'status', 'resume'].includes(cmd)) die(64, USAGE);
-  const a = args(rest);
-  const P = project();
-  if (cmd === 'enqueue') {
-    if (!TASK.test(a.task || '') || !SHA.test(a.head || '') || !branchOk(a.branch) || !branchOk(a.base)) die(64, `${USAGE}\n  (task: letters, digits . _ -; head: a full sha; branch and base: branch names)`);
-    const done = readJ(resultFile(P, a.task, a.head));
-    if (done) { out({ decided: true, result: done }); return 0; }
+// The verdict of a result or a halt as the exit code of `ride` (the chain's wait step returns only the exit code; the
+// workflow reads no files, so the code is the verdict and the details stay in the result file).
+const RIDE_RC = { green: 0, 'green-unmerged': 10, red: 11, seam: 12, conflict: 13, 'arc-red': 14, coordinator: 15 };
+const RC_ENV = 75, RC_QUEUE = 74, RC_REFUSED = 65;
+const rideRc = (o) => (o && Object.prototype.hasOwnProperty.call(RIDE_RC, o.verdict) && !(o.halted && !['arc-red', 'coordinator'].includes(o.verdict)) ? RIDE_RC[o.verdict] : RC_ENV);
+
+// enqueue: {decided, result} | {queued, existing?}; exits on a refusal (65) or a queue that cannot be written (74).
+function enqueue(P, a, USAGE) {
+  if (!TASK.test(a.task || '') || !SHA.test(a.head || '') || !branchOk(a.branch) || !branchOk(a.base)) die(64, `${USAGE}\n  (task: letters, digits . _ -; head: a full sha; branch and base: branch names)`);
+  // Refused before the queue (coordinator's decisions for c3): the dispatcher moves the arc branch, so the base is a
+  // branch of the repository (a commit cannot be moved) and never a protected one (rule push: merges into a protected
+  // branch are the owner's call).
+  const prot = Array.isArray(P.c.protectedBranches) ? P.c.protectedBranches : [];
+  if (prot.includes(a.base)) die(RC_REFUSED, `refused before the queue: base ${a.base} is a protected branch (protectedBranches: ${prot.join(', ')}) - the train moves only the branch of the arc`);
+  if (!rev(P, `refs/heads/${a.base}`)) die(RC_REFUSED, `refused before the queue: base ${a.base} is not a branch of ${P.c.repoDir} (refs/heads/${a.base}) - the train needs the branch of the arc, not a commit`);
+  const done = readJ(resultFile(P, a.task, a.head));
+  if (done) return { decided: true, result: done };
+  try {
     for (const e of entries(P).filter((x) => x.task === a.task)) {
-      if (e.head === a.head) { out({ queued: e.file, existing: true }); return 0; }
+      if (e.head === a.head) return { queued: e.file, existing: true };
       fs.rmSync(e.file, { force: true });
     }
     const f = path.join(P.Q, `${String(Date.now()).padStart(13, '0')}-${a.task}.json`);
     writeAtomic(f, { task: a.task, branch: a.branch, head: a.head, base: a.base, dir: a.dir ? path.resolve(a.dir) : '', enqueuedAt: new Date().toISOString() });
-    out({ queued: f });
-    return 0;
+    return { queued: f };
+  } catch (e) {
+    die(RC_QUEUE, `the train queue ${P.Q} is unavailable (${e.code || e.message}): ${a.task} ${a.branch} head ${a.head} is not queued - the review accepted it, the coordinator queues it by hand`);
+  }
+}
+
+// await: the result of the entry, or the halt as {verdict: environment | arc-red | coordinator, halted: true, ...};
+// null when there is neither an entry nor a result.
+async function awaitEntry(P, task, head, poll) {
+  for (;;) {
+    const r = readJ(resultFile(P, task, head));
+    if (r) return r;
+    const h = readJ(P.HALT);
+    if (h) return Object.assign({ verdict: 'environment', halted: true, task, head }, h);
+    if (!entries(P).some((e) => e.task === task && e.head === head)) {
+      // finish() writes the result before it removes the entry: read the result again, it may have come in between
+      return readJ(resultFile(P, task, head));
+    }
+    const d = await dispatch(P);
+    if (!d.departed) await sleep(poll);
+  }
+}
+
+async function main() {
+  const [cmd, ...rest] = process.argv.slice(2);
+  const USAGE = 'usage: train.js enqueue --task <t> --branch <b> --head <sha> --base <arc> [--dir <folder>] | ride (the same) | run | await --task <t> --head <sha> [--poll <s>] | status | resume';
+  if (!['enqueue', 'ride', 'run', 'await', 'status', 'resume'].includes(cmd)) die(64, USAGE);
+  const a = args(rest);
+  const P = project();
+  const poll = 1000 * (Number(a.poll || process.env.CODIS_TRAIN_POLL) || 10);
+  if (cmd === 'enqueue') { out(enqueue(P, a, USAGE)); return 0; }
+  if (cmd === 'ride') {
+    // the chain after the review (p-train-c3): enqueue, then await; the exit code is the verdict (RIDE_RC)
+    const q = enqueue(P, a, USAGE);
+    out(q);
+    let r = q.decided ? q.result : await awaitEntry(P, a.task, a.head, poll);
+    if (!r) die(66, `no queue entry and no result for ${a.task} ${a.head}`);
+    // a seam is fixed on the arc head that holds the earlier branch: wait for the partner's result first (it rides the
+    // next train), so the fix round starts after it
+    if (!r.halted && r.verdict === 'seam' && r.partner && TASK.test(r.partner) && SHA.test(r.partnerHead || '')) {
+      const pr = await awaitEntry(P, r.partner, r.partnerHead, poll);
+      // the partner's train halted: its verdict is ours (arc-red 14, coordinator 15, otherwise environment 75)
+      if (pr && pr.halted) { out(Object.assign({}, r, { partnerResult: pr })); return rideRc(pr); }
+      r = Object.assign({}, r, { partnerResult: pr || { verdict: 'none', reason: `no queue entry and no result for ${r.partner} ${r.partnerHead}` } });
+    }
+    out(r);
+    return rideRc(r);
   }
   if (cmd === 'run') { out(await dispatch(P)); return 0; }
   if (cmd === 'await') {
     if (!TASK.test(a.task || '') || !SHA.test(a.head || '')) die(64, USAGE);
-    const poll = 1000 * (Number(a.poll || process.env.CODIS_TRAIN_POLL) || 10);
-    for (;;) {
-      const r = readJ(resultFile(P, a.task, a.head));
-      if (r) { out(r); return 0; }
-      const h = readJ(P.HALT);
-      if (h) { out(Object.assign({ verdict: 'environment', halted: true, task: a.task, head: a.head }, h)); return 0; }
-      if (!entries(P).some((e) => e.task === a.task && e.head === a.head)) {
-        // finish() writes the result before it removes the entry: read the result again, it may have come in between
-        const r2 = readJ(resultFile(P, a.task, a.head));
-        if (r2) { out(r2); return 0; }
-        die(66, `no queue entry and no result for ${a.task} ${a.head}`);
-      }
-      const d = await dispatch(P);
-      if (!d.departed) await sleep(poll);
-    }
+    const r = await awaitEntry(P, a.task, a.head, poll);
+    if (!r) die(66, `no queue entry and no result for ${a.task} ${a.head}`);
+    out(r); return 0;
   }
   if (cmd === 'status') {
     const h = readJ(P.HALT), o = readJ(ownerFile(P));
     console.log(h ? `halt: ${h.reason} (since ${h.at}); the coordinator lifts it with train.js resume` : 'halt: none');
-    console.log(o ? `lock: train ${o.train || '-'} by pid ${o.pid} (${alive(o.pid) || alive(o.child) ? 'alive' : 'dead'}) since ${o.since}` : 'lock: free');
+    console.log(o ? `lock: train ${o.train || '-'} by pid ${o.pid} (${holderAlive(o) ? 'alive' : 'dead'}) since ${o.since}` : 'lock: free');
     const q = entries(P);
     console.log(`queue: ${q.length}`);
     for (const e of q) console.log(`  ${e.task} ${e.branch} ${e.head} -> ${e.base} (since ${e.enqueuedAt})`);

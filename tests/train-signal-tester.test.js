@@ -8,7 +8,8 @@
 //   X3 the runner exits 128 (POSIX: only a status above 128 is a signal) -> not a signal; its log has no tally, so the
 //      environment by the log (coordinator's decision for p-train-c2: a log without its tally is the environment);
 //   X4 the runner exits 200 (128 + 72, no such signal) -> the same: not a signal, the environment by the missing tally;
-//   X5 a real red (tally reached, exit 1) stays a red train;
+//   X5 a real red (tally reached, exit 1) stays a red train: not attributed here (no repeated new red in its log), so
+//      the halt for the coordinator with the verdict coordinator (p-train-c3), not the environment;
 //   X6 after resume, with the runner green, the passenger rides green.
 const fs = require('fs');
 const os = require('os');
@@ -116,7 +117,7 @@ async function main_() {
     ['X2', 'SIGINT to guards-all.sh', () => killedTop('SIGINT'), 'environment', /guards-all\.sh exit 143 by a signal \(SIGTERM\)/],
     ['X3', 'the runner exits 128', () => runWith('e128'), 'environment', /guards-all\.sh exit 128 without the tally/],
     ['X4', 'the runner exits 200', () => runWith('e200'), 'environment', /guards-all\.sh exit 200 without the tally/],
-    ['X5', 'a real red with its tally', () => runWith('red'), 'red', /guards-all\.sh exit 1\)/],
+    ['X5', 'a real red with its tally', () => runWith('red'), 'coordinator', /guards-all\.sh exit 1\)/],
   ];
   let first = true;
   for (const [cell, what, go, want, re] of cases) {

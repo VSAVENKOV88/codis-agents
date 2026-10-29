@@ -59,7 +59,7 @@ async function partE3() {
   const REJ = { verdict: 'rejected', docsOnly: false, summary: 'rej' }, DREJ = { verdict: 'rejected', docsOnly: true, summary: 'docs' }, D = { verdict: 'done', docsOnly: false, summary: '' };
   let x = await run({ pre: [PRE], prog: [PROG, Object.assign({}, PROG, { head: 'P2' })], review: [REJ, D] });
   ok('E3. light, rejection for code with a new HEAD -> the selection on it -> the second review',
-    x.r.status === 'done' && x.full === 'pre>prog>run:x:select-1>review>diff:x:reviewer>prog>run:x:select-r>review>diff:x:reviewer>left:x:end', x.full);
+    x.r.status === 'done' && x.full === 'pre>prog>run:x:select-1>review>diff:x:reviewer>prog>run:x:select-r>review>diff:x:reviewer>run:x:train-1>left:x:end', x.full);
   x = await run({ pre: [PRE], prog: [PROG, Object.assign({}, PROG, { head: 'P2', changedFiles: ['README.md'] })], review: [DREJ, D] });
   ok('E3. light, rejection for docs only with a new HEAD -> the selection on it too (guardAlways) -> the second review',
     x.r.status === 'done' && x.full.includes('prog>run:x:select-r>review'), x.full);

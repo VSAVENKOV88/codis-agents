@@ -1,7 +1,7 @@
 export const meta = {
   name: 'role-chain',
   description: 'Role chain over tasks in parallel: preconditions -> (analyst) -> programmer -> tester -> reviewer (+ security reviewer); fix rounds; an analyst after the second rejection or the second red tester round',
-  whenToUse: 'Started by the codis-agents:role-chain skill, which reads .claude/codis-agents.json and passes it. args: {owner: "the owner\'s request, verbatim", config: <resolved project config>, tasks: [{key, title, wt, branch, accept, dir?, gdir?, start?, kind: feature | defect | tail (exactly one), analystFirst | analysis | noAnalysis (exactly one), feature?, spec?, useCases?, useCasesFirst?, stack?, security?, base?, mode?}]}',
+  whenToUse: 'Started by the codis-agents:role-chain skill, which reads .claude/codis-agents.json and passes it. args: {owner: "the owner\'s request, verbatim", config: <resolved project config>, tasks: [{key, title, wt, branch, accept, dir?, gdir?, start?, kind: feature | defect | tail (exactly one), analystFirst | analysis | noAnalysis (exactly one), feature?, spec?, useCases?, useCasesFirst?, stack?, security?, base?, mode?}]}; with guardSubsetCommand a reviewed task rides the integration train (scripts/train.js ride) before it is done',
   phases: [
     { title: 'Preconditions', detail: 'brief, worktree, branch, open questions' },
     { title: 'Analyst', detail: 'matrix of cases or a diagnosis (before the programmer, after the second rejection, or after the second red tester round)' },
@@ -9,6 +9,7 @@ export const meta = {
     { title: 'Selection', detail: 'the guards of the task\'s diff on every new programmer HEAD, run by the workflow as a wait step (no full guard run in the task)' },
     { title: 'Tester', detail: 'independent inventory, own guards, acceptance in the real environment' },
     { title: 'Reviewer', detail: 'read only, tries to refute' },
+    { title: 'Train', detail: 'with guardSubsetCommand: the branch rides the integration train after the review (train.js ride as a wait step); red, seam or conflict -> a fix round' },
   ],
 }
 
@@ -266,7 +267,7 @@ const RUN_SCHEMA = { type: 'object', properties: {
   done: { type: 'boolean' }, rc: { type: ['number', 'null'] }, seconds: { type: 'number' }, log: { type: 'string' },
   tail: { type: 'string' }, alive: { type: 'boolean' }, pid: { type: 'number' }, error: { type: 'string' },
 }, required: ['done', 'rc', 'log'] }
-const runStep1 = (t, step, cmd, retry) => {
+const runStep1 = (t, step, cmd, retry, phase = 'Selection') => {
   const id = `${t.dir}/wait-${step}`
   return agent(`This is a wait step of the codis-agents process the project owner set up: a long deterministic command runs in the background and you only wait for it, so that the role agents do not. Running it is the expected step, not a decision for you to make; change nothing, analyse nothing.
 1. Run once: node ${SCRIPTS}/wait-step.js start --id ${sq(id)} --cwd ${sq(t.wt)}${retry ? ' --reuse' : ''} -- ${sq(cmd)}
@@ -274,7 +275,7 @@ const runStep1 = (t, step, cmd, retry) => {
    (Bash with timeout 300000 ms; it blocks up to 270 s and prints JSON). While the JSON says "done":false (the run is alive: "alive":true), run the same command 2 again, nothing else in between, whatever the tail, the queue position or the time that has passed: an unchanged tail, a long wait or a queue position that does not move is not a reason to stop - the run may wait hours for a memory slot, and wait-step itself ends a hung run at its deadline. Never run the command of step 1 twice.
 3. Return the schema only once the JSON says "done":true: its fields (done, rc, seconds, log, tail, alive, pid, error) exactly as printed - do not describe or judge the result. Never return "done":false yourself, except when a command printed no JSON:
 If a command fails without JSON - done=false, rc=null, log=${sq(id + '.log')}, error = the error text.`,
-  checkOpts(`run:${t.key}:${step}`, 'Selection', RUN_SCHEMA, retry))
+  checkOpts(`run:${t.key}:${step}`, phase, RUN_SCHEMA, retry))
 }
 const ranStep = (r) => !!(r && typeof r.rc === 'number')
 // Exit codes of the selection step that are the environment, not the product (p-wait D1; coordinator 2026-10-24): the
@@ -295,7 +296,7 @@ const envFull = (tag, r) => {
   const why = `exit ${r.rc}: ${ENV_RC[r.rc]}${r.error ? ` (${r.error})` : ''}; log ${r.log}`
   return { fail: `selection after programmer ${tag}: red from the environment, not the product - ${why}`, environment: why, full: selLine(r) }
 }
-const runStep = async (t, step, cmd) => (await checkTwice(t, `wait step ${step}`, ranStep, (retry) => runStep1(t, step, cmd, retry))).res
+const runStep = async (t, step, cmd, phase) => (await checkTwice(t, `wait step ${step}`, ranStep, (retry) => runStep1(t, step, cmd, retry, phase))).res
 // '' when the step ran (any numeric exit code), otherwise why it could not: that goes to the coordinator.
 const runFail = (step, r) => (!r ? `the wait step ${step} returned no result`
   : !ranStep(r) ? `the wait step ${step} could not run: ${r.error || 'no exit code'} (log ${r.log})` : '')
@@ -377,6 +378,10 @@ function baseOf(t) {
   if (!nonBlankS(t.base)) return 'base: with guardSubsetCommand the task needs base - the branch of the arc it started from (the selection of its guards diffs against it)'
   const prot = Array.isArray(CFG.protectedBranches) ? CFG.protectedBranches : []
   if (prot.includes(t.base.trim())) return `base ${t.base.trim()} is a protected branch (protectedBranches): with guardSubsetCommand the base is the branch of the arc, not ${prot.join(', ')}`
+  // W3 of p-train-ac: the train moves the base after a green ride, so it is a branch; a full object name is a commit (git
+  // names an object by 40 hex digits, or 64 with sha256). An abbreviated sha or a missing branch is caught by the
+  // precondition agent (show-ref refs/heads/<base>) and by train.js enqueue, before the queue.
+  if (/^([0-9a-f]{40}|[0-9a-f]{64})$/.test(t.base.trim())) return `base ${t.base.trim()} is a commit, not a branch: with guardSubsetCommand the base is the branch of the arc (the train moves it after a green ride)`
   return ''
 }
 const analysisLine = (a) => (a.mode === 'none' ? `No analysis: ${a.reason}` : `The analysis to follow: ${a.path}`)
@@ -398,7 +403,7 @@ const preAnalysis = (t) => (t.an.mode === 'reused'
     ? ` the noAnalysis reason "${t.an.reason}" says why this task needs no matrix of its own (a tail, a one-line fix, a rename); "the arc specification covers it" is not such a reason;`
     : '')
 const pre = (t) => agent(`You check PRECONDITIONS (read only, change nothing). ${RULES(t)}
-Check: ${t.dir}/BRIEF.md exists and contains an acceptance scenario in the real environment;${preAnalysis(t)}${t.uc ? ` the use cases ${t.uc} exist, are non-empty and have no open questions to the owner left unanswered (they were reviewed with the owner);` : ''}${t.specs.length ? ` the arc specification ${t.specs.join(', ')} exists;` : ''} ${t.wt} exists and is on branch ${t.branch}; there are no uncommitted changes (except untracked build output or probes); the brief has no unanswered questions to the owner on which acceptance depends; the environment has room: run node ${SCRIPTS}/env-check.js --path ${sq(t.wt)} --path ${sq(t.dir)} --worktree ${sq(t.wt)} --min-disk-gb ${ENV.minFreeDiskGB} --min-swap-mb ${ENV.swapMinMB} (free disk and swap headroom; the worktree is not the main working copy of its repository) and copy its problems. ok=false if any of this fails.`,
+Check: ${t.dir}/BRIEF.md exists and contains an acceptance scenario in the real environment;${preAnalysis(t)}${ONE_RUN && nonBlankS(t.base) ? ` the base ${t.base.trim()} is a branch of the repository: git -C ${sq(t.wt)} show-ref --verify --quiet ${sq(`refs/heads/${t.base.trim()}`)} exits 0 (the integration train moves that branch after a green ride; a commit or a missing branch fails);` : ''}${t.uc ? ` the use cases ${t.uc} exist, are non-empty and have no open questions to the owner left unanswered (they were reviewed with the owner);` : ''}${t.specs.length ? ` the arc specification ${t.specs.join(', ')} exists;` : ''} ${t.wt} exists and is on branch ${t.branch}; there are no uncommitted changes (except untracked build output or probes); the brief has no unanswered questions to the owner on which acceptance depends; the environment has room: run node ${SCRIPTS}/env-check.js --path ${sq(t.wt)} --path ${sq(t.dir)} --worktree ${sq(t.wt)} --min-disk-gb ${ENV.minFreeDiskGB} --min-swap-mb ${ENV.swapMinMB} (free disk and swap headroom; the worktree is not the main working copy of its repository) and copy its problems. ok=false if any of this fails.`,
   Object.assign({ label: `pre:${t.key}`, phase: 'Preconditions', schema: PRE_SCHEMA, effort: 'low', agentType: 'general-purpose' }, modelOf('preconditions')))
 
 const analyst = (t, why) => agent(`You are the ANALYST/DIAGNOSER (read code only; you write only ${t.dir}/analyst.md). ${RULES(t)}
@@ -502,11 +507,15 @@ const envProg = (n, p) => ({ fail: `programmer ${n}: red from the environment, n
 // (fix and commit, or explain and change nothing), then the selection again, at most MAX_SEL_FIX rounds. No new
 // selection on a HEAD whose selection is done (st.selAt); a round that changed only docs gets one on its new HEAD all
 // the same (the selection holds guardAlways, the scanners of the diff - S8 of p-train-ac).
-async function progStep(t, st, task, n, report) {
+// sameStops (a train fix round): a round with no commit returns {p, same: true} before any selection - the coordinator
+// decides on a red the programmer explained (UC-8 2d).
+async function progStep(t, st, task, n, report, sameStops) {
+  const prev = st.head
   const p = await prog(t, task, n, report ? { report, before: st.head } : null)
   if (!p) return { fail: 'the programmer returned no result' }
   if (p.status === 'blocked') return { fail: 'programmer: an answer is needed', questions: p.questions }
   if (p.status === 'environment') return envProg(n, p)
+  if (sameStops && p.head === prev) return { p, same: true }
   st.head = p.head
   if (!ONE_RUN) return { p }
   let merged = p, tag = n
@@ -653,7 +662,7 @@ async function work(t, st) {
   if (b.redAnalyst) return afterRedAnalyst(t, st, b)
   if (b.fail) return stop(t, b.fail, b)
   const rv = await reviewLoop(t, st, '')
-  if (rv.ok) return { task: t.key, status: 'done', review: rv.ok.summary }
+  if (rv.ok) return ride(t, st, rv.ok.summary)
   if (rv.redAnalyst) return afterRedAnalyst(t, st, rv)
   if (!rv.second || rv.docsOnly) return stop(t, rv.fail, rv)
 
@@ -665,7 +674,7 @@ async function work(t, st) {
   const b2 = await buildAndTest(t, st, `After the second review rejection the analyst wrote ${t.dir}/analyst.md - fix according to it and to review.md.`, 'A', 2)
   if (b2.fail) return stop(t, `after the analyst: ${b2.fail}`, b2)
   const rv2 = await reviewLoop(t, st, 'A')
-  if (rv2.ok) return { task: t.key, status: 'done', review: rv2.ok.summary }
+  if (rv2.ok) return ride(t, st, rv2.ok.summary)
   return stop(t, `after the analyst: ${rv2.fail}`, rv2)
 }
 
@@ -680,7 +689,7 @@ async function afterRedAnalyst(t, st, x) {
   const b = await buildAndTest(t, st, `After the second red tester round the analyst wrote ${t.dir}/analyst.md - a matrix of cases from the tester's findings: red guards for its cells, then the fix of every cell, according to it and to ${t.dir}/test.md.`, 'T', 1)
   if (b.fail) return stop(t, b.stopWhy || `after the analyst: ${b.fail}`, b)
   const rv = await reviewLoop(t, st, 'T')
-  if (rv.ok) return { task: t.key, status: 'done', review: rv.ok.summary }
+  if (rv.ok) return ride(t, st, rv.ok.summary)
   return stop(t, rv.stopWhy || `after the analyst: ${rv.fail}`, rv)
 }
 
@@ -695,16 +704,101 @@ async function light(t, st) {
   const x1 = await reviewChecked(t, st, '1')
   if (x1.fail) return stop(t, x1.fail, x1)
   log(`${t.title}: review 1 (light) - ${x1.rv.verdict}`)
-  if (x1.rv.verdict === 'done') return { task: t.key, status: 'done', review: x1.rv.summary }
+  if (x1.rv.verdict === 'done') return ride(t, st, x1.rv.summary)
   const before = st.head
   const s2 = await progStep(t, st, `Review 1 - rejected${x1.rv.docsOnly ? ' for docs only: fix the docs, guard wording or comments it names and change no behaviour' : ''}. Fix according to ${t.dir}/review.md, and run the acceptance again if the fix touches what it checks:\n${x1.rv.summary}`, 'r', `${t.dir}/review.md`)
   if (s2.fail) return stop(t, s2.fail, Object.assign({}, s2, { review: x1.rv.summary }))
   const x2 = await reviewChecked(t, st, '2', `the fix after review 1 (git diff ${before}..${st.head}) and whether review 1 is answered`)
   if (x2.fail) return stop(t, x2.fail, x2)
   log(`${t.title}: review 2 (light) - ${x2.rv.verdict}`)
-  if (x2.rv.verdict === 'done') return { task: t.key, status: 'done', review: x2.rv.summary }
+  if (x2.rv.verdict === 'done') return ride(t, st, x2.rv.summary)
   return stop(t, 'second review rejection in the light mode: the coordinator relaunches the task in the full mode (drop mode "light": tester, analyst after a second rejection)',
     { second: true, docsOnly: x2.rv.docsOnly, review: x2.rv.summary })
+}
+
+// ---- The integration train after the review (p-train-c3, W1-W15 of p-train-ac) ----
+// With guardSubsetCommand a task whose review is done rides the train: one wait step runs scripts/train.js ride
+// (enqueue {task, branch, the head after the review, base, dir} + await; the dispatcher is whoever waits, see train.js),
+// and its exit code is the verdict, since the workflow reads no files; the details (logs, files, partner) stay in the
+// result file <sharedDir>/train/result/<task>-<head>.json, which the next role reads.
+//   0 green: the arc branch moved to the train commit -> done. 10 green-unmerged -> done, the merge waits for the
+//   coordinator. 11 red, 12 seam, 13 conflict -> a programmer round on the result (a fix round) -> the selection on its
+//   new HEAD -> the second review of the diff of the fix -> the train again; a round with no commit (a red explained)
+//   goes to the coordinator (UC-8 2d); the second red train of the task sends it to the analyst inside the same run
+//   (like the second red tester round; only one analyst per run), then one round, and a red after it stops the task.
+//   14 arc-red, 15 coordinator -> stopped for the coordinator (not the environment). 74 the queue unavailable, 75 the
+//   queue halted (the environment of a train), 124 the deadline of the step (4 h, coordinator's decision 5) -> stopped
+//   with environment; the entry stays and a relaunch of the task alone attaches to it (ride is idempotent: the same task
+//   and head queued is kept, a result already there is returned). 65: refused before the queue (the base is protected or
+//   not a branch). At most MAX_RIDES rides per run.
+// Without guardSubsetCommand there is no train: done after the review, as before (W13).
+const TRAIN_RC = { 0: 'green', 10: 'green-unmerged', 11: 'red', 12: 'seam', 13: 'conflict', 14: 'arc-red', 15: 'coordinator' }
+const TRAIN_ENV = {
+  74: 'the train queue is unavailable (no queue directory, not writable)',
+  75: 'the train queue is halted for the coordinator: the environment of a train (a run cut off before its tally, the runner, the worktree, a git error, an attribution that could not run)',
+  124: 'the deadline of the wait step passed (the train did not come back in time)',
+  78: 'the dispatcher found no project config',
+}
+const MAX_RIDES = 4
+const resultOf = (t, head) => `${CFG.sharedDir}/train/result/${t.key}-${head}.json`
+const rideCmd = (t, head) => `${CFG.configPath ? `CODIS_AGENTS_CONFIG=${sq(CFG.configPath)} ` : ''}node ${SCRIPTS}/train.js ride --task ${sq(t.key)} --branch ${sq(t.branch)} --head ${sq(head)} --base ${sq(String(t.base).trim())} --dir ${sq(t.dir)}`
+const FIX_TAIL = 'Commit on the branch (a red guard first when none covers it, mutations after the commit); do not run the selection or a full run yourself: the workflow runs the selection on your new HEAD, then the second review of the diff, then the train again. If there is nothing to fix on the branch (a known or a stale guard), explain it in prog.md and commit nothing: the coordinator decides.'
+const trainTask = (t, v, res) => {
+  const base = String(t.base).trim()
+  if (v === 'red') return `The integration train came back red for your branch (verdict red): read the result ${res} - its train log (log), the attribution log (attribution) and the guards red on the arc head ${base} + your branch alone (guards); copies of the logs are in ${t.dir}. Fix the red on the branch. ${FIX_TAIL}`
+  if (v === 'conflict') return `The integration train excluded your branch: merging it into the train conflicts (verdict conflict; the files are in ${res}, field files). Your fix: merge the head of the arc branch ${base} into your branch ${t.branch} and resolve the conflict, then check the guards of those files. ${FIX_TAIL}`
+  return `The integration train found a seam (verdict seam): your branch is green alone on the arc head but red together with its partner, named in ${res} (partner, partnerBranch; the guards in guards; partnerResult is the partner's own result - it arrived first and rode before you). Your fix: merge the head of the arc branch ${base} into your branch ${t.branch} (it holds the partner once partnerResult is green) and fix the seam with it on that head. ${FIX_TAIL}`
+}
+async function ride(t, st, review) {
+  if (!ONE_RUN) return { task: t.key, status: 'done', review }
+  const results = []
+  for (let n = 1; ; n++) {
+    const head = st.head, step = `train-${n}`, res = resultOf(t, head)
+    const r = await runStep(t, step, rideCmd(t, head), 'Train')
+    const f = runFail(step, r)
+    if (f) return stop(t, `${f}; branch ${t.branch} head ${head} - the review accepted it, the coordinator queues it (train.js enqueue) or relaunches the task alone`, { review })
+    const v = TRAIN_RC[r.rc]
+    const info = { rc: r.rc, verdict: v || 'environment', result: res, log: r.log, tail: r.tail || '' }
+    log(`${t.title}: train ${n} - exit ${r.rc}${v ? ` (${v})` : ''}`)
+    const keep = `the queue entry stays (branch ${t.branch} head ${head}): a relaunch of the task alone attaches to it (train.js ride is idempotent)`
+    if (v === 'green') return { task: t.key, status: 'done', review, train: info }
+    if (v === 'green-unmerged') return { task: t.key, status: 'done', review, train: Object.assign(info, { note: `green, the merge waits for the coordinator: it merges the train commit named in ${res} (refs/runs/train/<id>)` }) }
+    if (v === 'arc-red') return stop(t, `train ${n}: arc-red - the arc branch ${String(t.base).trim()} itself is red without the passengers (the train's halt and ${res} name the guards); the coordinator fixes it and runs train.js resume; ${keep}`, { review, train: info })
+    if (v === 'coordinator') return stop(t, `train ${n}: halted for the coordinator - a red train with no automatic attribution (the reason is in train.js status and the halt); the coordinator decides and runs train.js resume; ${keep}`, { review, train: info })
+    if (!v) {
+      if (r.rc === 65) return stop(t, `train ${n}: refused before the queue (exit 65: the base ${String(t.base).trim()} is a protected branch or not a branch of the repository); log ${r.log}`, { review, train: info })
+      if (TRAIN_ENV[r.rc]) {
+        const why = `exit ${r.rc}: ${TRAIN_ENV[r.rc]}; ${r.rc === 74 ? `branch ${t.branch} head ${head} is not queued - the review accepted it, the coordinator queues it (train.js enqueue) or relaunches the task alone` : keep}; log ${r.log}`
+        return stop(t, `train ${n}: red from the environment, not the product - ${why}`, { environment: why, review, train: info })
+      }
+      return stop(t, `train ${n}: train.js ride exit ${r.rc} (log ${r.log}) - the coordinator decides; ${keep}`, { review, train: info })
+    }
+    results.push(res)
+    if (n === MAX_RIDES) return stop(t, `train ${n}: still ${v} after ${MAX_RIDES} rides - the coordinator decides`, { review, train: info })
+    let task = '', fix = res
+    if (v === 'red') {
+      st.trainReds = (st.trainReds || 0) + 1
+      if (st.analyst === 'train-red') return stop(t, `train red after analyst (train ${n})`, { review, train: info })
+      if (!st.analyst && st.trainReds >= 2) {
+        st.analyst = 'train-red'
+        log(`${t.title}: train ${n} - the second red train of the task - analyst`)
+        const a = await analyst(t, `the second red train for this task (the integration train after the review; like the second red tester round). Inputs: the train results ${results.join(', ')} (each names its train log, its attribution log and the guards red on the arc head + this branch alone) and the programmer's rounds in ${t.dir}/prog.md. Write the matrix of cases those reds belong to and their cause with file:line, so the next programmer round closes the whole matrix at once.`)
+        if (!a) return stop(t, 'the analyst returned no result', { review, train: info })
+        if (!a.ready || a.split.length || a.questions.length) return stop(t, 'analyst after the second red train: split or an answer is needed', { split: a.split, questions: a.questions, analyst: a.summary, review, train: info })
+        task = `After the second red train the analyst wrote ${t.dir}/analyst.md - a matrix of cases from the train's reds (${results.join(', ')}): red guards for its cells, then the fix of every cell. ${FIX_TAIL}`
+        fix = null
+      }
+    }
+    const before = st.head
+    const s = await progStep(t, st, task || trainTask(t, v, res), `t${n}`, fix, true)
+    if (s.fail) return stop(t, s.fail, Object.assign({}, s, { review, train: info }))
+    if (s.same) return stop(t, `train ${n} (${v}): the programmer committed nothing (the red explained, not fixed: ${s.p && s.p.summary || '?'}) - the coordinator decides; the branch is not queued again`, { review, train: info })
+    const x = await reviewChecked(t, st, `t${n}`, `only the diff of the fix after train ${n} (git diff ${before}..${st.head}): does it answer the train's ${v} (${res}) and change nothing else`)
+    if (x.fail) return stop(t, x.fail, Object.assign({}, x, { train: info }))
+    log(`${t.title}: review t${n} - ${x.rv.verdict}`)
+    if (x.rv.verdict !== 'done') return stop(t, `train ${n} (${v}): the review of the fix rejected it - the coordinator decides`, { review: x.rv.summary, train: info })
+    review = x.rv.summary
+  }
 }
 
 const results = await pipeline(TASKS, (t) => chain(t))
