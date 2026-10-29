@@ -39,10 +39,12 @@ const put = (f, s) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.w
 const sh = (f, body) => { put(f, body); fs.chmodSync(f, 0o755); };
 
 for (const d of [main, wts, shared, bin]) fs.mkdirSync(d, { recursive: true });
-sh(path.join(bin, 'sysctl'), '#!/bin/zsh\n[[ $1 == -n && $2 == vm.swapusage ]] || exec /usr/sbin/sysctl "$@"\nprint -r -- "total = 30000,00M  used = 1000,00M  free = 20000,00M  (encrypted)"\n');
-sh(path.join(bin, 'memory_pressure'), '#!/bin/zsh\nprint -r -- "System-wide memory free percentage: 20%"\n');
-sh(path.join(bin, 'vm_stat'), '#!/bin/zsh\nprint -r -- "Mach Virtual Memory Statistics: (page size of 16384 bytes)"\nprint -r -- "Swapouts:                                   0."\n');
-sh(path.join(bin, 'df'), '#!/bin/zsh\nprint -r -- "Filesystem 1M-blocks Used Available Capacity Mounted"\nprint -r -- "/dev/disk3s6 100000 0 0 0% /System/Volumes/VM"\n');
+// the fake machine of the slots, in front of PATH: a calm machine
+const tool = (name, body) => sh(path.join(bin, name), body);
+tool('sysctl', '#!/bin/zsh\n[[ $1 == -n && $2 == vm.swapusage ]] || exec /usr/sbin/sysctl "$@"\nprint -r -- "total = 30000,00M  used = 1000,00M  free = 20000,00M  (encrypted)"\n');
+tool('memory_pressure', '#!/bin/zsh\nprint -r -- "System-wide memory free percentage: 20%"\n');
+tool('vm_stat', '#!/bin/zsh\nprint -r -- "Mach Virtual Memory Statistics: (page size of 16384 bytes)"\nprint -r -- "Swapouts:                                   0."\n');
+tool('df', '#!/bin/zsh\nprint -r -- "Filesystem 1M-blocks Used Available Capacity Mounted"\nprint -r -- "/dev/disk3s6 100000 0 0 0% /System/Volumes/VM"\n');
 // The project's guard runner: every guard of $T/rules, or only the --only ones; one line per call into calls.txt
 // ("<pwd> <head> <subset 0|1> <only...>"); env-*.txt in the tree makes a selection run exit 69 (the runner unreachable)
 // after a complete log with its tally and its reds, so only the exit code tells the environment.
