@@ -4,6 +4,8 @@
 //   H1-H3  ride of a seam passenger whose partner's await ends on a halt: the halt's own verdict is the exit code
 //          (arc-red 14, coordinator 15; a halt without a verdict - the environment - 75). Coordinator's decision for c3:
 //          a stop "for the coordinator" is given by await and the chain as a stop for the coordinator, not as environment.
+//   H6     (round 2) a partner's halt with a verdict that is not a stop (a stale 'red') is still 75 for the seam passenger.
+//   H7     (round 2) the seam passenger's last line keeps verdict seam and the partner's halt with its reason.
 //   H4     a result already there for the task and head wins over a halt (ride returns the result's verdict).
 //   H5     a branch or base that looks like an option (-x) is refused as usage (64), nothing queued.
 //   A1-A2  only one analyst per run: when the analyst of the second review rejection or of the second red tester round
@@ -53,6 +55,21 @@ function trainCells() {
     r = tr('ride', ...args('s', 'sb', h));
     ok(`H${rc === 14 ? 1 : rc === 15 ? 2 : 3}. ride of a seam passenger whose partner's train halts with ${name} -> exit ${rc}`,
       r.status === rc && queue().some((e) => e.task === 'p1'), `${r.status} ${r.stdout}${r.stderr}`);
+    // H7 (tester round 2): the last line names the seam and carries the partner's halt with its reason, so the
+    // coordinator sees why the passenger stopped (the chain reads the code, the coordinator reads this line)
+    const l = last(r);
+    ok(`H7. the seam passenger's last line keeps verdict seam and the partner's halt (${name}) with its reason`,
+      l && l.verdict === 'seam' && l.partner === 'p1' && l.partnerResult && l.partnerResult.halted === true && l.partnerResult.reason === halt.reason && (l.partnerResult.verdict || 'environment') === (halt.verdict || 'environment'), `${r.stdout}`);
+  }
+  // H6 (tester round 2): a halt whose verdict is not a stop for the coordinator (here a stale 'red') is the
+  // environment for the seam passenger too (75), never the red code 11 of a fix round on a result that does not exist
+  fs.rmSync(TD, { recursive: true, force: true });
+  tr('enqueue', ...args('p1', 'pa', h));
+  setResult('s', h, { verdict: 'seam', partner: 'p1', partnerBranch: 'pa', partnerHead: h, guards: ['g'] });
+  put(path.join(TD, 'halt'), JSON.stringify({ reason: 'a stale halt', verdict: 'red' }));
+  {
+    const r6 = tr('ride', ...args('s', 'sb', h));
+    ok('H6. ride of a seam passenger whose partner halts with a non-stop verdict (red) -> exit 75, not 11', r6.status === 75, `${r6.status} ${r6.stdout}${r6.stderr}`);
   }
   // H4: a result already there wins over a halt
   fs.rmSync(TD, { recursive: true, force: true });
