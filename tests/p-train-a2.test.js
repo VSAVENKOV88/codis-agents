@@ -149,6 +149,33 @@ async function partA() {
   ok('S19. multi-agent.md: the onerun line says there is no full guard run in a task, names --select and Replaces',
     /[Nn]o full guard run in the task/.test(line) && /--select/.test(line) && /Replaces:/.test(line), line);
   ok('S19. the agents and the README speak of the selection step', /--select/.test(read('README.md')) && /selection/.test(read('agents/programmer.md')) && /selection/.test(read('agents/tester.md')));
+  // S19 / UC-4 Err 1 (review round 1): with the key no other rule of a role prompt contradicts the onerun line - the
+  // slots rule names no full guard run, the rerun rule writes no flaky guard of a selection into the quarantine, the
+  // pause rule waits for the selection, not for a full run. Without the key the texts stay as they were.
+  const listOf = (config) => new AsyncFunction('args', SRC.slice(0, SRC.indexOf('const PRE_SCHEMA')) + '\nreturn RULE_LIST(TASKS[0])')({ owner: 'o', config, tasks: [T] });
+  const BL = { guardBaseline: 'tools/guards-baseline.json', guardRerun: RERUN };
+  const one = await listOf(Object.assign({}, ONE, BL));
+  const full = await listOf(Object.assign({}, CFG, BL));
+  const rOf = (l, id) => (l.find((r) => r[0] === id) || ['', ''])[1];
+  ok('S19. with the key the slots rule names no full guard run (guards-all.sh is the selection, in the background)',
+    !/full guard run/.test(rOf(one, 'slots')) && /guards-all\.sh/.test(rOf(one, 'slots')) && /run_in_background/.test(rOf(one, 'slots')), rOf(one, 'slots'));
+  ok('S19. without the key the slots rule keeps the full guard run', /full guard run \/p\/scripts\/guards-all\.sh w/.test(rOf(full, 'slots')), rOf(full, 'slots'));
+  ok('S19. with the key the rerun rule: the quarantine is read only on a selection, a flaky guard goes into the report',
+    !/A flaky guard is written into the project's quarantine/.test(rOf(one, 'rerun')) && /quarantine[^.]*read only/.test(rOf(one, 'rerun')), rOf(one, 'rerun'));
+  ok('S19. without the key the rerun rule still writes a flaky guard into the quarantine', /A flaky guard is written into the project's quarantine/.test(rOf(full, 'rerun')), rOf(full, 'rerun'));
+  ok('S19. with the key the pause rule: the selection is waited for by the workflow, no full guard run',
+    !/full guard run/.test(rOf(one, 'pauses')) && /selection[^.]*waited for by the workflow/.test(rOf(one, 'pauses')) && /do not end your work to wait/.test(rOf(one, 'pauses')), rOf(one, 'pauses'));
+  ok('S19. without the key the pause rule is unchanged', /the one full guard run is waited for by the workflow/.test(rOf(full, 'pauses')), rOf(full, 'pauses'));
+  // Living docs of the key (review round 1, findings 2 and 3): no "one full run" of a task with guardSubsetCommand.
+  const readme = read('README.md');
+  const rowOf = (txt, key) => (txt.split('\n').find((l) => l.startsWith(`| \`${key}\``)) || '');
+  ok('S19. README guardSubsetCommand: no full guard run per task, the selection of the diff instead',
+    !/one full guard run per task/.test(rowOf(readme, 'guardSubsetCommand')) && /--select/.test(rowOf(readme, 'guardSubsetCommand')), rowOf(readme, 'guardSubsetCommand'));
+  ok('S19. README wait-step and the lessons table: no "one full guard run of a task", no "the one full run includes the selection"',
+    !/the one full guard run of a task/.test(rowOf(readme, 'scripts/wait-step.js')) && !/the one full run includes the selection/.test(readme), rowOf(readme, 'scripts/wait-step.js'));
+  ok('S19. light mode in the skills and the rules: the selection step, not the one full run',
+    !/the one full run, one reviewer/.test(read('skills/role-chain/SKILL.md')) && !/the one full run, one reviewer/.test(read('skills/coordinator/SKILL.md'))
+      && !/the one full guard run of a task\) is waited/.test(rules), '');
 }
 
 const zshOk = has('zsh') && has('git');
