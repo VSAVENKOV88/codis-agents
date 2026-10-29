@@ -60,6 +60,8 @@ function trainCells() {
   put(path.join(TD, 'halt'), JSON.stringify({ reason: 'environment: exit 69' }));
   let r = tr('ride', ...args('r', 'sb', h));
   ok('H4. ride: the result of the task and head already there wins over a halt -> its verdict (red 11)', r.status === 11 && last(r) && last(r).verdict === 'red', `${r.status} ${r.stdout}${r.stderr}`);
+  r = tr('await', '--task', 'r', '--head', h);
+  ok('H4. await: the result already there wins over a halt -> the result, not the halt', r.status === 0 && last(r) && last(r).verdict === 'red' && !last(r).halted, `${r.status} ${r.stdout}${r.stderr}`);
   // H5: option-like names are usage, nothing queued
   fs.rmSync(TD, { recursive: true, force: true });
   r = tr('ride', ...args('o', '-x', h));
