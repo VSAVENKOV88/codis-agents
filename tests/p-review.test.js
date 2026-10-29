@@ -23,7 +23,7 @@ const SRC = fs.readFileSync(path.join(ROOT, 'workflows', 'role-chain.js'), 'utf8
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 const CFG = { sharedDir: '/s', worktreeRoot: '/r', scriptsDir: '/p/scripts', reportLanguage: 'Russian', ownerStackReadOnly: 'own', slots: { lockDir: '/slots' },
   protectedBranches: ['main'], testerWritable: ['-run\\.js$'], roleNotes: {}, threatModel: 'ACCESS.md' };
-const T = { key: 'x', title: 'X', dir: '/d', wt: '/w', branch: 'b', gdir: 'w', accept: 'acc', noAnalysis: 'n' };
+const T = { key: 'x', title: 'X', dir: '/d', wt: '/w', branch: 'b', gdir: 'w', accept: 'acc', kind: 'tail', noAnalysis: 'n' };
 const TS = Object.assign({}, T, { security: true });
 const PRE = { ok: true, problems: [], blockingQuestions: [] };
 const PROG = { status: 'ready', changedFiles: ['src/a.js'], commits: ['c'], head: 'P', mutations: 'm', fullRun: 'r', questions: [], summary: 's' };

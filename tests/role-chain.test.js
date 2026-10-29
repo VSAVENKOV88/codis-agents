@@ -17,7 +17,7 @@ const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
 const CFG = { sharedDir: '/s', worktreeRoot: '/r', scriptsDir: '/p/scripts', reportLanguage: 'Russian', ownerStackReadOnly: 'own', slots: { lockDir: '/slots' },
   protectedBranches: ['main'], testerWritable: ['-run\\.js$'], roleNotes: { programmer: 'rebuild the bundle' }, threatModel: 'ACCESS.md' };
-const T = { key: 'x', title: 'X', dir: '/d', wt: '/w', branch: 'b', gdir: 'w', accept: 'acc', noAnalysis: 'one-line fix' };
+const T = { key: 'x', title: 'X', dir: '/d', wt: '/w', branch: 'b', gdir: 'w', accept: 'acc', kind: 'tail', noAnalysis: 'one-line fix' };
 // T without the analysis marker (exactly one of analystFirst, analysis, noAnalysis is required).
 const bare = (extra) => { const t = Object.assign({}, T, extra); delete t.noAnalysis; return Object.assign(t, extra); };
 const PRE = { ok: true, problems: [], blockingQuestions: [] };
@@ -246,7 +246,7 @@ async function run(script, task = T, extra = {}) {
   // only use-cases.md and the task stops for the review with the owner; useCases -> every role gets the path as context.
   const UC = { ready: true, useCases: 4, questions: ['Q1: who may resend?'], summary: 'u' };
   const roleP = (x, r) => (x.prompts.find((p) => p.role === r) || {}).prompt || '';
-  x = await run({ pre: [PRE], usecases: [UC] }, bare({ analystFirst: true, useCasesFirst: true }));
+  x = await run({ pre: [PRE], usecases: [UC] }, bare({ kind: 'feature', analystFirst: true, useCasesFirst: true }));
   ok('useCasesFirst: pre > use cases analyst only, then stopped for the owner review (no matrix, no programmer)',
     x.r.status === 'use-cases-review' && x.trace === 'pre>usecases' && /review the use cases with the owner/i.test(x.r.why), JSON.stringify(x.r));
   ok('useCasesFirst: the result names the file, its questions and how to relaunch',
@@ -257,9 +257,9 @@ async function run(script, task = T, extra = {}) {
   ok('useCasesFirst: the analyst runs as the analyst agent, in the Analyst phase', (x.prompts.find((p) => p.role === 'usecases') || { opts: {} }).opts.agentType === 'codis-agents:analyst'
     && x.prompts.find((p) => p.role === 'usecases').opts.phase === 'Analyst');
   ok('useCasesFirst: the leftovers post-check still runs at the end', x.full === 'pre>usecases>left:x:end', x.full);
-  x = await run({ pre: [PRE], usecases: [null] }, bare({ analystFirst: true, useCasesFirst: true }));
+  x = await run({ pre: [PRE], usecases: [null] }, bare({ kind: 'feature', analystFirst: true, useCasesFirst: true }));
   ok('useCasesFirst: no result -> stopped', x.r.status === 'stopped' && /returned no result/.test(x.r.why), JSON.stringify(x.r));
-  x = await run({ pre: [PRE], usecases: [Object.assign({}, UC, { ready: false })] }, bare({ analystFirst: true, useCasesFirst: true }));
+  x = await run({ pre: [PRE], usecases: [Object.assign({}, UC, { ready: false })] }, bare({ kind: 'feature', analystFirst: true, useCasesFirst: true }));
   ok('useCasesFirst: not ready -> stopped, not offered for review', x.r.status === 'stopped' && x.trace === 'pre>usecases', JSON.stringify(x.r));
   for (const [name, t] of [['without analystFirst', { noAnalysis: 'tail', useCasesFirst: true }], ['with analysis', { analysis: '/d/a.md', useCasesFirst: true }],
     ['not true', { analystFirst: true, useCasesFirst: 'yes' }], ['together with useCases', { analystFirst: true, useCasesFirst: true, useCases: '/d/use-cases.md' }]]) {
@@ -272,7 +272,7 @@ async function run(script, task = T, extra = {}) {
     ok(`useCases ${name} -> stopped before any agent`, x.r.status === 'stopped' && x.trace === '' && /useCases/.test(JSON.stringify(x.r.problems)), JSON.stringify(x.r));
   }
   const UCP = '/s/feat/use-cases.md';
-  x = await run(Object.assign({}, G, { analyst: [AN] }), bare({ analystFirst: true, useCases: UCP, feature: 'feat' }));
+  x = await run(Object.assign({}, G, { analyst: [AN] }), bare({ kind: 'feature', analystFirst: true, useCases: UCP, feature: 'feat' }));
   ok('useCases in the feature folder + analystFirst -> analyst (matrix) > prog > test > review, done', x.r.status === 'done' && x.trace === 'pre>analyst>prog>test>review' && x.r.useCases === UCP, JSON.stringify(x.r));
   ok('useCases: every role prompt names the use cases as context',
     x.prompts.filter((p) => !['diff', 'left', 'post'].includes(p.role)).every((p) => p.prompt.includes(`Use cases of the feature (actors, flows, alternative flows, errors): ${UCP}.`)), x.full);
@@ -593,7 +593,7 @@ async function run(script, task = T, extra = {}) {
         { ok: false, found: [], removed: [], remaining: ['x'], error: 'not run' }, { ok: true, found: [], removed: [], remaining: [] }] },
     task || bare({ analystFirst: true, security: true }), { config: cfg });
     const uc = await run({ pre: [PRE], usecases: [{ ready: true, useCases: 1, questions: [], summary: 'u' }] },
-      bare({ analystFirst: true, useCasesFirst: true }), { config: cfg });
+      bare({ kind: 'feature', analystFirst: true, useCasesFirst: true }), { config: cfg });
     return y.prompts.concat(uc.prompts);
   };
   const rolesOf = (ps) => ps.filter((p) => ROLE_LABELS.includes(p.role));

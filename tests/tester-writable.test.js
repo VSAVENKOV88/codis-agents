@@ -62,7 +62,7 @@ try {
 const SRC = fs.readFileSync(path.join(ROOT, 'workflows', 'role-chain.js'), 'utf8').replace(/^export const meta/m, 'const meta');
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 const CFG = { sharedDir: '/s', worktreeRoot: '/r', scriptsDir: '/p/scripts', protectedBranches: ['main'], slots: { lockDir: '/slots' } };
-const T = { key: 'x', title: 'X', dir: '/d', wt: '/w', branch: 'b', accept: 'acc', noAnalysis: 'one-line fix' };
+const T = { key: 'x', title: 'X', dir: '/d', wt: '/w', branch: 'b', accept: 'acc', kind: 'tail', noAnalysis: 'one-line fix' };
 async function run(cfg, task = T) {
   const calls = [];
   const agent = async (prompt, opts) => { calls.push(opts.label); return opts.label.startsWith('pre:') ? { ok: true, problems: [], blockingQuestions: [] } : null; };
