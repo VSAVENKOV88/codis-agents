@@ -44,14 +44,15 @@ sh(path.join(bin, 'memory_pressure'), '#!/bin/zsh\nprint -r -- "System-wide memo
 sh(path.join(bin, 'vm_stat'), '#!/bin/zsh\nprint -r -- "Mach Virtual Memory Statistics: (page size of 16384 bytes)"\nprint -r -- "Swapouts:                                   0."\n');
 sh(path.join(bin, 'df'), '#!/bin/zsh\nprint -r -- "Filesystem 1M-blocks Used Available Capacity Mounted"\nprint -r -- "/dev/disk3s6 100000 0 0 0% /System/Volumes/VM"\n');
 // The project's guard runner: every guard of $T/rules, or only the --only ones; one line per call into calls.txt
-// ("<pwd> <head> <subset 0|1> <only...>"); env-*.txt in the tree makes a selection run exit 69 (the runner unreachable).
+// ("<pwd> <head> <subset 0|1> <only...>"); env-*.txt in the tree makes a selection run exit 69 (the runner unreachable)
+// after a complete log with its tally and its reds, so only the exit code tells the environment.
 sh(path.join(T, 'guard.sh'), `#!/bin/sh
 T='${T}'
 SUBSET=0; ONLY=""
 while [ $# -gt 0 ]; do case "$1" in --subset) SUBSET=1;; --only) ONLY="$ONLY $2"; shift;; esac; shift; done
 export SUBSET
 echo "$PWD $(git rev-parse HEAD) $SUBSET$ONLY" >> "$T/calls.txt"
-if [ "$SUBSET" = 1 ] && ls env-*.txt >/dev/null 2>&1; then echo "environment: the runner is unreachable"; exit 69; fi
+ENV=0; if [ "$SUBSET" = 1 ] && ls env-*.txt >/dev/null 2>&1; then echo "environment: the runner is unreachable"; ENV=1; fi
 failed=0; passed=0
 while IFS='|' read -r name cond; do
   [ -n "$name" ] || continue
@@ -60,6 +61,7 @@ while IFS='|' read -r name cond; do
 done < "$T/rules"
 [ "$SUBSET" = 0 ] && [ -f "$T/notally" ] && { echo "cut off"; exit 1; }
 echo "=== $failed failed, $passed passed in 0.1s ==="
+[ "$ENV" = 1 ] && exit 69
 [ "$failed" = 0 ]
 `);
 const G = path.join(T, 'guard.sh');
@@ -239,6 +241,37 @@ async function main_() {
   h = haltJ();
   ok('R8 no verdict for anyone, all three stay in the queue', !result('v1', v1) && !result('v2', v2) && !result('v3', v3) && queued() === 'v1,v2,v3', `${r.stdout}${r.stderr} ${queued()}`);
   ok('R8 the queue halts for the coordinator, the reason names the unstable guard on a pair', h && /g-8/.test(h.reason || '') && /pair/.test(h.reason || '') && /coordinator/.test(h.reason || ''), JSON.stringify(h));
+  clean();
+
+  // ---- R8 on a passenger: g flaky on a alone (red, then green on its rerun), green on b -> the coordinator, no seam ----
+  rules({ 'g-9': '{ [ -f seam-9a.txt ] && [ -f seam-9b.txt ]; } || { [ "$SUBSET" = 1 ] && [ -f seam-9a.txt ] && [ ! -f seam-9b.txt ]; }' });
+  const f1 = branch('f1', ['seam-9a.txt']), f2 = branch('f2', ['seam-9b.txt']);
+  enq('f1'); enq('f2');
+  r = tr('run');
+  h = haltJ();
+  ok('R8 g flaky on a passenger alone -> no seam verdict, both stay, the coordinator', !result('f1', f1) && !result('f2', f2) && queued() === 'f1,f2'
+    && h && /g-9 flaky/.test(h.reason || '') && /coordinator/.test(h.reason || ''), `${r.stdout}${r.stderr} ${JSON.stringify(h)}`);
+  clean();
+
+  // ---- R5: red on several pairs -> no one seam pair: the coordinator ----
+  rules({ 'g-10': '{ [ -f s10a.txt ] && [ -f s10b.txt ]; } || { [ -f s10a.txt ] && [ -f s10c.txt ]; }' });
+  const k1 = branch('k1', ['s10a.txt']), k2 = branch('k2', ['s10b.txt']), k3 = branch('k3', ['s10c.txt']);
+  enq('k1'); enq('k2'); enq('k3');
+  r = tr('run');
+  h = haltJ();
+  ok('R5 g red on two pairs -> no verdict, all stay, the coordinator', !result('k2', k2) && !result('k3', k3) && queued() === 'k1,k2,k3'
+    && h && /several pairs/.test(h.reason || '') && /coordinator/.test(h.reason || ''), `${r.stdout}${r.stderr} ${JSON.stringify(h)}`);
+  clean();
+
+  // ---- a seam among four passengers is not searched (UC-9 out of scope) -> the coordinator ----
+  rules({ 'g-11': '[ -f s11a.txt ] && [ -f s11b.txt ] && [ -f s11c.txt ] && [ -f s11d.txt ]' });
+  const q1 = branch('q1', ['s11a.txt']), q2 = branch('q2', ['s11b.txt']), q3 = branch('q3', ['s11c.txt']), q4 = branch('q4', ['s11d.txt']);
+  enq('q1'); enq('q2'); enq('q3'); enq('q4');
+  clearCalls();
+  r = tr('run');
+  h = haltJ();
+  ok('four passengers green alone -> no verdict, no pair runs, the coordinator', [q1, q2, q3, q4].every((hd, i) => !result(`q${i + 1}`, hd)) && queued() === 'q1,q2,q3,q4'
+    && h && /more than three/.test(h.reason || '') && subsetCalls().length === 5, `${r.stdout}${r.stderr} ${JSON.stringify(h)} ${subsetCalls().length}`);
   clean();
 
   // ---- one passenger: red in the train, green alone on the same tree -> the coordinator ----
