@@ -164,11 +164,12 @@ async function main_() {
   fs.writeFileSync(path.join(T, 'sleep'), '6');
   clearCalls();
   const ch = spawn(process.execPath, [TRAIN, 'run'], { cwd: T, env, stdio: 'ignore' });
+  const closed = new Promise((z) => ch.on('close', z));   // attached at once: a run that ends early still resolves
   for (let i = 0; i < 150 && !fs.existsSync(path.join(T, 'calls.txt')); i++) await wait(100);
   const own = readJ(path.join(LOCK, 'owner.json')) || {};
   const deadWt = own.wt;
   ch.kill('SIGKILL');
-  await new Promise((z) => ch.on('close', z));
+  await closed;
   const childAlive = own.child && alive(own.child);
   r = tr('run'); o = last(r);
   ok('I4 the dispatcher killed, its guard run still alive -> the lock holds (busy), no result', childAlive && o && o.busy && !result('w', w), `${childAlive} ${r.stdout}${r.stderr}`);
@@ -210,8 +211,12 @@ async function main_() {
   ok('I2 the lock is released after the environment', !fs.existsSync(path.join(sh2, 'train', 'lock')));
 }
 
-main_().catch((e) => ok('no exception', false, e && e.stack)).finally(() => {
+// a promise that never settles would end node with exit 0 before the tally: count it as a failure
+let finished = false;
+process.on('beforeExit', () => { if (!finished) { finished = true; ok('the test ran to its end', false, 'the event loop emptied early'); cleanup(); } });
+const cleanup = () => {
   try { spawnSync('git', ['-C', main, 'worktree', 'prune']); } catch { /* best effort */ }
   fs.rmSync(T, { recursive: true, force: true });
   done();
-});
+};
+main_().catch((e) => ok('no exception', false, e && e.stack)).finally(() => { finished = true; cleanup(); });
