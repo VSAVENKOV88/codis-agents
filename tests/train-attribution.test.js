@@ -242,7 +242,7 @@ async function main_() {
   r = tr('run'); o = last(r);
   h = haltJ();
   ok('R8 no verdict for anyone, all three stay in the queue', !result('v1', v1) && !result('v2', v2) && !result('v3', v3) && queued() === 'v1,v2,v3', `${r.stdout}${r.stderr} ${queued()}`);
-  ok('R8 the queue halts for the coordinator, the reason names the unstable guard on a pair', h && /g-8/.test(h.reason || '') && /pair/.test(h.reason || '') && /coordinator/.test(h.reason || ''), JSON.stringify(h));
+  ok('R8 the queue halts for the coordinator, the reason names the unstable guard on a pair', h && h.verdict === 'coordinator' && /g-8/.test(h.reason || '') && /pair/.test(h.reason || '') && /coordinator/.test(h.reason || ''), JSON.stringify(h));
   clean();
 
   // ---- R8 on a passenger: g flaky on a alone (red, then green on its rerun), green on b -> the coordinator, no seam ----
@@ -252,7 +252,7 @@ async function main_() {
   r = tr('run');
   h = haltJ();
   ok('R8 g flaky on a passenger alone -> no seam verdict, both stay, the coordinator', !result('f1', f1) && !result('f2', f2) && queued() === 'f1,f2'
-    && h && /g-9 flaky/.test(h.reason || '') && /coordinator/.test(h.reason || ''), `${r.stdout}${r.stderr} ${JSON.stringify(h)}`);
+    && h && h.verdict === 'coordinator' && /g-9 flaky/.test(h.reason || '') && /coordinator/.test(h.reason || ''), `${r.stdout}${r.stderr} ${JSON.stringify(h)}`);
   clean();
 
   // ---- R5: red on several pairs -> no one seam pair: the coordinator ----
@@ -262,7 +262,7 @@ async function main_() {
   r = tr('run');
   h = haltJ();
   ok('R5 g red on two pairs -> no verdict, all stay, the coordinator', !result('k2', k2) && !result('k3', k3) && queued() === 'k1,k2,k3'
-    && h && /several pairs/.test(h.reason || '') && /coordinator/.test(h.reason || ''), `${r.stdout}${r.stderr} ${JSON.stringify(h)}`);
+    && h && h.verdict === 'coordinator' && /several pairs/.test(h.reason || '') && /coordinator/.test(h.reason || ''), `${r.stdout}${r.stderr} ${JSON.stringify(h)}`);
   clean();
 
   // ---- a seam among four passengers is not searched (UC-9 out of scope) -> the coordinator ----
@@ -273,7 +273,7 @@ async function main_() {
   r = tr('run');
   h = haltJ();
   ok('four passengers green alone -> no verdict, no pair runs, the coordinator', [q1, q2, q3, q4].every((hd, i) => !result(`q${i + 1}`, hd)) && queued() === 'q1,q2,q3,q4'
-    && h && /more than three/.test(h.reason || '') && subsetCalls().length === 5, `${r.stdout}${r.stderr} ${JSON.stringify(h)} ${subsetCalls().length}`);
+    && h && h.verdict === 'coordinator' && /more than three/.test(h.reason || '') && subsetCalls().length === 5, `${r.stdout}${r.stderr} ${JSON.stringify(h)} ${subsetCalls().length}`);
   clean();
 
   // ---- one passenger: red in the train, green alone on the same tree -> the coordinator ----
@@ -282,7 +282,9 @@ async function main_() {
   enq('w');
   r = tr('run');
   h = haltJ();
-  ok('one passenger red in the train and green alone -> no verdict, the coordinator', !result('w', w) && queued() === 'w' && h && /coordinator/.test(h.reason || ''), `${r.stdout}${r.stderr} ${JSON.stringify(h)}`);
+  ok('one passenger red in the train and green alone -> no verdict, the coordinator', !result('w', w) && queued() === 'w' && h && h.verdict === 'coordinator' && /coordinator/.test(h.reason || ''), `${r.stdout}${r.stderr} ${JSON.stringify(h)}`);
+  r = tr('await', '--task', 'w', '--head', w); o = last(r);
+  ok('coordinator verdict: await of a passenger under that halt prints verdict coordinator, not environment (p-train-c3)', r.status === 0 && o && o.verdict === 'coordinator' && o.halted, r.stdout + r.stderr);
   clean();
 
   // ---- coordinator's decision: the log of the full run without its tally -> the environment, no attribution ----
