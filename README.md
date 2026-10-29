@@ -288,7 +288,7 @@ If the project keeps its own hooks directory as `core.hooksPath` instead, call t
 Workflow({ name: "codis-agents:role-chain", args: {
   owner: "<the owner's request, verbatim>",
   config: /* output of: node <plugin>/scripts/config.js json */,
-  tasks: [{ key: "q2", title: "Queue retries", wt: "q2", branch: "b-q2", analystFirst: true,
+  tasks: [{ key: "q2", title: "Queue retries", wt: "q2", branch: "b-q2", kind: "defect", analystFirst: true,
             accept: "Add -> the item builds with no tab open; log and screenshot attached" }]
 } })
 ```
@@ -299,6 +299,9 @@ programmer prompt); `noAnalysis: "<reason>"` says why none is needed (for a defe
 none or several the task stops before any agent. The result carries `analysis: {mode: run|reused|none, path?, reason?}`.
 A feature gets its own analysis: `analysis` must lie in the task's folder or in the folder of its `feature`, and the arc
 specification goes into `spec` (context for every role), never into `analysis`.
+Every task also carries exactly one `kind`: `feature`, `defect` or `tail` (without it, or with another value, the task
+stops before any agent, with no guess from the other fields). A `feature` without `useCases` and without
+`useCasesFirst` stops before any agent too: a feature starts only with its use cases. The result carries `kind`.
 Optional task fields: `dir`, `gdir`, `start`, `feature` (the feature this task was split from), `spec` (the arc
 specification), `useCases` (the feature's `use-cases.md`: actor, trigger, main and alternative flows, errors, out of
 scope - context for every role, cited by the matrix, the tester's acceptance follows its flows), `useCasesFirst`,

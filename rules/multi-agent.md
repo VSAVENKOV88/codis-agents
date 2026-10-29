@@ -33,6 +33,10 @@ Larger changes run as a chain of agents, each in its own role:
     (`analysis`: the path of the earlier analyst or diagnosis report), not left in free text, so the programmer gets it
     by name and the Analyst phase shows it. Skipping a diagnosis for a defect needs a written reason (`noAnalysis`).
     With no marker or several the chain does not start the task: it does not guess whether a task is a defect.
+  - Every chain task also carries exactly one `kind`: `feature`, `defect` or `tail`. Without it, or with any other
+    value, the task stops before any agent, with no guess from its other fields. A `feature` without `useCases` and
+    without `useCasesFirst` stops too, before any agent ("feature without use cases"): no tokens go into a feature
+    whose use cases nobody wrote. A defect or a tail needs no use cases.
   - **A feature gets its own analysis; the arc specification does not replace it.** `analysis` names a matrix of cases
     or a diagnosis of this task: an absolute path inside the task's folder, or inside the folder of the feature it was
     split from (task field `feature`). The arc specification goes into the separate field `spec`: every role gets it as

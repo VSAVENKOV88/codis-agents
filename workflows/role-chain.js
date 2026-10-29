@@ -1,7 +1,7 @@
 export const meta = {
   name: 'role-chain',
   description: 'Role chain over tasks in parallel: preconditions -> (analyst) -> programmer -> tester -> reviewer (+ security reviewer); fix rounds; an analyst after the second rejection or the second red tester round',
-  whenToUse: 'Started by the codis-agents:role-chain skill, which reads .claude/codis-agents.json and passes it. args: {owner: "the owner\'s request, verbatim", config: <resolved project config>, tasks: [{key, title, wt, branch, accept, dir?, gdir?, start?, analystFirst | analysis | noAnalysis (exactly one), feature?, spec?, useCases?, useCasesFirst?, stack?, security?, base?, mode?}]}',
+  whenToUse: 'Started by the codis-agents:role-chain skill, which reads .claude/codis-agents.json and passes it. args: {owner: "the owner\'s request, verbatim", config: <resolved project config>, tasks: [{key, title, wt, branch, accept, dir?, gdir?, start?, kind: feature | defect | tail (exactly one), analystFirst | analysis | noAnalysis (exactly one), feature?, spec?, useCases?, useCasesFirst?, stack?, security?, base?, mode?}]}',
   phases: [
     { title: 'Preconditions', detail: 'brief, worktree, branch, open questions' },
     { title: 'Analyst', detail: 'matrix of cases or a diagnosis (before the programmer, after the second rejection, or after the second red tester round)' },
@@ -29,6 +29,11 @@ export const meta = {
 // (tasks that had only the arc spec: 44 % red testers and 2.4 programmer rounds, against 24 % and 1.65 with their own
 // analysis): it goes into spec, and an analysis path outside the task's or feature's folder, or equal to a spec path,
 // stops the task.
+// Kind of the task - exactly one `kind`: feature, defect or tail (p-train-a1, K1-K7). Without it, or with any other
+// value (another string, a list, a blank), the task stops on preconditions before any agent, with no guess from its
+// other fields. A feature starts only with use cases - useCasesFirst (with analystFirst) or useCases; a feature without
+// either stops before any agent too, so no tokens are spent on it. A defect or a tail needs no use cases (and may carry
+// them). Why: a feature started without use cases had its questions born during the task (see below).
 // Use cases (rules: "Use cases before the matrix"): useCases - absolute path of the feature's use-cases.md, inside the
 // task's or the feature's folder like analysis; every role gets it as context, the analyst's matrix cites it, the tester
 // builds acceptance along its flows, the reviewer checks its alternative flows and errors. useCasesFirst (true, with
@@ -325,6 +330,11 @@ function analysisOf(t) {
   }
   return { mode: 'none', reason: t.noAnalysis.trim() }
 }
+// The kind of a task: {kind} or {error}. Only the exact strings count; nothing is inferred from the other fields.
+const KINDS = ['feature', 'defect', 'tail']
+const KIND_ERR = 'exactly one kind: feature | defect | tail - the task must carry `kind` ("feature": new behaviour, it needs use cases; "defect": a bug, with its diagnosis or a noAnalysis reason; "tail": a small leftover); the chain does not guess it from the other fields'
+const kindOf = (t) => (KINDS.includes(t.kind) ? { kind: t.kind } : { error: `${KIND_ERR} (got ${t.kind === undefined ? 'none' : JSON.stringify(t.kind)})` })
+const NO_UC_ERR = 'feature without use cases: add useCasesFirst (the analyst writes them) or useCases (a path)'
 // The use cases of a task: {path?, first?} or {error}. A path lies where an analysis may (the task's or feature's folder).
 function useCasesOf(t) {
   if (t.useCasesFirst !== undefined) {
@@ -583,14 +593,18 @@ async function reviewLoop(t, st, tag) {
 // The analysis marker is checked before any agent; from then on every result carries it (analysis).
 async function chain(t0) {
   if (TESTER_WRITABLE_MISSING) return stop(t0, 'preconditions', { problems: [TESTER_WRITABLE_MISSING], questions: [TESTER_WRITABLE_MISSING] })
+  const kd = kindOf(t0)
+  if (kd.error) return stop(t0, 'preconditions', { problems: [kd.error], questions: [kd.error] })
+  const refuse = (e) => Object.assign(stop(t0, 'preconditions', { problems: [e], questions: [e] }), { kind: kd.kind })
   const an = analysisOf(t0)
-  if (an.error) return stop(t0, 'preconditions', { problems: [an.error], questions: [an.error] })
+  if (an.error) return refuse(an.error)
   const uc = useCasesOf(t0)
-  if (uc.error) return stop(t0, 'preconditions', { problems: [uc.error], questions: [uc.error] })
+  if (uc.error) return refuse(uc.error)
+  if (kd.kind === 'feature' && !uc.path) return refuse(NO_UC_ERR)
   const md = modeOf(t0)
-  if (md.error) return stop(t0, 'preconditions', { problems: [md.error], questions: [md.error] })
-  const t = Object.assign({}, t0, { an, uc: uc.first ? '' : uc.path || '', ucFirst: uc.first ? uc.path : '', light: md.light })
-  const withAn = (r) => Object.assign({}, r, { analysis: an }, nonBlank(t0.feature) ? { feature: t0.feature.trim() } : {}, md.light ? { mode: 'light' } : {},
+  if (md.error) return refuse(md.error)
+  const t = Object.assign({}, t0, { kind: kd.kind, an, uc: uc.first ? '' : uc.path || '', ucFirst: uc.first ? uc.path : '', light: md.light })
+  const withAn = (r) => Object.assign({}, r, { kind: kd.kind, analysis: an }, nonBlank(t0.feature) ? { feature: t0.feature.trim() } : {}, md.light ? { mode: 'light' } : {},
     uc.path && !r.useCases ? { useCases: uc.path } : {})
   const st = { head: '', leftovers: [] }
   const pc = await pre(t)

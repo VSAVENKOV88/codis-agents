@@ -381,7 +381,7 @@ async function run(script, task = T, extra = {}) {
   ok('agentTypePrefix "" -> every role general-purpose', x.prompts.every((p) => p.opts.agentType === 'general-purpose'));
 
   // Config and task defaults.
-  x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D] }, { key: 'k', title: 'K', wt: 'k-wt', branch: 'b', accept: 'a', noAnalysis: 'n' });
+  x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D] }, { key: 'k', title: 'K', wt: 'k-wt', branch: 'b', accept: 'a', kind: 'tail', noAnalysis: 'n' });
   const pp = x.prompts.find((p) => p.role === 'prog').prompt;
   ok('task defaults: dir = <sharedDir>/<key>, wt under worktreeRoot, guards-all gets wt', pp.includes('/s/k/prog.md') && pp.includes('Worktree /r/k-wt') && pp.includes('/p/scripts/guards-all.sh k-wt'), pp);
   ok('project notes reach only their role', pp.includes('rebuild the bundle') && !x.prompts.find((p) => p.role === 'test').prompt.includes('rebuild the bundle'));
