@@ -55,17 +55,22 @@
 #   selected", exit 0, no command runs (an empty --only list would run every guard). The selection could not be computed
 #   (git: unknown base, not a repository): exit 65. On the remote runner only with remoteRun.subsetCommand (run name
 #   <name>-select); without that key it runs in a heavy slot here, with a note - an unreachable runner stays 69.
-# usage: guards-all.sh [--force] [--main-checkout] [--local] [--no-quarantine] [--quarantine-read-only] [--select <base>] <worktree>   (a name under worktreeRoot, or a path) -> log in <sharedDir>/guards-<name>.txt (.select.txt)
+# Named guards (--guards <names file>, a JSON array of guard names as newRedPattern finds them in a log): the same
+#   selection mode with these guards instead of the diff's - the attribution of a red train (scripts/train.js) runs the
+#   repeated new reds of the train on "arc head + passenger" so. An empty list: "nothing selected", exit 0; a file that
+#   is not a JSON array of names: exit 64.
+# usage: guards-all.sh [--force] [--main-checkout] [--local] [--no-quarantine] [--quarantine-read-only] [--select <base> | --guards <names file>] <worktree>   (a name under worktreeRoot, or a path) -> log in <sharedDir>/guards-<name>.txt (.select.txt)
 #   A worktree directly under worktreeRoot (by name or by path) logs as guards-<name>.txt; any other path as
 #   guards-<basename>-<cksum of its resolved path>.txt, so two worktrees with the same basename never share a log and
 #   its reuse record.
 H=${0:A:h}
-FORCE=0 LOCAL=0 NOQ=0 QRO= MAINOK=() SELECT= SELBASE= SELFILE= SELTMP=; typeset -a POS
-USAGE="usage: guards-all.sh [--force] [--main-checkout] [--local] [--no-quarantine] [--quarantine-read-only] [--select <base> | --selected <names file>] <worktree name or path>"
+FORCE=0 LOCAL=0 NOQ=0 QRO= MAINOK=() SELECT= SELBASE= SELFILE= SELTMP= GUARDS=; typeset -a POS
+USAGE="usage: guards-all.sh [--force] [--main-checkout] [--local] [--no-quarantine] [--quarantine-read-only] [--select <base> | --guards <names file> | --selected <names file>] <worktree name or path>"
 while (( $# )); do
   case $1 in
     --force) FORCE=1;; --local) LOCAL=1;; --no-quarantine) NOQ=1;; --quarantine-read-only) QRO=ro;; --main-checkout) MAINOK=(--main-checkout);;
     --select) [[ -n $2 ]] || { print -u2 -r -- "$USAGE"; exit 64; }; SELECT=1 SELBASE=$2; shift;;
+    --guards) [[ -n $2 ]] || { print -u2 -r -- "$USAGE"; exit 64; }; SELECT=1 GUARDS=${2:A}; shift;;
     # the guards a selection runs, a JSON array (guards-select.js --names-out): the runner's run of a selection
     # (scripts/guards-remote-host.js) - a known red outside it did not run and is never called "not red now"
     --selected) [[ -n $2 ]] || { print -u2 -r -- "$USAGE"; exit 64; }; SELFILE=${2:A}; shift;;
@@ -75,6 +80,7 @@ while (( $# )); do
 done
 set -- "${POS[@]}"
 [[ -n $1 ]] || { print -u2 -r -- "$USAGE"; exit 64; }
+[[ -n $GUARDS && -n $SELBASE ]] && { print -u2 -r -- "guards-all: --select and --guards exclude each other"$'\n'"$USAGE"; exit 64; }
 cfg() { node "$H/config.js" get "$1" 2>/dev/null }
 source "$H/slots.zsh" || exit $?
 [[ -n $CODIS_WORKTREE_ROOT && -n $CODIS_SHARED_DIR ]] || { print -u2 "guards-all: no project config (.claude/codis-agents.json) found"; exit 78; }
@@ -89,6 +95,18 @@ mkdir -p $CODIS_SHARED_DIR
 if [[ -n $SELECT ]]; then
   CMD=$(cfg guardSubsetCommand)
   [[ -n $CMD ]] || { print -u2 "guards-all: --select needs guardSubsetCommand in the project config"; exit 78; }
+fi
+if [[ -n $GUARDS ]]; then
+  ONLY=$(node "$H/guards-result.js" only-args "$GUARDS"); src=$?
+  (( src == 64 )) && exit 64
+  if (( src == 3 )); then
+    print -r -- "nothing selected: the list of guards $GUARDS is empty" > "$OUT"; cat "$OUT"; exit 0
+  fi
+  (( src == 0 )) || exit $src
+  SELFILE=$GUARDS
+  CMD=${CMD//\{onlyArgs\}/$ONLY}
+  QRO=select
+elif [[ -n $SELECT ]]; then
   SELERR=$(_slot_tmp guardssel) || { print -u2 "guards-all: no temporary file in ${TMPDIR:-/tmp} (mktemp failed)"; exit 73; }
   SELFILE=$(_slot_tmp guardsnames) || { rm -f $SELERR; print -u2 "guards-all: no temporary file in ${TMPDIR:-/tmp} (mktemp failed)"; exit 73; }
   SELTMP=1; trap 'rm -f $SELFILE' EXIT

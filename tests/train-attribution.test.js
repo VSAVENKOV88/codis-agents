@@ -264,6 +264,28 @@ async function main_() {
   clean();
 
   ok('no train worktree is left behind', !ls(wts).some((n) => n.startsWith('train-')), ls(wts).join());
+
+  // ---- guards-all.sh --guards: the selection mode for named guards ----
+  const gwt = path.join(wts, 'gsel');
+  git(main, 'worktree', 'add', '-q', '--detach', gwt, 'arc');
+  const GA = path.join(ROOT, 'scripts', 'guards-all.sh');
+  const ga = (...a) => spawnSync('zsh', [GA, ...a], { cwd: T, encoding: 'utf8', env, timeout: 120000 });
+  const nf = path.join(T, 'names.json');
+  rules({ 'g-a': 'false', 'g-b': 'false' });
+  fs.writeFileSync(nf, '["g-b"]'); clearCalls();
+  r = ga('--guards', nf, gwt);
+  ok('--guards runs guardSubsetCommand with one --only per named guard, its log the selection log', r.status === 0 && calls().length === 1 && calls()[0].subset === '1' && calls()[0].only.join() === 'g-b'
+    && /PASSED g-b/.test(read(path.join(shared, 'guards-gsel.select.txt')) || ''), r.stdout + r.stderr + JSON.stringify(calls()));
+  fs.writeFileSync(nf, '[]'); clearCalls();
+  r = ga('--guards', nf, gwt);
+  ok('--guards with an empty list -> nothing selected, exit 0, nothing runs', r.status === 0 && /nothing selected/.test(r.stdout) && !calls().length, r.stdout + r.stderr);
+  fs.writeFileSync(nf, '{"g-b": 1}');
+  r = ga('--guards', nf, gwt);
+  ok('--guards with a file that is not a JSON array of names -> exit 64', r.status === 64, `${r.status} ${r.stderr}`);
+  fs.writeFileSync(nf, '["g-b"]');
+  r = ga('--guards', nf, '--select', 'arc', gwt);
+  ok('--guards and --select together -> exit 64', r.status === 64, `${r.status} ${r.stderr}`);
+  git(main, 'worktree', 'remove', '--force', gwt);
 }
 
 main_().catch((e) => ok('no exception', false, e && e.stack)).finally(() => {

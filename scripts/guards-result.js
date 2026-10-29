@@ -52,6 +52,9 @@
 //        guards-result.js quarantine-take <wt> <guardBaseline> <quarantine file> [<guard>...]
 //          -> the entries (all, or the named ones) move into guardBaseline of the worktree, which the caller commits
 //        guards-result.js quarantine-drop <quarantine file> <guard>...   -> the named entries leave the quarantine
+//        guards-result.js only-args <names file>   -> {onlyArgs} of guardSubsetCommand for the guards of a JSON array of
+//          names (guards-all.sh --guards: the attribution of a red train), one --only <guard> each, quoted for zsh;
+//          exit 3 when the list is empty, 64 when the file is not a JSON array of non-empty names
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -277,6 +280,14 @@ function writeFlaky({ wt, log, names, quarantine, baseline, readHash }) {
       text: `quarantined: ${names.join(', ')} (${quarantine}) — the coordinator commits them into ${baseline} (guards-result.js quarantine-take)\n` };
   } catch (e) { return { quarantined: [], text: `quarantine not written: ${e.message}\n` }; }
 }
+// The guards a rerun found red again alone ("new red, red again alone: G (exit N)"), from the last rerun section of a log.
+function repeatedInLog(text) {
+  const head = '==== rerun of new reds one by one (guardRerun) ====\n', i = String(text).lastIndexOf(head);
+  if (i < 0) return [];
+  const names = [];
+  for (const m of String(text).slice(i + head.length).matchAll(/^new red, red again alone: (.+) \(exit [^)]*\)$/gm)) if (!names.includes(m[1])) names.push(m[1]);
+  return names;
+}
 // The guards a rerun found flaky, from the last rerun section of a log (a guard's own output before it never counts).
 function flakyInLog(text) {
   const head = '==== rerun of new reds one by one (guardRerun) ====\n', i = String(text).lastIndexOf(head);
@@ -329,7 +340,7 @@ function reusable(wt, log, command, env = 'local', quarantine = '') {
 }
 
 module.exports = { newReds, rerun, readBaseline, subst, metaStart, metaEnd, reusable, rerunLog,
-  quarantineFile, readQuarantine, addQuarantine, dropQuarantine, takeQuarantine, quarantineHash, writeFlaky, flakyInLog };
+  quarantineFile, readQuarantine, addQuarantine, dropQuarantine, takeQuarantine, quarantineHash, writeFlaky, flakyInLog, repeatedInLog };
 
 if (require.main === module) {
   const [cmd, wt, log, x, y, z, u, v, sf] = process.argv.slice(2);
@@ -348,6 +359,13 @@ if (require.main === module) {
     }
     if (r.text) process.stdout.write('\n' + r.text);
     process.exit(r.rc > 255 ? 1 : r.rc);
+  } else if (cmd === 'only-args') {
+    // wt holds the names file here: guards-result.js only-args <names file>
+    let names = null;
+    try { names = JSON.parse(fs.readFileSync(wt, 'utf8')); } catch (e) { console.error(`guards-result: only-args: ${wt}: ${e.message}`); process.exit(64); }
+    if (!Array.isArray(names) || !names.every((n) => typeof n === 'string' && n !== '')) { console.error(`guards-result: only-args: ${wt} is not a JSON array of guard names`); process.exit(64); }
+    if (!names.length) process.exit(3);
+    process.stdout.write(names.map((n) => `--only ${q(n)}`).join(' ') + '\n');
   } else if (cmd === 'meta-start') metaStart(wt, log, x, y);
   else if (cmd === 'meta-end') metaEnd(wt, log, x, y ? { quarantine: quarantineHash(y) } : undefined);
   else if (cmd === 'reuse') {
@@ -374,5 +392,5 @@ if (require.main === module) {
       if (r.missing.length) console.log(`not in the quarantine: ${r.missing.join(', ')}`);
       process.exit(r.missing.length ? 1 : 0);
     } catch (e) { console.error(`${cmd}: ${e.message}`); process.exit(1); }
-  } else { console.error('usage: guards-result.js rerun|meta-start|meta-end|reuse|quarantine-take|quarantine-drop ...'); process.exit(64); }
+  } else { console.error('usage: guards-result.js rerun|meta-start|meta-end|reuse|quarantine-take|quarantine-drop|only-args ...'); process.exit(64); }
 }

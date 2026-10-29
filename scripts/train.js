@@ -9,8 +9,9 @@
 //   queue/<ms>-<task>.json   {task, branch, head, base, dir, enqueuedAt} - written through a temporary file + rename;
 //                            the order of the names is the order of arrival. base = the arc branch, dir = the task folder.
 //   result/<task>-<head>.json {verdict, task, branch, head, base, train, sha, ref, arc, log, passengers, merged?,
-//                            reason?, files?}; verdict green | green-unmerged | conflict (red, seam and arc-red come
-//                            with the attribution, part C2). A result is written before its queue entry is removed.
+//                            reason?, files?, guards?, attribution?, partner?, partnerBranch?, pair?}; verdict green |
+//                            green-unmerged | conflict | red | seam (the attribution of a red train, below). A result is
+//                            written before its queue entry is removed.
 //   lock/                    the dispatcher's lock: mkdir is atomic (macOS has no flock(1)); lock/owner.json names the
 //                            holder {pid, child, train, wt, since}. A holder whose pid and child are both gone is dead:
 //                            the next dispatcher breaks its lock under lock.break (a second mkdir lock naming its pid in
@@ -18,10 +19,12 @@
 //                            lock is removed by others only when its pid is gone, or it has no pid and is older than 60 s)
 //                            by renaming it to lock.dead-<pid>-<ms>; then, under its own lock, it removes the dead train's
 //                            worktree and that directory, and departs - the passengers were never taken out of the queue.
-//   halt                     {reason, train, log, at}: the queue stands until the coordinator runs `resume`. Written on
-//                            the environment (the run's exit 69, 124, 77, 78, 72, 73, 64, 66, or a signal: no code or
-//                            128+n; the worktree could not be made), on a git error while building the train, and on a
-//                            red train (its attribution is part C2). The passengers stay in the queue without a verdict.
+//   halt                     {reason, train, log, at, verdict?, guards?, attribution?}: the queue stands until the
+//                            coordinator runs `resume`. Written on the environment (the run's exit 69, 124, 77, 78, 72,
+//                            73, 64, 66, or a signal: no code or 128+n; a red exit whose log has no tally; the worktree
+//                            could not be made; an attribution run that could not run), on a git error while building
+//                            the train, on arc-red (verdict arc-red: `await` prints it), and on a red train the
+//                            attribution cannot decide. The passengers without a result stay in the queue.
 //   trains/<id>.json, logs/<id>.txt   the record and the log of every train.
 // There is no daemon: the dispatcher is whoever takes the lock - the waiting step of a chain (`await`) or a `run`; after
 // its train it releases the lock and the next waiter takes it.
@@ -51,6 +54,7 @@
 //          merges refs/runs/train/<id>.
 //      The arc head moved during the run (or the compare-and-swap lost) -> nobody gets a verdict: the tree that ran is
 //      not the one that would be merged, so the passengers ride the next train on the new head.
+//   5. Red: the attribution and the seam (redTrain below, p-train-c2).
 //
 // usage: train.js enqueue --task <t> --branch <b> --head <sha> --base <arc> [--dir <task folder>]
 //          -> the entry (same task and head already queued: kept; another head of the task: replaced; a result for this
@@ -68,6 +72,7 @@ const os = require('os');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const C = require('./config');
+const GR = require('./guards-result');
 
 const H = __dirname;
 const STALE_MS = 60000;
@@ -224,8 +229,8 @@ function identity(P) {
   return Object.assign({}, P.env, { GIT_AUTHOR_NAME: 'codis-agents train', GIT_AUTHOR_EMAIL: 'train@example.com', GIT_COMMITTER_NAME: 'codis-agents train', GIT_COMMITTER_EMAIL: 'train@example.com' });
 }
 
-const runGuards = (P, wt) => new Promise((res) => {
-  const ch = spawn('zsh', [path.join(H, 'guards-all.sh'), wt], { cwd: P.c.repoDir, env: P.env, stdio: ['ignore', 'pipe', 'pipe'] });
+const runGuards = (P, wt, extra = []) => new Promise((res) => {
+  const ch = spawn('zsh', [path.join(H, 'guards-all.sh'), ...extra, wt], { cwd: P.c.repoDir, env: P.env, stdio: ['ignore', 'pipe', 'pipe'] });
   let s = '';
   ch.stdout.on('data', (x) => { s += x; }); ch.stderr.on('data', (x) => { s += x; });
   try { setOwner(P, { child: ch.pid }); } catch { /* the lock is ours; a failed note only weakens the liveness check */ }
@@ -315,13 +320,7 @@ async function departure(P) {
     record(Object.assign({ verdict: 'environment', reason }, base0));
     return Object.assign({ departed: true, verdict: 'environment', halted: true, reason }, base0);
   }
-  if (run.rc !== 0) {
-    const reason = `red train ${id} (guards-all.sh exit ${run.rc}): the attribution to the passengers is not in this version (p-train-c2); the passengers stay in the queue; log ${logFile}`;
-    lines.push(reason); writeLog(body());
-    halt(P, reason, { train: id, log: logFile });
-    record(Object.assign({ verdict: 'red', reason }, base0));
-    return Object.assign({ departed: true, verdict: 'red', halted: true, reason }, base0);
-  }
+  if (run.rc !== 0) return redTrain(P, { id, base, arc, riders, lines, logFile, rc: run.rc, text: read(guardsLog) || '', base0, record, writeLog: () => writeLog(body()) });
 
   // green: move the arc branch only onto the tree that ran
   let verdict = 'green', reason = '', moved = '';
@@ -360,6 +359,148 @@ async function departure(P) {
   }
   record(Object.assign({ verdict, reason: reason || undefined }, base0));
   return Object.assign({ departed: true, verdict, reason: reason || undefined }, base0);
+}
+
+// ---- a red train: the attribution and the seam (p-train-c2, UC-8 and UC-9) ----
+// The repeated new reds R of the train's log (the rerun's "new red, red again alone") run again, only for the
+// attribution and never for a verdict of their own, in the selection mode of guards-all.sh (--guards: guardSubsetCommand
+// with {onlyArgs} = R; the rerun of new reds, the known reds, the quarantine read only, the remote runner as for any
+// selection), each in a temporary worktree train-<id>-<label> detached at a commit built like the train's:
+//   1. the bare arc head. A guard of R red there -> arc-red: the arc itself is red, the passengers are not to blame;
+//      the train does not count, they stay in the queue, the queue halts (verdict arc-red) until the coordinator.
+//   2. "arc head + X" for every passenger X. A guard of R red there -> X gets red (the train's log, the attribution log
+//      and the guards; copies in its task folder) and leaves; the others get no verdict and ride the next train by the
+//      departure rule (the train came back, a train leaves with what is ready), with no halt.
+//   3. Green on every X alone -> a seam: two passengers -> the earlier by arrival stays in the queue and rides the next
+//      train, the later gets seam naming it (partner); three -> R on the three pairs, at most three runs: one red pair ->
+//      that pair is the seam (its later one gets seam, its earlier one and the passenger outside the pair ride); no red
+//      pair -> the seam of the three: the earliest rides, the other two get seam with it. More than three passengers,
+//      several red pairs, a guard of R flaky on a passenger or a pair (now red, now green), or one passenger green alone
+//      on the tree that was red in the train -> no automatic decision: the halt for the coordinator, nobody gets a verdict.
+// An attribution run that could not run R (the environment codes or a signal, a log without its tally, no repeated red
+// named for a red exit, the worktree or the commit not made) -> that passenger stays in the queue without a verdict and
+// the queue halts with the reason ("environment: ..."); the others keep the verdicts of their own results.
+// Before any of that, coordinator's decision for p-train-c2: the train's log without its tally (guardRerun.tallyPattern)
+// is the environment, not a red train - the run was cut off before it ended.
+async function redTrain(P, t) {
+  const { id, base, arc, riders, lines, logFile, rc, base0, record } = t;
+  const rr = P.c.guardRerun;
+  const alog = path.join(P.LOGS, `train-${id}.attribution.txt`), al = [], given = [];
+  const writeA = () => writeAtomic(alog, al.join('\n') + '\n');
+  const copy = (e) => {
+    if (!e.dir || !fs.existsSync(e.dir)) return;
+    try { fs.writeFileSync(path.join(e.dir, `train-${id}.txt`), read(logFile) || ''); fs.writeFileSync(path.join(e.dir, path.basename(alog)), read(alog) || ''); } catch { /* the shared logs stay */ }
+  };
+  // the copies go into the task folders once the logs are complete (copyAll before every return)
+  const copyAll = () => { for (const e of given) copy(e); };
+  const stop = (verdict, reason, extra = {}) => {
+    lines.push(reason); t.writeLog();
+    if (al.length) { al.push(reason); writeA(); }
+    copyAll();
+    const x = Object.assign(al.length ? { attribution: alog } : {}, extra);
+    halt(P, reason, Object.assign({ train: id, log: logFile }, verdict === 'arc-red' ? { verdict } : {}, x));
+    record(Object.assign({ verdict, reason }, base0, x));
+    return Object.assign({ departed: true, verdict, halted: true, reason }, base0, x);
+  };
+  const where = `the passengers stay in the queue; log ${logFile}`;
+  if (rr && rr.tallyPattern && !GR.newReds(t.text, rr).tally) {
+    return stop('environment', `environment: guards-all.sh exit ${rc} without the tally of its log (cut off before it) on train ${id} - not counted, ${where}`);
+  }
+  const R = GR.repeatedInLog(t.text);
+  const why = !rr ? 'the project config has no guardRerun, so no repeated new red is named'
+    : !R.length ? 'no repeated new red is named in its log (no "new red, red again alone")'
+      : !P.c.guardSubsetCommand ? `the attribution of ${R.join(', ')} needs guardSubsetCommand (its selection mode)` : '';
+  if (why) return stop('red', `red train ${id} (guards-all.sh exit ${rc}): ${why} - not attributed, the coordinator decides; ${where}`);
+
+  const names = path.join(P.TR, `${id}.guards.json`);
+  writeAtomic(names, R);
+  al.push(`attribution of train ${id}: the repeated new reds ${R.join(', ')}, each alone in the selection mode (guards-all.sh --guards)`, `arc ${base} ${arc}`);
+  lines.push(`red train ${id}: the repeated new reds ${R.join(', ')}; attribution ${alog}`);
+  const idEnv = identity(P);
+  // one attribution run: the arc head plus `heads` in that order -> {state: ok | cannot, red, flaky, why}
+  const attempt = async (label, ps) => {
+    const desc = ps.length ? `arc + ${ps.map((e) => e.task).join(' + ')}` : 'the bare arc head';
+    const cannot = (w) => { al.push(`==== ${desc}: could not run: ${w}`); writeA(); return { state: 'cannot', red: [], flaky: [], why: `${desc}: ${w}`, desc }; };
+    let cur = arc;
+    for (const e of ps) {
+      const m = git(P, P.c.repoDir, ['merge-tree', '--write-tree', '--no-messages', cur, e.head]);
+      if (m.rc !== 0) return cannot(`git merge-tree ${e.task} (${e.head}): exit ${m.rc}`);
+      const cm = git(P, P.c.repoDir, ['commit-tree', m.out.split('\n')[0], '-p', cur, '-p', e.head, '-m', `train ${id} attribution: ${e.task}`], { env: idEnv });
+      if (cm.rc !== 0 || !SHA.test(cm.out)) return cannot(`git commit-tree for ${e.task}: exit ${cm.rc}: ${cm.err}`);
+      cur = cm.out;
+    }
+    const ref = `refs/runs/train/${id}-${label}`;
+    if (ps.length && git(P, P.c.repoDir, ['update-ref', ref, cur]).rc !== 0) return cannot(`git update-ref ${ref}`);
+    const name = `train-${id}-${label}`, wt = path.join(P.c.worktreeRoot, name);
+    setOwner(P, { wt });
+    const ws = spawnSync('zsh', [path.join(H, 'wt-setup.sh'), '--detach', name, cur], { cwd: P.c.repoDir, env: P.env, encoding: 'utf8' });
+    const run = ws.status === 0 ? await runGuards(P, wt, ['--guards', names]) : null;
+    const rm = removeTrainWt(P, wt);
+    if (ps.length) git(P, P.c.repoDir, ['update-ref', '-d', ref]);
+    if (!run) return cannot(`wt-setup.sh exit ${ws.status}: ${(ws.stderr || ws.stdout || '').trim()}`);
+    const slog = read(path.join(P.c.sharedDir, `guards-${name}.select.txt`)) || '';
+    al.push(`==== ${desc}: commit ${cur}: guards-all.sh --guards exit ${run.rc}${rm ? ` (worktree not removed: ${rm})` : ''}`, slog.trimEnd());
+    writeA();
+    if (bySignal(run.rc) || ENV_RC.has(run.rc)) return cannot(run.rc === null ? 'guards-all.sh exit by a signal' : `guards-all.sh exit ${run.rc}${bySignal(run.rc) ? ` by a signal (${SIGNAL_NAME[run.rc - 128]})` : ''}`);
+    const flaky = GR.flakyInLog(slog).filter((n) => R.includes(n));
+    if (run.rc === 0) return { state: 'ok', red: [], flaky, desc };
+    if (rr.tallyPattern && !GR.newReds(slog, rr).tally) return cannot(`guards-all.sh exit ${run.rc} without the tally of its log`);
+    const red = GR.repeatedInLog(slog).filter((n) => R.includes(n));
+    if (!red.length) return cannot(`guards-all.sh exit ${run.rc}, but none of ${R.join(', ')} is named red again alone`);
+    return { state: 'ok', red, flaky, desc };
+  };
+  const give = (e, res) => { al.push(`${e.task}: ${res.verdict}${res.partner ? ` with ${res.partner}` : ''} (${res.guards.join(', ')})`); writeA(); given.push(e); finish(P, e, Object.assign(res, base0, { attribution: alog })); };
+
+  // 1. the bare arc head
+  const A = await attempt('arc', []);
+  if (A.state !== 'ok') return stop('environment', `environment: the attribution of train ${id} could not run on ${A.why} - not counted, ${where}; attribution ${alog}`);
+  if (A.red.length) return stop('arc-red', `arc-red: ${A.red.join(', ')} red on the bare arc head ${base} ${arc} alone - train ${id} not counted, the passengers are not to blame and stay in the queue; the coordinator fixes ${base} and runs train.js resume; log ${logFile}; attribution ${alog}`, { guards: A.red });
+
+  // 2. every passenger alone on the arc head
+  const per = [];
+  for (const [i, e] of riders.entries()) per.push({ e, a: await attempt(`p${i + 1}`, [e]) });
+  const reds = per.filter((p) => p.a.state === 'ok' && p.a.red.length), cannot = per.filter((p) => p.a.state !== 'ok');
+  for (const p of reds) give(p.e, { verdict: 'red', guards: p.a.red, reason: `${p.a.red.join(', ')} red on arc ${base} + ${p.e.branch} alone (train ${id}): fix it on the branch; the others ride the next train` });
+  if (cannot.length) {
+    return stop('environment', `environment: the attribution of train ${id} could not run on ${cannot.map((p) => p.a.why).join('; ')} - ${cannot.map((p) => p.e.task).join(', ')} stay in the queue without a verdict${reds.length ? `; red: ${reds.map((p) => p.e.task).join(', ')}` : ''}; the coordinator decides; log ${logFile}; attribution ${alog}`, { red: reds.map((p) => p.e.task) });
+  }
+  if (reds.length) {
+    const red = reds.map((p) => p.e.task), note = `red train ${id}: red alone on the arc head: ${red.join(', ')}; the others ride the next train`;
+    lines.push(note); al.push(note); writeA(); t.writeLog(); copyAll();
+    record(Object.assign({ verdict: 'red', reason: note, red, attribution: alog }, base0));
+    return Object.assign({ departed: true, verdict: 'red', reason: note, red, attribution: alog }, base0);
+  }
+
+  // 3. green on every passenger alone: a seam
+  const coord = (w) => stop('red', `red train ${id}: ${R.join(', ')} ${w} - no automatic decision, the coordinator decides; ${where}; attribution ${alog}`, { guards: R });
+  const unstable = (list) => list.filter((p) => p.a.flaky.length).map((p) => `${p.a.flaky.join(', ')} flaky (red, then green alone) on ${p.a.desc}`);
+  if (riders.length === 1) return coord(`red in the train and on its rerun alone, but green alone on the same tree (arc + ${riders[0].task})`);
+  if (riders.length > 3) return coord(`seam red, passengers {${riders.map((e) => e.task).join(', ')}}: green on each alone; a seam among more than three passengers is not searched`);
+  const u1 = unstable(per);
+  if (u1.length) return coord(`now red, now green: ${u1.join('; ')}`);
+  const seam = (earlier, laters, group, guards) => {
+    const g = group.map((e) => e.task);
+    for (const e of laters) {
+      give(e, { verdict: 'seam', partner: earlier.task, partnerBranch: earlier.branch, pair: g, guards,
+        reason: `seam red: ${guards.join(', ')} red on arc ${base} + ${g.join(' + ')} together, green on each alone (train ${id}): ${earlier.task} arrived first and rides the next train; fix the seam with ${earlier.branch} on the arc head once it is merged` });
+    }
+    const note = `seam train ${id}: ${guards.join(', ')} on {${g.join(', ')}}; ${earlier.task} rides the next train, seam: ${laters.map((e) => e.task).join(', ')}`;
+    lines.push(note); al.push(note); writeA(); t.writeLog(); copyAll();
+    const o = { seam: laters.map((e) => e.task), partner: earlier.task, pair: g, guards, attribution: alog };
+    record(Object.assign({ verdict: 'seam', reason: note }, base0, o));
+    return Object.assign({ departed: true, verdict: 'seam', reason: note }, base0, o);
+  };
+  if (riders.length === 2) return seam(riders[0], [riders[1]], riders, R);
+  const pairs = [];
+  for (const [i, j] of [[0, 1], [0, 2], [1, 2]]) pairs.push({ ps: [riders[i], riders[j]], a: await attempt(`p${i + 1}p${j + 1}`, [riders[i], riders[j]]) });
+  const pc = pairs.filter((p) => p.a.state !== 'ok');
+  if (pc.length) return stop('environment', `environment: the attribution of train ${id} could not run on ${pc.map((p) => p.a.why).join('; ')} - the seam is not named, the passengers stay in the queue; the coordinator decides; log ${logFile}; attribution ${alog}`);
+  const u2 = unstable(pairs);
+  if (u2.length) return coord(`now red, now green on a pair: ${u2.join('; ')}`);
+  const redPairs = pairs.filter((p) => p.a.red.length);
+  if (redPairs.length > 1) return coord(`red on several pairs (${redPairs.map((p) => p.a.desc).join('; ')}): no one seam pair`);
+  if (redPairs.length === 1) { const [a, b] = redPairs[0].ps; return seam(a, [b], [a, b], redPairs[0].a.red); }
+  return seam(riders[0], [riders[1], riders[2]], riders, R);
 }
 
 async function dispatch(P) {
