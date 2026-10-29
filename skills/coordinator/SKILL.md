@@ -25,7 +25,8 @@ one. For whatever the owner judges by the screen, show a mockup of all states be
    "inactive while ..." restriction - split before any programmer, or send the analyst first. Defects get a diagnosis
    first by default; an analysis of the task that already exists is passed as the task's `analysis` path, and a
    defect without a diagnosis gets a written `noAnalysis` reason. A small task - up to ~100 lines of product in one subsystem, not on the attack surface (no security work, no routes or access classes) and with an acceptance that needs no Docker stack - may run with `mode: "light"` (one programmer-checker, the one full run, one reviewer); say so in the brief, the owner may overturn it; a light task stopped after a second rejection is relaunched in the full mode. A feature gets its own analysis: the arc
-   specification goes into `spec`, never into `analysis`. A feature (not a defect, not a tail) starts with its use cases:
+   specification goes into `spec`, never into `analysis`. Every task carries exactly one `kind` (`feature`, `defect`,
+   `tail`); the chain refuses a task without it. A feature (not a defect, not a tail) starts with its use cases:
    run it with `useCasesFirst: true` and `analystFirst`, take the `use-cases-review` result to the owner as one list of
    questions, write the answers into `use-cases.md`, then relaunch with `useCases: <path>` and `analystFirst`.
 3. **Brief.** One folder per task under `sharedDir` with `BRIEF.md` (skill `codis-agents:brief`); the owner's words

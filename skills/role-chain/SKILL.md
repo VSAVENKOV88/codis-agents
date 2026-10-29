@@ -29,6 +29,7 @@ Only tasks the owner asked for in this conversation. For each task:
 | `accept` | the acceptance scenario in the real environment, copied from the brief |
 | `gdir` | optional: argument of `guards-all.sh` (default `wt`) |
 | `start` | optional: what is new for the first programmer (e.g. "continue from prog.md") |
+| `kind` | exactly one of `"feature"` (new behaviour: it needs `useCases` or `useCasesFirst`), `"defect"` (a bug), `"tail"` (a small leftover); without it or with another value the task stops before any agent |
 | `analystFirst` | `true`: the brief needs a matrix or a diagnosis before code (default for defects) - the analyst runs first |
 | `analysis` | absolute path of an existing analyst or diagnosis report of this task (an earlier analyst that proposed the split, a diagnoser run outside the chain - put its report into the task folder); it must lie in the task folder or in the folder of its `feature`, never be the arc specification; the preconditions check it exists, is non-empty and is a matrix or diagnosis of this task; the programmer gets it by name |
 | `noAnalysis` | a short reason why no analysis is needed: a tail, a one-line fix; for a defect, why the diagnosis is skipped. "The arc specification covers it" is not a reason. It is logged and given to the programmer |
@@ -47,6 +48,11 @@ phase then logs `<title>: analyst reused - <path>` instead of looking skipped. A
 specification goes into `spec`, not into `analysis` (an `analysis` equal to a `spec` path or outside the task's or the
 feature's folder stops the task).
 
+Every task also carries exactly one `kind`: `feature`, `defect` or `tail`; without it, or with any other value, the
+workflow stops that task before any agent and does not guess it from the other fields. A `feature` without `useCases`
+and without `useCasesFirst` stops before any agent too, with "feature without use cases: add useCasesFirst (the analyst
+writes them) or useCases (a path)". A defect or a tail needs no use cases (it may carry them).
+
 Check before starting: `BRIEF.md` exists in the task folder, the worktree is on the branch, the task has its analysis
 marker (and the `analysis` file exists), and the brief has no unanswered question on which acceptance depends. If something is missing, write it into the brief as a question for
 the owner and ask, instead of starting.
@@ -57,7 +63,7 @@ the owner and ask, instead of starting.
 Workflow({ name: "codis-agents:role-chain", args: {
   owner: "<the owner's request in this conversation, verbatim>",
   config: <the JSON printed in step 1>,
-  tasks: [ { key, title, wt, branch, accept, ... } ]
+  tasks: [ { key, title, wt, branch, accept, kind, ... } ]
 } })
 ```
 

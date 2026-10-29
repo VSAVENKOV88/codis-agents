@@ -60,6 +60,9 @@ const CHECKS = [
   [[RULES], 'open questions of the use cases go to the owner before the matrix; every cell cites its use case', /open questions[^.]*use cases[^.]*owner[^.]*before the matrix[^.]*every cell[^.]*cites its use case/i],
   [[RULES], 'the tester builds acceptance along the flows, the reviewer checks alternative flows', /tester builds the acceptance along the flows[^.]*reviewer checks[^.]*alternative flows/],
   [[RULES, CHAIN, README], 'useCasesFirst stops the task for the review with the owner, then useCases + analystFirst', /`useCasesFirst`[^\n]*`useCases`[^\n]*`analystFirst`/],
+  // The kind of a task (p-train-a1, K1-K7): exactly one kind at the entry; a feature without use cases does not start.
+  [[RULES, CHAIN, README], 'every task carries exactly one kind: feature, defect or tail', /exactly one `kind`: `feature`, `defect` or `tail`/],
+  [[RULES, CHAIN, README], 'a feature without use cases stops before any agent', /`feature` without `useCases` (and|or) without `useCasesFirst`[^.]*stops[^.]*before any agent/],
   // New reds rerun alone; flaky goes to the backlog, not to the programmer; reuse on the same HEAD (owner 2026-10-20).
   [[RULES, README], 'a new red is first rerun alone (guardRerun)', /(new reds? (is first )?rerun alone|new reds rerun alone)[^\n]*`guardRerun`/i],
   [[RULES], 'a flaky guard is not sent to the programmer as a regression but goes into the project backlog', /flaky[^.]*not a regression and not sent to the programmer[^.]*project backlog/],
