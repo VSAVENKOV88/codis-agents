@@ -612,7 +612,8 @@ async function main() {
     // next train), so the fix round starts after it
     if (!r.halted && r.verdict === 'seam' && r.partner && TASK.test(r.partner) && SHA.test(r.partnerHead || '')) {
       const pr = await awaitEntry(P, r.partner, r.partnerHead, poll);
-      if (pr && pr.halted) { out(Object.assign({}, r, { partnerResult: pr })); return RC_ENV; }
+      // the partner's train halted: its verdict is ours (arc-red 14, coordinator 15, otherwise environment 75)
+      if (pr && pr.halted) { out(Object.assign({}, r, { partnerResult: pr })); return rideRc(pr); }
       r = Object.assign({}, r, { partnerResult: pr || { verdict: 'none', reason: `no queue entry and no result for ${r.partner} ${r.partnerHead}` } });
     }
     out(r);
