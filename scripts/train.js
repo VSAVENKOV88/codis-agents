@@ -13,10 +13,11 @@
 //                            with the attribution, part C2). A result is written before its queue entry is removed.
 //   lock/                    the dispatcher's lock: mkdir is atomic (macOS has no flock(1)); lock/owner.json names the
 //                            holder {pid, child, train, wt, since}. A holder whose pid and child are both gone is dead:
-//                            the next dispatcher breaks its lock under lock.break (a second mkdir lock, rechecked inside,
-//                            so a fresh lock is never removed; a break lock older than 60 s is left by a dead breaker),
-//                            removes the dead train's worktree and departs - its passengers were never taken out of the
-//                            queue, so nothing was lost.
+//                            the next dispatcher breaks its lock under lock.break (a second mkdir lock naming its pid in
+//                            lock.break/owner.json, the holder rechecked inside, so a fresh lock is never removed; a break
+//                            lock is removed by others only when its pid is gone, or it has no pid and is older than 60 s)
+//                            by renaming it to lock.dead-<pid>-<ms>; then, under its own lock, it removes the dead train's
+//                            worktree and that directory, and departs - the passengers were never taken out of the queue.
 //   halt                     {reason, train, log, at}: the queue stands until the coordinator runs `resume`. Written on
 //                            the environment (the run's exit 69, 124, 77, 78, 72, 73, 64, 66 or a signal; the worktree
 //                            could not be made), on a git error while building the train, and on a red train (its
@@ -128,7 +129,7 @@ function setOwner(P, extra) {
 }
 function lockTake(P) {
   fs.mkdirSync(P.D, { recursive: true });
-  const brk = `${P.LOCK}.break`;
+  const brk = `${P.LOCK}.break`, brkOwner = path.join(brk, 'owner.json');
   for (let i = 0; i < 3; i++) {
     try { fs.mkdirSync(P.LOCK); setOwner(P, {}); return { ok: true }; } catch (e) { if (e.code !== 'EEXIST') throw e; }
     const o = readJ(ownerFile(P));
@@ -136,20 +137,39 @@ function lockTake(P) {
     if (!o && ageMs(P.LOCK) < STALE_MS) return { busy: { pid: null, note: 'a lock without its owner file yet' } };
     try { fs.mkdirSync(brk); } catch (e) {
       if (e.code !== 'EEXIST') throw e;
-      if (ageMs(brk) > STALE_MS) { try { fs.rmdirSync(brk); } catch { /* gone */ } }
+      // a break lock is left behind only by a dead breaker: its pid is gone (or it never wrote one and is old)
+      const bo = readJ(brkOwner);
+      if (bo ? !alive(bo.pid) : ageMs(brk) > STALE_MS) { try { fs.rmSync(brk, { recursive: true, force: true }); } catch { /* gone */ } }
       return { busy: o || {} };
     }
     try {
+      writeAtomic(brkOwner, { pid: process.pid, since: new Date().toISOString() });
       const o2 = readJ(ownerFile(P));
       const sameDead = o2 ? (o && o2.pid === o.pid && !alive(o2.pid) && !alive(o2.child)) : (!o && ageMs(P.LOCK) >= STALE_MS);
       if (sameDead) {
-        if (o2 && o2.wt) removeTrainWt(P, o2.wt);
-        fs.rmSync(P.LOCK, { recursive: true, force: true });
+        // a rename, not the removal of the dead train's worktree: that worktree (a cloned corpus) is removed by reapDead
+        // under the breaker's own lock, so the break lock is held for milliseconds and nobody can break again meanwhile
+        fs.renameSync(P.LOCK, `${P.LOCK}.dead-${process.pid}-${Date.now()}`);
         process.stderr.write(`train: broke the lock of a dead dispatcher (pid ${o2 ? o2.pid : '?'}, train ${o2 && o2.train || '?'})\n`);
       }
-    } finally { try { fs.rmdirSync(brk); } catch { /* gone */ } }
+    } finally {
+      const bo = readJ(brkOwner);
+      if (bo && bo.pid === process.pid) { try { fs.rmSync(brk, { recursive: true, force: true }); } catch { /* gone */ } }
+    }
   }
   return { busy: readJ(ownerFile(P)) || {} };
+}
+// Under our own lock: the broken locks of dead dispatchers (lock.dead-*) - their train worktrees are removed, then the lock
+// directory itself; a worktree that cannot be removed keeps its lock.dead-* for the next train to retry.
+function reapDead(P) {
+  let names = [];
+  try { names = fs.readdirSync(P.D).filter((n) => n.startsWith(`${path.basename(P.LOCK)}.dead-`)); } catch { /* none */ }
+  for (const n of names) {
+    const dir = path.join(P.D, n), o = readJ(path.join(dir, 'owner.json'));
+    const why = o && o.wt ? removeTrainWt(P, o.wt) : '';
+    if (why && !why.startsWith('not a train worktree')) { process.stderr.write(`train: the dead train's worktree stays: ${why}\n`); continue; }
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 }
 function lockRelease(P) {
   const o = readJ(ownerFile(P));
@@ -341,6 +361,7 @@ async function dispatch(P) {
   const lk = lockTake(P);
   if (!lk.ok) return { departed: false, busy: true, note: 'a train is in transit', holder: lk.busy };
   try {
+    reapDead(P);
     const h2 = readJ(P.HALT);
     if (h2) return { departed: false, halted: true, reason: h2.reason };
     return await departure(P);
@@ -384,7 +405,12 @@ async function main() {
       if (r) { out(r); return 0; }
       const h = readJ(P.HALT);
       if (h) { out(Object.assign({ verdict: 'environment', halted: true, task: a.task, head: a.head }, h)); return 0; }
-      if (!entries(P).some((e) => e.task === a.task && e.head === a.head)) die(66, `no queue entry and no result for ${a.task} ${a.head}`);
+      if (!entries(P).some((e) => e.task === a.task && e.head === a.head)) {
+        // finish() writes the result before it removes the entry: read the result again, it may have come in between
+        const r2 = readJ(resultFile(P, a.task, a.head));
+        if (r2) { out(r2); return 0; }
+        die(66, `no queue entry and no result for ${a.task} ${a.head}`);
+      }
       const d = await dispatch(P);
       if (!d.departed) await sleep(poll);
     }
