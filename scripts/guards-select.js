@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 'use strict';
-// The guards a programmer runs instead of the full suite (rules/multi-agent.md, "One full guard run per task"): the full
-// run is done once per task by the workflow after the programmer's last commit; the programmer runs only this selection.
+// The guards of a task's diff, run instead of the full suite (rules/multi-agent.md, "No full guard run in the task"): with
+// guardSubsetCommand the workflow runs this selection (guards-all.sh --select, through --only-args) after every
+// programmer round with a new HEAD, and the tester after its own commits; the full run of a branch is not in the task.
 // A guard is selected when
 //   - it is itself changed (new, edited, untracked);
 //   - it imports a changed file (a relative require/import whose target, with or without an extension or /index, is a

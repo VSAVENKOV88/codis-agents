@@ -52,7 +52,8 @@ const SPEC = {
   // whose name matches one of glob and that has a line `<marker> guards:exclusive — <reason>`. Without the key the
   // default below (resolve()); with it both members are required and replace the default.
   guardExclusive: ['object', null],
-  // One full run per task (scripts/guards-select.js): what a guard file is, which guards always run, the subset command.
+  // The selection of a task's guards (scripts/guards-select.js, guards-all.sh --select): what a guard file is, which
+  // guards always run, the subset command.
   guardFiles: ['string[]', ['*-run.js', '*-run.mjs', '*-run.cjs']],
   guardAlways: ['string[]', []],
   guardSubsetCommand: ['string', ''],

@@ -39,7 +39,7 @@ Only tasks the owner asked for in this conversation. For each task:
 | `stack` | optional: docker compose project the tester may start and tear down; with a shared stand in the config (`stand`) only for a task whose commits change the stand's image files |
 | `security` | optional: the brief marks the task as security work - a security reviewer joins |
 | `base` | optional: the branch or commit the task started from; `scripts/guards-select.js` takes the changed files since its merge-base (without it the role names the base itself) |
-| `mode` | optional: `mode: "light"` for a small task chosen by the coordinator (rules: up to ~100 lines of product, one subsystem, no attack surface, no Docker acceptance) - one programmer-checker, the one full run, one reviewer, no tester; refused with `security` or `stack`. Default `"full"` |
+| `mode` | optional: `mode: "light"` for a small task chosen by the coordinator (rules: up to ~100 lines of product, one subsystem, no attack surface, no Docker acceptance) - one programmer-checker, the step of the task's guards (the selection with `guardSubsetCommand`, else the programmer's full run), one reviewer, no tester; refused with `security` or `stack`. Default `"full"` |
 
 Every task carries exactly one of `analystFirst`, `analysis`, `noAnalysis`; with none or several the workflow stops
 that task before any agent. A reused analysis is passed as `analysis`, not in free text inside `start`: the Analyst

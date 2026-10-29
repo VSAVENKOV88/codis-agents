@@ -39,7 +39,7 @@ export const meta = {
 // base (the branch the task started from: scripts/guards-select.js diffs against its merge-base; with
 // guardSubsetCommand it is required and is not a protected branch - the branch of the arc, coordinator's decision 6 of
 // p-train-ac, 2026-10-29),
-// mode ("full", the default, or "light": one programmer-checker, the full run step, one reviewer - see work()).
+// mode ("full", the default, or "light": one programmer-checker, the selection step (ONE_RUN), one reviewer - see work()).
 
 const ARGS = typeof args === 'string' ? JSON.parse(args) : (args || {})
 const OWNER = ARGS.owner || ''
@@ -98,10 +98,10 @@ const RULE_LIST = (t) => [
   ['local-task', `Task "${t.title}". Brief: ${t.dir}/BRIEF.md (read all of it and the sections it refers to). Worktree ${t.wt}, branch ${t.branch}.${t.specs.length ? ` Arc specification (context of the surface; it is not this task's analysis): ${t.specs.join(', ')}.` : ''}${t.uc ? ` Use cases of the feature (actors, flows, alternative flows, errors): ${t.uc}.` : ''}`],
   ['scope', `The owner asked: "${OWNER}". Do only the task "${t.title}"; refuse neighbouring tasks and do not touch other worktrees.`],
   ['decisions', 'Only the coordinator writes the owner\'s decisions. An open question goes into your own report as a line "❓ coordinator: ..."; do not decide it yourself.'],
-  ['pauses', 'Pauses: never wait longer than 270 s at a time - run anything long through Bash run_in_background and wait with Monitor in slices; an agent with no output for 10 minutes is killed. While your own process waits in a slot queue or runs, keep waiting in slices while your process is alive: do not end your work to wait (the chain has no status for it; the one full guard run is waited for by the workflow, not by you).'],
+  ['pauses', `Pauses: never wait longer than 270 s at a time - run anything long through Bash run_in_background and wait with Monitor in slices; an agent with no output for 10 minutes is killed. While your own process waits in a slot queue or runs, keep waiting in slices while your process is alive: do not end your work to wait (the chain has no status for it; ${ONE_RUN ? 'the selection of the task\'s guards after a programmer round' : 'the one full guard run'} is waited for by the workflow, not by you).`],
   ['context', 'Context: past ~200k finish the current stage, write the report with "Next step: ..." and stop - a fresh agent continues.'],
-  ['slots', `Heavy work goes through memory slots: ${SCRIPTS}/heavy.sh <cmd>, ${SCRIPTS}/medium.sh <cmd>, full guard run ${SCRIPTS}/guards-all.sh ${t.gdir}; run heavy.sh and guards-all.sh only through Bash run_in_background and wait with Monitor in slices of at most 270 s, never as a blocking Bash call (the Bash timeout kills the waiter, its ticket is dropped and it rejoins the queue at the end).`],
-  ['rerun', `New reds of a full run: ${SCRIPTS}/guards-all.sh reruns each one alone in the same slot. Red again alone - a new red (a regression); green alone - flaky: not a regression, name it in your report under "Flaky guards" for the coordinator, who puts it into the project backlog.${CFG.guardBaseline ? ` Known reds listed in ${CFG.guardBaseline} (config guardBaseline) are subtracted first and never rerun ("N known red"): not a regression; a fix that turns one green removes its entry in the same commit. A flaky guard is written into the project's quarantine (<sharedDir>/guards-quarantine.json, outside the worktree) and is known in later runs; only the coordinator moves it into ${CFG.guardBaseline}: do not edit either file for it.` : ''} A full run on the same HEAD with a clean tracked tree that ended green is reused ("reused, HEAD <sha>"); --force runs again.`],
+  ['slots', `Heavy work goes through memory slots: ${SCRIPTS}/heavy.sh <cmd>, ${SCRIPTS}/medium.sh <cmd>, ${ONE_RUN ? `the selection of guards ${selectRun(t)}` : `full guard run ${SCRIPTS}/guards-all.sh ${t.gdir}`}; run heavy.sh and guards-all.sh only through Bash run_in_background and wait with Monitor in slices of at most 270 s, never as a blocking Bash call (the Bash timeout kills the waiter, its ticket is dropped and it rejoins the queue at the end).`],
+  ['rerun', `New reds of a ${ONE_RUN ? 'selection' : 'full run'}: ${SCRIPTS}/guards-all.sh reruns each one alone in the same slot. Red again alone - a new red (a regression); green alone - flaky: not a regression, name it in your report under "Flaky guards" for the coordinator, who puts it into the project backlog.${CFG.guardBaseline ? ` Known reds listed in ${CFG.guardBaseline} (config guardBaseline) are subtracted first and never rerun ("N known red"): not a regression; a fix that turns one green removes its entry in the same commit.${ONE_RUN ? ` On a selection the project's quarantine is read only (<sharedDir>/guards-quarantine.json, known reds it lists are subtracted): a flaky guard goes into your report, not into the quarantine; do not edit either file for it.` : ` A flaky guard is written into the project's quarantine (<sharedDir>/guards-quarantine.json, outside the worktree) and is known in later runs; only the coordinator moves it into ${CFG.guardBaseline}: do not edit either file for it.`}` : ''} A ${ONE_RUN ? 'selection' : 'full run'} on the same HEAD with a clean tracked tree that ended green is reused ("reused, HEAD <sha>"); --force runs again.`],
   ['onerun', ONE_RUN
     ? `No full guard run in the task: after every programmer round with a new HEAD the workflow runs the selection of the task's guards, ${selectRun(t)} (a wait step: changed guards, guards that import a changed file or name it, the project's guardAlways; new reds rerun alone, known reds subtracted, the quarantine read only), and hands its log to the next role; no role runs the full suite. The programmer runs only its new guards and mutations, no selection. The tester, after its own commits, runs its guards and the same selection through Bash run_in_background: ${selectRun(t)} (its log ${CFG.sharedDir}/guards-${gname(t)}.select.txt; "nothing selected" - run your new guards directly). A flaky guard of a selection goes into your report, not into the quarantine.`
     : `One full guard run per task: the project config has no guardSubsetCommand, so the programmer runs the full run (${SCRIPTS}/guards-all.sh ${t.gdir}) and the tester reuses its log; ${SCRIPTS}/guards-select.js --wt ${sq(t.wt)} --base ${baseArg(t)} lists the guards a change touches.`],
@@ -244,7 +244,8 @@ const leftFail = (st, when, l) => {
     : `leftovers the chain could not remove (${when}): ${(l.remaining || []).join(', ') || l.error || '?'}`
 }
 
-// The full run step (ONE_RUN). A long deterministic step runs between role agents: a cheap service agent starts it with
+// The selection step (ONE_RUN: guards-all.sh --select after every programmer round with a new HEAD). A long
+// deterministic step runs between role agents: a cheap service agent starts it with
 // scripts/wait-step.js and waits with blocking calls of at most 270 s (its context is tiny, so a wake-up costs almost
 // nothing; under the cache lifetime and the 10-minute silence limit); the next role gets the log as a file. The agent
 // keeps waiting while the run is alive ("alive":true), whatever its tail: 24 of 37 repeats in one window (2026-10-22..24)
@@ -254,7 +255,7 @@ const leftFail = (st, when, l) => {
 // result instead of starting it twice. A numeric exit code means the step ran, whatever its outcome: a red run goes to
 // the programmer with its log (in the wait steps experiment a red run whose agent wrote a description into error was
 // taken for "could not run" and stopped the task, e2g2 2026-10-19). Only a step that could not run stops the task.
-// Why one run (measurement 2026-10-10..20): 3.9 full runs per task, about 81 minutes, 37 % of a task's calendar; about
+// Why the workflow waits, not a role (measurement 2026-10-10..20): 3.9 full runs per task, about 81 minutes, 37 % of a task's calendar; about
 // 80 % of their new reds were the environment or flaky guards.
 const RUN_SCHEMA = { type: 'object', properties: {
   done: { type: 'boolean' }, rc: { type: ['number', 'null'] }, seconds: { type: 'number' }, log: { type: 'string' },
@@ -271,8 +272,9 @@ If a command fails without JSON - done=false, rc=null, log=${sq(id + '.log')}, e
   checkOpts(`run:${t.key}:${step}`, 'Selection', RUN_SCHEMA, retry))
 }
 const ranStep = (r) => !!(r && typeof r.rc === 'number')
-// Exit codes of the full run step that are the environment, not the product (p-wait D1; coordinator 2026-10-24): the
-// step's deadline, and the refusals of the slot queue before the run (scripts/slots.zsh, guards-all.sh). A project
+// Exit codes of the selection step that are the environment, not the product (p-wait D1; coordinator 2026-10-24): the
+// step's deadline, the refusals of the slot queue before the run (scripts/slots.zsh, guards-all.sh), a selection that
+// could not be computed (65) and the remote runner (69; p-train-ac). A project
 // runner that itself exits with one of them is taken for the environment too (README). Without this they went to the
 // programmer as a red run (#nf) with nothing to fix.
 const ENV_RC = {
@@ -668,9 +670,9 @@ async function afterRedAnalyst(t, st, x) {
   return stop(t, rv.stopWhy || `after the analyst: ${rv.fail}`, rv)
 }
 
-// Light mode (owner 2026-10-20): programmer-checker -> the full run step -> reviewer; no tester role, so no tester
-// post-checks (the reviewer's git post-check and the leftovers check at the end run as usual). A rejection -> one
-// programmer round (and the full run if it committed) -> the second review; a second rejection goes to the coordinator
+// Light mode (owner 2026-10-20): programmer-checker -> the selection step (ONE_RUN) -> reviewer; no tester role, so no
+// tester post-checks (the reviewer's git post-check and the leftovers check at the end run as usual). A rejection -> one
+// programmer round (and the selection on its new HEAD) -> the second review; a second rejection goes to the coordinator
 // with the proposal to relaunch in the full mode. Why: tasks of up to 100 lines of product took 2-2.6 h through the
 // chain against about 0.6 h in one session (measurement 2026-10-20).
 async function light(t, st) {
