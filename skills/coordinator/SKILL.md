@@ -35,7 +35,12 @@ one. For whatever the owner judges by the screen, show a mockup of all states be
 5. **Run.** Skill `codis-agents:role-chain` with the tasks. Independent tasks run in parallel; heavy steps queue in
    the memory slots, so do not start more chains than the machine's slots can serve. At most two chains with
    acceptance in Docker at once.
-6. **Route.** `done` -> merge the branch into the integration branch yourself and resolve conflicts. After merging
+6. **Route.** With `guardSubsetCommand` the branch of a `done` task has ridden the integration train already: `green`
+   - the arc branch moved, nothing to merge; `green-unmerged` - merge `refs/runs/train/<id>` (named in the task's
+   `train.result`) into the arc's worktree yourself; a stop `arc-red` or `coordinator` halts the queue - fix the arc or
+   decide, then `node "${CLAUDE_PLUGIN_ROOT}/scripts/train.js" resume` (`train.js status` shows the halt, the lock and the
+   queue); a stop `environment` of the train keeps its entry: free the machine, `train.js resume` if halted, relaunch the
+   task alone. Without the key: `done` -> merge the branch into the integration branch yourself and resolve conflicts. After merging
    the second of parallel branches that touched the same files, run the new and touched guards of both tasks, then
    the full guard run. Each task already had its one full guard run, so after any other merge run a full guard run only at a seam - when the merged branch and another branch merged since the last full run touched the same files; otherwise the CI of the branch decides. Before removing a worktree or a data directory, show the owner the output of
    `node "${CLAUDE_PLUGIN_ROOT}/scripts/wt-remove-check.js" <path>` (ignored data with sizes, the path in code,

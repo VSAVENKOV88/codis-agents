@@ -92,7 +92,8 @@ const heavyBlocking = (ps) => ps.filter((p) => !['diff', 'left', 'post', 'run'].
 
   // W5r: the #retry of the waiter carries the same rule and attaches with --reuse.
   let x = await run({ pre: [PRE], prog: [PROG], test: [GREEN], review: [D], run: [{ done: false, rc: null, log: '/d/l', error: 'no JSON' }, RUN_OK] }, T, { config: ONE });
-  const rr = runsOf(x);
+  // the selection steps only: a done task with guardSubsetCommand rides the train afterwards (run:x:train-1, p-train-c3)
+  const rr = runsOf(x).filter((p) => !/:train-/.test(p.label));
   ok('W5r. a waiter that returned no exit code is repeated once with --reuse', rr.length === 2 && /#retry$/.test(rr[1].label) && /--reuse/.test(rr[1].prompt), rr.map((p) => p.label).join(','));
   ok('W5r. the #retry prompt keeps the rule: an unchanged tail is not a reason to stop, only done:true returns',
     rr[1] && /an unchanged tail[^.]*not a reason to stop/.test(rr[1].prompt) && /[Rr]eturn the schema only once [^.]*"done":true/.test(rr[1].prompt), rr[1] && rr[1].prompt);

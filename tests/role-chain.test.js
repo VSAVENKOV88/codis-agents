@@ -420,11 +420,12 @@ async function run(script, task = T, extra = {}) {
   const G1 = () => ({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D] });
   const RUN_RED = { done: true, rc: 1, seconds: 900, log: '/d/wait-select-1.log', tail: 'FAIL x-run.js' };
   const RUN_OK = { done: true, rc: 0, seconds: 900, log: '/d/wait-select-1f.log', tail: 'ok' };
-  const runsOf = (x) => x.prompts.filter((p) => p.role === 'run');
+  // the selection steps; with guardSubsetCommand a done task also rides the train (run:x:train-N, p-train-c3)
+  const runsOf = (x) => x.prompts.filter((p) => p.role === 'run' && !/:train-/.test(p.label));
   const pOf = (x, role, i = 0) => (x.prompts.filter((p) => p.role === role)[i] || {}).prompt || '';
   x = await run(G1(), TB, { config: ONE });
   ok('one run: pre > prog > the full run step > tester > review, done',
-    x.r.status === 'done' && x.full === 'pre>prog>run:x:select-1>test>post:x:tester>review>diff:x:reviewer>left:x:end', x.full);
+    x.r.status === 'done' && x.full === 'pre>prog>run:x:select-1>test>post:x:tester>review>diff:x:reviewer>run:x:train-1>left:x:end', x.full);
   const rp = runsOf(x)[0];
   ok('the full run step: a cheap agent runs wait-step.js start with guards-all.sh on the worktree, then waits in slices of at most 270 s',
     rp && rp.opts.model === 'haiku' && rp.opts.agentType === 'general-purpose' && rp.prompt.includes("node /p/scripts/wait-step.js start --id '/d/wait-select-1' --cwd '/w'")
@@ -462,7 +463,7 @@ async function run(script, task = T, extra = {}) {
 
   x = await run({ pre: [PRE], prog: [PROG, Object.assign({}, PROG, { head: 'P2' })], run: [RUN_RED, RUN_OK], test: [{ verdict: 'green', summary: '' }], review: [D] }, TB, { config: ONE });
   ok('a red full run -> a programmer round with its log -> the full run again -> tester',
-    x.r.status === 'done' && x.full === 'pre>prog>run:x:select-1>prog>run:x:select-1f>test>post:x:tester>review>diff:x:reviewer>left:x:end', x.full);
+    x.r.status === 'done' && x.full === 'pre>prog>run:x:select-1>prog>run:x:select-1f>test>post:x:tester>review>diff:x:reviewer>run:x:train-1>left:x:end', x.full);
   ok('the fix round gets the exit code, the summary and the copied full log', /exited 1/.test(pOf(x, 'prog', 1)) && pOf(x, 'prog', 1).includes('/d/wait-select-1.log') && pOf(x, 'prog', 1).includes('/d/wait-select-1.guards.txt') && /selection log/.test(pOf(x, 'prog', 1)), pOf(x, 'prog', 1));
   const nfLine = (pOf(x, 'prog', 1).match(/^The selection of the task's guards the workflow ran.*$/m) || [''])[0];
   ok('C3. the fix round after a red full run: no "selected guards" (the workflow runs the full run again)', nfLine && !/selected guards/.test(nfLine) && /mutations after the commit/.test(nfLine), nfLine);
@@ -470,7 +471,7 @@ async function run(script, task = T, extra = {}) {
   ok('the tester post-check starts from the HEAD of the fix', / --since P2 --role tester/.test(pOf(x, 'post')), pOf(x, 'post'));
   x = await run({ pre: [PRE], prog: [PROG, PROG], run: [RUN_RED], test: [{ verdict: 'green', summary: '' }], review: [D] }, TB, { config: ONE });
   ok('a red full run the programmer explains without a commit -> no second run, the tester gets the red log',
-    x.r.status === 'done' && x.full === 'pre>prog>run:x:select-1>prog>test>post:x:tester>review>diff:x:reviewer>left:x:end' && /exit 1/.test(pOf(x, 'test')), x.full);
+    x.r.status === 'done' && x.full === 'pre>prog>run:x:select-1>prog>test>post:x:tester>review>diff:x:reviewer>run:x:train-1>left:x:end' && /exit 1/.test(pOf(x, 'test')), x.full);
   x = await run({ pre: [PRE], prog: [PROG, Object.assign({}, PROG, { head: 'P2' }), Object.assign({}, PROG, { head: 'P3' })], run: [RUN_RED, RUN_RED, RUN_RED] }, TB, { config: ONE });
   ok('the full run still red after two fix rounds -> stopped for the coordinator, no tester',
     x.r.status === 'stopped' && !x.trace.includes('test') && /selection.*still red/.test(x.r.why) && runsOf(x).length === 3, JSON.stringify(x.r) + ' ' + x.full);
@@ -520,7 +521,7 @@ async function run(script, task = T, extra = {}) {
   const L = Object.assign({}, TB, { mode: 'light' });
   x = await run({ pre: [PRE], prog: [PROG], review: [D] }, L, { config: ONE });
   ok('light: pre > programmer-checker > full run > review > done, no tester and no tester post-checks',
-    x.r.status === 'done' && x.full === 'pre>prog>run:x:select-1>review>diff:x:reviewer>left:x:end' && x.r.mode === 'light', x.full + ' ' + JSON.stringify(x.r));
+    x.r.status === 'done' && x.full === 'pre>prog>run:x:select-1>review>diff:x:reviewer>run:x:train-1>left:x:end' && x.r.mode === 'light', x.full + ' ' + JSON.stringify(x.r));
   const lp0 = pOf(x, 'prog');
   ok('light: the programmer-checker prompt - red guard, code, mutations after the commit, own acceptance with evidence in test.md',
     /PROGRAMMER-CHECKER/.test(lp0) && /red guard/.test(lp0) && /mutations AFTER the commit/.test(lp0) && lp0.includes('/d/test.md') && lp0.includes('acc') && /evidence/.test(lp0), lp0);
@@ -528,12 +529,12 @@ async function run(script, task = T, extra = {}) {
   ok('light: the reviewer post-check starts from the programmer HEAD', / --since P --role reviewer/.test(pOf(x, 'diff')), pOf(x, 'diff'));
   x = await run({ pre: [PRE], prog: [PROG, Object.assign({}, PROG, { head: 'P2' })], review: [{ verdict: 'rejected', docsOnly: false, summary: 'r' }, D] }, L, { config: ONE });
   ok('light: rejection -> programmer round -> full run -> second review -> done',
-    x.r.status === 'done' && x.full === 'pre>prog>run:x:select-1>review>diff:x:reviewer>prog>run:x:select-r>review>diff:x:reviewer>left:x:end', x.full);
+    x.r.status === 'done' && x.full === 'pre>prog>run:x:select-1>review>diff:x:reviewer>prog>run:x:select-r>review>diff:x:reviewer>run:x:train-1>left:x:end', x.full);
   x = await run({ pre: [PRE], prog: [PROG, Object.assign({}, PROG, { head: 'P2' })], review: [{ verdict: 'rejected', docsOnly: false, summary: 'r1' }, { verdict: 'rejected', docsOnly: false, summary: 'r2' }] }, L, { config: ONE });
   ok('light: second rejection -> stopped for the coordinator with the proposal to relaunch in the full mode, no analyst',
     x.r.status === 'stopped' && !x.trace.includes('analyst') && /full mode/.test(x.r.why) && /r2/.test(x.r.review || ''), JSON.stringify(x.r));
   x = await run({ pre: [PRE], prog: [PROG, Object.assign({}, PROG, { head: 'P2' })], run: [RUN_RED, RUN_OK], review: [D] }, L, { config: ONE });
-  ok('light: a red full run -> programmer round with the log -> full run -> review', x.r.status === 'done' && x.full === 'pre>prog>run:x:select-1>prog>run:x:select-1f>review>diff:x:reviewer>left:x:end', x.full);
+  ok('light: a red full run -> programmer round with the log -> full run -> review', x.r.status === 'done' && x.full === 'pre>prog>run:x:select-1>prog>run:x:select-1f>review>diff:x:reviewer>run:x:train-1>left:x:end', x.full);
   ok('C2. light (one run): the Order line runs no selection and no full run, then the own acceptance',
     !/guards-select/.test(orderOf(lp0)) && !/heavy\.sh zsh -c/.test(orderOf(lp0)) && /the workflow runs the selection/.test(orderOf(lp0)) && /your own acceptance/.test(orderOf(lp0)), orderOf(lp0));
   x = await run({ pre: [PRE], prog: [PROG], review: [D] }, L);

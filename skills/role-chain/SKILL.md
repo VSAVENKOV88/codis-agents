@@ -39,7 +39,7 @@ Only tasks the owner asked for in this conversation. For each task:
 | `useCasesFirst` | optional: `true` together with `analystFirst` for a feature whose use cases are not written yet - the analyst writes only `<dir>/use-cases.md` with its open questions and the task stops with status `use-cases-review`; review them with the owner, then relaunch with `useCases` and `analystFirst` |
 | `stack` | optional: docker compose project the tester may start and tear down; with a shared stand in the config (`stand`) only for a task whose commits change the stand's image files |
 | `security` | optional: the brief marks the task as security work - a security reviewer joins |
-| `base` | optional: the branch or commit the task started from; `scripts/guards-select.js` takes the changed files since its merge-base (without it the role names the base itself) |
+| `base` | the branch or commit the task started from; `scripts/guards-select.js` takes the changed files since its merge-base (without it the role names the base itself); with `guardSubsetCommand` required: the branch of the arc (a branch of the repository, not a commit and not a protected branch), which the integration train moves |
 | `mode` | optional: `mode: "light"` for a small task chosen by the coordinator (rules: up to ~100 lines of product, one subsystem, no attack surface, no Docker acceptance) - one programmer-checker, the step of the task's guards (the selection with `guardSubsetCommand`, else the programmer's full run), one reviewer, no tester; refused with `security` or `stack`. Default `"full"` |
 
 Every task carries exactly one of `analystFirst`, `analysis`, `noAnalysis`; with none or several the workflow stops
@@ -84,6 +84,15 @@ role agents are unavailable).
   alive. A stop with "could not run" means the run left no exit code (killed); exit 124 (the step's deadline), a refusal
   of the slot queue before the run (77, 78; 72, 73), 65 (unknown base) or 69 (the remote runner) stops the task with
   `environment`. Either way: free the machine and relaunch the task with `start`.
+- With `guardSubsetCommand` a task whose review is done rides the integration train (phase "Train"): one wait step runs
+  `scripts/train.js ride --task <key> --branch <branch> --head <head after the review> --base <base> --dir <folder>`,
+  and its exit code is the verdict - 0 `green` -> `done` with `train.verdict` and the result file; 10 `green-unmerged`
+  -> `done` with the note "the merge waits for the coordinator" (merge `refs/runs/train/<id>` yourself); 11 `red`,
+  12 `seam`, 13 `conflict` -> a fix round on `<sharedDir>/train/result/<task>-<head>.json`, the selection, the second
+  review of the diff, the train again (the second red train -> the analyst inside the run; at most four rides); 14
+  `arc-red`, 15 `coordinator` -> stopped for you: fix the arc or decide, then `train.js resume`; 74, 75, 124 ->
+  `environment`, the queue entry stays and a relaunch of the task alone attaches to it; 65 -> refused (a protected base
+  or not a branch). The base must be a branch of the repository, not a commit.
 - Cost: `node "${CLAUDE_PLUGIN_ROOT}/scripts/chain-cost.js" <directory with the run's agent transcripts>...` prints the
   input-equivalent cost per task and flags tasks above twice `medianTaskIE`; give it the transcript directories of all
   runs of a split feature, and it sums the parts that carry the same `feature` and flags the feature above
