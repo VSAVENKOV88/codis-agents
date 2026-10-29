@@ -146,7 +146,8 @@ const G = (train, more = {}) => Object.assign({ pre: [PRE], prog: [PROG], test: 
   for (const [rc, re, env] of [[75, /environment/, true], [74, /queue/, true], [124, /deadline/, true], [14, /arc-red/, false], [15, /coordinator/, false]]) {
     x = await run(G([ride(rc)]));
     ok(`W11. train exit ${rc} -> stopped${env ? ' with environment' : ' for the coordinator, not the environment'}`,
-      x.r.status === 'stopped' && re.test(x.r.why || '') && !!x.r.environment === env && trainSteps(x).length === 1 && x.r.train && x.r.train.rc === rc, JSON.stringify(x.r));
+      x.r.status === 'stopped' && re.test(x.r.why || '') && !!x.r.environment === env && trainSteps(x).length === 1 && x.r.train && x.r.train.rc === rc
+        && x.r.train.verdict === ({ 14: 'arc-red', 15: 'coordinator' }[rc] || 'environment'), JSON.stringify(x.r));
   }
   x = await run(G([ride(74)]));
   ok('W2. the queue unavailable -> the stop names the branch and the head the review accepted', /branch b\b/.test(x.r.why || '') && /head T\b/.test(x.r.why || '') && /queue/.test(x.r.why || ''), x.r.why);
