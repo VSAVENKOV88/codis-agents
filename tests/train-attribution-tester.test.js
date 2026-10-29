@@ -123,7 +123,8 @@ async function main_() {
   const pwned = () => spawnSync('find', [T, '-name', 'PWNED*'], { encoding: 'utf8' }).stdout.trim();
 
   // ---- S1: a guard name with shell metacharacters (it comes from a guard's output) reaches {onlyArgs} literally ----
-  const evil = 'g;:>PWNED;$(:>PWNED2)`:>PWNED3`';
+  // the payload writes into $T by an absolute path: the attribution worktrees are removed, $T stays to be searched
+  const evil = `g;:>${T}/PWNED;$(:>${T}/PWNED2)\`:>${T}/PWNED3\``;
   rules({ [evil]: '[ -f red-e.txt ]' });
   let arc = rev('arc');
   const e1 = branch('e1', ['red-e.txt']), e2 = branch('e2', ['f-e2.txt']);
