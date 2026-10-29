@@ -51,7 +51,7 @@ sh(path.join(T, 'one.sh'), '#!/bin/sh\nexit 0\n');
 const cfgFile = path.join(T, 'cfg.json');
 fs.writeFileSync(cfgFile, JSON.stringify({ repoDir: main, worktreeRoot: wts, sharedDir: shared,
   guardCommand: `cd {wt} && ${path.join(T, 'guard.sh')}`,
-  guardRerun: { command: `${path.join(T, 'one.sh')} {name}`, newRedPattern: '^FAILED (\\S+) ', tallyPattern: '^=== .* in [0-9.]+s ===$' },
+  guardRerun: { command: `cd {wt} && ${path.join(T, 'one.sh')} {name}`, newRedPattern: '^FAILED (\\S+) ', tallyPattern: '^=== .* in [0-9.]+s ===$' },
   guardBaseline: 'known.json',
   worktreeSetup: { scan: ['data'], skip: [], link: [] },
   slots: { lockDir: path.join(T, 'slots'), legacyLock: path.join(T, 'guards.lock') } }));
@@ -121,6 +121,7 @@ async function main_() {
   ok('D12 the corpus in that worktree is a clone (a file), not a link', c1.length === 1 && c1[0][3] === 'file', JSON.stringify(c1));
   ok('D13 after the run the temporary worktree is removed (directory and registration)', c1.length === 1 && !fs.existsSync(c1[0][0])
     && !git(main, 'worktree', 'list', '--porcelain').stdout.includes(c1[0][0]), c1.length && c1[0][0]);
+  ok('D12 the temporary worktree added no branch', !/refs\/heads\/train-/.test(heads()), heads());
   ok('D6 the train commit has its ref refs/runs/train/<id>, not a branch or a tag', id1 && rev(`refs/runs/train/${id1}`) === (o && o.sha), runRefs().join());
   ok('D15 green, arc not checked out -> refs/heads/arc = the train commit', o && rev('arc') === o.sha && res1 && res1.merged === o.sha, rev('arc'));
   ok('D14 the result names the train, its commit and a log', res1 && res1.train === id1 && res1.sha === (o && o.sha) && res1.log && fs.existsSync(res1.log), JSON.stringify(res1));
