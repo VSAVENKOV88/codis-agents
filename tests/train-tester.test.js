@@ -116,10 +116,11 @@ async function main_() {
     tr('resume');
   }
   setRc(0);
-  // a red that is not the environment (exit 1) is not reported as environment
+  // exit 1 whose log has no tally (this runner prints none on a red): the environment by the log, not a red train
+  // (coordinator's decision for p-train-c2); a red with its tally is attributed (tests/train-attribution.test.js)
   setRc(1);
   r = tr('run'); o = last(r);
-  ok('I3 exit 1 is a red train, not the environment (no merge, m stays)', o && o.verdict === 'red' && !result('m', m) && queue().length === 1, r.stdout + r.stderr);
+  ok('I3 exit 1 without the tally of its log -> environment (no merge, m stays)', o && o.verdict === 'environment' && /without the tally/.test(o.reason || '') && !result('m', m) && queue().length === 1, r.stdout + r.stderr);
   tr('resume'); setRc(0);
   r = tr('run'); o = last(r);
   ok('I3 after resume m rides green', o && o.verdict === 'green' && result('m', m), r.stdout + r.stderr);
