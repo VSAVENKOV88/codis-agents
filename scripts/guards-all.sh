@@ -60,12 +60,15 @@
 #   guards-<basename>-<cksum of its resolved path>.txt, so two worktrees with the same basename never share a log and
 #   its reuse record.
 H=${0:A:h}
-FORCE=0 LOCAL=0 NOQ=0 QRO= MAINOK=() SELECT= SELBASE=; typeset -a POS
-USAGE="usage: guards-all.sh [--force] [--main-checkout] [--local] [--no-quarantine] [--quarantine-read-only] [--select <base>] <worktree name or path>"
+FORCE=0 LOCAL=0 NOQ=0 QRO= MAINOK=() SELECT= SELBASE= SELFILE= SELTMP=; typeset -a POS
+USAGE="usage: guards-all.sh [--force] [--main-checkout] [--local] [--no-quarantine] [--quarantine-read-only] [--select <base> | --selected <names file>] <worktree name or path>"
 while (( $# )); do
   case $1 in
     --force) FORCE=1;; --local) LOCAL=1;; --no-quarantine) NOQ=1;; --quarantine-read-only) QRO=ro;; --main-checkout) MAINOK=(--main-checkout);;
     --select) [[ -n $2 ]] || { print -u2 -r -- "$USAGE"; exit 64; }; SELECT=1 SELBASE=$2; shift;;
+    # the guards a selection runs, a JSON array (guards-select.js --names-out): the runner's run of a selection
+    # (scripts/guards-remote-host.js) - a known red outside it did not run and is never called "not red now"
+    --selected) [[ -n $2 ]] || { print -u2 -r -- "$USAGE"; exit 64; }; SELFILE=${2:A}; shift;;
     *) POS+=("$1");;
   esac
   shift
@@ -87,7 +90,9 @@ if [[ -n $SELECT ]]; then
   CMD=$(cfg guardSubsetCommand)
   [[ -n $CMD ]] || { print -u2 "guards-all: --select needs guardSubsetCommand in the project config"; exit 78; }
   SELERR=$(_slot_tmp guardssel) || { print -u2 "guards-all: no temporary file in ${TMPDIR:-/tmp} (mktemp failed)"; exit 73; }
-  ONLY=$(node "$H/guards-select.js" --wt "$WT" --base "$SELBASE" --only-args 2>$SELERR); src=$?
+  SELFILE=$(_slot_tmp guardsnames) || { rm -f $SELERR; print -u2 "guards-all: no temporary file in ${TMPDIR:-/tmp} (mktemp failed)"; exit 73; }
+  SELTMP=1; trap 'rm -f $SELFILE' EXIT
+  ONLY=$(node "$H/guards-select.js" --wt "$WT" --base "$SELBASE" --only-args --names-out "$SELFILE" 2>$SELERR); src=$?
   SELWHY=$(<$SELERR); rm -f $SELERR
   if (( src == 3 )); then
     print -r -- "nothing selected: no guard is changed, imports or names a changed file, or matches guardAlways (base $SELBASE, HEAD $(git -C "$WT" rev-parse --short HEAD 2>/dev/null)) - run your new guards directly" > "$OUT"
@@ -114,7 +119,7 @@ QFILE=; [[ -n $BASELINE ]] && (( ! NOQ )) && QFILE=$CODIS_SHARED_DIR/guards-quar
 ENVID=local RNAME=$NAME SUBSET=()
 if (( ! LOCAL )) && RHOST=$(cfg remote.host) && [[ -n $RHOST ]]; then
   if [[ -n $SELECT ]]; then
-    if RCMD=$(cfg remoteRun.subsetCommand) && [[ -n $RCMD ]]; then ENVID=remote:$RHOST CMD=${RCMD//\{onlyArgs\}/$ONLY} RNAME=$NAME-select; SUBSET=(--subset "$CMD")
+    if RCMD=$(cfg remoteRun.subsetCommand) && [[ -n $RCMD ]]; then ENVID=remote:$RHOST CMD=${RCMD//\{onlyArgs\}/$ONLY} RNAME=$NAME-select; SUBSET=(--subset "$CMD" --selected "$SELFILE")
     else print -u2 -r -- "guards-all: note: the machine file names the remote runner $RHOST, but the project config has no remoteRun.subsetCommand - the selection runs in a heavy slot on this machine"; fi
   elif RCMD=$(cfg remoteRun.command) && [[ -n $RCMD ]]; then ENVID=remote:$RHOST CMD=$RCMD
   else print -u2 -r -- "guards-all: note: the machine file names the remote runner $RHOST, but the project config has no remoteRun - the run stays on this machine"; fi
@@ -130,11 +135,11 @@ if [[ $ENVID == remote:* ]]; then
   exit $rc
 fi
 RCF=$(_slot_tmp guardsrc) || { print -u2 "guards-all: no temporary file in ${TMPDIR:-/tmp} (mktemp failed)"; exit 73; }
-trap 'rm -f $RCF' EXIT
+trap 'rm -f $RCF ${SELTMP:+$SELFILE}' EXIT
 while true; do
   : > $RCF
   SLOT_KIND=$kind SLOT_RETRY_RC=75 SLOT_LABEL="guards-all $NAME" slot_run heavy zsh -c '
-    source "$1"; WT="$2"; OUT="$3"; CMD="$4"; mode="$5"; RCF="$6"; GR="$7"; RERUN="$8"; BASELINE="$9"; QFILE="${10}"; QRO="${11}"
+    source "$1"; WT="$2"; OUT="$3"; CMD="$4"; mode="$5"; RCF="$6"; GR="$7"; RERUN="$8"; BASELINE="$9"; QFILE="${10}"; QRO="${11}"; SELFILE="${12}"
     cd "$WT" || exit 1
     t0=$EPOCHSECONDS said=0
     while true; do
@@ -169,8 +174,8 @@ while true; do
     fi
     rm -f "$SLOT_PATH.jobs" "$SLOT_PATH.limit" "$SLOT_PATH.limit.tmp" "$SLOT_PATH.limit.active" "$SLOT_PATH.whole"
     tail -25 "$OUT"
-    if [[ -n $RERUN ]]; then node "$GR" rerun "$WT" "$OUT" "$(<$RCF)" "$RERUN" "$BASELINE" "$QFILE" "$QRO"; print -r -- $? > "$RCF"; fi
-    node "$GR" meta-end "$WT" "$OUT" "$(<$RCF)" "$QFILE"' guards-all "$H/slots.zsh" "$WT" "$OUT" "$CMD" "$mode" "$RCF" "$H/guards-result.js" "$RERUN" "$BASELINE" "$QFILE" "$QRO"
+    if [[ -n $RERUN ]]; then node "$GR" rerun "$WT" "$OUT" "$(<$RCF)" "$RERUN" "$BASELINE" "$QFILE" "$QRO" ${SELFILE:+"$SELFILE"}; print -r -- $? > "$RCF"; fi
+    node "$GR" meta-end "$WT" "$OUT" "$(<$RCF)" "$QFILE"' guards-all "$H/slots.zsh" "$WT" "$OUT" "$CMD" "$mode" "$RCF" "$H/guards-result.js" "$RERUN" "$BASELINE" "$QFILE" "$QRO" "$SELFILE"
   rc=$?
   [[ -s $RCF ]] && exit $(<$RCF)          # the runner ran: its code
   (( rc == 75 )) || exit $rc              # 75 without a run: no worker budget - queue again

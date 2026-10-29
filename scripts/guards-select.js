@@ -23,7 +23,8 @@
 //              exit 3 when nothing is selected (an empty --only list would run every guard), 78 without the key
 //   --only-args  only the {onlyArgs} part (one --only <guard> per guard, quoted for zsh); exit 3 when nothing is
 //              selected. guards-all.sh --select fills it into guardSubsetCommand here or remoteRun.subsetCommand on the
-//              remote runner.
+//              remote runner. With --names-out <file> it also writes the selected guards there as a JSON array: the
+//              rerun judges a known red "not red now" only among them (a known red outside the selection did not run).
 // Exit codes: 0 ok, 2 git failed (unknown base, not a repository), 3 nothing selected (--command), 64 usage,
 // 78 no or invalid project config.
 const fs = require('fs');
@@ -104,6 +105,7 @@ if (a.includes('--json')) {
   process.stdout.write(JSON.stringify({ base, mergeBase, changed, guards: picked, command: picked.length ? command() : '' }, null, 1) + '\n');
 } else if (a.includes('--only-args')) {
   if (!picked.length) die(3, 'no guard selected');
+  if (opt('--names-out')) fs.writeFileSync(opt('--names-out'), JSON.stringify(picked.map((p) => p.path)) + '\n');
   process.stdout.write(onlyArgs() + '\n');
 } else if (a.includes('--command')) {
   if (!config.guardSubsetCommand) die(78, `no guardSubsetCommand in the project config ${file}: run the full guard run instead`);

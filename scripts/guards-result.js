@@ -39,8 +39,10 @@
 //    scripts/guards-remote.js; a record without it is a run on this machine, "local"): a result is reused only in the
 //    environment it came from - a green run here says nothing of the runner and the other way round.
 //
-// usage: guards-result.js rerun <wt> <log> <runner rc> <guardRerun JSON> [<guardBaseline> [<quarantine file> [ro]]]
+// usage: guards-result.js rerun <wt> <log> <runner rc> <guardRerun JSON> [<guardBaseline> [<quarantine file> [ro [<selected file>]]]]
 //          (ro: the quarantine is subtracted, never written - the remote runner, guards-all.sh --quarantine-read-only); select: the same on a selection, guards-all.sh --select
+//          <selected file>: a JSON array of the guards a selection ran (guards-select.js --names-out); a known red is
+//          then "not red now" only when it is among them (one outside the selection did not run)
 //          -> summary on stdout, appended to the log; exit = final code
 //        guards-result.js meta-start <wt> <log> <command template> [<env>]
 //        guards-result.js meta-end <wt> <log> <final rc> [<quarantine file>]
@@ -187,7 +189,9 @@ const quarantineHash = (file) => { try { return sha256(fs.readFileSync(path.reso
 // readOnly: the quarantine is read and subtracted, never written (the remote runner: the machine that started the run
 // writes the flaky guards of the log it gets back, scripts/guards-remote.js); 'select' - a selection of a task's guards
 // (guards-all.sh --select): nothing is written anywhere, the flaky guards go into the role's report.
-function rerun({ wt, log, rc, cfg, baseline, quarantine, readOnly }) {
+// selected: the guards a selection ran (an array; null or left out - a full run): a known red that is not red in the
+// log is called stale only when it is among them, since a known red outside the selection never ran.
+function rerun({ wt, log, rc, cfg, baseline, quarantine, readOnly, selected }) {
   const res = { rc, repeated: [], flaky: [], known: [], quarantined: [], text: '' };
   const head = '==== rerun of new reds one by one (guardRerun) ====\n';
   const finish = (text) => { res.text = text; fs.appendFileSync(log, '\n' + text); return res; };
@@ -206,7 +210,8 @@ function rerun({ wt, log, rc, cfg, baseline, quarantine, readOnly }) {
   const source = (n) => (Object.hasOwn(tree, n) ? `guardBaseline ${baseline}` : `quarantine ${quarantine}`);
   const p = newReds(fs.readFileSync(log, 'utf8'), cfg);
   // a known name not red in a finished run: the fix landed, the entry is stale (a flaky one is green most of the time)
-  const stale = p.tally ? Object.keys(known).filter((n) => !p.names.includes(n) && !FLAKY.test(known[n])) : [];
+  const ran = Array.isArray(selected) ? (n) => selected.includes(n) : () => true;
+  const stale = p.tally ? Object.keys(known).filter((n) => ran(n) && !p.names.includes(n) && !FLAKY.test(known[n])) : [];
   const staleText = stale.map((n) => `known red not red now: ${n} — remove it from the ${Object.hasOwn(tree, n) ? `baseline ${baseline}` : `quarantine ${quarantine}`}\n`).join('');
   if (rc === 0) return staleText ? finish(head + staleText) : res;
   const max = cfg.maxReruns || 10;
@@ -327,9 +332,17 @@ module.exports = { newReds, rerun, readBaseline, subst, metaStart, metaEnd, reus
   quarantineFile, readQuarantine, addQuarantine, dropQuarantine, takeQuarantine, quarantineHash, writeFlaky, flakyInLog };
 
 if (require.main === module) {
-  const [cmd, wt, log, x, y, z, u, v] = process.argv.slice(2);
+  const [cmd, wt, log, x, y, z, u, v, sf] = process.argv.slice(2);
   if (cmd === 'rerun') {
-    const r = rerun({ wt, log, rc: Number(x), cfg: JSON.parse(y), baseline: z || '', quarantine: u || '', readOnly: v === 'select' ? 'select' : v === 'ro' });
+    let selected = null;
+    if (sf) {
+      try { selected = JSON.parse(fs.readFileSync(sf, 'utf8')); } catch (e) { selected = e; }
+      if (!Array.isArray(selected) || !selected.every((n) => typeof n === 'string')) {
+        console.error(`guards-result: the selected guards file ${sf} is not a JSON array of names${selected instanceof Error ? ` (${selected.message})` : ''}`);
+        process.exit(Number(x) || 1);
+      }
+    }
+    const r = rerun({ wt, log, rc: Number(x), cfg: JSON.parse(y), baseline: z || '', quarantine: u || '', readOnly: v === 'select' ? 'select' : v === 'ro', selected });
     if (r.quarantineHash !== undefined) {
       try { const m = JSON.parse(fs.readFileSync(metaFile(log), 'utf8')); m.quarantine = r.quarantineHash; fs.writeFileSync(metaFile(log), JSON.stringify(m, null, 1) + '\n'); } catch { /* no start record: the run stays unusable */ }
     }
