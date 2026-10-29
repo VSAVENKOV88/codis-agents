@@ -318,6 +318,15 @@ process.exit(r.status === null ? 255 : r.status);
   x = ga({}, '--force', '--select', 'trunk', 'xw');
   ok('C-S14. without remoteRun.subsetCommand: no ssh, the selection runs here (guardSubsetCommand) with a note', x.status === 0 && !fs.existsSync(sshLog)
     && /--only srv\/a-run\.js/.test(count('local.count')[0] || '') && /no remoteRun\.subsetCommand/.test(x.all), `${x.status} ${x.all.slice(-600)}`);
+  // S5 x E1 on the runner: a known red outside the selection did not run there, so it is not "not red now"; a selected
+  // known red that ran green still is (the runner's own rerun sees only the guards of the selection)
+  setCfg(true);
+  fs.writeFileSync(path.join(xw, 'known.json'), JSON.stringify({ 'srv/a-run.js': 'known: selected', 'srv/z-run.js': 'known: not selected' }) + '\n');
+  gitC(xw, 'add', 'known.json'); gitC(xw, 'commit', '-q', '-m', 'known reds');
+  set(0, ['Guards to run: 2', 'TOTAL: 0 NEW red'].join('\n') + '\n', []);
+  x = ga({}, '--force', '--select', 'trunk', 'xw');
+  ok('C-E1. the runner\'s green selection: a selected known red that ran green is "not red now"', x.status === 0 && /known red not red now: srv\/a-run\.js/.test(read(SEL) || ''), `${x.status} ${(read(SEL) || '').slice(-800)}`);
+  ok('C-E1. ... and a known red outside the selection is not (it did not run)', x.status === 0 && !/not red now: srv\/z-run\.js/.test(read(SEL) || ''), `${x.status} ${(read(SEL) || '').slice(-800)}`);
 }
 
 function partConfig() {
