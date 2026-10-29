@@ -114,8 +114,10 @@ const refusedBefore = (x, re) => x.r.status === 'stopped' && x.r.why === 'precon
   ok('K7 feature part + useCases outside the task and feature folders -> refused before any agent', refusedBefore(x, /useCases \/s\/other\/use-cases\.md is not an absolute path inside \/d\/ or \/s\/feat\//), J(x));
   x = await run({}, task({ kind: 'feature', feature: 'feat', analysis: '/s/feat/analyst.md', useCases: '/s/feat/spec.md', spec: '/s/feat/spec.md' }));
   ok('K7 feature part + useCases equal to spec -> refused before any agent', refusedBefore(x, /useCases \/s\/feat\/spec\.md is the arc specification/), J(x));
-  x = await run({}, task({ kind: 'feature', feature: 'feat', analysis: '/s/feat/analyst.md', useCases: ' ' }));
-  ok('K7 feature + blank useCases -> the blank refusal, not "without use cases"', refusedBefore(x, /useCases must be a non-empty path/), J(x));
+  for (const u of [' ', '']) {
+    x = await run({}, task({ kind: 'feature', feature: 'feat', analysis: '/s/feat/analyst.md', useCases: u }));
+    ok(`K7 feature + useCases ${JSON.stringify(u)} -> the blank refusal, not "without use cases"`, refusedBefore(x, /useCases must be a non-empty path/), J(x));
+  }
 
   // The documented interface: meta.whenToUse and the header name the field.
   const src = fs.readFileSync(path.join(ROOT, 'workflows', 'role-chain.js'), 'utf8');
