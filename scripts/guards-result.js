@@ -40,7 +40,7 @@
 //    environment it came from - a green run here says nothing of the runner and the other way round.
 //
 // usage: guards-result.js rerun <wt> <log> <runner rc> <guardRerun JSON> [<guardBaseline> [<quarantine file> [ro]]]
-//          (ro: the quarantine is subtracted, never written - the remote runner, guards-all.sh --quarantine-read-only)
+//          (ro: the quarantine is subtracted, never written - the remote runner, guards-all.sh --quarantine-read-only); select: the same on a selection, guards-all.sh --select
 //          -> summary on stdout, appended to the log; exit = final code
 //        guards-result.js meta-start <wt> <log> <command template> [<env>]
 //        guards-result.js meta-end <wt> <log> <final rc> [<quarantine file>]
@@ -185,7 +185,8 @@ const quarantineHash = (file) => { try { return sha256(fs.readFileSync(path.reso
 // it is off. quarantineHash: the hash of the quarantine this run subtracted (read at its start; after its own write the
 // hash of the written file, but only when nobody changed the file between the read and the write), for the meta.
 // readOnly: the quarantine is read and subtracted, never written (the remote runner: the machine that started the run
-// writes the flaky guards of the log it gets back, scripts/guards-remote.js).
+// writes the flaky guards of the log it gets back, scripts/guards-remote.js); 'select' - a selection of a task's guards
+// (guards-all.sh --select): nothing is written anywhere, the flaky guards go into the role's report.
 function rerun({ wt, log, rc, cfg, baseline, quarantine, readOnly }) {
   const res = { rc, repeated: [], flaky: [], known: [], quarantined: [], text: '' };
   const head = '==== rerun of new reds one by one (guardRerun) ====\n';
@@ -235,6 +236,7 @@ function rerun({ wt, log, rc, cfg, baseline, quarantine, readOnly }) {
     if (res.flaky.length) {
       if (!baseline) qText = 'quarantine off: no guardBaseline in the project config\n';
       else if (!quarantine) qText = 'quarantine off on this run (--no-quarantine): nothing written\n';
+      else if (readOnly === 'select') qText = 'quarantine read-only on a selection (guards-all.sh --select): nothing written; name the flaky guards under "Flaky guards" in the role\'s report\n';
       else if (readOnly) qText = 'quarantine read-only on this run (the remote runner): the machine that started the run writes it\n';
       else {
         const w = writeFlaky({ wt, log, names: res.flaky, quarantine, baseline, readHash: ql.hash });
@@ -327,7 +329,7 @@ module.exports = { newReds, rerun, readBaseline, subst, metaStart, metaEnd, reus
 if (require.main === module) {
   const [cmd, wt, log, x, y, z, u, v] = process.argv.slice(2);
   if (cmd === 'rerun') {
-    const r = rerun({ wt, log, rc: Number(x), cfg: JSON.parse(y), baseline: z || '', quarantine: u || '', readOnly: v === 'ro' });
+    const r = rerun({ wt, log, rc: Number(x), cfg: JSON.parse(y), baseline: z || '', quarantine: u || '', readOnly: v === 'select' ? 'select' : v === 'ro' });
     if (r.quarantineHash !== undefined) {
       try { const m = JSON.parse(fs.readFileSync(metaFile(log), 'utf8')); m.quarantine = r.quarantineHash; fs.writeFileSync(metaFile(log), JSON.stringify(m, null, 1) + '\n'); } catch { /* no start record: the run stays unusable */ }
     }

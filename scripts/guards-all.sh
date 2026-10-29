@@ -46,15 +46,32 @@
 #   slot, and the worse exit code is the run's. Environment problems: exit 69, the log's first line "environment: ...".
 #   A remote key without remoteRun in the project keeps the run here, with a note. --local runs here regardless (the
 #   runner itself calls its guards-all.sh so).
-# usage: guards-all.sh [--force] [--main-checkout] [--local] [--no-quarantine] [--quarantine-read-only] <worktree>   (a name under worktreeRoot, or a path) -> log in <sharedDir>/guards-<name>.txt
+# Selection (--select <base>; rules/multi-agent.md "No full guard run in the task"): the guards of the task's diff
+#   instead of the full suite - scripts/guards-select.js against the merge-base with <base> (changed guards, guards that
+#   import or name a changed file, guardAlways) fills {onlyArgs} of guardSubsetCommand (78 without it). Its own log
+#   <sharedDir>/guards-<name>.select.txt, so a selection is never reused for a full run nor the other way (the commands
+#   differ in the meta too); the same rerun of new reds alone and known reds; the quarantine is read only (a flaky guard
+#   of a selection goes into the role's report, not into the quarantine). Nothing selected: the log says "nothing
+#   selected", exit 0, no command runs (an empty --only list would run every guard). The selection could not be computed
+#   (git: unknown base, not a repository): exit 65. On the remote runner only with remoteRun.subsetCommand (run name
+#   <name>-select); without that key it runs in a heavy slot here, with a note - an unreachable runner stays 69.
+# usage: guards-all.sh [--force] [--main-checkout] [--local] [--no-quarantine] [--quarantine-read-only] [--select <base>] <worktree>   (a name under worktreeRoot, or a path) -> log in <sharedDir>/guards-<name>.txt (.select.txt)
 #   A worktree directly under worktreeRoot (by name or by path) logs as guards-<name>.txt; any other path as
 #   guards-<basename>-<cksum of its resolved path>.txt, so two worktrees with the same basename never share a log and
 #   its reuse record.
 H=${0:A:h}
-FORCE=0 LOCAL=0 NOQ=0 QRO= MAINOK=(); typeset -a POS
-for a in "$@"; do if [[ $a == --force ]]; then FORCE=1; elif [[ $a == --local ]]; then LOCAL=1; elif [[ $a == --no-quarantine ]]; then NOQ=1; elif [[ $a == --quarantine-read-only ]]; then QRO=ro; elif [[ $a == --main-checkout ]]; then MAINOK=(--main-checkout); else POS+=("$a"); fi; done
+FORCE=0 LOCAL=0 NOQ=0 QRO= MAINOK=() SELECT= SELBASE=; typeset -a POS
+USAGE="usage: guards-all.sh [--force] [--main-checkout] [--local] [--no-quarantine] [--quarantine-read-only] [--select <base>] <worktree name or path>"
+while (( $# )); do
+  case $1 in
+    --force) FORCE=1;; --local) LOCAL=1;; --no-quarantine) NOQ=1;; --quarantine-read-only) QRO=ro;; --main-checkout) MAINOK=(--main-checkout);;
+    --select) [[ -n $2 ]] || { print -u2 -r -- "$USAGE"; exit 64; }; SELECT=1 SELBASE=$2; shift;;
+    *) POS+=("$1");;
+  esac
+  shift
+done
 set -- "${POS[@]}"
-[[ -n $1 ]] || { print -u2 "usage: guards-all.sh [--force] [--main-checkout] [--local] [--no-quarantine] [--quarantine-read-only] <worktree name or path>"; exit 64; }
+[[ -n $1 ]] || { print -u2 -r -- "$USAGE"; exit 64; }
 cfg() { node "$H/config.js" get "$1" 2>/dev/null }
 source "$H/slots.zsh" || exit $?
 [[ -n $CODIS_WORKTREE_ROOT && -n $CODIS_SHARED_DIR ]] || { print -u2 "guards-all: no project config (.claude/codis-agents.json) found"; exit 78; }
@@ -64,19 +81,42 @@ node "$H/main-checkout.js" $MAINOK "$WT" || exit $?
 NAME=${WT:A:t}
 [[ ${WT:A:h} == ${CODIS_WORKTREE_ROOT:A} ]] || NAME=$NAME-${${=$(print -rn -- ${WT:A} | cksum)}[1]}
 OUT=$CODIS_SHARED_DIR/guards-$NAME.txt
+[[ -n $SELECT ]] && OUT=$CODIS_SHARED_DIR/guards-$NAME.select.txt
 mkdir -p $CODIS_SHARED_DIR
-CMD=$(cfg guardCommand); LEGACY=$(cfg guardCommandLegacy); PFILE=$(cfg guardAdaptiveProbe.file); PTEXT=$(cfg guardAdaptiveProbe.contains)
-[[ -n $CMD ]] || { print -u2 "guards-all: guardCommand is not set in the project config"; exit 78; }
-# Older branches may carry a runner without the adaptive limit: the probe decides per worktree.
-if [[ -n $PFILE ]] && ! grep -qF -- "$PTEXT" "$WT/$PFILE" 2>/dev/null; then CMD=$LEGACY; fi
+if [[ -n $SELECT ]]; then
+  CMD=$(cfg guardSubsetCommand)
+  [[ -n $CMD ]] || { print -u2 "guards-all: --select needs guardSubsetCommand in the project config"; exit 78; }
+  SELERR=$(_slot_tmp guardssel) || { print -u2 "guards-all: no temporary file in ${TMPDIR:-/tmp} (mktemp failed)"; exit 73; }
+  ONLY=$(node "$H/guards-select.js" --wt "$WT" --base "$SELBASE" --only-args 2>$SELERR); src=$?
+  SELWHY=$(<$SELERR); rm -f $SELERR
+  if (( src == 3 )); then
+    print -r -- "nothing selected: no guard is changed, imports or names a changed file, or matches guardAlways (base $SELBASE, HEAD $(git -C "$WT" rev-parse --short HEAD 2>/dev/null)) - run your new guards directly" > "$OUT"
+    cat "$OUT"; exit 0
+  elif (( src == 2 )); then
+    print -r -- "the selection could not be computed (base $SELBASE): $SELWHY" > "$OUT"
+    print -u2 -r -- "guards-all: $(<$OUT)"; exit 65
+  elif (( src != 0 )); then
+    print -u2 -r -- "guards-all: guards-select.js exited $src: $SELWHY"; exit $src
+  fi
+  CMD=${CMD//\{onlyArgs\}/$ONLY}
+  QRO=select
+else
+  CMD=$(cfg guardCommand); LEGACY=$(cfg guardCommandLegacy); PFILE=$(cfg guardAdaptiveProbe.file); PTEXT=$(cfg guardAdaptiveProbe.contains)
+  [[ -n $CMD ]] || { print -u2 "guards-all: guardCommand is not set in the project config"; exit 78; }
+  # Older branches may carry a runner without the adaptive limit: the probe decides per worktree.
+  if [[ -n $PFILE ]] && ! grep -qF -- "$PTEXT" "$WT/$PFILE" 2>/dev/null; then CMD=$LEGACY; fi
+fi
 mode=fixed; [[ $CMD == *'{jobs}'* ]] || mode=whole; [[ $CMD == *'{limitFile}'* ]] && mode=adaptive
 kind=full; [[ $mode == whole ]] && kind=whole
 RERUN=$(cfg guardRerun); [[ $RERUN == null ]] && RERUN=   # config get prints null for an unset object key
 BASELINE=$(cfg guardBaseline)
 QFILE=; [[ -n $BASELINE ]] && (( ! NOQ )) && QFILE=$CODIS_SHARED_DIR/guards-quarantine.json
-ENVID=local
+ENVID=local RNAME=$NAME SUBSET=()
 if (( ! LOCAL )) && RHOST=$(cfg remote.host) && [[ -n $RHOST ]]; then
-  if RCMD=$(cfg remoteRun.command) && [[ -n $RCMD ]]; then ENVID=remote:$RHOST CMD=$RCMD
+  if [[ -n $SELECT ]]; then
+    if RCMD=$(cfg remoteRun.subsetCommand) && [[ -n $RCMD ]]; then ENVID=remote:$RHOST CMD=${RCMD//\{onlyArgs\}/$ONLY} RNAME=$NAME-select; SUBSET=(--subset "$CMD")
+    else print -u2 -r -- "guards-all: note: the machine file names the remote runner $RHOST, but the project config has no remoteRun.subsetCommand - the selection runs in a heavy slot on this machine"; fi
+  elif RCMD=$(cfg remoteRun.command) && [[ -n $RCMD ]]; then ENVID=remote:$RHOST CMD=$RCMD
   else print -u2 -r -- "guards-all: note: the machine file names the remote runner $RHOST, but the project config has no remoteRun - the run stays on this machine"; fi
 fi
 if (( ! FORCE )) && node "$H/guards-result.js" reuse "$WT" "$OUT" "$CMD" "$ENVID" "$QFILE" > /dev/null 2>&1; then
@@ -84,7 +124,7 @@ if (( ! FORCE )) && node "$H/guards-result.js" reuse "$WT" "$OUT" "$CMD" "$ENVID
 fi
 if [[ $ENVID == remote:* ]]; then
   treq=$(_slot_now)
-  node "$H/guards-remote.js" run "$WT" "$OUT" "$NAME" "$QFILE"; rc=$?
+  node "$H/guards-remote.js" run "$WT" "$OUT" "$RNAME" "$QFILE" $SUBSET; rc=$?
   # one line of class remote for the whole run (no slot here: acquire = request), in the worktree's name
   ( cd "$WT" 2>/dev/null; SLOT_LABEL="guards-all $NAME on $RHOST" _slot_journal $treq $treq $(_slot_now) remote - full $rc guards-all )
   exit $rc

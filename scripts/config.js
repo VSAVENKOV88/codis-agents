@@ -122,8 +122,10 @@ const STAND_REQUIRED = ['project', 'up', 'deploy', 'reset', 'status', 'down'];
 // directory ("" = the directory itself), each a link straight to its real path; prepare - commands run in the runner's
 // worktree before the run (medium slot); localPattern - a regexp over the runner's log lines, group 1 a ", "-separated
 // list of guards the runner did not run: they run on this machine after it in a heavy slot by localCommand ({wt},
-// {onlyArgs}; default guardSubsetCommand), and the worse exit code is the run's.
-const REMOTE_RUN_SPEC = { command: ['string', ''], commandLegacy: ['string', ''], deps: ['any', []], prepare: ['string[]', []], localPattern: ['string', ''], localCommand: ['string', ''] };
+// {onlyArgs}; default guardSubsetCommand), and the worse exit code is the run's; subsetCommand - the selection of a task's
+// guards on the runner (guards-all.sh --select; {wt}, {onlyArgs}, needs guardSubsetCommand): without it the selection
+// runs in a heavy slot of this machine, which is not a fallback of an unreachable runner (that stays 69).
+const REMOTE_RUN_SPEC = { command: ['string', ''], commandLegacy: ['string', ''], subsetCommand: ['string', ''], deps: ['any', []], prepare: ['string[]', []], localPattern: ['string', ''], localCommand: ['string', ''] };
 const DEP_SPEC = { files: ['string[]', undefined], install: ['string', undefined], link: ['object', undefined] };
 // A path inside the worktree or the cache directory: relative, no .., no empty or . segment, no quote or newline.
 const relPath = (p, emptyOk) => typeof p === 'string' && (p === '' ? !!emptyOk : !path.isAbsolute(p) && !/^~/.test(p) && !/['\n\0\\]/.test(p) && p.split('/').every((x) => x && x !== '.' && x !== '..'));
@@ -360,6 +362,11 @@ function resolve(raw, opts = {}) {
     if (!x.command) x.command = c.guardCommand;
     if (!x.commandLegacy) x.commandLegacy = c.guardCommandLegacy;
     if (x.command && !x.command.includes('{wt}')) errors.push('remoteRun.command: must contain {wt} (the worktree directory)');
+    // the selection on the runner (guards-all.sh --select): without the key the selection runs in a heavy slot here
+    if (x.subsetCommand) {
+      for (const k of ['wt', 'onlyArgs']) if (!x.subsetCommand.includes(`{${k}}`)) errors.push(`remoteRun.subsetCommand: must contain {${k}}`);
+      if (!c.guardSubsetCommand) errors.push('remoteRun.subsetCommand: needs guardSubsetCommand (no selection step without it)');
+    }
     if (!Array.isArray(x.deps)) { errors.push('remoteRun.deps: expected an array of {files, install, link}'); x.deps = []; }
     x.deps = x.deps.map((d, i) => {
       const w = `remoteRun.deps[${i}].`;

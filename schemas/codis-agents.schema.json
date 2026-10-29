@@ -121,6 +121,7 @@
       "properties": {
         "command": { "type": "string", "description": "The guard command on the runner (default guardCommand); placeholders as guardCommand, must contain {wt}. E.g. guardCommand plus a runner flag that skips the guards the runner cannot run." },
         "commandLegacy": { "type": "string", "description": "The command on the runner for worktrees where guardAdaptiveProbe fails (default guardCommandLegacy)." },
+        "subsetCommand": { "type": "string", "description": "The selection of a task's guards on the runner (guards-all.sh --select): must contain {wt} and {onlyArgs}, needs guardSubsetCommand. Without it the selection runs in a heavy slot of this machine." },
         "deps": {
           "type": "array",
           "items": {

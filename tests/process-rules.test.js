@@ -65,7 +65,10 @@ const CHECKS = [
   [[RULES], 'a flaky guard is not sent to the programmer as a regression but goes into the project backlog', /flaky[^.]*not a regression and not sent to the programmer[^.]*project backlog/],
   [[RULES, README], 'a full run on the same HEAD with a clean tracked tree is reused, --force runs anyway', /same HEAD with a clean tracked tree[^\n]*reused, HEAD <sha>[^\n]*`--force`/],
   // One full guard run per task and a light mode for small tasks (owner 2026-10-20: "yes, we make both changes").
-  [[RULES, README], 'one full guard run per task, run by the workflow after the programmer\'s last commit', /[Oo]ne full guard run per task[^.]*workflow[^.]*after the programmer's last commit/],
+  // p-train-a2 (2026-10-29): the selection of the task's diff replaced the one full run in the task (Replaces: names it).
+  [[RULES, README], 'no full guard run in the task: the selection, run by the workflow after every programmer round', /[Nn]o full guard run in the task: the selection of its diff, run by the workflow after every programmer round/],
+  [[RULES, README], 'the selection replaces "one full guard run per task"', /[Rr]eplaces:? "[Oo]ne full guard run per task, run by the workflow after the programmer's last commit"/],
+  [[RULES, README], 'the selection runs remotely only with remoteRun.subsetCommand', /`remoteRun\.subsetCommand`/],
   [[RULES, README], 'the selection: guards that import a changed file or name it, plus guardAlways', /guards that import a changed file or name it[^.]*`guardAlways`/],
   // p-wait (owner 2026-10-24, "yes, we do it as you recommend"; form 1 of (c), C5/C6/C8): the full run of the wait step
   // includes the selection, so the programmer runs none; guardSubsetCommand narrows guardCommand (the contract).
@@ -106,10 +109,10 @@ ok('P1. rules: role:pauses - no "for a longer wait ... finish"; a role does not 
   !/and finish/.test(lineOf('pauses')) && /does not end its work to wait/.test(lineOf('pauses')) && /while its process is alive/.test(lineOf('pauses'))
     && /21 %[^\n]*7\.4 %/.test(lineOf('pauses')) && /0\.37-0\.43M/.test(lineOf('pauses')), lineOf('pauses'));
 ok('C5. rules: the old "the programmer runs only its new guards and the selection" is gone', !/programmer runs only its new guards and the selection/.test(read(RULES)));
-ok('C6. agents/programmer.md: no selection of its own with guardSubsetCommand', !/run your new guards and the selection/.test(read('agents/programmer.md')) && /includes the selection/.test(read('agents/programmer.md')));
+ok('C6. agents/programmer.md: no selection of its own with guardSubsetCommand', !/run your new guards and the selection/.test(read('agents/programmer.md')) && /run no\s+full run and no selection/.test(read('agents/programmer.md')));
 ok('C6. README: guards-select.js is the tester\'s selection, not "the guards a programmer runs instead of the full suite"', !/guards a programmer runs instead of the full suite/.test(read(README)));
-ok('rules: the one-run line is marked role:onerun', /[Oo]ne full guard run per task[^\n]*<!-- role:onerun -->/.test(rules));
-ok('RULE_LIST onerun: the workflow runs the full run, roles run selected guards', /\['onerun',[\s\S]{0,1200}guards-select\.js/.test(wf));
+ok('rules: the selection line is marked role:onerun', /[Nn]o full guard run in the task[^\n]*<!-- role:onerun -->/.test(rules));
+ok('RULE_LIST onerun: the workflow runs the selection (guards-all.sh --select), roles run no full suite', /\['onerun', ONE_RUN\s*\?\s*`No full guard run in the task[^`]*\$\{selectRun\(t\)\}/.test(wf));
 ok('rules: the rerun line is marked role:rerun', /flaky[^\n]*<!-- role:rerun -->/.test(rules));
 ok('RULE_LIST rerun: guards-all reruns alone, flaky to the report for the backlog', /\['rerun', [^\n]*guards-all\.sh reruns each one alone[^\n]*Flaky guards[^\n]*backlog/.test(wf));
 // Docker cleanup (owner 2026-10-14, after old test stacks filled the disk): the role:docker line reaches every role.

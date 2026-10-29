@@ -34,7 +34,12 @@
 //      --no-quarantine call attached to a run that subtracted entries, and an attach to a runner that does not say which
 //      quarantine its run was begun with: never reused). A broken
 //      quarantine here, or one the runner refuses or cannot write, is an environment red (69), never a run without it.
-// usage: guards-remote.js run <worktree> <log> <name> [<quarantine file>]   (guards-all.sh passes it; '' - off)
+//   8. The selection of a task's guards (guards-all.sh --select, remoteRun.subsetCommand): --subset <command> is the
+//      runner's guard command instead of remoteRun.command (its {onlyArgs} filled in here; no legacy command), the meta
+//      keeps that command (a selection is never reused for a full run, nor the other way), and the quarantine is read
+//      only: the flaky guards of a selection go into the role's report, never into the quarantine.
+// usage: guards-remote.js run <worktree> <log> <name> [<quarantine file>] [--subset <command>]   (guards-all.sh passes
+//   the quarantine file; '' - off)
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
@@ -89,10 +94,10 @@ function gitState(wt) {
 }
 
 // The project config of the run on the runner: the guard keys of this project; its paths are set there.
-function runnerConfig(c) {
+function runnerConfig(c, subset) {
   const x = c.remoteRun;
-  const o = { guardCommand: x.command, protectedBranches: [], reportLanguage: c.reportLanguage, guardExclusive: c.guardExclusive };
-  if (x.commandLegacy) { o.guardCommandLegacy = x.commandLegacy; if (c.guardAdaptiveProbe) o.guardAdaptiveProbe = c.guardAdaptiveProbe; }
+  const o = { guardCommand: subset || x.command, protectedBranches: [], reportLanguage: c.reportLanguage, guardExclusive: c.guardExclusive };
+  if (x.commandLegacy && !subset) { o.guardCommandLegacy = x.commandLegacy; if (c.guardAdaptiveProbe) o.guardAdaptiveProbe = c.guardAdaptiveProbe; }
   if (c.guardRerun) o.guardRerun = c.guardRerun;
   if (c.guardBaseline) o.guardBaseline = c.guardBaseline;
   return o;
@@ -120,7 +125,8 @@ function attachedOther(st, qfile, quarantine) {
 }
 const OTHER_Q = 'another quarantine (an attached run)';
 
-function run(c, wt, log, name, qfile) {
+function run(c, wt, log, name, qfile, opts) {
+  const subset = (opts && opts.subset) || '';
   const r = c.remote, x = c.remoteRun, envId = `remote:${r.host}`;
   if (qfile === undefined) qfile = c.guardBaseline ? G.quarantineFile(c.sharedDir) : '';
   const g = gitState(wt);
@@ -128,7 +134,7 @@ function run(c, wt, log, name, qfile) {
   if (!g.clean) throw new Stop(78, `guards-remote: tracked changes not committed - remote run tests HEAD only (${wt}); commit them, or set the machine key remote aside to run here`);
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name) || name.includes('..') || name.endsWith('.lock')) throw new Stop(78, `guards-remote: the worktree name ${JSON.stringify(name)} cannot name a run on the runner (letters, digits, . _ -; no .., not ending in .lock)`);
   const sha = g.head;
-  G.metaStart(wt, log, x.command, envId);
+  G.metaStart(wt, log, subset || x.command, envId);
   let id = null;
   const said = [];
   const fail = (e) => {
@@ -160,7 +166,7 @@ function run(c, wt, log, name, qfile) {
         { encoding: 'utf8', env: Object.assign({}, process.env, { GIT_SSH_COMMAND: sshE(r), GIT_SSH_VARIANT: 'ssh' }), maxBuffer: 1 << 26 });
       if (p.status !== 0) throw env(`git push of ${sha.slice(0, 12)} to the runner was refused (exit ${p.status}): ${clean(tail(p.stderr, 5))}`);
     } else say(`commit ${sha.slice(0, 12)} already on ${r.host} - nothing sent`);
-    const job = Object.assign({ plugin: r.plugin, corpus: c.worktreeSetup.scan.length > 0, deps: x.deps, prepare: x.prepare, config: runnerConfig(c) },
+    const job = Object.assign({ plugin: r.plugin, corpus: c.worktreeSetup.scan.length > 0, deps: x.deps, prepare: x.prepare, config: runnerConfig(c, subset) },
       quarantine ? { quarantine } : {});
     const st = remoteOp(r, 'start', { name, sha, bundle: BUNDLE, job });
     id = st.id;
@@ -211,7 +217,8 @@ function run(c, wt, log, name, qfile) {
     if (f.rerun !== null) fs.writeFileSync(G.rerunLog(log), f.rerun);
     // 7. the runner subtracted the quarantine read-only; its flaky guards are written here
     const flaky = qfile ? G.flakyInLog(f.log) : [];
-    if (flaky.length) {
+    if (flaky.length && subset) fs.appendFileSync(log, `quarantine read-only on a selection (guards-all.sh --select): nothing written; flaky: ${flaky.join(', ')} - name them under "Flaky guards" in the role's report\n`);
+    else if (flaky.length) {
       const w = G.writeFlaky({ wt, log, names: flaky, quarantine: qfile, baseline: c.guardBaseline, readHash: qhash });
       if (w.hash !== undefined) qhash = w.hash;
       fs.appendFileSync(log, w.text);
@@ -236,7 +243,7 @@ function run(c, wt, log, name, qfile) {
       if (c.guardRerun) {
         // the meta follows the part here only when the quarantine is still the one of this run (nobody changed it since)
         const same = qfile && G.quarantineHash(qfile) === qhash;
-        const lres = G.rerun({ wt, log: local, rc: lrc, cfg: c.guardRerun, baseline: c.guardBaseline || '', quarantine: qfile });
+        const lres = G.rerun({ wt, log: local, rc: lrc, cfg: c.guardRerun, baseline: c.guardBaseline || '', quarantine: qfile, readOnly: subset ? 'select' : false });
         lrc = lres.rc;
         if (same && lres.quarantineHash !== undefined) qhash = lres.quarantineHash;
       }
@@ -256,15 +263,18 @@ function run(c, wt, log, name, qfile) {
 }
 
 function main(argv) {
-  const [cmd, wt, log, name, qfile] = argv;
-  if (cmd !== 'run' || !wt || !log || !name) throw new Stop(64, 'usage: guards-remote.js run <worktree> <log> <name> [<quarantine file>]');
+  const si = argv.indexOf('--subset');
+  const subset = si >= 0 ? argv[si + 1] : '';
+  if (si >= 0 && !subset) throw new Stop(64, 'guards-remote.js: --subset needs the command');
+  const [cmd, wt, log, name, qfile] = si >= 0 ? argv.slice(0, si).concat(argv.slice(si + 2)) : argv;
+  if (cmd !== 'run' || !wt || !log || !name) throw new Stop(64, 'usage: guards-remote.js run <worktree> <log> <name> [<quarantine file>] [--subset <command>]');
   const file = C.find();
   if (!file) throw new Stop(78, 'guards-remote: no project config found (set CODIS_AGENTS_CONFIG)');
   const l = C.load(file);
   if (l.errors.length) throw new Stop(78, l.errors.map((e) => 'codis-agents config: ' + e).join('\n'));
   if (!l.config.remote) throw new Stop(78, `guards-remote: no key remote in the machine file ${l.config.machine.path} - no runner`);
   if (!l.config.remoteRun) throw new Stop(78, `guards-remote: no remoteRun in the project config ${file} - the runner does not know how to prepare this project`);
-  return run(l.config, wt, log, name, qfile);
+  return run(l.config, wt, log, name, qfile, { subset });
 }
 
 module.exports = { run, runnerConfig, sameQuarantine, attachedOther, BUNDLE, VERSION };

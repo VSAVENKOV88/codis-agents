@@ -75,7 +75,9 @@ async function partA() {
   let x = await run(G1());
   ok('S1. one run: pre > prog > the selection step > tester > review, done',
     x.r.status === 'done' && x.full === 'pre>prog>run:x:select-1>test>post:x:tester>review>diff:x:reviewer>left:x:end', x.full);
-  const rp = runsOf(x)[0] || { prompt: '' };
+  const rp0 = runsOf(x)[0] || { prompt: '' };
+  // the command is quoted once more for wait-step.js (sq): unquote '\'' for the checks
+  const rp = Object.assign({}, rp0, { prompt: rp0.prompt.split("'\\''").join("'") });
   ok('S1. the step runs guards-all.sh --select <base> on the worktree through wait-step.js and copies the selection log',
     rp.prompt.includes("/p/scripts/guards-all.sh --select 'arc' 'w'") && rp.prompt.includes("'/s/guards-w.select.txt'") && rp.prompt.includes("'/d/wait-select-1.guards.txt'")
       && rp.prompt.includes("node /p/scripts/wait-step.js start --id '/d/wait-select-1'"), rp.prompt);
@@ -166,7 +168,7 @@ function partB(TMP) {
   for (const d of [bin, sh2, w]) fs.mkdirSync(d, { recursive: true });
   fakeBin(bin);
   const put = (f, s, mode) => { fs.mkdirSync(path.dirname(path.join(w, f)), { recursive: true }); fs.writeFileSync(path.join(w, f), s); if (mode) fs.chmodSync(path.join(w, f), mode); };
-  put('full.sh', `#!/bin/sh\necho "$*" >> "${TMP}/full.count"\necho "=== full ==="\nexit 0\n`, 0o755);
+  put('full.sh', `#!/bin/sh\necho "run $*" >> "${TMP}/full.count"\necho "=== full ==="\nexit 0\n`, 0o755);
   put('sub.sh', `#!/bin/sh\necho "$*" >> "${TMP}/sub.count"\ncat "${TMP}/sub.log"\nexit $(cat "${TMP}/sub.rc")\n`, 0o755);
   put('one.sh', `#!/bin/sh\necho "$1" >> "${TMP}/one.count"\ngrep -qxF -- "$1" "${TMP}/red.txt" && exit 1\nexit 0\n`, 0o755);
   put('known.json', '{"g/b-run.js": "known: a test entry"}\n');
@@ -203,7 +205,7 @@ function partB(TMP) {
   x = ga('--select', 'base', 'pw');
   ok('B-S15. the same HEAD, clean tree, same selection -> reused, the subset command not run again', x.status === 0 && /reused, HEAD/.test(x.stdout) && count('sub.count').length === 1, x.all);
   x = ga('pw');
-  ok('B-S15. a full run on the same HEAD is not taken from the selection: it runs', x.status === 0 && count('full.count').length === 1 && fs.existsSync(FULL), x.all);
+  ok('B-S15. a full run on the same HEAD is not taken from the selection: it runs', x.status === 0 && count('full.count').length === 1 && fs.existsSync(FULL), `${x.status} ${count('full.count').length} ${x.all}`);
   x = ga('--select', 'base', 'pw');
   ok('B-S15. ... and the selection is still reused after it (its own meta)', x.status === 0 && /reused, HEAD/.test(x.stdout) && count('sub.count').length === 1, x.all);
   // S5: known reds subtracted before the rerun
