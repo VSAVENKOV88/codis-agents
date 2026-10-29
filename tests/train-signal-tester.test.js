@@ -5,8 +5,9 @@
 //      "a full run cut off before its tally - the environment"): guards-all.sh passes 137 on -> environment naming
 //      SIGKILL, halt, no result, the passenger stays, the arc is not moved;
 //   X2 SIGINT to the train's guards-all.sh (the slot trap: 143) -> environment, as SIGTERM/SIGHUP;
-//   X3 the runner exits 128 (POSIX: only a status above 128 is a signal) -> a red train, not the environment;
-//   X4 the runner exits 200 (128 + 72, no such signal) -> a red train, not the environment;
+//   X3 the runner exits 128 (POSIX: only a status above 128 is a signal) -> not a signal; its log has no tally, so the
+//      environment by the log (coordinator's decision for p-train-c2: a log without its tally is the environment);
+//   X4 the runner exits 200 (128 + 72, no such signal) -> the same: not a signal, the environment by the missing tally;
 //   X5 a real red (tally reached, exit 1) stays a red train;
 //   X6 after resume, with the runner green, the passenger rides green.
 const fs = require('fs');
@@ -113,8 +114,8 @@ async function main_() {
   const cases = [
     ['X1', 'the runner killed by SIGKILL', () => runWith('sigkill'), 'environment', /guards-all\.sh exit 137 by a signal \(SIGKILL\)/],
     ['X2', 'SIGINT to guards-all.sh', () => killedTop('SIGINT'), 'environment', /guards-all\.sh exit 143 by a signal \(SIGTERM\)/],
-    ['X3', 'the runner exits 128', () => runWith('e128'), 'red', /guards-all\.sh exit 128\)/],
-    ['X4', 'the runner exits 200', () => runWith('e200'), 'red', /guards-all\.sh exit 200\)/],
+    ['X3', 'the runner exits 128', () => runWith('e128'), 'environment', /guards-all\.sh exit 128 without the tally/],
+    ['X4', 'the runner exits 200', () => runWith('e200'), 'environment', /guards-all\.sh exit 200 without the tally/],
     ['X5', 'a real red with its tally', () => runWith('red'), 'red', /guards-all\.sh exit 1\)/],
   ];
   let first = true;
