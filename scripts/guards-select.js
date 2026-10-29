@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 'use strict';
-// The guards a programmer runs instead of the full suite (rules/multi-agent.md, "One full guard run per task"): the full
-// run is done once per task by the workflow after the programmer's last commit; the programmer runs only this selection.
+// The guards of a task's diff, run instead of the full suite (rules/multi-agent.md, "No full guard run in the task"): with
+// guardSubsetCommand the workflow runs this selection (guards-all.sh --select, through --only-args) after every
+// programmer round with a new HEAD, and the tester after its own commits; the full run of a branch is not in the task.
 // A guard is selected when
 //   - it is itself changed (new, edited, untracked);
 //   - it imports a changed file (a relative require/import whose target, with or without an extension or /index, is a
@@ -15,12 +16,16 @@
 // of the programmer is often not committed yet). Guard files: tracked and untracked (not ignored) files matching the
 // config key guardFiles (globs as in scripts/stand.js: no "/" -> the file name at any depth; default *-run.js|mjs|cjs).
 //
-// usage: guards-select.js --wt <worktree> [--base <ref>] [--config <file>] [--json | --command]
+// usage: guards-select.js --wt <worktree> [--base <ref>] [--config <file>] [--json | --command | --only-args]
 //   --base     the branch or commit the task started from (default: the first of protectedBranches)
 //   (none)     one selected guard per line, paths from the repository root
 //   --json     {base, mergeBase, changed, guards: [{path, why: [...]}], command}
 //   --command  the project's guardSubsetCommand with {wt} and {onlyArgs} (one --only <guard> per guard) filled in;
 //              exit 3 when nothing is selected (an empty --only list would run every guard), 78 without the key
+//   --only-args  only the {onlyArgs} part (one --only <guard> per guard, quoted for zsh); exit 3 when nothing is
+//              selected. guards-all.sh --select fills it into guardSubsetCommand here or remoteRun.subsetCommand on the
+//              remote runner. With --names-out <file> it also writes the selected guards there as a JSON array: the
+//              rerun judges a known red "not red now" only among them (a known red outside the selection did not run).
 // Exit codes: 0 ok, 2 git failed (unknown base, not a repository), 3 nothing selected (--command), 64 usage,
 // 78 no or invalid project config.
 const fs = require('fs');
@@ -35,7 +40,7 @@ const die = (code, m) => { process.stderr.write(`guards-select: ${m}\n`); proces
 const q = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
 
 const wt = opt('--wt');
-if (!wt) die(64, 'usage: guards-select.js --wt <worktree> [--base <ref>] [--config <file>] [--json | --command]');
+if (!wt) die(64, 'usage: guards-select.js --wt <worktree> [--base <ref>] [--config <file>] [--json | --command | --only-args]');
 const file = opt('--config') ? path.resolve(opt('--config')) : cfg.find(wt);
 if (!file) die(78, 'no project config (.claude/codis-agents.json) found');
 const { config, errors } = cfg.load(file);
@@ -91,13 +96,18 @@ for (const g of guards) {
   if (why.length) picked.push({ path: g, why });
 }
 
+const onlyArgs = () => picked.map((p) => `--only ${q(p.path)}`).join(' ');
 const command = () => {
   if (!config.guardSubsetCommand) return '';
-  const only = picked.map((p) => `--only ${q(p.path)}`).join(' ');
-  return config.guardSubsetCommand.replace(/\{wt\}/g, q(wt)).replace(/\{onlyArgs\}/g, only);
+  const only = onlyArgs();
+  return config.guardSubsetCommand.replace(/\{wt\}/g, () => q(wt)).replace(/\{onlyArgs\}/g, () => only);
 };
 if (a.includes('--json')) {
   process.stdout.write(JSON.stringify({ base, mergeBase, changed, guards: picked, command: picked.length ? command() : '' }, null, 1) + '\n');
+} else if (a.includes('--only-args')) {
+  if (!picked.length) die(3, 'no guard selected');
+  if (opt('--names-out')) fs.writeFileSync(opt('--names-out'), JSON.stringify(picked.map((p) => p.path)) + '\n');
+  process.stdout.write(onlyArgs() + '\n');
 } else if (a.includes('--command')) {
   if (!config.guardSubsetCommand) die(78, `no guardSubsetCommand in the project config ${file}: run the full guard run instead`);
   if (!picked.length) die(3, 'no guard selected: run your new guards directly');

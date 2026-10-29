@@ -7,7 +7,7 @@
 //   F2. a red tester -> round 2 names test.md, the task's diff from the task's base, the brief and analysis only in the
 //       sections the findings cite, mutations only for the guards of git diff <tester HEAD>..HEAD;
 //   F3. a review rejection -> round r names review.md and the diff of the round from the HEAD before it;
-//   F4. a red full run -> round 1f names the log of the run and the diff of the round from the programmer's HEAD;
+//   F4. a red selection -> round 1f names the log of the run and the diff of the round from the programmer's HEAD;
 //   F5. light mode: round 1 has no block, the round after a rejection has it;
 //   F6. the first round after the analyst of the second red tester round is not a fix round;
 //   F7. the rule: a marked line role:fixround in rules/multi-agent.md, a RULE_LIST entry, README names it;
@@ -80,12 +80,12 @@ const fixOk = (p, report, before) => {
   ok('F3. a review rejection: round r is a fix round - review.md, mutations of the round from the HEAD before it (tester T)',
     ps.length === 2 && !isFix(ps[0]) && isFix(ps[1]) && fixOk(ps[1], '/d/review.md', 'T'), fixLine(ps[1]));
 
-  // F4: one-run mode, a red full run.
+  // F4: one-run mode, a red selection (p-train-a2: the selection step replaced the full run in the task).
   x = await run({ pre: [PRE], prog: [PROG, P2], test: [GREEN], review: [D],
     run: [{ done: true, rc: 1, seconds: 1, log: '/d/full.log', tail: '1 new red' }, { done: true, rc: 0, seconds: 1, log: '/d/w2', tail: 'ok' }] }, T, ONE);
   ps = progs(x);
-  ok('F4. a red full run: round 1f is a fix round - the run log, mutations of git diff P..HEAD',
-    ps.length === 2 && !isFix(ps[0]) && isFix(ps[1]) && fixOk(ps[1], '/d/full.log', 'P') && fixLine(ps[1]).includes('/d/wait-full-1.guards.txt'), fixLine(ps[1]));
+  ok('F4. a red selection: round 1f is a fix round - the run log, mutations of git diff P..HEAD',
+    ps.length === 2 && !isFix(ps[0]) && isFix(ps[1]) && fixOk(ps[1], '/d/full.log', 'P') && fixLine(ps[1]).includes('/d/wait-select-1.guards.txt'), fixLine(ps[1]));
 
   // F5: light mode.
   const L = Object.assign({}, T, { mode: 'light' });

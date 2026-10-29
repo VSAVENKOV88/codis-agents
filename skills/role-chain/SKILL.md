@@ -40,7 +40,7 @@ Only tasks the owner asked for in this conversation. For each task:
 | `stack` | optional: docker compose project the tester may start and tear down; with a shared stand in the config (`stand`) only for a task whose commits change the stand's image files |
 | `security` | optional: the brief marks the task as security work - a security reviewer joins |
 | `base` | optional: the branch or commit the task started from; `scripts/guards-select.js` takes the changed files since its merge-base (without it the role names the base itself) |
-| `mode` | optional: `mode: "light"` for a small task chosen by the coordinator (rules: up to ~100 lines of product, one subsystem, no attack surface, no Docker acceptance) - one programmer-checker, the one full run, one reviewer, no tester; refused with `security` or `stack`. Default `"full"` |
+| `mode` | optional: `mode: "light"` for a small task chosen by the coordinator (rules: up to ~100 lines of product, one subsystem, no attack surface, no Docker acceptance) - one programmer-checker, the step of the task's guards (the selection with `guardSubsetCommand`, else the programmer's full run), one reviewer, no tester; refused with `security` or `stack`. Default `"full"` |
 
 Every task carries exactly one of `analystFirst`, `analysis`, `noAnalysis`; with none or several the workflow stops
 that task before any agent. A reused analysis is passed as `analysis`, not in free text inside `start`: the Analyst
@@ -78,10 +78,12 @@ role agents are unavailable).
   owner; write the owner's answers into the brief yourself (verbatim, dated) before the next run.
 - A light task (`mode: "light"`) stopped after a second rejection goes to the coordinator with the proposal of the
   full mode: relaunch it without `mode` (tester, analyst after a second rejection), `start` pointing to its reports.
-- With `guardSubsetCommand` in the config the workflow runs one full guard run per task after the programmer's last
-  commit (phase "Full run"); its waiter keeps waiting while the run is alive. A stop with "could not run" means the run
-  left no exit code (killed); exit 124 (the step's deadline) or a refusal of the slot queue before the run (77, 78; 72,
-  73) stops the task with `environment`. Either way: free the machine and relaunch the task with `start`.
+- With `guardSubsetCommand` in the config there is no full guard run in the task: after every programmer round with a
+  new HEAD the workflow runs the selection of its guards, `guards-all.sh --select <base>` (phase "Selection"); every
+  task then needs `base`, the branch of the arc (not a protected branch). Its waiter keeps waiting while the run is
+  alive. A stop with "could not run" means the run left no exit code (killed); exit 124 (the step's deadline), a refusal
+  of the slot queue before the run (77, 78; 72, 73), 65 (unknown base) or 69 (the remote runner) stops the task with
+  `environment`. Either way: free the machine and relaunch the task with `start`.
 - Cost: `node "${CLAUDE_PLUGIN_ROOT}/scripts/chain-cost.js" <directory with the run's agent transcripts>...` prints the
   input-equivalent cost per task and flags tasks above twice `medianTaskIE`; give it the transcript directories of all
   runs of a split feature, and it sums the parts that carry the same `feature` and flags the feature above

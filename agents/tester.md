@@ -20,8 +20,9 @@ the project's guards and fixtures; there is no default - without it the chain st
   background (that process holds the ticket until release), `stand.sh deploy`, the scenario, `stand.sh release` - also
   after a red, others wait in the queue. Never bring the stand up or down.
 - Do not repeat the programmer's full guard run: reuse its log, run new and touched guards and mutations; run the full
-  suite only after your own commits. When the workflow ran the one full run of the task (the prompt gives its log), do
-  not run the full suite at all: after your commits run your guards and the selection of `scripts/guards-select.js`.
+  suite only after your own commits. When the workflow ran the selection of the task's guards (the prompt gives its log;
+  there is no full guard run in the task), do not run the full suite at all: after your commits run your guards and
+  the selection again, `guards-all.sh --select <base>` (`scripts/guards-select.js` picks it).
 - `heavy.sh` and `guards-all.sh` only through Bash `run_in_background`, waited for with Monitor in slices of at most
   270 s while the process is alive in the slot queue or running; never as a blocking Bash call (its timeout kills the
   waiter and drops its ticket).

@@ -413,25 +413,28 @@ async function run(script, task = T, extra = {}) {
   // the programmer runs only the selected guards (scripts/guards-select.js), the workflow runs ONE full run on its last
   // HEAD as a wait step (scripts/wait-step.js, a cheap agent), a red run goes back to the programmer with its log, the
   // tester reuses the log and runs no full run. Without the key the chain is as before (the programmer's own full run).
+  // p-train-a2 (2026-10-29): the full run step became the selection step (guards-all.sh --select <base>), and with the
+  // key the task needs base (the branch of the arc): TB below.
   const ONE = Object.assign({}, CFG, { guardSubsetCommand: 'cd {wt}/server && npm run guards -- --all {onlyArgs}' });
+  const TB = Object.assign({}, T, { base: 'arc' });
   const G1 = () => ({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D] });
-  const RUN_RED = { done: true, rc: 1, seconds: 900, log: '/d/wait-full-1.log', tail: 'FAIL x-run.js' };
-  const RUN_OK = { done: true, rc: 0, seconds: 900, log: '/d/wait-full-1f.log', tail: 'ok' };
+  const RUN_RED = { done: true, rc: 1, seconds: 900, log: '/d/wait-select-1.log', tail: 'FAIL x-run.js' };
+  const RUN_OK = { done: true, rc: 0, seconds: 900, log: '/d/wait-select-1f.log', tail: 'ok' };
   const runsOf = (x) => x.prompts.filter((p) => p.role === 'run');
   const pOf = (x, role, i = 0) => (x.prompts.filter((p) => p.role === role)[i] || {}).prompt || '';
-  x = await run(G1(), T, { config: ONE });
+  x = await run(G1(), TB, { config: ONE });
   ok('one run: pre > prog > the full run step > tester > review, done',
-    x.r.status === 'done' && x.full === 'pre>prog>run:x:full-1>test>post:x:tester>review>diff:x:reviewer>left:x:end', x.full);
+    x.r.status === 'done' && x.full === 'pre>prog>run:x:select-1>test>post:x:tester>review>diff:x:reviewer>left:x:end', x.full);
   const rp = runsOf(x)[0];
   ok('the full run step: a cheap agent runs wait-step.js start with guards-all.sh on the worktree, then waits in slices of at most 270 s',
-    rp && rp.opts.model === 'haiku' && rp.opts.agentType === 'general-purpose' && rp.prompt.includes("node /p/scripts/wait-step.js start --id '/d/wait-full-1' --cwd '/w'")
+    rp && rp.opts.model === 'haiku' && rp.opts.agentType === 'general-purpose' && rp.prompt.includes("node /p/scripts/wait-step.js start --id '/d/wait-select-1' --cwd '/w'")
       && rp.prompt.includes('/p/scripts/guards-all.sh') && rp.prompt.includes('wait-step.js wait') && /--max 270/.test(rp.prompt), rp && rp.prompt);
   // C1 (p-wait, form 1): the full run of the wait step includes the selection (guardSubsetCommand narrows guardCommand),
   // so the programmer runs no selection after its mutations: no guards-select, no heavy.sh for it in its Order line.
   const orderOf = (pr) => (pr.match(/^Order:.*$/m) || [''])[0];
   ok('C1. programmer prompt (one run): no selection of its own and no full run - the workflow runs the full run, which includes the selection',
     orderOf(pOf(x, 'prog')) && !/guards-select/.test(orderOf(pOf(x, 'prog'))) && !/heavy\.sh zsh -c/.test(orderOf(pOf(x, 'prog')))
-      && /do NOT run the full guard run/.test(orderOf(pOf(x, 'prog'))) && /includes the selected guards/.test(orderOf(pOf(x, 'prog')))
+      && /there is no full guard run in the task/.test(orderOf(pOf(x, 'prog'))) && /the workflow runs the selection/.test(orderOf(pOf(x, 'prog')))
       && !/full run \/p\/scripts\/guards-all\.sh w in the background/.test(pOf(x, 'prog')), orderOf(pOf(x, 'prog')));
   ok('C7. the full run step is one guards-all.sh, without guards-select', runsOf(x).length === 1 && !/guards-select/.test(runsOf(x)[0].prompt), runsOf(x)[0].prompt);
   ok('C4. programmer schema (one run): fullRun is not "the selected guards\' result"',
@@ -450,28 +453,28 @@ async function run(script, task = T, extra = {}) {
   const heavyBlocking = (ps) => ps.flatMap((p) => p.prompt.split(/(?<=[.:])\s+(?=[A-Z0-9])|\n/).filter((sen) => /heavy\.sh/.test(sen) && !/run_in_background/.test(sen)).map((sen) => p.label + ': ' + sen));
   ok('H2. one run: every sentence that names heavy.sh says run_in_background', !heavyBlocking(x.prompts).length, heavyBlocking(x.prompts).join(' | '));
   ok('tester prompt (one run): reuses the workflow full run log, runs no full run itself',
-    pOf(x, 'test').includes('exit 0; summary /d/wait.log') && /do NOT run the full guard run/i.test(pOf(x, 'test')) && !/a full run only after your own commits/.test(pOf(x, 'test')), pOf(x, 'test'));
-  ok('the task base reaches guards-select when given', /--base 'origin-x'/.test(pOf(await run(G1(), Object.assign({}, T, { base: 'origin-x' }), { config: ONE }), 'prog')));
+    pOf(x, 'test').includes('exit 0; summary /d/wait.log') && /no full guard run in the task/i.test(pOf(x, 'test')) && !/a full run only after your own commits/.test(pOf(x, 'test')), pOf(x, 'test'));
+  ok('the task base reaches the selection when given', /--select 'origin-x'/.test(pOf(await run(G1(), Object.assign({}, TB, { base: 'origin-x' }), { config: ONE }), 'prog')));
   x = await run(G1());
   ok('without guardSubsetCommand: no full run step, the programmer runs the full run itself as before',
     !runsOf(x).length && /full run \/p\/scripts\/guards-all\.sh w in the background/.test(pOf(x, 'prog')) && /a full run only after your own commits/.test(pOf(x, 'test')), x.full);
   ok('H2. without guardSubsetCommand: every sentence that names heavy.sh says run_in_background', !heavyBlocking(x.prompts).length, heavyBlocking(x.prompts).join(' | '));
 
-  x = await run({ pre: [PRE], prog: [PROG, Object.assign({}, PROG, { head: 'P2' })], run: [RUN_RED, RUN_OK], test: [{ verdict: 'green', summary: '' }], review: [D] }, T, { config: ONE });
+  x = await run({ pre: [PRE], prog: [PROG, Object.assign({}, PROG, { head: 'P2' })], run: [RUN_RED, RUN_OK], test: [{ verdict: 'green', summary: '' }], review: [D] }, TB, { config: ONE });
   ok('a red full run -> a programmer round with its log -> the full run again -> tester',
-    x.r.status === 'done' && x.full === 'pre>prog>run:x:full-1>prog>run:x:full-1f>test>post:x:tester>review>diff:x:reviewer>left:x:end', x.full);
-  ok('the fix round gets the exit code, the summary and the copied full log', /exited 1/.test(pOf(x, 'prog', 1)) && pOf(x, 'prog', 1).includes('/d/wait-full-1.log') && pOf(x, 'prog', 1).includes('/d/wait-full-1.guards.txt'), pOf(x, 'prog', 1));
-  const nfLine = (pOf(x, 'prog', 1).match(/^The full guard run the workflow ran.*$/m) || [''])[0];
+    x.r.status === 'done' && x.full === 'pre>prog>run:x:select-1>prog>run:x:select-1f>test>post:x:tester>review>diff:x:reviewer>left:x:end', x.full);
+  ok('the fix round gets the exit code, the summary and the copied full log', /exited 1/.test(pOf(x, 'prog', 1)) && pOf(x, 'prog', 1).includes('/d/wait-select-1.log') && pOf(x, 'prog', 1).includes('/d/wait-select-1.guards.txt') && /selection log/.test(pOf(x, 'prog', 1)), pOf(x, 'prog', 1));
+  const nfLine = (pOf(x, 'prog', 1).match(/^The selection of the task's guards the workflow ran.*$/m) || [''])[0];
   ok('C3. the fix round after a red full run: no "selected guards" (the workflow runs the full run again)', nfLine && !/selected guards/.test(nfLine) && /mutations after the commit/.test(nfLine), nfLine);
   ok('W14. the fix round: the environment is a refused queue (77, 78), not "no slot"', !/no slot/.test(pOf(x, 'prog', 1)) && /77/.test(pOf(x, 'prog', 1)), pOf(x, 'prog', 1));
   ok('the tester post-check starts from the HEAD of the fix', / --since P2 --role tester/.test(pOf(x, 'post')), pOf(x, 'post'));
-  x = await run({ pre: [PRE], prog: [PROG, PROG], run: [RUN_RED], test: [{ verdict: 'green', summary: '' }], review: [D] }, T, { config: ONE });
+  x = await run({ pre: [PRE], prog: [PROG, PROG], run: [RUN_RED], test: [{ verdict: 'green', summary: '' }], review: [D] }, TB, { config: ONE });
   ok('a red full run the programmer explains without a commit -> no second run, the tester gets the red log',
-    x.r.status === 'done' && x.full === 'pre>prog>run:x:full-1>prog>test>post:x:tester>review>diff:x:reviewer>left:x:end' && /exit 1/.test(pOf(x, 'test')), x.full);
-  x = await run({ pre: [PRE], prog: [PROG, Object.assign({}, PROG, { head: 'P2' }), Object.assign({}, PROG, { head: 'P3' })], run: [RUN_RED, RUN_RED, RUN_RED] }, T, { config: ONE });
+    x.r.status === 'done' && x.full === 'pre>prog>run:x:select-1>prog>test>post:x:tester>review>diff:x:reviewer>left:x:end' && /exit 1/.test(pOf(x, 'test')), x.full);
+  x = await run({ pre: [PRE], prog: [PROG, Object.assign({}, PROG, { head: 'P2' }), Object.assign({}, PROG, { head: 'P3' })], run: [RUN_RED, RUN_RED, RUN_RED] }, TB, { config: ONE });
   ok('the full run still red after two fix rounds -> stopped for the coordinator, no tester',
-    x.r.status === 'stopped' && !x.trace.includes('test') && /full guard run.*red/.test(x.r.why) && runsOf(x).length === 3, JSON.stringify(x.r) + ' ' + x.full);
-  x = await run({ pre: [PRE], prog: [PROG, Object.assign({}, PROG, { status: 'environment', questions: [], summary: 'the run was cut off at 40 %' })], run: [RUN_RED] }, T, { config: ONE });
+    x.r.status === 'stopped' && !x.trace.includes('test') && /selection.*still red/.test(x.r.why) && runsOf(x).length === 3, JSON.stringify(x.r) + ' ' + x.full);
+  x = await run({ pre: [PRE], prog: [PROG, Object.assign({}, PROG, { status: 'environment', questions: [], summary: 'the run was cut off at 40 %' })], run: [RUN_RED] }, TB, { config: ONE });
   ok('the programmer names the red of the full run an environment red -> stopped for the coordinator, no tester',
     x.r.status === 'stopped' && !x.trace.includes('test') && /environment/.test(x.r.why) && /cut off at 40 %/.test(x.r.why), JSON.stringify(x.r));
   x = await run({ pre: [PRE], prog: [Object.assign({}, PROG, { status: 'environment', summary: 'no heavy slot for 2 h' })] });
@@ -480,44 +483,44 @@ async function run(script, task = T, extra = {}) {
   ok('programmer schema: status environment exists', (x.prompts.find((p) => p.role === 'prog').opts.schema.properties.status.enum || []).includes('environment'));
 
   // "Could not run" only without a numeric exit code (a red run is a step that ran; e2g2, 2026-10-19).
-  x = await run({ pre: [PRE], prog: [PROG, PROG], run: [Object.assign({}, RUN_RED, { error: 'two guards failed' })], test: [{ verdict: 'green', summary: '' }], review: [D] }, T, { config: ONE });
+  x = await run({ pre: [PRE], prog: [PROG, PROG], run: [Object.assign({}, RUN_RED, { error: 'two guards failed' })], test: [{ verdict: 'green', summary: '' }], review: [D] }, TB, { config: ONE });
   ok('a red run whose agent wrote an error text is still a step that ran: its log goes to the programmer', x.r.status === 'done' && x.trace === 'pre>prog>prog>test>review', x.full);
-  x = await run(Object.assign(G1(), { run: [{ done: false, rc: null, log: '/d/wait-full-1.log', error: 'no JSON' }, RUN_OK] }), T, { config: ONE });
+  x = await run(Object.assign(G1(), { run: [{ done: false, rc: null, log: '/d/wait-select-1.log', error: 'no JSON' }, RUN_OK] }), TB, { config: ONE });
   ok('a step without an exit code is repeated once by the default model with --reuse; ok on the repeat -> the chain goes on',
-    x.r.status === 'done' && runsOf(x).length === 2 && runsOf(x)[1].label === 'run:x:full-1#retry' && runsOf(x)[1].opts.model === undefined && /--reuse/.test(runsOf(x)[1].prompt) && !/--reuse/.test(runsOf(x)[0].prompt), x.full);
-  x = await run({ pre: [PRE], prog: [PROG], run: [{ done: true, rc: null, log: '/d/l', error: 'the process ended without an exit code' }, { done: true, rc: null, log: '/d/l', error: 'the process ended without an exit code' }] }, T, { config: ONE });
+    x.r.status === 'done' && runsOf(x).length === 2 && runsOf(x)[1].label === 'run:x:select-1#retry' && runsOf(x)[1].opts.model === undefined && /--reuse/.test(runsOf(x)[1].prompt) && !/--reuse/.test(runsOf(x)[0].prompt), x.full);
+  x = await run({ pre: [PRE], prog: [PROG], run: [{ done: true, rc: null, log: '/d/l', error: 'the process ended without an exit code' }, { done: true, rc: null, log: '/d/l', error: 'the process ended without an exit code' }] }, TB, { config: ONE });
   ok('no exit code twice -> stopped for the coordinator (could not run), no programmer round', x.r.status === 'stopped' && /could not run/.test(x.r.why) && x.trace === 'pre>prog', JSON.stringify(x.r));
   // W6-W8 (p-wait D1): the deadline of the wait step (124) and a refusal of the slot queue before the run (77 slot
   // directory, 78 config/swap/main checkout, 72/73 no ps/pgrep or mktemp - coordinator, BRIEF 2026-10-24) are the
   // environment: the task stops for the coordinator, no programmer round #nf, no tester, no repeat of the step.
   for (const rc of [124, 77, 78, 72, 73]) {
-    x = await run({ pre: [PRE], prog: [PROG], run: [{ done: true, rc, seconds: 14401, log: '/d/wait-full-1.log', tail: 'position 3', error: rc === 124 ? 'deadline of 14400 s passed' : '' }] }, T, { config: ONE });
+    x = await run({ pre: [PRE], prog: [PROG], run: [{ done: true, rc, seconds: 14401, log: '/d/wait-select-1.log', tail: 'position 3', error: rc === 124 ? 'deadline of 14400 s passed' : '' }] }, TB, { config: ONE });
     ok(`W6-8. full run exit ${rc} -> stopped with environment, the log in the reason, no programmer round, no tester`,
       x.r.status === 'stopped' && x.trace === 'pre>prog' && runsOf(x).length === 1 && /environment/.test(x.r.why) && new RegExp(`exit ${rc}`).test(x.r.why)
-        && x.r.why.includes('/d/wait-full-1.log') && !!x.r.environment, JSON.stringify(x.r) + ' ' + x.full);
+        && x.r.why.includes('/d/wait-select-1.log') && !!x.r.environment, JSON.stringify(x.r) + ' ' + x.full);
   }
-  x = await run({ pre: [PRE], prog: [PROG, Object.assign({}, PROG, { head: 'P2' })], run: [RUN_RED, { done: true, rc: 124, seconds: 14401, log: '/d/wait-full-1f.log', tail: '', error: 'deadline' }] }, T, { config: ONE });
+  x = await run({ pre: [PRE], prog: [PROG, Object.assign({}, PROG, { head: 'P2' })], run: [RUN_RED, { done: true, rc: 124, seconds: 14401, log: '/d/wait-select-1f.log', tail: '', error: 'deadline' }] }, TB, { config: ONE });
   ok('W6. the deadline on the run after a fix round -> stopped with environment, no third programmer round',
     x.r.status === 'stopped' && x.trace === 'pre>prog>prog' && /environment/.test(x.r.why), JSON.stringify(x.r) + ' ' + x.full);
-  x = await run({ pre: [PRE], prog: [PROG, PROG], run: [Object.assign({}, RUN_RED, { rc: 2 })], test: [{ verdict: 'green', summary: '' }], review: [D] }, T, { config: ONE });
+  x = await run({ pre: [PRE], prog: [PROG, PROG], run: [Object.assign({}, RUN_RED, { rc: 2 })], test: [{ verdict: 'green', summary: '' }], review: [D] }, TB, { config: ONE });
   ok('W9. any other non-zero exit (2) is the product: a programmer round with the log', x.r.status === 'done' && x.trace === 'pre>prog>prog>test>review', x.full);
-  x = await run({ pre: [PRE], prog: [PROG], run: [{ done: true, rc: 77, seconds: 3, log: '/d/l', tail: '' }] }, Object.assign({}, T, { mode: 'light' }), { config: ONE });
+  x = await run({ pre: [PRE], prog: [PROG], run: [{ done: true, rc: 77, seconds: 3, log: '/d/l', tail: '' }] }, Object.assign({}, TB, { mode: 'light' }), { config: ONE });
   ok('W7. light mode: a refused queue -> stopped with environment, no review', x.r.status === 'stopped' && x.trace === 'pre>prog' && /environment/.test(x.r.why), JSON.stringify(x.r));
 
-  x = await run({ pre: [PRE], prog: [PROG, PROG], test: [{ verdict: 'green', summary: '' }, { verdict: 'green', summary: '' }], review: [{ verdict: 'rejected', docsOnly: false, summary: 'r' }, D] }, T, { config: ONE });
+  x = await run({ pre: [PRE], prog: [PROG, PROG], test: [{ verdict: 'green', summary: '' }, { verdict: 'green', summary: '' }], review: [{ verdict: 'rejected', docsOnly: false, summary: 'r' }, D] }, TB, { config: ONE });
   ok('a review fix on the HEAD whose full run is done (no new commit) -> no second full run', runsOf(x).length === 1 && x.r.status === 'done', x.full);
-  x = await run({ pre: [PRE], prog: [PROG, Object.assign({}, PROG, { head: 'P2' })], test: [{ verdict: 'green', summary: '' }, { verdict: 'green', summary: '' }], review: [{ verdict: 'rejected', docsOnly: false, summary: 'r' }, D] }, T, { config: ONE });
-  ok('a review fix for code with a new commit -> one full run on it before the tester', runsOf(x).length === 2 && x.full.includes('review>diff:x:reviewer>prog>run:x:full-r>test'), x.full);
-  x = await run({ pre: [PRE], prog: [PROG, Object.assign({}, DOCS, { head: 'P2' })], test: [{ verdict: 'green', summary: '' }], review: [DOCS_REJ, D] }, T, { config: ONE });
-  ok('a docs-only fix (docs and guard files) -> no full run, second review', runsOf(x).length === 1 && x.r.status === 'done' && x.trace === 'pre>prog>test>review>prog>review', x.full);
-  x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', head: 'T2', summary: '' }], review: [D] }, T, { config: ONE });
+  x = await run({ pre: [PRE], prog: [PROG, Object.assign({}, PROG, { head: 'P2' })], test: [{ verdict: 'green', summary: '' }, { verdict: 'green', summary: '' }], review: [{ verdict: 'rejected', docsOnly: false, summary: 'r' }, D] }, TB, { config: ONE });
+  ok('a review fix for code with a new commit -> one full run on it before the tester', runsOf(x).length === 2 && x.full.includes('review>diff:x:reviewer>prog>run:x:select-r>test'), x.full);
+  x = await run({ pre: [PRE], prog: [PROG, Object.assign({}, DOCS, { head: 'P2' })], test: [{ verdict: 'green', summary: '' }], review: [DOCS_REJ, D] }, TB, { config: ONE });
+  ok('S8. a docs-only fix (docs and guard files) with a new commit -> the selection on its HEAD, second review', runsOf(x).length === 2 && x.r.status === 'done' && x.trace === 'pre>prog>test>review>prog>review', x.full);
+  x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', head: 'T2', summary: '' }], review: [D] }, TB, { config: ONE });
   ok('the tester commits guards -> no full run after the tester', runsOf(x).length === 1, x.full);
 
   // Light mode (owner 2026-10-20): one programmer-checker, the full run step, one reviewer; no tester role.
-  const L = Object.assign({}, T, { mode: 'light' });
+  const L = Object.assign({}, TB, { mode: 'light' });
   x = await run({ pre: [PRE], prog: [PROG], review: [D] }, L, { config: ONE });
   ok('light: pre > programmer-checker > full run > review > done, no tester and no tester post-checks',
-    x.r.status === 'done' && x.full === 'pre>prog>run:x:full-1>review>diff:x:reviewer>left:x:end' && x.r.mode === 'light', x.full + ' ' + JSON.stringify(x.r));
+    x.r.status === 'done' && x.full === 'pre>prog>run:x:select-1>review>diff:x:reviewer>left:x:end' && x.r.mode === 'light', x.full + ' ' + JSON.stringify(x.r));
   const lp0 = pOf(x, 'prog');
   ok('light: the programmer-checker prompt - red guard, code, mutations after the commit, own acceptance with evidence in test.md',
     /PROGRAMMER-CHECKER/.test(lp0) && /red guard/.test(lp0) && /mutations AFTER the commit/.test(lp0) && lp0.includes('/d/test.md') && lp0.includes('acc') && /evidence/.test(lp0), lp0);
@@ -525,22 +528,22 @@ async function run(script, task = T, extra = {}) {
   ok('light: the reviewer post-check starts from the programmer HEAD', / --since P --role reviewer/.test(pOf(x, 'diff')), pOf(x, 'diff'));
   x = await run({ pre: [PRE], prog: [PROG, Object.assign({}, PROG, { head: 'P2' })], review: [{ verdict: 'rejected', docsOnly: false, summary: 'r' }, D] }, L, { config: ONE });
   ok('light: rejection -> programmer round -> full run -> second review -> done',
-    x.r.status === 'done' && x.full === 'pre>prog>run:x:full-1>review>diff:x:reviewer>prog>run:x:full-r>review>diff:x:reviewer>left:x:end', x.full);
+    x.r.status === 'done' && x.full === 'pre>prog>run:x:select-1>review>diff:x:reviewer>prog>run:x:select-r>review>diff:x:reviewer>left:x:end', x.full);
   x = await run({ pre: [PRE], prog: [PROG, Object.assign({}, PROG, { head: 'P2' })], review: [{ verdict: 'rejected', docsOnly: false, summary: 'r1' }, { verdict: 'rejected', docsOnly: false, summary: 'r2' }] }, L, { config: ONE });
   ok('light: second rejection -> stopped for the coordinator with the proposal to relaunch in the full mode, no analyst',
     x.r.status === 'stopped' && !x.trace.includes('analyst') && /full mode/.test(x.r.why) && /r2/.test(x.r.review || ''), JSON.stringify(x.r));
   x = await run({ pre: [PRE], prog: [PROG, Object.assign({}, PROG, { head: 'P2' })], run: [RUN_RED, RUN_OK], review: [D] }, L, { config: ONE });
-  ok('light: a red full run -> programmer round with the log -> full run -> review', x.r.status === 'done' && x.full === 'pre>prog>run:x:full-1>prog>run:x:full-1f>review>diff:x:reviewer>left:x:end', x.full);
+  ok('light: a red full run -> programmer round with the log -> full run -> review', x.r.status === 'done' && x.full === 'pre>prog>run:x:select-1>prog>run:x:select-1f>review>diff:x:reviewer>left:x:end', x.full);
   ok('C2. light (one run): the Order line runs no selection and no full run, then the own acceptance',
-    !/guards-select/.test(orderOf(lp0)) && !/heavy\.sh zsh -c/.test(orderOf(lp0)) && /includes the selected guards/.test(orderOf(lp0)) && /your own acceptance/.test(orderOf(lp0)), orderOf(lp0));
+    !/guards-select/.test(orderOf(lp0)) && !/heavy\.sh zsh -c/.test(orderOf(lp0)) && /the workflow runs the selection/.test(orderOf(lp0)) && /your own acceptance/.test(orderOf(lp0)), orderOf(lp0));
   x = await run({ pre: [PRE], prog: [PROG], review: [D] }, L);
   ok('light without guardSubsetCommand: no run step, the programmer-checker runs the full run itself',
     x.r.status === 'done' && !runsOf(x).length && /full run \/p\/scripts\/guards-all\.sh w in the background/.test(pOf(x, 'prog')), x.full);
   for (const [name, t] of [['an unknown mode', { mode: 'fast' }], ['light with security', { mode: 'light', security: true }], ['light with a stack', { mode: 'light', stack: 'k-test' }]]) {
-    x = await run({}, Object.assign({}, T, t), { config: ONE });
+    x = await run({}, Object.assign({}, TB, t), { config: ONE });
     ok(`${name} -> stopped before any agent`, x.r.status === 'stopped' && x.trace === '' && /mode/.test(JSON.stringify(x.r.problems)), JSON.stringify(x.r));
   }
-  x = await run(G1(), Object.assign({}, T, { mode: 'full' }), { config: ONE });
+  x = await run(G1(), Object.assign({}, TB, { mode: 'full' }), { config: ONE });
   ok('mode full is the default chain', x.r.status === 'done' && x.trace === 'pre>prog>test>review', x.trace);
 
   // One source of role rules: markers in rules/multi-agent.md <-> RULE_LIST <-> the prompt of every role.
@@ -591,9 +594,9 @@ async function run(script, task = T, extra = {}) {
       diff: [{ ok: false, offending: [], error: 'not run' }, { ok: true, offending: [] }, { ok: false, offending: [], error: 'not run' }, { ok: true, offending: [] }],
       left: [{ ok: false, found: [], removed: [], remaining: ['x'], error: 'not run' }, { ok: true, found: [], removed: [], remaining: [] },
         { ok: false, found: [], removed: [], remaining: ['x'], error: 'not run' }, { ok: true, found: [], removed: [], remaining: [] }] },
-    task || bare({ analystFirst: true, security: true }), { config: cfg });
+    task || bare({ analystFirst: true, security: true, base: 'arc' }), { config: cfg });
     const uc = await run({ pre: [PRE], usecases: [{ ready: true, useCases: 1, questions: [], summary: 'u' }] },
-      bare({ kind: 'feature', analystFirst: true, useCasesFirst: true }), { config: cfg });
+      bare({ kind: 'feature', analystFirst: true, useCasesFirst: true, base: 'arc' }), { config: cfg });
     return y.prompts.concat(uc.prompts);
   };
   const rolesOf = (ps) => ps.filter((p) => ROLE_LABELS.includes(p.role));
@@ -607,7 +610,7 @@ async function run(script, task = T, extra = {}) {
   ok('roleModel "opus": the first attempt of every check and wait step stays haiku', firstChecks(ap).length >= 3 && firstChecks(ap).every((p) => p.opts.model === 'haiku'), models(firstChecks(ap)));
   ok('roleModel "opus": the repeat of a check or wait step gets opus, not the main session model',
     SERVICE.every((r) => retryChecks(ap).some((p) => p.role === r)) && retryChecks(ap).every((p) => p.opts.model === 'opus'), models(retryChecks(ap)));
-  ap = await allAgents({ roleModel: 'fable' }, Object.assign({}, T, { mode: 'light' }));
+  ap = await allAgents({ roleModel: 'fable' }, Object.assign({}, T, { mode: 'light', base: 'arc' }));
   ok('roleModel: the light-mode programmer-checker gets it too', ap.filter((p) => p.role === 'prog').every((p) => p.opts.model === 'fable') && ap.some((p) => p.role === 'prog' && /PROGRAMMER-CHECKER/.test(p.prompt)), models(ap));
   ap = await allAgents({ roleModel: 'opus', roleModels: { reviewer: 'sonnet', 'security-reviewer': 'fable', programmer: 'haiku', analyst: 'sonnet', tester: 'sonnet', preconditions: 'haiku', wait: 'sonnet' } });
   const want = { pre: 'haiku', analyst: 'sonnet', usecases: 'sonnet', prog: 'haiku', test: 'sonnet', review: 'sonnet', sec: 'fable' };

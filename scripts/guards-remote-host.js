@@ -207,6 +207,14 @@ function job(R, input, name, sha, dir, say) {
   writeJSON(cfgFile, Object.assign({}, input.config || {}, { repoDir: R.repo, worktreeRoot: R.wt, sharedDir: dir }));
   const withQ = input.quarantine !== undefined;
   if (withQ) writeQuarantine(dir, input.quarantine);
+  // a selection (guards-all.sh --select): the guards it runs, so a known red outside it is never "not red now"
+  let selArgs = [];
+  if (input.selected !== undefined) {
+    if (!Array.isArray(input.selected) || !input.selected.every((n) => typeof n === 'string')) throw env('the selected guards sent with the run are not a list of names - no run');
+    const selFile = path.join(dir, 'guards-selected.json');
+    writeJSON(selFile, input.selected);
+    selArgs = ['--selected', selFile];
+  }
   const medium = (cmd, cwd, what) => {
     const r = spawnSync('zsh', [path.join(plugin, 'scripts', 'medium.sh'), 'zsh', '-c', cmd], { cwd, env: childEnv, stdio: ['ignore', 'inherit', 'inherit'] });
     if (r.status !== 0) throw env(`${what} failed (exit ${r.status === null ? r.signal : r.status}): ${cmd}`);
@@ -271,7 +279,7 @@ function job(R, input, name, sha, dir, say) {
   noSecrets(wt, sha, 'the prepare commands');
 
   phase('full run: guards-all.sh of the runner');
-  const g = spawnSync('zsh', [path.join(plugin, 'scripts', 'guards-all.sh'), '--force', '--local', withQ ? '--quarantine-read-only' : '--no-quarantine', wt], { cwd: wt, env: childEnv, stdio: ['ignore', 'inherit', 'inherit'] });
+  const g = spawnSync('zsh', [path.join(plugin, 'scripts', 'guards-all.sh'), '--force', '--local', withQ ? '--quarantine-read-only' : '--no-quarantine', ...selArgs, wt], { cwd: wt, env: childEnv, stdio: ['ignore', 'inherit', 'inherit'] });
   return g.status === null ? 69 : g.status;
 }
 
