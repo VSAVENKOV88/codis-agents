@@ -3,7 +3,8 @@
 // (cell D19 of p-train-ac, UC-7 Err 1; tester round 2, finding F1). guards-all.sh is run as it is: its slot trap
 // (scripts/slots.zsh, INT/TERM/HUP) ends it with 143, which the dispatcher must read as "by a signal" just like an exit
 // with no code. Cells:
-//   S1 SIGTERM to the train's guards-all.sh while its guard runs -> verdict environment, the halt names the signal,
+//   S1 SIGTERM to the train's guards-all.sh while its guard runs -> verdict environment, the halt names exit 143 and
+//      its signal (SIGTERM),
 //      trains/<id>.json says environment, no result, the passenger stays in the queue, the arc is not moved;
 //   S2 the same with SIGHUP after `resume`;
 //   S3 after `resume` the passenger rides the next train green.
@@ -58,6 +59,8 @@ const tr = (...a) => spawnSync(process.execPath, [TRAIN, ...a], { cwd: T, encodi
 const last = (s) => { try { return JSON.parse(String(s).trim().split('\n').pop()); } catch { return null; } };
 const queue = () => ls(path.join(TD, 'queue')).filter((f) => f.endsWith('.json'));
 const LOCK = path.join(TD, 'lock');
+// the slot trap exits 143 on INT, TERM and HUP alike, so the reason names 128+15 = SIGTERM (not the temp path's word)
+const SIG = /guards-all\.sh exit 143 by a signal \(SIGTERM\)/;
 
 // one train whose guards-all.sh gets `sig` while its guard sleeps; returns the dispatcher's last JSON line
 async function killed(sig) {
@@ -98,9 +101,9 @@ async function main_() {
     const halt = readJ(path.join(TD, 'halt')) || {};
     ok(`${cell} ${sig} reached the train's guards-all.sh mid-run`, sent, JSON.stringify(own));
     ok(`${cell} ${sig} to guards-all.sh -> verdict environment, halted, not a red train`,
-      o && o.verdict === 'environment' && o.halted === true && /signal/.test(o.reason || ''), s);
+      o && o.verdict === 'environment' && o.halted === true && SIG.test(o.reason || ''), s);
     ok(`${cell} the train record says environment`, rec.verdict === 'environment', JSON.stringify(rec));
-    ok(`${cell} the halt is the environment's and names the signal`, /^environment: .*signal/.test(halt.reason || ''), JSON.stringify(halt));
+    ok(`${cell} the halt is the environment's and names the signal`, /^environment: /.test(halt.reason || '') && SIG.test(halt.reason || ''), JSON.stringify(halt));
     ok(`${cell} no result, the passenger stays in the queue, the arc is not moved, the lock is released`,
       !fs.existsSync(path.join(TD, 'result', `p-${p}.json`)) && queue().length === 1 && rev('arc') === arc0 && !fs.existsSync(LOCK),
       `${queue().join()} ${rev('arc')} lock=${fs.existsSync(LOCK)}`);
