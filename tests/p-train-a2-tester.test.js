@@ -7,6 +7,11 @@
 //      still named stale.
 //   E2 (S1 x a guard name with a quote, a space and $(...)) - {onlyArgs} carries the name as one literal argument; no
 //      command of the name runs.
+// Round 2 (after the fix of E1: the list of the selected guards, guards-select.js --names-out):
+//   N1 - both sources of known reds (guardBaseline, the quarantine): stale only within the selection, nothing written;
+//   N2 - guards-result.js rerun with a damaged names file: not 0, said, never "not red now";
+//   N3 - guards-remote.js --selected without --subset or with a damaged list: 64 before any config or ssh;
+//   N4 - guards-all.sh --select leaves no temporary file (the names file) after green, red, empty and 65 runs.
 //   E3 (S17 x a rejection) - light mode: a rejection for code and one for docs only, each with a new HEAD, get the
 //      selection on that HEAD before the second review.
 // usage: node tests/p-train-a2-tester.test.js
@@ -99,7 +104,10 @@ function partB(TMP) {
     guardRerun: { command: 'cd {wt} && ./one.sh {name}', newRedPattern: '^FAILED (\\S+) ', tallyPattern: '^=== .* ===$' },
     guardBaseline: 'known.json', guardAlways: [], protectedBranches: ['base'], slots: { lockDir: path.join(TMP, 'slots'), legacyLock: path.join(TMP, 'guards.lock') } }));
   cleanEnv();
-  const env = Object.assign({}, process.env, { CODIS_AGENTS_CONFIG: f, PATH: bin + path.delimiter + process.env.PATH, SLOT_OS: 'darwin', SLOT_POLL: '0.2', SLOT_SAY: '1', SLOT_THIRD_WINDOW: '1', SLOT_HIST_GAP: '2' });
+  // N4: the temporary files of guards-all.sh (the names file of a selection among them) go into a TMPDIR of its own
+  const TD = path.join(TMP, 'tmp'); fs.mkdirSync(TD);
+  const env = Object.assign({}, process.env, { CODIS_AGENTS_CONFIG: f, PATH: bin + path.delimiter + process.env.PATH, SLOT_OS: 'darwin', SLOT_POLL: '0.2', SLOT_SAY: '1', SLOT_THIRD_WINDOW: '1', SLOT_HIST_GAP: '2', TMPDIR: TD });
+  const leftTmp = () => fs.readdirSync(TD).filter((n) => /^guards/.test(n));
   const ga = (...a) => { const r = spawnSync('zsh', [path.join(ROOT, 'scripts', 'guards-all.sh'), '--main-checkout', ...a], { encoding: 'utf8', env, timeout: 120000 }); r.all = (r.stdout || '') + (r.stderr || ''); return r; };
   const SEL = path.join(sh2, 'guards-pw.select.txt');
   const set = (rc, reds) => {
@@ -140,12 +148,68 @@ function partB(TMP) {
   ok('E2. the odd guard name reaches the subset command as one literal argument after --only',
     x.status === 0 && args().indexOf(odd) > 0 && args()[args().indexOf(odd) - 1] === '--only', `${x.status} [${args().join('|')}] ${x.all}`);
   ok('E2. no command from the name ran', !fs.existsSync(path.join(w, 'PWNED')) && !fs.existsSync(path.join(TMP, 'PWNED')) && !fs.existsSync(path.join(w, 'g', 'PWNED')));
+
+  // N4 (round 2): the names file of a selection (guards-select.js --names-out) does not outlive the run
+  ok('N4. after green selections no temporary file of guards-all.sh is left (the names file included)', leftTmp().length === 0, `[${leftTmp()}]`);
+  set(1, ['g/b-run.js']); fs.writeFileSync(path.join(TMP, 'red.txt'), 'g/b-run.js\n');
+  x = ga('--force', '--select', 'base', 'pw');
+  ok('N4. setup: a red selection (red again alone) -> exit 1', x.status === 1, `${x.status} ${read(SEL)}`);
+  ok('N4. ... and no temporary file is left after it', leftTmp().length === 0, `[${leftTmp()}]`);
+  x = ga('--force', '--select', 'HEAD', 'pw');
+  ok('N4. setup: base = HEAD -> nothing selected, exit 0', x.status === 0 && /nothing selected/.test(read(SEL) || ''), `${x.status} ${x.all}`);
+  ok('N4. ... and no temporary file is left after it', leftTmp().length === 0, `[${leftTmp()}]`);
+  x = ga('--force', '--select', 'no-such-ref', 'pw');
+  ok('N4. setup: an unknown base -> 65', x.status === 65, `${x.status} ${x.all}`);
+  ok('N4. ... and no temporary file is left after it', leftTmp().length === 0, `[${leftTmp()}]`);
+}
+
+// ---- N1-N3 (round 2): the list of the selected guards, its source and its damage
+function partN(TMP) {
+  const G = require('../scripts/guards-result.js');
+  const wt = path.join(TMP, 'nw'); fs.mkdirSync(wt, { recursive: true });
+  const cfg = { command: 'true {name}', newRedPattern: '^FAILED (\\S+) ', tallyPattern: '^=== .* ===$' };
+  const log = path.join(TMP, 'n.txt'), qf = path.join(TMP, 'q.json');
+  fs.writeFileSync(path.join(wt, 'known.json'), JSON.stringify({ 'b/base-sel-run.js': 'known: selected', 'b/base-out-run.js': 'known: outside' }) + '\n');
+  fs.writeFileSync(qf, JSON.stringify({ 'q/q-sel-run.js': 'red: a quarantined one, selected', 'q/q-out-run.js': 'red: a quarantined one, outside' }) + '\n');
+  const green = () => fs.writeFileSync(log, '=== 0 failed ===\n');
+  // N1: both sources, a green selection of one entry of each
+  green();
+  let r = G.rerun({ wt, log, rc: 0, cfg, baseline: 'known.json', quarantine: qf, readOnly: 'select', selected: ['b/base-sel-run.js', 'q/q-sel-run.js'] });
+  ok('N1. a selected baseline entry that ran green -> "not red now ... remove it from the baseline"', /known red not red now: b\/base-sel-run\.js — remove it from the baseline/.test(r.text), r.text);
+  ok('N1. a selected quarantine entry that ran green -> "not red now ... remove it from the quarantine"', /known red not red now: q\/q-sel-run\.js — remove it from the quarantine/.test(r.text), r.text);
+  ok('N1. entries of either source outside the selection are not named', !/base-out-run|q-out-run/.test(r.text), r.text);
+  ok('N1. a selection writes nothing into the quarantine', JSON.parse(fs.readFileSync(qf, 'utf8'))['q/q-out-run.js'] === 'red: a quarantined one, outside' && Object.keys(JSON.parse(fs.readFileSync(qf, 'utf8'))).length === 2);
+  green();
+  r = G.rerun({ wt, log, rc: 0, cfg, baseline: 'known.json', quarantine: qf, readOnly: 'select', selected: [] });
+  ok('N1. an empty list of the selected -> no entry is named', !/not red now/.test(r.text), r.text);
+  // N2: the command line of guards-result.js rerun with a damaged names file
+  const cli = (sf, rc = '0') => spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'guards-result.js'), 'rerun', wt, log, rc, JSON.stringify(cfg), 'known.json', qf, 'select', sf], { encoding: 'utf8' });
+  for (const [what, body] of [['not JSON', '{oops'], ['not an array', '{"a": 1}'], ['not names', '[1, 2]'], ['missing', null]]) {
+    const sf = path.join(TMP, `sel-${what.replace(/\W/g, '')}.json`);
+    if (body !== null) fs.writeFileSync(sf, body);
+    green();
+    const c = cli(sf);
+    const lg = fs.readFileSync(log, 'utf8');
+    ok(`N2. rerun with a names file ${what} on a green run -> not 0, says so, no "not red now"`, c.status !== 0 && /selected guards file/.test(c.stderr) && !/not red now/.test(lg + c.stdout), `${c.status} ${c.stderr} ${lg}`);
+  }
+  const good = path.join(TMP, 'sel-good.json'); fs.writeFileSync(good, JSON.stringify(['b/base-sel-run.js']));
+  green();
+  let c = cli(good);
+  ok('N2. control: a good names file -> exit 0, only the selected one named', c.status === 0 && /not red now: b\/base-sel-run\.js/.test(c.stdout) && !/q-sel-run|base-out-run|q-out-run/.test(c.stdout), `${c.status} ${c.stdout} ${c.stderr}`);
+  // N3: guards-remote.js refuses a list without a selection command, and a damaged list, before any config or ssh
+  const rem = (...a) => spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'guards-remote.js'), 'run', wt, log, 'n', '', ...a], { encoding: 'utf8', env: Object.assign({}, process.env, { CODIS_AGENTS_CONFIG: path.join(TMP, 'no-such-config.json') }) });
+  c = rem('--selected', good);
+  ok('N3. guards-remote.js --selected without --subset -> 64', c.status === 64 && /--selected goes with --subset/.test(c.stderr), `${c.status} ${c.stderr}`);
+  c = rem('--subset', 'cmd', '--selected', path.join(TMP, 'sel-notnames.json'));
+  ok('N3. guards-remote.js --selected with a list that is not names -> 64', c.status === 64 && /not a JSON array of names/.test(c.stderr), `${c.status} ${c.stderr}`);
+  c = rem('--subset', 'cmd', '--selected', path.join(TMP, 'sel-missing.json'));
+  ok('N3. guards-remote.js --selected with a missing file -> 64', c.status === 64 && /selected guards file/.test(c.stderr), `${c.status} ${c.stderr}`);
 }
 
 (async () => {
   await partE3();
   if (!(has('zsh') && has('git'))) { skip('E1, E2. guards-all.sh --select end to end', 'zsh or git not found'); return done(); }
   const TMP = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'p-train-a2-tester-')));
-  try { partB(TMP); } finally { fs.rmSync(TMP, { recursive: true, force: true }); }
+  try { partB(TMP); partN(TMP); } finally { fs.rmSync(TMP, { recursive: true, force: true }); }
   done();
 })().catch((e) => { console.error(e); process.exit(1); });
