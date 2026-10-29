@@ -19,9 +19,9 @@
 //                            by renaming it to lock.dead-<pid>-<ms>; then, under its own lock, it removes the dead train's
 //                            worktree and that directory, and departs - the passengers were never taken out of the queue.
 //   halt                     {reason, train, log, at}: the queue stands until the coordinator runs `resume`. Written on
-//                            the environment (the run's exit 69, 124, 77, 78, 72, 73, 64, 66 or a signal; the worktree
-//                            could not be made), on a git error while building the train, and on a red train (its
-//                            attribution is part C2). The passengers stay in the queue without a verdict.
+//                            the environment (the run's exit 69, 124, 77, 78, 72, 73, 64, 66, or a signal: no code or
+//                            128+n; the worktree could not be made), on a git error while building the train, and on a
+//                            red train (its attribution is part C2). The passengers stay in the queue without a verdict.
 //   trains/<id>.json, logs/<id>.txt   the record and the log of every train.
 // There is no daemon: the dispatcher is whoever takes the lock - the waiting step of a chain (`await`) or a `run`; after
 // its train it releases the lock and the next waiter takes it.
@@ -74,6 +74,11 @@ const STALE_MS = 60000;
 // Exit codes of guards-all.sh that are the environment, not the product (role-chain.js ENV_RC, guards-remote.js 69),
 // plus its usage and missing-worktree codes, which here mean the dispatcher's own setup failed.
 const ENV_RC = new Set([69, 124, 77, 78, 72, 73, 64, 66]);
+// A run ended by a signal: node reports no code (rc null), and a shell that dies by signal n, or the slot trap of
+// guards-all.sh (slots.zsh: INT/TERM/HUP -> exit 143), exits 128+n (POSIX: the status of a command killed by a signal
+// is above 128). Either way the run was cut off before its tally: the environment, never a red train (D19).
+const SIGNAL_NAME = Object.fromEntries(Object.entries(os.constants.signals).map(([k, v]) => [v, k]));
+const bySignal = (rc) => rc === null || (Number.isInteger(rc) && !!SIGNAL_NAME[rc - 128]);
 
 const die = (rc, m) => { process.stderr.write(`train: ${m}\n`); process.exit(rc); };
 const readJ = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
@@ -300,8 +305,10 @@ async function departure(P) {
   const guardsLog = path.join(P.c.sharedDir, `guards-${name}.txt`);
   const body = () => (run ? `\n==== guards-all.sh ${wt}: exit ${run.rc} ====\n${run.out}\n==== ${guardsLog} ====\n${read(guardsLog) || '(no log)\n'}` : '');
 
-  if (!run || run.rc === null || ENV_RC.has(run.rc)) {
-    const why = !run ? `the worktree could not be made (wt-setup.sh exit ${ws.status})` : `guards-all.sh exit ${run.rc === null ? 'by a signal' : run.rc}`;
+  if (!run || bySignal(run.rc) || ENV_RC.has(run.rc)) {
+    const why = !run ? `the worktree could not be made (wt-setup.sh exit ${ws.status})`
+      : run.rc === null ? 'guards-all.sh exit by a signal'
+        : bySignal(run.rc) ? `guards-all.sh exit ${run.rc} by a signal (${SIGNAL_NAME[run.rc - 128]}), cut off before its tally` : `guards-all.sh exit ${run.rc}`;
     const reason = `environment: ${why} on train ${id} - not counted, the passengers stay in the queue; log ${logFile}`;
     lines.push(reason); writeLog(body());
     halt(P, reason, { train: id, log: logFile });
