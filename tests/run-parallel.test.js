@@ -139,4 +139,10 @@ if (has('zsh')) {
   ok('7.1 a *.test.sh with "# tests:quiet" runs after the parallel files', t.b && t.a && t.c && t.b.start >= Math.max(t.a.end, t.c.end) - 1, JSON.stringify(t) + r.out);
 } else skip('7.1 a quiet *.test.sh', 'zsh not found');
 
+// 8. --dir that is not a directory: refused with exit 2, not a stack trace.
+{
+  const r = run(path.join(T, 'no-such-dir'), 2);
+  ok('8.1 --dir of a missing directory: exit 2 and named', r.status === 2 && /is not a directory/.test(r.out), `status ${r.status}: ${r.out.slice(0, 300)}`);
+}
+
 done();
