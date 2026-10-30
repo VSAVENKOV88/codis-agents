@@ -165,7 +165,7 @@ async function run(script, task, resolve) {
   for (const c of ['git merge t1', 'git merge --ff-only refs/runs/train/20261030-155647439-1174', 'git pull', 'git pull . t1']) no(c);   // B2
   for (const c of ['git rebase main', 'git cherry-pick t1', 'git revert --no-edit HEAD', 'git am p.patch', 'git merge --continue', 'git cherry-pick --continue']) no(c);   // B3
   for (const c of ['git reset --hard main', 'git reset main', 'git reset --soft HEAD', 'git reset -q --keep main']) no(c);   // B4
-  for (const c of ['git reset -- f.txt', 'git reset', 'git reset --hard', 'git reset main -- f.txt', 'git reset f.txt', 'git reset -p']) yes(c);   // B4
+  for (const c of ['git reset -- f.txt', 'git reset', 'git reset --hard', 'git reset main -- f.txt', 'git reset f.txt', 'git reset -p', 'git reset -p main', 'git reset --patch main']) yes(c);   // B4: --patch changes the index only
   for (const c of ['git checkout -B arc main', 'git switch -C arc main', 'git switch --force-create=arc main', 'git checkout -qB arc main']) no(c);   // B5
   for (const c of ['git status', 'git log --oneline', 'git diff', 'git add f.txt', 'git stash', 'git commit --dry-run -m x', 'git merge --abort',
     'git rebase --abort', 'git cherry-pick --abort', 'git am --abort', 'git fetch', 'git checkout -B side main', 'git switch -c side2']) yes(c);   // B6
@@ -178,6 +178,15 @@ async function run(script, task, resolve) {
   yes(`node ${TRAIN} ride --task svc --branch svc --head ${'a'.repeat(40)} --base arc`);   // C9: the dispatcher is not git
   yes(`node ${TRAIN} status`);
   yes(`node "${TRAIN}" await --task svc --head ${'a'.repeat(40)}`);
+
+  // the repository check of judgeTrain (model §3.3; the full cell C10 is p-noghost-e2's): another repository on a branch
+  // named arc, the session's config naming the project -> not the train's arc
+  const other = path.join(T, 'other');
+  fs.mkdirSync(other); git(other, 'init', '-q', '-b', 'arc'); git(other, 'commit', '-q', '--allow-empty', '-m', 'o');
+  const ro = decide({ tool_name: 'Bash', tool_input: { command: 'git commit -m x' }, cwd: other }, Object.assign({}, henv, { CODIS_AGENTS_CONFIG: cfgFile }));
+  ok('another repository on a branch named arc (config of the project from the session) -> allowed', ro === null, ro);
+  const rp = decide({ tool_name: 'Bash', tool_input: { command: 'git commit -m x' }, cwd: wArc }, Object.assign({}, henv, { CODIS_AGENTS_CONFIG: cfgFile }));
+  ok('... and the same session config in the arc worktree -> refused', refused(rp), rp);
 
   // ---- B7: an unfinished rebase of the arc (HEAD detached, head-name = refs/heads/arc) ----
   git(wT1, 'checkout', '-q', '-b', 'side', 'main');
