@@ -181,6 +181,11 @@ Larger changes run as a chain of agents, each in its own role:
   class and per worktree.
 - A full guard run picks its worker count from what else holds heavy slots: all full runs together never exceed the
   budget (`slots.jobsAlone`).
+- **The train goes first in the heavy queue.** Its full run and the attribution of a red train ask for the priority
+  explicitly (`guards-all.sh --priority`); a priority ticket is ahead of every waiting heavy job without it, trains keep
+  their order of arrival among themselves, nothing running is stopped, and nothing gets the priority from its name.
+  Why (2026-10-30): a train waited 16 minutes behind task selections that queued before it, and the arc waits for the
+  train.
 - Guards that share a resource (a fixed port, a shared temp dir or corpus file, a docker project) carry
   `// guards:exclusive — <reason>` (the comment marker of the project's language, config key `guardExclusive`) and
   run one at a time under their own lock.

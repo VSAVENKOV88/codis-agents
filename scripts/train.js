@@ -251,8 +251,10 @@ function identity(P) {
   return Object.assign({}, P.env, { GIT_AUTHOR_NAME: 'codis-agents train', GIT_AUTHOR_EMAIL: 'train@example.com', GIT_COMMITTER_NAME: 'codis-agents train', GIT_COMMITTER_EMAIL: 'train@example.com' });
 }
 
+// --priority: the full run of the train and its attribution are ahead of the waiting task runs in the heavy queue
+// (slots.zsh SLOT_PRIORITY; coordinator's decisions 2-5 of 2026-10-30 in p-runq): the arc waits for the train.
 const runGuards = (P, wt, extra = []) => new Promise((res) => {
-  const ch = spawn('zsh', [path.join(H, 'guards-all.sh'), ...extra, wt], { cwd: P.c.repoDir, env: P.env, stdio: ['ignore', 'pipe', 'pipe'] });
+  const ch = spawn('zsh', [path.join(H, 'guards-all.sh'), '--priority', ...extra, wt], { cwd: P.c.repoDir, env: P.env, stdio: ['ignore', 'pipe', 'pipe'] });
   let s = '';
   ch.stdout.on('data', (x) => { s += x; }); ch.stderr.on('data', (x) => { s += x; });
   try { setOwner(P, { child: ch.pid }); } catch { /* the lock is ours; a failed note only weakens the liveness check */ }

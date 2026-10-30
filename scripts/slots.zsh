@@ -318,6 +318,12 @@ _slot_pick() {
 #    its ticket goes, so a single heavy job that takes the next slot right after cannot bump it back to the queue;
 #  * the first of its class may take the last slot of the shared ceiling (medium + heavy = SLOT_TOTAL_MAX - 1) only if
 #    the first of the OTHER queue with a smaller number cannot take it right now.
+# Priority (SLOT_PRIORITY=1: guards-all.sh --priority, the full run of a train and its attribution - scripts/train.js;
+# never inferred from a name): the ticket carries a fifth field "priority", and a priority ticket is ahead of every
+# ticket without it in its class; among themselves both keep the order of their numbers. Only an explicit flag sets it;
+# nothing is pre-empted (a job holding a slot runs to its end), and the last slot of the shared ceiling still goes by
+# number. The command does not inherit it. A waiter of an older copy of the plugin on the same slot directory ignores
+# the field and takes the head by number (README, "Memory slots").
 # Any waiter removes tickets of dead waiters (no pid, or the pid was reused - a different start time) under admit.lock;
 # on TERM/INT/HUP a trap removes its own ticket. SLOT_RETRY_RC=<code>: the command exited with that code - back to the
 # queue with the SAME number (guards-all.sh: 75 - the budget was taken between admission and start).
@@ -355,18 +361,26 @@ _slot_q_take() {
 # $SLOT_QOTHER ("path class kind", empty - none; only medium and heavy share the ceiling, so a stand ticket is never
 # the other queue - scripts/stand.sh); first ticket of my queue -> $SLOT_QHEAD.
 _slot_q_where() {
-  local me=$1 class=$2 f t
+  local me=$1 class=$2 f t mp= ph= nh=
   SLOT_QPOS=0 SLOT_QOTHER= SLOT_QHEAD=
+  [[ -s $me ]] && { t=( $(<$me) ); [[ $t[1] != stand && $t[5] == priority ]] && mp=1; }
   for f in $SLOTS_DIR/queue/<->(N); do       # the glob is sorted by name = by number
     t=( $(<$f) )
     if [[ $t[1] == $class ]]; then
-      [[ -z $SLOT_QHEAD ]] && SLOT_QHEAD="${f:t} $t[4] pid $t[2]"
-      (( SLOT_QPOS++ ))
-      [[ $f == $me ]] && break
+      # ahead of me: a priority ticket with a number up to mine, or any priority ticket if mine is plain, or a plain
+      # ticket up to mine if mine is plain (a stand ticket's fifth field is its worktree, never a priority)
+      if [[ $t[1] != stand && $t[5] == priority ]]; then
+        [[ -z $ph ]] && ph="${f:t} $t[4] priority pid $t[2]"
+        [[ -z $mp || ! $f > $me ]] && (( SLOT_QPOS++ ))
+      else
+        [[ -z $nh ]] && nh="${f:t} $t[4] pid $t[2]"
+        [[ -z $mp && ! $f > $me ]] && (( SLOT_QPOS++ ))
+      fi
     elif [[ -z $SLOT_QOTHER && $t[1] == (medium|heavy) ]]; then SLOT_QOTHER="$f $t[1] $t[4]"
     fi
   done
-  # only a smaller number than mine matters in the other queue
+  SLOT_QHEAD=${ph:-$nh}
+  # only a smaller number than mine matters in the other queue (by number, priority or not)
   [[ -n $SLOT_QOTHER && ${${=SLOT_QOTHER}[1]} > $me ]] && SLOT_QOTHER=
 }
 
@@ -395,6 +409,8 @@ slot_run() {
   got=$(_slot_tmp slotgot) || { print -u2 -r -- "slot_run: no temporary file in ${TMPDIR:-/tmp} (mktemp failed)"; return 73; }
   local kind=${SLOT_KIND:-single} retry=${SLOT_RETRY_RC:-} qnum= qf= pos=0 m h o treq=$(_slot_now) tacq= jslot= jcmd=( "$@" )
   [[ $class == (medium|heavy) ]] || { print -u2 "slot_run: class must be medium|heavy, not \"$class\""; return 64; }
+  local prio=
+  case ${SLOT_PRIORITY:-0} in 0) ;; 1) prio=priority;; *) print -u2 -r -- "slot_run: SLOT_PRIORITY must be 0 or 1, not \"$SLOT_PRIORITY\""; return 64;; esac
   if _slot_unwritable; then _slot_unwritable_say; rm -f $got; _slot_journal $treq - $(_slot_now) $class - $kind 77 "${jcmd[@]}"; return 77; fi
   # Linux swap smaller than the threshold (SwapTotal / 1024 < SLOT_SWAP_MIN_MB; SwapTotal 0 - no swap, a cloud VM) while
   # a slot needs swap capacity: SwapFree never exceeds SwapTotal and Linux swap does not grow by itself, so no slot would
@@ -419,7 +435,7 @@ slot_run() {
   local killed=0
   trap 'killed=1; if [[ -n $holder ]]; then _slot_kill_tree $holder; else [[ -n $qf ]] && rm -f $qf; rm -f $got; _slot_journal $treq - $(_slot_now) $class - $kind 143 "${jcmd[@]}"; exit 143; fi' INT TERM HUP
   : > $SLOTS_DIR/queue.lock
-  _slot_q_take "" $class $kind && { qf=$SLOT_QF; qnum=$(( 10#${qf:t} )); }   # the number is given on arrival
+  _slot_q_take "" $class $kind $prio && { qf=$SLOT_QF; qnum=$(( 10#${qf:t} )); }   # the number is given on arrival
   while true; do
     while true; do
       # a lock turned unwritable while we wait (a sudo job started meanwhile) - the same refusal
@@ -430,7 +446,7 @@ slot_run() {
       if zsystem flock -t 30 -i 0.1 -f fd $SLOTS_DIR/admit.lock; then
         _slot_q_clean
         # no ticket (a retry after SLOT_RETRY_RC, or it was cleaned) - the same number; no queue.lock on arrival - a new one
-        if [[ -z $qf || ! -e $qf ]]; then _slot_q_take "$qnum" $class $kind && { qf=$SLOT_QF; qnum=$(( 10#${qf:t} )); }; fi
+        if [[ -z $qf || ! -e $qf ]]; then _slot_q_take "$qnum" $class $kind $prio && { qf=$SLOT_QF; qnum=$(( 10#${qf:t} )); }; fi
         slot= why=
         if [[ -z $qf ]]; then pos=0; why="no ticket - the queue lock (queue.lock) is busy"
         elif _slot_q_where $qf $class; pos=$SLOT_QPOS; (( pos > 1 )); then
@@ -448,8 +464,8 @@ slot_run() {
         fi
         if [[ -n $slot ]]; then
           : > $got; : >> $slot   # zsystem flock does not create the file; created here, never by the holder
-          # The holder: lock (-t 0, busy -> 75), got-file, the command as a child, its code. kind/retry are not for the children.
-          SLOT_KIND= SLOT_RETRY_RC= SLOT_LABEL= SLOT_PATH=$slot zsh -c 'zmodload zsh/system zsh/datetime
+          # The holder: lock (-t 0, busy -> 75), got-file, the command as a child, its code. kind/retry/priority are not for the children.
+          SLOT_KIND= SLOT_RETRY_RC= SLOT_PRIORITY= SLOT_LABEL= SLOT_PATH=$slot zsh -c 'zmodload zsh/system zsh/datetime
             zsystem flock -t 0 -f _slot_fd "$2" 2>/dev/null || exit 75
             t=${EPOCHREALTIME/,/.}; print -r -- $$ ${t%%.*}.${${t#*.}[1,3]} > "$1"; shift 2
             "$@"; exit $?' slot-holder "$got" "$slot" "$@" 0<&0 &
@@ -488,7 +504,7 @@ slot_run() {
     treq=$(_slot_now)
     [[ -n $retry ]] && (( rc == retry && ! killed )) || break
     # back to the queue with the same number at once: during a pause without a ticket a late waiter would slip past
-    _slot_q_take "$qnum" $class $kind && qf=$SLOT_QF
+    _slot_q_take "$qnum" $class $kind $prio && qf=$SLOT_QF
   done
   trap - INT TERM HUP
   rm -f $got

@@ -424,6 +424,14 @@ while it waits in the queue, its ticket is dropped and it rejoins the queue at t
 - medium + heavy together at most `slots.total` (4); no slot at all while swap capacity is under 4000 MB
   (`SLOT_SWAP_MIN_MB`; 0 switches the swap check off);
 - waiters queue in arrival order; a full guard run first in the queue is never starved by single jobs;
+- the train goes first: `scripts/train.js` runs its full guard run and the attribution of a red train with
+  `guards-all.sh --priority` (`SLOT_PRIORITY=1` in `slots.zsh`), and such a ticket is ahead of every waiting heavy job
+  without it - task selections, single `heavy.sh` jobs, CI; trains among themselves keep the order of arrival. Nothing
+  running is stopped (the train waits for the end of the job in the slot), the last slot of the shared ceiling still
+  goes by ticket number, the command does not inherit the priority, and only the flag sets it, never a name like
+  `train-*`. Known limits: a waiter of an older copy of the plugin on the same slot directory (a CI runner user with its
+  own copy) ignores the priority and takes the head by number, so every copy that waits on one slot directory is
+  updated together; on the remote runner the flag does not travel yet (the run queues there by its number);
 - all full guard runs together use at most `slots.jobsAlone` workers (6), `slots.jobsShared` (3) next to another
   heavy job, re-evaluated during the run for runners that read `{limitFile}`.
 
