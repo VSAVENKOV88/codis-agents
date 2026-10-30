@@ -20,15 +20,27 @@
 //    the config is looked up from those paths too, and a push is refused (the hook reads the branches through -C).
 //  * a git command with a global option before the subcommand that the hook's measured table (GIT_GLOBAL) does not hold:
 //    the hook cannot tell which word is the subcommand, and git fails on an option it does not know anyway.
+//  * a commit or a reset of the arc branch under a train (p-noghost-e1): while a live dispatcher holds the train lock and
+//    its <sharedDir>/train/lock/owner.json names the arc (base; scripts/train-lock.js, the same liveness as train.js),
+//    a git command in a directory of the project's repository (the cwd, or -C) whose current branch - or the branch of
+//    an unfinished rebase there (head-name) - is that arc and that moves it: commit (not --dry-run), merge, pull,
+//    rebase, cherry-pick, revert, am (not --abort / --quit / ...), reset with a commit (not a reset of paths), and
+//    checkout -B / switch -C naming the arc from anywhere. The train would end arc-moved (no verdict, the passengers ride
+//    again): wait for it (train.js status), or let the change ride as a passenger. ALLOW_PROTECTED_PUSH=1 does not lift
+//    it (coordinator's decision 2 for p-noghost-e); a dead holder is no train. The dispatcher itself moves the arc
+//    from inside node (spawnSync), so the hook never sees it, and `node train.js ...` is not git.
 // git takes any unique prefix of a long option (gitcli(7)): --del is --delete. A word that is a prefix of a long option
 // the hook judges counts as that option; an ambiguous prefix makes git fail, so judging it so is safe.
 // Active only in projects that have .claude/codis-agents.json: the plugin is opt-in per project.
 // The git pre-push hook (scripts/git-hooks/pre-push) is the last line; this hook explains the refusal to the agent
 // before anything runs.
+const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const { find, load } = require(path.join(__dirname, '..', 'config.js'));
 const standingPush = require(path.join(__dirname, '..', 'standing-push.js'));
+const trainLock = require(path.join(__dirname, '..', 'train-lock.js'));
+const TRAIN_JS = path.join(__dirname, '..', 'train.js');
 
 // Splits a command line into simple commands (on && || ; | & and newlines) and words, honouring quotes.
 function parse(line) {
@@ -121,6 +133,87 @@ function judgeRemoteHead(sub, args) {
   return null;
 }
 
+// ---- a commit or a reset of the arc branch under a train ----
+// Subcommands that move the current branch of their directory (measured with git 2.50 in the analysis p-noghost-e, E4;
+// git-<cmd>(1)) and the options with which they do not: those only stop, show or edit the operation in progress.
+const MOVES = {
+  commit: ['dry-run'],
+  merge: ['abort', 'quit'],
+  pull: [],
+  rebase: ['abort', 'quit', 'edit-todo', 'show-current-patch'],
+  'cherry-pick': ['abort', 'quit'],
+  revert: ['abort', 'quit'],
+  am: ['abort', 'quit', 'show-current-patch'],
+};
+const ARC_SUBS = new Set([...Object.keys(MOVES), 'reset', 'checkout', 'switch']);
+
+// git reset moves the branch only in its commit form, git reset [<mode>] [<commit>] (git-reset(1)); with paths (after
+// --, more than one word, --pathspec-from-file) or --patch it changes the index only, and without a commit it stays.
+function resetMoves(args, dir) {
+  const pos = [];
+  let dashes = false, paths = false;
+  for (let k = 0; k < args.length; k++) {
+    const a = args[k];
+    if (dashes) { paths = true; continue; }
+    if (a === '--') { dashes = true; continue; }
+    if (a === '-' || !a.startsWith('-')) { pos.push(a); continue; }
+    if (longOpt(a, 'pathspec-from-file')) { paths = true; if (!a.includes('=')) k++; continue; }
+    if (longOpt(a, 'patch') || (!a.startsWith('--') && a.slice(1).includes('p'))) paths = true;
+  }
+  if (paths || pos.length !== 1) return false;
+  // '-' is the previous branch (@{-1}); any other word moves the branch when git resolves it as a commit
+  return pos[0] === '-' || spawnSync('git', ['-C', dir, 'rev-parse', '--verify', '-q', `${pos[0]}^{commit}`], { encoding: 'utf8' }).status === 0;
+}
+
+// The branch checkout -B <name> (git-checkout(1)) or switch -C / --force-create <name> (git-switch(1)) resets, or null.
+function forceCreated(sub, args) {
+  const letter = sub === 'checkout' ? 'B' : 'C';
+  for (let k = 0; k < args.length; k++) {
+    const a = args[k];
+    if (a === '--') break;
+    if (sub === 'switch' && a.startsWith('--') && longOpt(a, 'force-create')) return a.includes('=') ? a.slice(a.indexOf('=') + 1) : (args[k + 1] || '');
+    if (a.startsWith('-') && !a.startsWith('--')) {
+      const i = a.indexOf(letter);
+      if (i > 0) return a.slice(i + 1) || args[k + 1] || '';
+    }
+  }
+  return null;
+}
+
+const gitOut = (dir, ...a) => { const r = spawnSync('git', ['-C', dir, ...a], { encoding: 'utf8' }); return r.status === 0 ? r.stdout.trim() : ''; };
+const real = (p) => { try { return fs.realpathSync(p); } catch { return p; } };
+// The branch the command moves when it moves "the current branch" of dir: HEAD's branch, or, with HEAD detached by an
+// unfinished rebase, the branch that rebase finishes on (rebase-merge/head-name or rebase-apply/head-name; E5).
+function currentBranch(dir) {
+  const h = gitOut(dir, 'symbolic-ref', '-q', 'HEAD');
+  if (h) return h;
+  for (const f of ['rebase-merge/head-name', 'rebase-apply/head-name']) {
+    const p = gitOut(dir, 'rev-parse', '--path-format=absolute', '--git-path', f);
+    let t = ''; try { t = p ? fs.readFileSync(p, 'utf8').trim() : ''; } catch { /* no rebase */ }
+    if (t) return t;
+  }
+  return '';
+}
+
+// -> null or the refusal of a git command that would move the arc of a live train of the project (cfg).
+function judgeTrain(sub, args, dir, cfg) {
+  const o = trainLock.arcHolder(cfg.sharedDir);
+  if (!o) return null;
+  // the train moves refs only in the project's repository (train.js: git -C repoDir); another repository with a branch
+  // of the same name is not its arc
+  const common = (d) => real(gitOut(d, 'rev-parse', '--path-format=absolute', '--git-common-dir'));
+  const here = common(dir);
+  if (!here || here !== common(cfg.repoDir)) return null;
+  let moves = false;
+  if (sub === 'checkout' || sub === 'switch') moves = forceCreated(sub, args) === o.base;
+  else {
+    const stays = sub === 'reset' ? !resetMoves(args, dir) : args.some((a) => MOVES[sub].some((n) => longOpt(a, n)));
+    moves = !stays && currentBranch(dir) === `refs/heads/${o.base}`;
+  }
+  if (!moves) return null;
+  return `\`git ${sub}\` is refused: train ${o.train || '?'} (pid ${o.pid}) holds the train lock and moves the arc branch ${o.base} when it is green; moving ${o.base} now ends the train arc-moved (no verdict, its passengers ride again). Wait for the train: node "${TRAIN_JS}" status (until "lock: free"). Or let the change ride as a passenger: commit it on a service branch from the head of ${o.base} and run node "${TRAIN_JS}" ride --task <svc> --branch <svc> --head <full sha> --base ${o.base} in the background.`;
+}
+
 // -> null (allowed) or a refusal reason.
 function judge(words, ctx) {
   let i = 0, allow = ctx.env.ALLOW_PROTECTED_PUSH === '1';
@@ -145,7 +238,7 @@ function judge(words, ctx) {
     else { unknown = o; break; }
   }
   const sub = words[i], args = words.slice(i + 1);
-  if (!unknown && sub !== 'add' && sub !== 'push' && sub !== 'remote' && sub !== 'symbolic-ref' && sub !== 'update-ref') return null;
+  if (!unknown && sub !== 'add' && sub !== 'push' && sub !== 'remote' && sub !== 'symbolic-ref' && sub !== 'update-ref' && !ARC_SUBS.has(sub)) return null;
   let cfg = ctx.cfgFor(dir);
   if (repoPaths.length) {
     // The repository git works on is not dir: take the config from any of the places the command can reach.
@@ -156,6 +249,7 @@ function judge(words, ctx) {
   if (!cfg) return null;
   if (unknown) return allow ? null : `\`git ${unknown}\` before the subcommand is refused: the hook does not know this global option of git, so it cannot tell which word is the subcommand (git fails on an option it does not know; write the git command without it, or ALLOW_PROTECTED_PUSH=1 only on the owner's explicit word).`;
   if (sub === 'remote' || sub === 'symbolic-ref' || sub === 'update-ref') return allow ? null : judgeRemoteHead(sub, args);
+  if (ARC_SUBS.has(sub)) return judgeTrain(sub, args, dir, cfg);
   if (sub === 'add') {
     const blanket = args.find((a) => a === '-A' || a === '--all' || a === '--no-ignore-removal' || a === '.' || a === './' || a === ':/' || /^-[a-zA-Z]*A[a-zA-Z]*$/.test(a));
     if (blanket) return `\`git add ${blanket}\` is refused: stage files by path (git add <path>...), never everything at once.`;

@@ -136,7 +136,7 @@ async function run(script, task, resolve) {
   const why = bash('git commit -m x');
   ok('A2. a live holder with base = arc -> git commit refused', refused(why), why);
   ok('A2. ... the reason names the arc, the train id, train.js status and the passenger path (train.js ride ... --base arc)',
-    refused(why) && /\barc\b/.test(why) && why.includes(LIVE.train) && /train\.js"? status/.test(why) && /train\.js"? ride --task \S+ --branch \S+ --head \S+ --base arc/.test(why), why);
+    refused(why) && /\barc\b/.test(why) && why.includes(LIVE.train) && /train\.js"? status/.test(why) && /train\.js"? ride --task \S+ --branch \S+ --head (<full sha>|\S+) --base arc/.test(why), why);
   lock(Object.assign({}, LIVE, { base: 'other' }));
   ok('A3. a live holder with base = another branch -> allowed', bash('git commit -m x') === null, bash('git commit -m x'));
   const noBase = Object.assign({}, LIVE); delete noBase.base;

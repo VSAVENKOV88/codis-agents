@@ -625,7 +625,7 @@ async function reviewLoop(t, st, tag) {
     if (xt.fail || xt.redAnalyst) return xt
   }
   const scope = !r1.docsOnly ? ''
-    : `only the diff of the fix after review 1 (git diff ${before}..${p.head})${byPaths ? '' : `; it touches files outside docs and guards (${other.join(', ') || 'none reported'}): set fixBehaviourUnchanged=true only if that diff changes comments, wording or docs alone and no behaviour`}`
+    : `only the diff of the fix after review 1 (git diff ${before}..${st.head})${byPaths ? '' : `; it touches files outside docs and guards (${other.join(', ') || 'none reported'}): set fixBehaviourUnchanged=true only if that diff changes comments, wording or docs alone and no behaviour`}`
   const x2 = await reviewChecked(t, st, `${tag}2`, scope)
   if (x2.fail) return x2
   const r2 = x2.rv
