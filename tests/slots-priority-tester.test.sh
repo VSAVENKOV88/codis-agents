@@ -8,7 +8,10 @@
 #   2. B6 - a priority whole run first in the queue waits outside the slot while a single heavy job runs, and an
 #   earlier plain heavy waiter does not take the free second slot past it; then the priority one goes first;
 #   3. an empty SLOT_PRIORITY is a plain run (0), not a refusal; 4. B15 - the journal line of a priority run has the
-#   same fields as a plain one (format v1 unchanged).
+#   same fields as a plain one (format v1 unchanged); 5. (round 2) the mirror of 1: the head of MEDIUM is a priority
+#   ticket behind an earlier plain medium waiter and a heavy waiter sits between them - the heavy weighs itself against
+#   the head of medium (the priority one, a larger number), not the earlier plain medium, so the heavy goes (decision 6:
+#   by number between the heads).
 H=${SLOTS_H:-${0:A:h:h}/scripts}
 zmodload zsh/datetime
 T=$(mktemp -d "${${TMPDIR:-/tmp}%/}/slots-prio.XXXXXX")
@@ -109,6 +112,19 @@ $H/heavy.sh true; SLOT_PRIORITY=1 $H/heavy.sh true
 nf=( ${(f)"$(awk -F'\t' '{print NF}' $J 2>/dev/null)"} )
 ok '4. B15 two journal lines, the same fields with and without priority' '(( ${#nf} == 2 )) && [[ $nf[1] == $nf[2] ]]' "fields: ${nf[*]} | $(cat $J 2>/dev/null)"
 ok '4. B15 the priority line does not carry the word priority (format v1 unchanged)' '! grep -q priority $J' "$(tail -1 $J)"
+
+# 5. (round 2) mirror of 1 for the medium queue: ceiling 3, heavy 2, medium 2; h1 h2 and m1 hold all 3. Waiters by
+#    number: N (plain medium), H (plain heavy), Q (priority medium). h2 ends: the heads are H (heavy) and Q (medium);
+#    by number between the heads H goes; N (not the head of medium) and Q wait. Nobody going is the livelock of 1.
+export SLOT_TOTAL_MAX=3
+: > $T/order
+hold heavy.sh h1; hold heavy.sh h2; waitfor 'started h1 && started h2'; hold medium.sh m1; sleep 1.5
+w medium.sh N 0.2 3; sleep 0.6; w heavy.sh H 0.2 3; sleep 0.6; p medium.sh Q 0.2 3; sleep 1.5
+ok '5. while the ceiling is full nobody went' '[[ $(n_order) == 0 ]]' "got: $(order)"
+touch $T/rel.h2
+waitfor 'got H || got N || got Q' 60; sleep 1
+ok '5. the last ceiling slot goes to the heavy head H (smaller number than the priority medium head Q)' '[[ "$(order)" == "H" ]]' "got: $(order) | N: $(tail -1 $T/N.out) | H: $(tail -1 $T/H.out) | Q: $(tail -1 $T/Q.out)"
+endcase; unset SLOT_TOTAL_MAX
 
 print -r -- "TOTAL: $pass ok, $fail fail"
 (( fail == 0 ))
