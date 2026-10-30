@@ -428,7 +428,7 @@ while it waits in the queue, its ticket is dropped and it rejoins the queue at t
   `guards-all.sh --priority` (`SLOT_PRIORITY=1` in `slots.zsh`), and such a ticket is ahead of every waiting heavy job
   without it - task selections, single `heavy.sh` jobs, CI; trains among themselves keep the order of arrival. Nothing
   running is stopped (the train waits for the end of the job in the slot), the last slot of the shared ceiling still
-  goes by ticket number, the command does not inherit the priority, and only the flag sets it, never a name like
+  goes by ticket number between the heads of the two queues (a priority ticket is the head of its queue), the command does not inherit the priority, and only the flag sets it, never a name like
   `train-*`. Known limits: a waiter of an older copy of the plugin on the same slot directory (a CI runner user with its
   own copy) ignores the priority and takes the head by number, so every copy that waits on one slot directory is
   updated together; on the remote runner the flag does not travel yet (the run queues there by its number);

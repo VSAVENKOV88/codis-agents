@@ -317,7 +317,8 @@ _slot_pick() {
 #    either: it is never starved; a run of kind "whole" admitted on the whole budget reserves it in <slot>.whole before
 #    its ticket goes, so a single heavy job that takes the next slot right after cannot bump it back to the queue;
 #  * the first of its class may take the last slot of the shared ceiling (medium + heavy = SLOT_TOTAL_MAX - 1) only if
-#    the first of the OTHER queue with a smaller number cannot take it right now.
+#    the head of the OTHER queue (its first priority ticket, else its first ticket) with a smaller number cannot take
+#    it right now.
 # Priority (SLOT_PRIORITY=1: guards-all.sh --priority, the full run of a train and its attribution - scripts/train.js;
 # never inferred from a name): the ticket carries a fifth field "priority", and a priority ticket is ahead of every
 # ticket without it in its class; among themselves both keep the order of their numbers. Only an explicit flag sets it;
@@ -357,12 +358,15 @@ _slot_q_take() {
   zsystem flock -u $qfd
 }
 
-# Under admit.lock: position of ticket $1 in the queue of class $2 -> $SLOT_QPOS; first ticket of the other queue ->
+# Under admit.lock: position of ticket $1 in the queue of class $2 -> $SLOT_QPOS; the head of the other queue ->
 # $SLOT_QOTHER ("path class kind", empty - none; only medium and heavy share the ceiling, so a stand ticket is never
-# the other queue - scripts/stand.sh); first ticket of my queue -> $SLOT_QHEAD.
+# the other queue - scripts/stand.sh); the head of my queue -> $SLOT_QHEAD. A head is the first priority ticket of its
+# queue, or its first ticket when it has no priority one: the last slot of the ceiling is weighed between the two heads
+# (a ticket that is not a head never goes, and yielding to it left the slot idle - each head yielding to the other).
 _slot_q_where() {
-  local me=$1 class=$2 f t mp= ph= nh=
+  local me=$1 class=$2 f t mp= ph= nh= oc= oph= onh=
   SLOT_QPOS=0 SLOT_QOTHER= SLOT_QHEAD=
+  case $class in medium) oc=heavy;; heavy) oc=medium;; esac
   [[ -s $me ]] && { t=( $(<$me) ); [[ $t[1] != stand && $t[5] == priority ]] && mp=1; }
   for f in $SLOTS_DIR/queue/<->(N); do       # the glob is sorted by name = by number
     t=( $(<$f) )
@@ -376,11 +380,14 @@ _slot_q_where() {
         [[ -z $nh ]] && nh="${f:t} $t[4] pid $t[2]"
         [[ -z $mp && ! $f > $me ]] && (( SLOT_QPOS++ ))
       fi
-    elif [[ -z $SLOT_QOTHER && $t[1] == (medium|heavy) ]]; then SLOT_QOTHER="$f $t[1] $t[4]"
+    elif [[ -n $oc && $t[1] == $oc ]]; then
+      if [[ $t[5] == priority ]]; then [[ -z $oph ]] && oph="$f $t[1] $t[4]"
+      else [[ -z $onh ]] && onh="$f $t[1] $t[4]"
+      fi
     fi
   done
-  SLOT_QHEAD=${ph:-$nh}
-  # only a smaller number than mine matters in the other queue (by number, priority or not)
+  SLOT_QHEAD=${ph:-$nh} SLOT_QOTHER=${oph:-$onh}
+  # only a smaller number than mine matters for the other head (by number, priority or not: decision 6 of p-runq)
   [[ -n $SLOT_QOTHER && ${${=SLOT_QOTHER}[1]} > $me ]] && SLOT_QOTHER=
 }
 
