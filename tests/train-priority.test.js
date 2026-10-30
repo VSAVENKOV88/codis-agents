@@ -20,7 +20,14 @@ const rev = (ref) => git(main, 'rev-parse', '--verify', '-q', ref).stdout.trim()
 const put = (f, s) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, s); };
 const read = (f) => { try { return fs.readFileSync(f, 'utf8'); } catch { return ''; } };
 
-for (const d of [main, wts, shared]) fs.mkdirSync(d, { recursive: true });
+const bin = path.join(T, 'bin');
+for (const d of [main, wts, shared, bin]) fs.mkdirSync(d, { recursive: true });
+// the stub below holds no slot, but the scripts it stands beside read the machine: a calm fake one, as in train.test.js
+const tool = (name, body) => { put(path.join(bin, name), body); fs.chmodSync(path.join(bin, name), 0o755); };
+tool('sysctl', '#!/bin/zsh\n[[ $1 == -n && $2 == vm.swapusage ]] || exec /usr/sbin/sysctl "$@"\nprint -r -- "total = 30000,00M  used = 1000,00M  free = 20000,00M  (encrypted)"\n');
+tool('memory_pressure', '#!/bin/zsh\nprint -r -- "System-wide memory free percentage: 20%"\n');
+tool('vm_stat', '#!/bin/zsh\nprint -r -- "Mach Virtual Memory Statistics: (page size of 16384 bytes)"\nprint -r -- "Swapouts:                                   0."\n');
+tool('df', '#!/bin/zsh\nprint -r -- "Filesystem 1M-blocks Used Available Capacity Mounted"\nprint -r -- "/dev/disk3s6 100000 0 0 0% /System/Volumes/VM"\n');
 fs.cpSync(path.join(ROOT, 'scripts'), S, { recursive: true });
 // the stub: one line of arguments per call; the attribution call (--guards) is green, the full run red with one new
 // red that the rerun repeats (so the train attributes it)
@@ -44,8 +51,10 @@ fs.writeFileSync(cfgFile, JSON.stringify({ repoDir: main, worktreeRoot: wts, sha
   guardRerun: { command: 'cd {wt} && true {name}', newRedPattern: '^FAILED (\\S+) ', tallyPattern: '^=== .* in [0-9.]+s ===$' },
   worktreeSetup: { scan: [], skip: [], link: [] },
   slots: { lockDir: path.join(T, 'slots'), legacyLock: path.join(T, 'guards.lock') } }));
-const env = Object.assign({}, process.env, { CODIS_AGENTS_CONFIG: cfgFile, CODIS_TRAIN_POLL: '0.3' });
-for (const k of ['SLOTS_DIR', 'SLOT_LEGACY_LOCK', 'SLOT_JOURNAL', 'SLOT_LABEL', 'SLOT_KIND', 'SLOT_RETRY_RC', 'SLOT_PRIORITY', 'CLAUDE_PROJECT_DIR']) delete env[k];
+const env = Object.assign({}, process.env, { CODIS_AGENTS_CONFIG: cfgFile, PATH: bin + path.delimiter + process.env.PATH, SLOT_OS: 'darwin',
+  SLOT_POLL: '0.2', SLOT_SAY: '1', SLOT_THIRD_WINDOW: '1', SLOT_HIST_GAP: '2', CODIS_TRAIN_POLL: '0.3' });
+for (const k of ['SLOTS_DIR', 'SLOT_LEGACY_LOCK', 'SLOT_JOURNAL', 'SLOT_LABEL', 'SLOT_KIND', 'SLOT_RETRY_RC', 'SLOT_PRIORITY', 'GUARDS_EXCLUSIVE_LOCK', 'SLOT_MEDIUM_N', 'SLOT_HEAVY_N', 'SLOT_TOTAL_MAX', 'GUARDS_JOBS_ALONE', 'GUARDS_JOBS_SHARED', 'SLOT_EXCL_TOOLS', 'GUARDS_EXCL_GLOB', 'GUARDS_EXCL_MARKER', 'SLOT_PATH',
+  'SLOT_SWAP_MIN_MB', 'SLOT_THIRD_FREE_PCT', 'SLOT_THIRD_SWAP_GROW_MB', 'SLOT_PROC', 'CLAUDE_PROJECT_DIR']) delete env[k];
 const tr = (...a) => spawnSync(process.execPath, [path.join(S, 'train.js'), ...a], { cwd: T, encoding: 'utf8', env, timeout: 120000 });
 
 git(main, 'init', '-q', '-b', 'main');
