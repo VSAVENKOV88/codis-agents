@@ -152,6 +152,13 @@ fi
 if (( ! FORCE )) && node "$H/guards-result.js" reuse "$WT" "$OUT" "$CMD" "$ENVID" "$QFILE" > /dev/null 2>&1; then
   tail -40 "$OUT"; print -r -- ""; node "$H/guards-result.js" reuse "$WT" "$OUT" "$CMD" "$ENVID" "$QFILE"; exit 0
 fi
+# A selection whose command has no {jobs} is a runner that sets its own workers: counted as the whole budget, it waits
+# for every other heavy job, so selections and the train's run go one at a time (README guardSubsetCommand). Not an
+# error - a note naming the key that decides here (on the runner its subsetCommand).
+if [[ -n $SELECT && $CMD != *'{jobs}'* ]]; then
+  _ga_key=guardSubsetCommand; [[ $ENVID == remote:* ]] && _ga_key=remoteRun.subsetCommand
+  print -u2 -r -- "guards-all: note: $_ga_key has no {jobs}: the selection is counted as the whole worker budget (slots.jobsAlone) and starts only when no other heavy job runs, so selections go one at a time; give it --concurrency {jobs} and {limitFile} as guardCommand has (README, guardSubsetCommand)"
+fi
 if [[ $ENVID == remote:* ]]; then
   treq=$(_slot_now)
   node "$H/guards-remote.js" run "$WT" "$OUT" "$RNAME" "$QFILE" $SUBSET; rc=$?
