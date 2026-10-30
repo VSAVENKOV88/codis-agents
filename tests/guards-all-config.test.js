@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 'use strict';
-// guards-all.sh <absolute worktree> takes the project config from that worktree (хвост ревью p-train-c3): before it
+// guards-all.sh <absolute worktree> takes the project config from that worktree (a tail of the p-train-c3 review): before it
 // sourced slots.zsh, and config.js found the config from the CURRENT directory, so a run started from another folder
 // took a foreign config or refused 78 "no project config". Now:
 // - an absolute path to an existing folder whose nearest .claude/codis-agents.json (config.js path --from <dir>) exists
