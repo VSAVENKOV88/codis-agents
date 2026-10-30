@@ -62,7 +62,7 @@ async function run(script, task, resolve = {}, lie) {
         if (!q.train || !q.train.length) throw new Error('extra train step after ' + full.join('>'));
         return q.train.shift();
       }
-      return OKR;
+      return q.select && q.select.length ? q.select.shift() : OKR;
     }
     trace.push(role);
     if (!q[role] || !q[role].length) throw new Error('extra call ' + role + ' after ' + trace.join('>'));
@@ -133,6 +133,11 @@ const rideHead = (x, i = 0) => { const m = /--head '([^']*)'/.exec(unq((steps(x,
   // the selection on that commit is done - not repeated
   x = await run({ pre: [PRE], prog: [prog(FULL), prog('3fb1d6dd')], review: [REJD, D], train: [ride(0)] }, L, { '3fb1d6dd': FULL });
   ok('F5. the same commit reported short after a docs rejection -> the selection on it is not repeated (selAt === full head)',
+    x.r.status === 'done' && steps(x, /^run:x:select-/).length === 1 && rideHead(x) === FULL, x.full);
+  // a red selection, the programmer explains it without a commit and reports the same commit short: no new selection
+  const RED = { done: true, rc: 1, seconds: 1, log: '/d/wait-select-1.log', tail: '1 new red' };
+  x = await run({ pre: [PRE], prog: [prog(FULL), prog('3fb1d6dd')], review: [D], train: [ride(0)], select: [RED] }, L, { '3fb1d6dd': FULL });
+  ok('F5. a red selection explained without a commit, the same commit reported short -> no second selection, ride gets the full sha',
     x.r.status === 'done' && steps(x, /^run:x:select-/).length === 1 && rideHead(x) === FULL, x.full);
   // train fix round: the programmer reports the same commit short -> "committed nothing", stopped for the coordinator
   x = await run({ pre: [PRE], prog: [prog(FULL), prog('3fb1d6dd')], review: [D], train: [ride(11)] }, L, { '3fb1d6dd': FULL });
