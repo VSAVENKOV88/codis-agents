@@ -9,6 +9,8 @@
 // (so linked worktrees find the config even when it is not committed).
 //
 // usage: config.js path                 -> absolute path of the config in use (exit 1 when none)
+//        config.js path --from <dir>    -> the same lookup from <dir> instead of the cwd, without $CLAUDE_PROJECT_DIR
+//                                          ($CODIS_AGENTS_CONFIG still first): guards-all.sh <absolute worktree>
 //        config.js check [file]         -> validation errors, exit 1 when any
 //        config.js json [file]          -> resolved config as JSON (defaults applied, ~ expanded, plugin paths added)
 //        config.js shell [file]         -> zsh lines `: ${VAR:=value}` for the slot scripts (environment wins); with no
@@ -682,6 +684,13 @@ module.exports = { find, load, resolve, migrate, branches, anonUrl, remoteHead, 
 if (require.main === module) {
   const [cmd, ...rest] = process.argv.slice(2);
   if (cmd === 'migrate' && rest.some((a) => a.startsWith('--') && a !== '--write')) { console.error('usage: config.js migrate [file] [--write]'); process.exit(64); }
+  if (cmd === 'path' && rest[0] === '--from') {
+    if (!rest[1]) { console.error('usage: config.js path --from <dir>'); process.exit(64); }
+    const env = Object.assign({}, process.env); delete env.CLAUDE_PROJECT_DIR;
+    const f = find(rest[1], env);
+    if (!f) process.exit(1);
+    console.log(f); process.exit(0);
+  }
   const fileArg = cmd === 'get' ? rest[1] : cmd === 'migrate' ? rest.find((a) => a !== '--write') : rest[0];
   const file = fileArg ? path.resolve(fileArg) : find();
   if (!file && cmd === 'shell') {
@@ -720,7 +729,7 @@ if (require.main === module) {
     const v = rest[0].split('.').reduce((o, k) => (o == null ? undefined : o[k]), config);
     if (v === undefined) process.exit(1);
     console.log(typeof v === 'object' ? JSON.stringify(v) : String(v));
-  } else { console.error('usage: config.js path|check|json|shell|get <key>|default-branch|migrate [--write]'); process.exit(64); }
+  } else { console.error('usage: config.js path [--from <dir>]|check|json|shell|get <key>|default-branch|migrate [--write]'); process.exit(64); }
 }
 
 // For hooks: the project config when there is one (even with validation errors, defaults fill the gaps), else the

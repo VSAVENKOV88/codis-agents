@@ -82,6 +82,13 @@ set -- "${POS[@]}"
 [[ -n $1 ]] || { print -u2 -r -- "$USAGE"; exit 64; }
 [[ -n $GUARDS && -n $SELBASE ]] && { print -u2 -r -- "guards-all: --select and --guards exclude each other"$'\n'"$USAGE"; exit 64; }
 cfg() { node "$H/config.js" get "$1" 2>/dev/null }
+# An absolute worktree brings its own project config (config.js path --from: the nearest .claude/codis-agents.json from
+# it upwards), so a run started from another folder neither takes a foreign config nor refuses 78; an explicit
+# $CODIS_AGENTS_CONFIG still wins. Exported: slots.zsh, cfg and the scripts below read it. A relative name keeps the
+# lookup from the cwd (its worktreeRoot is what resolves the name).
+if [[ -z $CODIS_AGENTS_CONFIG && $1 == /* && -d $1 ]] && _ga_cfg=$(node "$H/config.js" path --from "$1" 2>/dev/null); then
+  export CODIS_AGENTS_CONFIG=$_ga_cfg
+fi
 source "$H/slots.zsh" || exit $?
 [[ -n $CODIS_WORKTREE_ROOT && -n $CODIS_SHARED_DIR ]] || { print -u2 "guards-all: no project config (.claude/codis-agents.json) found"; exit 78; }
 if [[ $1 == /* ]]; then WT=$1; else WT=$CODIS_WORKTREE_ROOT/$1; fi
