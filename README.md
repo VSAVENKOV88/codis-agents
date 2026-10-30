@@ -556,9 +556,6 @@ fallback to another slot directory: a second directory would be a second queue t
   the matching refspec `:` name no branch or tag the session hook can check, so it lets them through; `pre-push` (while it runs) judges
   every ref they expand to (owner 2026-10-21: backlog).
 
-- The plugin's own test suite (`tests/run.js`) runs its files one after another (`spawnSync` per file): 85
-  `*.test.js` and 9 `*.test.sh`, the integration tests of the train and of the slots among them, about 35 min on the
-  Mac. A candidate for a parallel runner.
 - `guardBaseline` must name a flat file `{"<guard name>": "<reason>"}`: `config.js check` validates only that the path
   is relative, and `guards-result.js` refuses any value that is not a string ("the reason of ... is not a string"), so
   with a nested file (for example `{note, checked, known: {...}}`) nothing is subtracted and the runner's exit code
@@ -568,7 +565,17 @@ fallback to another slot directory: a second directory would be a second queue t
 
 ```sh
 npm test            # or: node tests/run.js [filter]
+CODIS_GUARD_JOBS=3 npm test   # three workers
 ```
+
+`tests/run.js` runs the test files in two phases. First every file not marked quiet, in parallel: `CODIS_GUARD_JOBS`
+workers (a positive integer; the plugin's own `guardCommand` passes `{jobs}` in it, so a full run counts only those
+workers against the slot budget), else the smaller of the CPU count and `slots.jobsAlone` of the machine file. Then the
+quiet files, one at a time with nothing else running: a file is quiet when one of its lines starts with
+`// tests:quiet - <reason>` (`*.test.js`) or `# tests:quiet - <reason>` (`*.test.sh`), for the tests of slots, locks,
+queues and time that turn red under load. The marker lives in the file, never in a list in the runner. The report
+keeps a stable order (the parallel files sorted by name, then the quiet ones), names every red file in the tally, and
+the exit code is not 0 when any file is red.
 
 The suite checks the chain logic with fake agents (every routing case, the post-checks, the rule markers against
 `RULE_LIST` and every role prompt), the post-check and cost scripts, the config, the hooks, the worktree setup, the
