@@ -11,7 +11,8 @@
 #   queue; 3. B5 - a retry (SLOT_RETRY_RC) keeps the priority; 4. B8 - the last slot of the shared ceiling still goes
 #   by number to an earlier medium; 5. guards-all.sh --priority goes ahead of an earlier single heavy job; B11 - a
 #   worktree named train-* without the flag gets no priority; 6. the priority is not inherited by the command; a value
-#   other than 0 or 1 is refused (64).
+#   other than 0 or 1 is refused (64); 7. B8 - the last slot of the ceiling is compared between the heads of the two
+#   queues by number, a priority head behind an earlier plain heavy included.
 H=${SLOTS_H:-${0:A:h:h}/scripts}
 zmodload zsh/datetime
 T=$(mktemp -d "${${TMPDIR:-/tmp}%/}/slots-prio.XXXXXX")
@@ -156,6 +157,28 @@ SLOT_PRIORITY=yes $H/heavy.sh true > $T/V.out 2>&1; rc=$?
 ok '6. SLOT_PRIORITY=yes -> 64, named in the message' '(( rc == 64 )) && grep -q SLOT_PRIORITY $T/V.out' "rc $rc: $(cat $T/V.out)"
 SLOT_PRIORITY=0 $H/heavy.sh true > $T/Z.out 2>&1; rc=$?
 ok '6. SLOT_PRIORITY=0 -> a plain run, exit 0' '(( rc == 0 ))' "rc $rc: $(cat $T/Z.out)"
+
+# 7. B8 with a priority head behind an earlier plain heavy (tester round 1): the last slot of the shared ceiling is
+#    compared between the HEADS of the two queues, by their numbers (p-runq/BRIEF.md decision 6), never with a plain
+#    heavy waiter that is not the head. Ceiling 3, heavy 2, medium 2; h1 h2 m1 hold all three.
+#    a) waiters H (plain heavy), M (medium), P (priority heavy): heads M and P, M has the smaller number -> M goes,
+#       P and H wait;
+#    b) waiters H, P, M: heads P and M, P has the smaller number -> P goes, M and H wait.
+export SLOT_TOTAL_MAX=3
+: > $T/order
+hold heavy.sh h1; hold heavy.sh h2; waitfor 'started h1 && started h2'; hold medium.sh m1; sleep 1.5
+w heavy.sh H 0.2; sleep 0.6; w medium.sh M 0.2 3; sleep 0.6; p heavy.sh P 0.2 3; sleep 1.5
+touch $T/rel.h2
+waitfor 'got M || got P' 60; sleep 1
+ok '7a. last ceiling slot between the heads M (earlier) and P - M goes, P and H wait' '[[ "$(order)" == "M" ]]' "got: $(order) | M: $(tail -1 $T/M.out) | P: $(tail -1 $T/P.out) | H: $(tail -1 $T/H.out)"
+endcase
+: > $T/order
+hold heavy.sh h1; hold heavy.sh h2; waitfor 'started h1 && started h2'; hold medium.sh m1; sleep 1.5
+w heavy.sh H 0.2; sleep 0.6; p heavy.sh P 0.2 3; sleep 0.6; w medium.sh M 0.2 3; sleep 1.5
+touch $T/rel.h2
+waitfor 'got M || got P' 60; sleep 1
+ok '7b. last ceiling slot between the heads P (earlier) and M - P goes, M and H wait' '[[ "$(order)" == "P" ]]' "got: $(order) | M: $(tail -1 $T/M.out) | P: $(tail -1 $T/P.out) | H: $(tail -1 $T/H.out)"
+endcase; unset SLOT_TOTAL_MAX
 
 print -r -- "TOTAL: $pass ok, $fail fail"
 (( fail == 0 ))
