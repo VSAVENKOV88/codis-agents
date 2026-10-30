@@ -390,7 +390,11 @@ review findings.
   the task; 14 `arc-red` and 15 `coordinator` stop the task for the coordinator, who fixes the arc or decides and runs
   `train.js resume`; 74 (queue unavailable), 75 (the queue halted by the environment of a train) and 124 (the step's
   deadline) are `environment` - the queue stands until the coordinator, the entry stays and a relaunch of the task
-  alone attaches to it; 65 - refused before the queue (a protected base or not a branch). The light mode rides too.
+  alone attaches to it; 65 - refused before the queue (a protected base or not a branch); 64 - refused arguments,
+  among them `head is not a full sha: <value>`. The head is the full sha: the workflow resolves an abbreviated head of a
+  role (hex digits, at least 4, gitrevisions(7)) right after the role's answer with one cheap service step
+  (`git rev-parse --verify -q '<h>^{commit}'`), so the post-checks, the selection, the result file and the ride all use
+  it; a head that does not resolve is kept as given, and `train.js` refuses it. The light mode rides too.
   After a green train the coordinator does not merge the branch by hand.
 - **Post-checks**: after the tester and each reviewer, `role-diff-check.js` compares the worktree with the previous
   role's HEAD; any change a role may not make stops the chain. This, not a tool list, keeps product code out of their

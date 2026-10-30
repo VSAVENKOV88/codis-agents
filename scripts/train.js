@@ -547,6 +547,13 @@ function args(list) {
   return o;
 }
 
+// A head that is not a full sha is refused with its own text and the value as given (p-noghost-d F3/F4): the usage line
+// alone hid an abbreviated head of a role ("3fb1d6dd", 2026-10-30). The chain resolves an abbreviation before the ride
+// (workflows/role-chain.js fullHead); the queue, the result file and the attribution are keyed by the full sha.
+const headOk = (h) => {
+  if (!SHA.test(h || '')) die(64, `head is not a full sha: ${h === undefined ? '(none)' : h === '' ? "''" : h} (40 hex digits, git rev-parse <commit>)`);
+};
+
 // The verdict of a result or a halt as the exit code of `ride` (the chain's wait step returns only the exit code; the
 // workflow reads no files, so the code is the verdict and the details stay in the result file).
 const RIDE_RC = { green: 0, 'green-unmerged': 10, red: 11, seam: 12, conflict: 13, 'arc-red': 14, coordinator: 15 };
@@ -555,7 +562,8 @@ const rideRc = (o) => (o && Object.prototype.hasOwnProperty.call(RIDE_RC, o.verd
 
 // enqueue: {decided, result} | {queued, existing?}; exits on a refusal (65) or a queue that cannot be written (74).
 function enqueue(P, a, USAGE) {
-  if (!TASK.test(a.task || '') || !SHA.test(a.head || '') || !branchOk(a.branch) || !branchOk(a.base)) die(64, `${USAGE}\n  (task: letters, digits . _ -; head: a full sha; branch and base: branch names)`);
+  headOk(a.head);
+  if (!TASK.test(a.task || '') || !branchOk(a.branch) || !branchOk(a.base)) die(64, `${USAGE}\n  (task: letters, digits . _ -; head: a full sha; branch and base: branch names)`);
   // Refused before the queue (coordinator's decisions for c3): the dispatcher moves the arc branch, so the base is a
   // branch of the repository (a commit cannot be moved) and never a protected one (rule push: merges into a protected
   // branch are the owner's call).
@@ -621,7 +629,8 @@ async function main() {
   }
   if (cmd === 'run') { out(await dispatch(P)); return 0; }
   if (cmd === 'await') {
-    if (!TASK.test(a.task || '') || !SHA.test(a.head || '')) die(64, USAGE);
+    headOk(a.head);
+    if (!TASK.test(a.task || '')) die(64, USAGE);
     const r = await awaitEntry(P, a.task, a.head, poll);
     if (!r) die(66, `no queue entry and no result for ${a.task} ${a.head}`);
     out(r); return 0;

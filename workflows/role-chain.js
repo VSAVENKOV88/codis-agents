@@ -150,7 +150,7 @@ const PROG_SCHEMA = { type: 'object', properties: {
   status: { type: 'string', enum: ['ready', 'blocked', 'environment'], description: 'blocked - an answer of the coordinator or owner is needed; environment - the red is the environment\'s, not the product\'s (a full run cut off before its tally, the slot queue refused your job - exit 77 or 78 - or your waiting process vanished without an exit code, disk or swap exhausted; a long queue while your process is alive is not one): the task stops for the coordinator' },
   changedFiles: { type: 'array', items: { type: 'string' }, description: 'paths changed in this round (git diff --name-only from the start of the round)' },
   commits: { type: 'array', items: { type: 'string' } },
-  head: { type: 'string', description: 'git rev-parse HEAD of the worktree after your commits' },
+  head: { type: 'string', description: 'git rev-parse HEAD of the worktree after your commits: the full sha (40 hex digits), not an abbreviation' },
   mutations: { type: 'string', description: 'table: mutant -> guard result -> after checkout' },
   fullRun: { type: 'string', description: 'result of your full guard run: N green, N new red (repeated alone), N flaky (green alone), N known red; when the workflow runs the full run (the prompt says so), "the workflow runs it" and the result of your new guards' },
   acceptance: { type: 'string', description: 'light mode only: the acceptance scenario run by you - result and where its evidence is (test.md, test-* files)' },
@@ -160,7 +160,7 @@ const PROG_SCHEMA = { type: 'object', properties: {
 const TEST_SCHEMA = { type: 'object', properties: {
   verdict: { type: 'string', enum: ['green', 'red', 'environment'], description: 'environment - red caused by the environment, not by the product: the task stops for the coordinator' },
   environment: { type: 'string', description: 'with verdict environment: the cause and its evidence (a cut-off full run, a refused slot queue, disk or swap, Docker down)' },
-  head: { type: 'string', description: 'git rev-parse HEAD of the worktree after your commits' },
+  head: { type: 'string', description: 'git rev-parse HEAD of the worktree after your commits: the full sha (40 hex digits), not an abbreviation' },
   summary: { type: 'string', description: 'acceptance numbers per profile/environment, own guards and mutations, red with file:line' },
 }, required: ['verdict', 'head', 'summary'] }
 const DIFF_SCHEMA = { type: 'object', properties: {
@@ -186,6 +186,30 @@ async function checkTwice(t, what, passed, run) {
   log(`${t.title}: ${what} post-check ${first ? 'failed' : 'returned no result'} - repeated once by the default model`)
   return { first, res: await run(true) }
 }
+// A role's head is resolved to the full sha right after its answer (p-noghost-d, coordinator's decision 4 of 2026-10-31):
+// on 2026-10-30 a role returned "3fb1d6dd", the ride got it, train.js exited 64 and the task stopped as the environment;
+// the result file (resultOf), the selection's st.selAt and "the fix round committed nothing" compare it as well. Only an
+// abbreviated object name is resolved - gitrevisions(7): a leading substring of the hexadecimal object name, at least
+// 4 digits (core.abbrev minimum) - by one cheap service step, `git rev-parse --verify -q '<h>^{commit}'`, whose answer
+// is taken only as a full sha that starts with the abbreviation (a failed answer is repeated once, checkTwice). A full sha
+// needs no step; anything else, or an abbreviation that does not resolve, is kept as the role gave it (never emptied),
+// and train.js refuses it with "head is not a full sha: <value>".
+const FULL_SHA = /^([0-9a-f]{40}|[0-9a-f]{64})$/
+const ABBREV_SHA = /^[0-9a-fA-F]{4,64}$/
+const SHA_SCHEMA = { type: 'object', properties: { sha: { type: 'string' }, error: { type: 'string' } }, required: ['sha'] }
+const sha1 = (t, role, phase, h, retry) => agent(`Run one command and return what it prints as the schema field sha (change nothing, analyse nothing):
+git -C ${sq(t.wt)} rev-parse --verify -q ${sq(`${h}^{commit}`)}
+If it prints nothing or fails - sha = '', error = the error text or "no such commit".`,
+  checkOpts(`sha:${t.key}:${role}`, phase, SHA_SCHEMA, retry))
+async function fullHead(t, role, phase, h) {
+  if (typeof h !== 'string' || FULL_SHA.test(h) || !ABBREV_SHA.test(h)) return h
+  const good = (r) => !!(r && FULL_SHA.test(r.sha || '') && r.sha.startsWith(h.toLowerCase()))
+  const { res } = await checkTwice(t, `full sha of the ${role}'s head ${h}`, good, (retry) => sha1(t, role, phase, h, retry))
+  if (good(res)) return res.sha
+  log(`${t.title}: the ${role}'s head ${h} does not resolve to a commit in ${t.wt} - kept as given (train.js refuses it)`)
+  return h
+}
+
 // The paths the tester may change: the project's own, no built-in list (coordinator decision U2b v.4); without them
 // every task stops before any agent (chain()), since the tester post-check could not tell a guard from product code.
 const TESTER_WRITABLE_MISSING = Array.isArray(CFG.testerWritable) && CFG.testerWritable.length ? ''
@@ -475,7 +499,7 @@ async function testChecked(t, st, n) {
   const lf = leftFail(st, 'tester', pc && pc.left)
   const f = diffFail('tester', pc && pc.diff)
   if (f || lf) return { fail: f || lf }
-  st.head = tr.head
+  st.head = await fullHead(t, 'tester', 'Tester', tr.head)
   return { tr }
 }
 // With t.security the review is reviewer + security reviewer, run together (plugin audit P3: both only read), and one
@@ -515,8 +539,9 @@ async function progStep(t, st, task, n, report, sameStops) {
   if (!p) return { fail: 'the programmer returned no result' }
   if (p.status === 'blocked') return { fail: 'programmer: an answer is needed', questions: p.questions }
   if (p.status === 'environment') return envProg(n, p)
-  if (sameStops && p.head === prev) return { p, same: true }
-  st.head = p.head
+  const head = await fullHead(t, 'programmer', 'Programmer', p.head)
+  if (sameStops && head === prev) return { p, same: true }
+  st.head = head
   if (!ONE_RUN) return { p }
   let merged = p, tag = n
   for (let k = 0; ; k++) {
@@ -534,8 +559,9 @@ async function progStep(t, st, task, n, report, sameStops) {
     if (p2.status === 'environment') return envProg(`${tag}f`, p2)
     merged = Object.assign({}, p2, { changedFiles: (merged.changedFiles || []).concat((p2.changedFiles || []).filter((f) => !(merged.changedFiles || []).includes(f))) })
     tag = `${tag}f`
-    if (p2.head === st.head) { log(`${t.title}: the red of the selection explained without a commit - the next role gets its log`); return { p: merged } }
-    st.head = p2.head
+    const head2 = await fullHead(t, 'programmer', 'Programmer', p2.head)
+    if (head2 === st.head) { log(`${t.title}: the red of the selection explained without a commit - the next role gets its log`); return { p: merged } }
+    st.head = head2
   }
 }
 
