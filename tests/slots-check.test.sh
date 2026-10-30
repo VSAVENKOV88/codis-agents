@@ -1,4 +1,5 @@
 #!/bin/zsh
+# tests:quiet - slot queues and locks polled every 0.2-0.3 s with timed waits; red under the load of other test files
 # Slot rules (classes, the extra heavy slot, the shared ceiling, swap, legacy lock, exit codes, exclusive guards,
 # signals, the worker budget of full guard runs) on a TEMPORARY slot directory and a fake machine - the real machine
 # is not loaded (the commands are sleeps). Exit code 0 - everything holds.

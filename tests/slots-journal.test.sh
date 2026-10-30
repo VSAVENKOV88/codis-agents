@@ -1,4 +1,5 @@
 #!/bin/zsh
+# tests:quiet - slot queues and locks polled every 0.2-0.3 s with timed waits; red under the load of other test files
 # The slot journal (slots.zsh: one line per slot hold) on a TEMPORARY slot directory and a fake machine.
 # Exit code 0 - everything holds.
 #   usage: tests/slots-journal.test.sh   (SLOTS_H=<dir with slots.zsh/heavy.sh/...> - check other copies)

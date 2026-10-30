@@ -1,4 +1,5 @@
 #!/bin/zsh
+# tests:quiet - slot queues and locks polled every 0.2-0.3 s with timed waits; red under the load of other test files
 # Slot locks without lockf(1) (macOS and Linux) on a TEMPORARY slot directory and a fake machine. Exit code 0 - holds.
 #   usage: tests/slots-locks.test.sh   (SLOTS_H=<dir with slots.zsh/heavy.sh/...> - check other copies)
 # The slot holder is a small zsh that takes `zsystem flock` (fcntl) on the slot file, runs the command as its CHILD,
