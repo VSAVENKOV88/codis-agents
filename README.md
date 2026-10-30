@@ -27,7 +27,10 @@ Everything below is how those habits scale to a chain of roles and a dozen tasks
 | brief | `BRIEF.md` of one task: the owner's words verbatim, scope, acceptance scenario |
 | arc | a connected group of tasks over one surface, with one specification agreed up front |
 | principles | the arc's numbered list of accepted decisions, each with its source and what it replaces |
-| coordinator | the main session: writes briefs, starts chains, merges, decides what the principles answer, asks the owner the rest |
+| coordinator | the main session: writes briefs, starts chains, merges (with `guardSubsetCommand` the train merges a green branch), decides what the principles answer, asks the owner the rest |
+| kind | every task is exactly one of `feature`, `defect`, `tail`; a `feature` starts only with its use cases (`useCases` or `useCasesFirst`) |
+| selection | the guards of a task's diff (`scripts/guards-select.js`), run by the workflow after every programmer round instead of a full guard run in the task (with `guardSubsetCommand`) |
+| train | the integration train (`scripts/train.js`): after the review a branch rides with the arc head and the other ready branches in one full guard run; green fast-forwards the arc branch (no push), red is attributed per branch |
 
 ## The role chain
 
@@ -43,8 +46,15 @@ flowchart LR
   tester -->|red| prog
   tester --> reviewer[Reviewer<br/>tries to refute]
   reviewer -->|rejected: fix round| prog
-  reviewer --> merge((Merge<br/>full guard run))
+  reviewer --> train{{Train<br/>arc head + ready branches,<br/>one full guard run}}
+  train -->|red, seam, conflict: fix round| prog
+  train -->|arc red, environment| coord
+  train --> merge((Arc branch<br/>fast-forward, no push))
 ```
+
+With `guardSubsetCommand` in the config the task has no full guard run of its own: the workflow runs the selection of
+its diff after every programmer round, and the full run belongs to the train. Without the key the reviewed branch is
+done after the review and the coordinator merges it, as before.
 
 Each role runs as its own agent in its own git worktree. A second rejection for code stops the fix rounds: the next round
 starts with the analyst. Work on access, keys or cookies gets a security reviewer as well. A role that hits an open
@@ -76,7 +86,7 @@ A role never answers an owner question itself: it writes the question into its r
 - **Two browsers** for anything visual: WebKit drops things Chromium draws.
 - **The real environment**: a change that touches two services is accepted in a two-service container stack driven
   through the real client, not in one process on the laptop, where guards stay green while the image fails.
-- **A full guard run** after every merge: "N green - N new red - N known red"; only new red is a regression (known reds: config `guardBaseline`).
+- **A full guard run** before a branch reaches the arc: "N green - N new red - N known red"; only new red is a regression (known reds: config `guardBaseline`). With `guardSubsetCommand` it is the train's one run over the arc head and the ready branches together, and only that tree is merged.
 
 Its limit, honestly: no headless browser reproduced a blurry label in real Safari. A person looking at the screen found
 it. Agents do not replace that.
@@ -97,7 +107,8 @@ it. Agents do not replace that.
 | a cheap waiter gave up on a full run waiting in the heavy slot queue ("the tail has not changed"): 24 of 37 repeats in one window, each repeat on an expensive model | the waiter keeps waiting while the run is alive, whatever its tail; only the step's deadline or a refused queue ends it, as `environment` |
 | a role waited for its own selection of guards in a heavy slot, inside its large context | the workflow runs the selection of the task's guards as its own wait step, so the programmer runs none; heavy commands only in the background |
 | a resumed run of parallel tasks replayed one task's cached results into another, and both chains stopped | never `resumeFromRunId` for a multi-task run; relaunch each unfinished task alone with `start` |
-| two parallel branches, each green alone, gave six red guards after the second merge | after merging the second of parallel branches over the same files: the guards of both tasks, then the full guard run |
+| two parallel branches, each green alone, gave six red guards after the second merge | after merging the second of parallel branches over the same files: the guards of both tasks, then the full guard run; with `guardSubsetCommand` replaced by the integration train (p-train): one full run over the arc head and the ready branches together, a seam is attributed to the later branch |
+| one full guard run per task still held a heavy slot for most of a task's calendar, and the seam stayed unchecked until the merge | no full guard run in the task: the selection of its diff after every programmer round; the full run moves to the train (replaces "one full guard run per task", p-train 2026-10-27) |
 | several container stacks at once pushed a 16 GB machine into swap | at most two chains with acceptance in Docker at once |
 | a merged worktree removed after a clean `git status` held the only copy of a measurement corpus in ignored files; an old copy of the repository removed the same way broke 1809 symlinks elsewhere | before removing a worktree or a data directory, the owner says "yes" to the output of `scripts/wt-remove-check.js` (ignored data with sizes, the path in code, symbolic links that lead into it) |
 | images of old test stacks (481 of them, ~130 GB) filled the disk and stopped the chains | a tester removes its own stack with `docker compose -p <stack> down -v --rmi all`; the owner's stack is never touched, other images and the build cache are not cleaned by roles |
@@ -113,7 +124,7 @@ read.
 
 | path | what |
 |---|---|
-| `workflows/role-chain.js` | the chain: preconditions -> (analyst) -> programmer -> tester -> reviewer (+ security reviewer); fix rounds; an analyst after the second rejection |
+| `workflows/role-chain.js` | the chain: preconditions -> (analyst) -> programmer -> tester -> reviewer (+ security reviewer) -> (with `guardSubsetCommand`) the integration train; fix rounds; an analyst after the second rejection, the second red tester round or the second red train |
 | `agents/*.md` | role agents: `analyst`, `programmer`, `tester`, `reviewer`, `security-reviewer` (all may edit files - the tester its guards, the reviewers their reports; what they may change in the worktree is enforced by the git post-check, not by tool lists) |
 | `skills/role-chain` | reads the project config and starts the workflow |
 | `skills/brief` | how to write a task brief |
@@ -200,7 +211,7 @@ node <plugin>/scripts/config.js check
 | `guardExclusive` | which guards share a machine resource and run one at a time under the exclusive lock (`heavy.sh`): `glob` (zsh patterns of the file name, matched with `extendedglob`; `config.js check` refuses one zsh cannot compile, such as `test_[.py`) and `marker` (the line-comment marker, literal), e.g. `{"glob": ["test_*.py"], "marker": "#"}` for a line `# guards:exclusive — <reason>`. Left out: `*-run.js`, `*-run.mjs` and `//`; given, both are required and replace the default |
 | `guardFiles` | globs of the project's guard files for `scripts/guards-select.js` (default `*-run.js`, `*-run.mjs`, `*-run.cjs` at any depth) |
 | `guardAlways` | guards always in the selection: a guard whose path contains an entry (scanners of the diff such as secrets or semgrep) |
-| `guardSubsetCommand` | runs the selected guards (zsh; `{wt}`, `{onlyArgs}` = `--only <guard>` per guard). Contract: it narrows `guardCommand` to the selected guards of the same suite, so a full run includes every guard it selects. When set: no full guard run in the task - after every programmer round with a new HEAD the workflow runs the selection of the task's diff (`guards-all.sh --select <base>`, its own log, the quarantine read only), so the programmer runs only its new guards and mutations; the tester runs the same selection after its own commits; every task needs `base`. Without it the programmer runs the full run itself |
+| `guardSubsetCommand` | runs the selected guards (zsh; `{wt}`, `{onlyArgs}` = `--only <guard>` per guard). Contract: it narrows `guardCommand` to the selected guards of the same suite, so a full run includes every guard it selects. When set: no full guard run in the task - after every programmer round with a new HEAD the workflow runs the selection of the task's diff (`guards-all.sh --select <base>`, its own log, the quarantine read only), so the programmer runs only its new guards and mutations; the tester runs the same selection after its own commits; every task needs `base`; a reviewed task rides the integration train (`scripts/train.js ride`), whose one full run replaces the one of the task. Without it the programmer runs the full run itself |
 | `worktreeSetup` | `scan` directories whose ignored data is copied into a new worktree; `skip` and `link` globs (everything else is an APFS clone) |
 | `slots` | machine settings, read from the machine file (below); a project config may still carry `medium`, `heavy`, `total`, `lockDir`, `legacyLock`, `jobsAlone`, `jobsShared` until `config.js migrate` |
 | `reportLanguage` | language of role reports (prompts stay in English) |
@@ -290,7 +301,7 @@ Workflow({ name: "codis-agents:role-chain", args: {
   owner: "<the owner's request, verbatim>",
   config: /* output of: node <plugin>/scripts/config.js json */,
   tasks: [{ key: "q2", title: "Queue retries", wt: "q2", branch: "b-q2", kind: "defect", analystFirst: true,
-            accept: "Add -> the item builds with no tab open; log and screenshot attached" }]
+            base: "b-arc", accept: "Add -> the item builds with no tab open; log and screenshot attached" }]
 } })
 ```
 
@@ -307,8 +318,9 @@ Optional task fields: `dir`, `gdir`, `start`, `feature` (the feature this task w
 specification), `useCases` (the feature's `use-cases.md`: actor, trigger, main and alternative flows, errors, out of
 scope - context for every role, cited by the matrix, the tester's acceptance follows its flows), `useCasesFirst`,
 `stack` (the tester's own compose project), `security`, `base` (the branch or commit the task started from, for
-`guards-select.js`), `mode` (`mode: "light"` for a small task: one programmer-checker, the full run, one reviewer - see
-below). For a feature, `useCasesFirst: true` with `analystFirst` has the
+`guards-select.js`; required with `guardSubsetCommand`: the branch of the arc, a branch of the repository, not a commit
+and not a protected branch, since the train moves it), `mode` (`mode: "light"` for a small task: one programmer-checker,
+the selection step, one reviewer, then the train - see below). For a feature, `useCasesFirst: true` with `analystFirst` has the
 analyst write only the use cases with their open questions and stops the task with status `use-cases-review`; after
 the review with the owner the coordinator relaunches it with `useCases` and `analystFirst`.
 Each task ends `done`, `use-cases-review` or `stopped` with the reason, the open questions, a proposed split or the
@@ -363,6 +375,23 @@ review findings.
   tester: the second review reads the diff of the fix; when the fix touches files outside docs and guards, that review
   confirms it changes no behaviour (`fixBehaviourUnchanged`), and only an unconfirmed fix gets a tester round. A second rejection for code brings the analyst into the same run for one more round; after that the
   coordinator decides.
+- **The integration train after the review** (with `guardSubsetCommand`; it replaces the coordinator's seam check after
+  the second of parallel merges): one wait step runs `scripts/train.js ride` (enqueue the task with its branch, the
+  head after the review, `base` and its folder, then wait, dispatching trains while it waits). A train is the arc head
+  plus every ready branch, merged into `refs/runs/train/<id>` and run by one full guard run in a detached temporary
+  worktree. The exit code of `ride` is the verdict: 0 `green` - the dispatcher fast-forwarded the arc branch to the
+  tree that ran (no push), the task is done; 10 `green-unmerged` - done, the arc's worktree had tracked changes or
+  refused the fast-forward, and the coordinator merges `refs/runs/train/<id>`; 11 `red` (the repeated new reds run
+  again alone on the bare arc head and on "arc + X" for each passenger), 12 `seam` (green on each alone, red together:
+  the earlier branch rides, the later one gets a round "seam with ..." after the partner's own result) and 13
+  `conflict` (a round to merge the arc head) give a fix round on `<sharedDir>/train/result/<task>-<head>.json` - the
+  programmer, the selection on the new HEAD, the second review of the diff, the train again; a round without a commit
+  goes to the coordinator, the second red train sends the task to the analyst inside the run, a red after it stops
+  the task; 14 `arc-red` and 15 `coordinator` stop the task for the coordinator, who fixes the arc or decides and runs
+  `train.js resume`; 74 (queue unavailable), 75 (the queue halted by the environment of a train) and 124 (the step's
+  deadline) are `environment` - the queue stands until the coordinator, the entry stays and a relaunch of the task
+  alone attaches to it; 65 - refused before the queue (a protected base or not a branch). The light mode rides too.
+  After a green train the coordinator does not merge the branch by hand.
 - **Post-checks**: after the tester and each reviewer, `role-diff-check.js` compares the worktree with the previous
   role's HEAD; any change a role may not make stops the chain. This, not a tool list, keeps product code out of their
   reach: a hook on Edit/Write would miss `sed -i`, `python -c`, a heredoc or a `git checkout`, while the post-check
@@ -526,6 +555,14 @@ fallback to another slot directory: a second directory would be a second queue t
 - With the protected branches known, glob refspecs (`'refs/heads/*:refs/heads/*'`, `'refs/tags/*:refs/tags/*'`) and
   the matching refspec `:` name no branch or tag the session hook can check, so it lets them through; `pre-push` (while it runs) judges
   every ref they expand to (owner 2026-10-21: backlog).
+
+- The plugin's own test suite (`tests/run.js`) runs its files one after another (`spawnSync` per file): 85
+  `*.test.js` and 9 `*.test.sh`, the integration tests of the train and of the slots among them, about 35 min on the
+  Mac. A candidate for a parallel runner.
+- `guardBaseline` must name a flat file `{"<guard name>": "<reason>"}`: `config.js check` validates only that the path
+  is relative, and `guards-result.js` refuses any value that is not a string ("the reason of ... is not a string"), so
+  with a nested file (for example `{note, checked, known: {...}}`) nothing is subtracted and the runner's exit code
+  stands. A project that keeps its known reds in a nested format points `guardBaseline` at a separate flat file.
 
 ## Tests
 
