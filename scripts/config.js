@@ -473,10 +473,10 @@ function resolve(raw, opts = {}) {
     // {jobs} is optional: a runner that sets its own workers is counted as the whole budget (scripts/guards-all.sh).
   }
   if (c.guardSubsetCommand && !c.guardSubsetCommand.includes('{onlyArgs}')) errors.push('guardSubsetCommand: must contain {onlyArgs} (one --only <guard> per selected guard)');
-  // A subset command that drops the {jobs} of its full command is counted as the whole budget (scripts/guards-all.sh):
+  // A subset command that drops both {jobs} and {limitFile} while its full command has {jobs} is counted as the whole budget (scripts/guards-all.sh):
   // its selections go one at a time. A note, not an error - an error refuses every slot of the project (slots.zsh).
   const wholeNote = (k, sub, fk, full) => {
-    if (sub && full && full.includes('{jobs}') && !sub.includes('{jobs}')) warnings.push(`note: ${k} has no {jobs} while ${fk} has: a selection is counted as the whole worker budget (slots.jobsAlone) and starts only when no other heavy job runs, so selections go one at a time; give it {jobs} and {limitFile} as ${fk} has`);
+    if (sub && full && full.includes('{jobs}') && !sub.includes('{jobs}') && !sub.includes('{limitFile}')) warnings.push(`note: ${k} has no {jobs} (and no {limitFile}) while ${fk} has {jobs}: a selection is counted as the whole worker budget (slots.jobsAlone) and starts only when no other heavy job runs, so selections go one at a time; give it {jobs} and {limitFile} as ${fk} has`);
   };
   wholeNote('guardSubsetCommand', c.guardSubsetCommand, 'guardCommand', c.guardCommand);
   if (c.remoteRun) wholeNote('remoteRun.subsetCommand', c.remoteRun.subsetCommand, 'remoteRun.command', c.remoteRun.command);
