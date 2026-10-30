@@ -40,6 +40,9 @@
 //      only: the flaky guards of a selection go into the role's report, never into the quarantine. --selected <file>
 //      (a JSON array of the selected guards, guards-select.js --names-out) goes with the job: the runner's rerun and
 //      the part here call a known red "not red now" only among them (a known red outside the selection did not run).
+// Placeholders: the part here fills {wt} and {onlyArgs} of remoteRun.localCommand and nothing else; a template with
+//   another one ({jobs}, {limitFile}, a typo) is refused with 78 at the start of run(), before any ssh (scripts/config.js
+//   FILLS; config.js load refuses such a config already).
 // usage: guards-remote.js run <worktree> <log> <name> [<quarantine file>] [--subset <command> [--selected <file>]]
 //   (guards-all.sh passes the quarantine file; '' - off)
 const fs = require('fs');
@@ -131,6 +134,12 @@ function run(c, wt, log, name, qfile, opts) {
   const subset = (opts && opts.subset) || '';
   const selected = (opts && opts.selected) || null;
   const r = c.remote, x = c.remoteRun, envId = `remote:${r.host}`;
+  // 6. the part here fills only {wt} and {onlyArgs}: any other placeholder of its template refuses the run before the
+  // runner is contacted (config.js load says so too; this holds for a config object that did not come through it)
+  if (x.localPattern && x.localCommand) {
+    const bad = C.placeholderErrors('remoteRun.localCommand', x.localCommand, C.FILLS['remoteRun.localCommand']);
+    if (bad.length) throw new Stop(78, `guards-remote: ${bad.join('; ')} - the part here would run that command with the placeholder left in it; nothing run`);
+  }
   if (qfile === undefined) qfile = c.guardBaseline ? G.quarantineFile(c.sharedDir) : '';
   const g = gitState(wt);
   if (!g.head) throw new Stop(78, `guards-remote: ${wt} is not a git worktree with a commit - nothing to run remotely`);

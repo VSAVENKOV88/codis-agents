@@ -161,7 +161,7 @@ try {
   const at = lines.findIndex((l) => /^if \[\[ -n \$SELECT && \$CMD != \*'\{jobs\}'\*/.test(l));
   let i = at - 1; const block = [];
   while (i >= 0 && /^\s*#/.test(lines[i])) block.unshift(lines[i--]);
-  const said = block.join(' ');
+  const said = block.map((l) => l.replace(/^\s*#\s?/, '')).join(' ');
   ok('C3. guards-all.sh: the comment of the whole-budget note says "on the runner its subsetCommand" once, no repeated line',
     at > 0 && block.length > 0 && (said.match(/on the runner its subsetCommand/g) || []).length === 1 && !/\(the same test as mode=whole above/.test(said), block.join('\n'));
 

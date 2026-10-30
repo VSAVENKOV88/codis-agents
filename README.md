@@ -199,6 +199,19 @@ the main checkout of a linked worktree. Check it with:
 node <plugin>/scripts/config.js check
 ```
 
+Placeholders of the guard commands: every place that fills a command knows its own set (`scripts/config.js` `FILLS`),
+and the check holds each template to it - a placeholder that is not filled in at its place, or an unknown placeholder (a typo
+such as `{job}`), is a config error naming the key and the placeholder, so every slot of the project refuses (78)
+instead of running a command with `{jobs}` left in it (a runner that read it as zero workers ran 0 guards and exited 0).
+`guardCommand` and `remoteRun.command`: `{wt}`, `{jobs}`, `{limitFile}`; `guardCommandLegacy` and
+`remoteRun.commandLegacy`: `{wt}`, `{jobs}`; `guardSubsetCommand` and `remoteRun.subsetCommand`: those of `guardCommand`
+plus `{onlyArgs}`; `remoteRun.localCommand` (by default `guardSubsetCommand`): only `{wt}` and `{onlyArgs}`;
+`guardRerun.command`: `{wt}`, `{name}`. A token is `{identifier}` not right after `$`: `${HOME}`, `{a,b}` and `{1..3}`
+are the shell's, and a shell brace group takes a blank (awk `'{ print }'`, not `'{print}'`). The template is checked,
+never the filled string, so a worktree path or a guard name with braces is fine. `guards-select.js --command` fills
+only `{wt}` and `{onlyArgs}` and refuses (78) a `guardSubsetCommand` with `{jobs}` or `{limitFile}`: run
+`guards-all.sh --select` instead.
+
 | key | meaning |
 |---|---|
 | `repoDir` | main checkout; worktrees are created from it (`~` is expanded) |

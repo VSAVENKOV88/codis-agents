@@ -16,7 +16,8 @@
 #   late single heavy jobs do not pass it either; exit 75 (budget taken after admission) - back to the queue with the
 #   same ticket (SLOT_RETRY_RC).
 # Command: project config key guardCommand, run with zsh in the worktree; placeholders {wt}, {jobs} (optional),
-#   {limitFile} (optional).
+#   {limitFile} (optional). A placeholder this script does not fill ({onlyArgs} in a full command, {name}, a typo) is
+#   a config error (scripts/config.js FILLS), so slots.zsh refuses 78 naming the key before anything runs.
 # Exit code: the runner's own (the last 25 log lines are printed either way). The runner's code travels through a file,
 #   so a runner that itself exits 75 is never mistaken for "no worker budget" and retried.
 # Rerun (project config key guardRerun; scripts/guards-result.js): after a red full run, still in the same slot, every
@@ -152,10 +153,10 @@ fi
 if (( ! FORCE )) && node "$H/guards-result.js" reuse "$WT" "$OUT" "$CMD" "$ENVID" "$QFILE" > /dev/null 2>&1; then
   tail -40 "$OUT"; print -r -- ""; node "$H/guards-result.js" reuse "$WT" "$OUT" "$CMD" "$ENVID" "$QFILE"; exit 0
 fi
-# A selection whose command has neither {jobs} nor {limitFile} is a runner that sets its own workers: counted as the whole budget, it waits
-# for every other heavy job, so selections and the train's run go one at a time (README guardSubsetCommand). Not an
-# error - a note naming the key that decides here (on the runner its subsetCommand).
-# (the same test as mode=whole above, on the command that runs: on the runner its subsetCommand).
+# A selection whose command has neither {jobs} nor {limitFile} is a runner that sets its own workers (the test of mode=whole above, on
+# the command that runs): counted as the whole budget, it waits for every other heavy job, so selections and the train's
+# run go one at a time (README guardSubsetCommand). Not an error - a note naming the key that decides here (on the
+# runner its subsetCommand).
 if [[ -n $SELECT && $CMD != *'{jobs}'* && $CMD != *'{limitFile}'* ]]; then
   _ga_key=guardSubsetCommand; [[ $ENVID == remote:* ]] && _ga_key=remoteRun.subsetCommand
   print -u2 -r -- "guards-all: note: $_ga_key has no {jobs} (and no {limitFile}): the selection is counted as the whole worker budget (slots.jobsAlone) and starts only when no other heavy job runs, so selections go one at a time; give it --concurrency {jobs} and {limitFile} as guardCommand has (README, guardSubsetCommand)"
