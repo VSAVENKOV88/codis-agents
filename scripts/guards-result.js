@@ -16,10 +16,11 @@
 //    never rerun; only known reds -> exit 0 and "N known red". A known name that is not red in a finished run is named
 //    ("known red not red now: X — remove it from the baseline"), the code is not changed for it. A baseline that is
 //    missing or broken is an error line and the runner's code stands: never "all known" in silence.
-//    A single rerun that exits 0 is green alone only when it accounted for its guard: with a capture group in
-//    tallyPattern (required with guardSubsetCommand or remoteRun.localPattern) a single run whose tally counts 0, or that
-//    has no tally line, is neither flaky nor a new red - "environment: the single rerun of G accounted for 0 of 1 ...",
-//    exit 69 (p-noghost B14: 0 run guards would otherwise be "green alone" and go into the quarantine).
+//    A single rerun that exits 0 is green alone only when it accounted for its guard, if guardRerun.uncountedIsRed is true
+//    (then tallyPattern needs a capture group, config check): a single run whose tally counts 0, or that has no tally
+//    line, is neither flaky nor a new red - "environment: the single rerun of G accounted for 0 of 1 ...", exit 69
+//    (p-noghost B14: 0 run guards would otherwise be "green alone" and go into the quarantine). Without the key the
+//    group of tallyPattern alone does not switch the count on (p-noghost-b, owner's variant B of 2026-10-31).
 //    Quarantine (p-train, UC-5): a guard red in the full run and green alone is written into the project's quarantine
 //    file <sharedDir>/guards-quarantine.json, the same flat format: {"<guard>": "flaky: <log> <sha7>, green alone,
 //    <date>"} ("quarantined: G (<file>)" in the summary). It lives outside the worktree on purpose: the tracked tree
@@ -278,8 +279,8 @@ function rerun({ wt, log, rc, cfg, baseline, quarantine, readOnly, selected }) {
       const r = spawnSync('zsh', ['-c', cmd], { cwd: wt, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
       const code = r.status === null ? `signal ${r.signal}` : r.status;
       fs.appendFileSync(details, `${r.stdout || ''}${r.stderr || ''}${r.error ? r.error.message + '\n' : ''}==== exit ${code}\n\n`);
-      // B14: a single run that exits 0 and accounted for 0 of 1 is not green alone (the count, when the pattern has one)
-      const one = r.status === 0 && tallyCount('', cfg.tallyPattern) !== undefined ? countCheck({ text: `${r.stdout || ''}${r.stderr || ''}`, cfg, selected: [name], label: `the single rerun of ${name}` }) : null;
+      // B14 under uncountedIsRed (F3): a single run that exits 0 and accounted for 0 of 1 is not green alone
+      const one = r.status === 0 && cfg.uncountedIsRed === true ? countCheck({ text: `${r.stdout || ''}${r.stderr || ''}`, cfg, selected: [name], label: `the single rerun of ${name}` }) : null;
       if (one && !one.ok) { res.uncounted.push(name); fs.appendFileSync(details, one.text); res.envText = (res.envText || '') + one.text; }
       else if (r.status === 0) res.flaky.push(name); else res.repeated.push({ name, rc: code });
     }

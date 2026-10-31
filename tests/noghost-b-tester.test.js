@@ -24,7 +24,7 @@ const G = require('../scripts/guards-result');
 const read = (f) => { try { return fs.readFileSync(f, 'utf8'); } catch { return null; } };
 const gitC = (cwd, ...a) => spawnSync('git', ['-C', cwd, '-c', 'user.email=t@example.com', '-c', 'user.name=t', ...a], { encoding: 'utf8' });
 const TALLY = '^TOTAL: (\\d+) total$';
-const RERUN = { command: 'cd {wt} && ./one.sh {name}', newRedPattern: '^X (\\S+)  \\(', tallyPattern: TALLY };
+const RERUN = { command: 'cd {wt} && ./one.sh {name}', newRedPattern: '^X (\\S+)  \\(', tallyPattern: TALLY, uncountedIsRed: true };
 const LOCALP = '^skipped \\(needs-font\\): \\d+ — (.+)$';
 
 function fakeBin(bin) {

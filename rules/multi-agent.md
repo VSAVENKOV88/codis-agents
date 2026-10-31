@@ -102,8 +102,8 @@ Larger changes run as a chain of agents, each in its own role:
   swap headroom (`scripts/env-check.js`, floors in the machine file, `minFreeDiskGB` and `swapMinMB`: by default 10 GB
   of disk and 4000 MB of swap, so a 4 GiB swap passes; older `preconditions` keys of a project config apply only with
   no machine file). Why: programmer rounds "without changes" after such reds cost about 3.3M tokens in one window.
-  A run given guards by `--only` (a selection, the attribution of a train, the part here of a remote run, a single
-  rerun) that accounted for fewer of them than it was given (group 1 of `guardRerun.tallyPattern`, minus the guards its
+  A run given guards by `--only` (a selection, the attribution of a train, the part here of a remote run, and a single
+  rerun of a new red when the project sets `guardRerun.uncountedIsRed`) that accounted for fewer of them than it was given (group 1 of `guardRerun.tallyPattern`, minus the guards its
   log names as skipped by a flag), or has no tally line, is an environment red too: exit 69 with
   "environment: ... accounted for T of N selected guards", never a green run. Why: on 2026-10-30 the part here ran 0 of
   10 guards and exited 0, and two trains went green without the Mac part.

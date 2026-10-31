@@ -96,8 +96,9 @@ const SLOT_SPEC = {
 };
 const WT_SPEC = { scan: ['string[]', []], skip: ['string[]', []], link: ['string[]', []] };
 // Rerun of new reds one by one after a full run (scripts/guards-result.js explains why): command ({wt}, {name}),
-// newRedPattern (per log line, group 1 = name), tallyPattern (the log reached its tally), maxReruns.
-const RERUN_SPEC = { command: ['string', undefined], newRedPattern: ['string', undefined], tallyPattern: ['string', ''], maxReruns: ['number', 10] };
+// newRedPattern (per log line, group 1 = name), tallyPattern (the log reached its tally), maxReruns, uncountedIsRed (the
+// single rerun is counted by the group of tallyPattern only with this key: F3, owner's variant B of 2026-10-31).
+const RERUN_SPEC = { command: ['string', undefined], newRedPattern: ['string', undefined], tallyPattern: ['string', ''], maxReruns: ['number', 10], uncountedIsRed: ['boolean', false] };
 const EXCL_SPEC = { glob: ['string[]', undefined], marker: ['string', undefined] };
 const EXCL_DEFAULT = { glob: ['*-run.js', '*-run.mjs'], marker: '//' };
 const PROBE_SPEC = { file: ['string', undefined], contains: ['string', undefined] };
@@ -453,6 +454,12 @@ function resolve(raw, opts = {}) {
     }
     if (g.tallyPattern) { try { new RegExp(g.tallyPattern); } catch (e) { errors.push('guardRerun.tallyPattern: bad regular expression'); } }
     if (!(Number.isInteger(g.maxReruns) && g.maxReruns >= 1)) errors.push('guardRerun.maxReruns: expected a positive integer');
+    // uncountedIsRed (F3): a single rerun that exits 0 is green alone only when its tally counts it; that needs the group
+    if (g.uncountedIsRed) {
+      let group = false; // null: a bad regexp, named above
+      try { group = !!g.tallyPattern && new RegExp(g.tallyPattern + '|').exec('').length > 1; } catch { group = null; }
+      if (group === false) errors.push('guardRerun.uncountedIsRed: needs guardRerun.tallyPattern with a capture group (the count of the single rerun: group 1 = the selected guards it accounted for, e.g. "^TOTAL: .* (\\d+) total$")');
+    }
   }
   // selected N - accounted for N (p-noghost, coordinator's decision 1 of 2026-10-31): a run given guards by --only (a
   // selection, the attribution of a train, the part here) is counted by group 1 of guardRerun.tallyPattern, so with
