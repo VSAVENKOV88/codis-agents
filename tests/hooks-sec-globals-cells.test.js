@@ -7,7 +7,8 @@
 // so the hook must not stop at it), an empty --exec-path=, a working directory inside .git and --bare. (2) A terminal
 // option after other options leaves origin/HEAD and is allowed. (3) README "Known gaps" names every form left open
 // (owner 2026-10-21, answers 30-34): the shell grammar (F1-F6, F8), env with options (F9), exec, eval, $G, aliases and
-// functions of the profile, git branch -dr origin/HEAD, a push with an expansion.
+// functions of the profile, git branch -dr origin/HEAD, a push with an expansion. (4) The shell's prefixes before git
+// (p-noghost-e2): refused by the hook and not listed as open; the forms still open are allowed and listed.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -85,22 +86,46 @@ try {
   const gaps = m ? m[1].replace(/\s+/g, ' ') : '';
   ok('README has a section Known gaps', gaps.length > 0);
   for (const [cell, re] of [
-    ['F1 a leading reserved word ({, !, time, if/then, do)', /reserved word/],
-    ['F1 { git ...; }', /\{ git/], ['F1 ! git', /! git/], ['F1 time', /time \[-p\] git|time git/], ['F1 if ... then', /then git/], ['F1 do', /do git/],
-    ['F2 zsh modifiers (repeat, noglob, nocorrect, {git)', /repeat 1 git/], ['F2 noglob', /noglob git/], ['F2 nocorrect', /nocorrect git/], ['F2 {git', /\{git/],
+    ['F2 zsh repeat 1 git', /repeat 1 git/], ['F2 {git', /\{git/], ['command -p git', /`command -p git`/],
+    ['the shell prefixes judged for every rule of the hook (p-noghost-e2)', /prefixes of a command[^.]*are judged by every rule/],
     ['F3 a redirection before or between the words', /redirection/], ['F3 2>/dev/null git', /2>\/dev\/null git/], ['F3 &>', /&>\/dev\/null/],
     ['F4 a line continuation', /line continuation/],
     ['F5 $\'...\' with escapes', /\$'\\x73et-head'/], ['F5 $"..."', /\$"\.\.\."/],
     ['F6 backquotes', /backquotes/],
     ['F8 an expansion in the subcommand or its arguments', /expansion in the subcommand/], ['F8 $(...)', /\$\(printf set-head\)/],
     ['F9 env -i', /env -i/], ['F9 env -u', /env -u/],
-    ['exec', /`exec`/], ['eval', /`eval`/], ['builtin', /`builtin`/], ['$G in the place of the command', /\$G/],
+    ['exec', /`exec`/], ['eval', /`eval`/], ['$G in the place of the command', /\$G/],
     ['aliases and functions of the profile', /aliases and functions of the user's shell profile/],
     ['git branch -dr origin/HEAD', /git branch -dr origin\/HEAD/],
     ['a push with an expansion stays allowed', /git push origin "\$BRANCH"/],
     ['the second layer: task p-head2', /p-head2/], ['the shell grammar: task p-shell', /p-shell/],
     ['the table of global options, fail closed', /GIT_GLOBAL/],
   ]) ok(`Known gaps names ${cell}`, re.test(gaps));
+
+  // p-noghost-e2 (coordinator's decision A, 2026-10-31): the shell's prefixes of a command (CD_PREFIX of guard-bash.js:
+  // reserved words, command, builtin, noglob, nocorrect, time [-p]) are taken off before git for every rule, so these
+  // forms are refused and the lists of open forms (the wrappers and the lexer paragraphs) must not name them; the
+  // forms the hook still does not see as git (zsh repeat 1 git, {git ...}, command -p git) are allowed and named.
+  console.log('4. Shell prefixes before git: refused and not listed as open; the forms left open: allowed and listed');
+  const span = (from, to) => { const a = gaps.indexOf(from); const b = a < 0 ? -1 : gaps.indexOf(to, a); return a < 0 || b < 0 ? '' : gaps.slice(a, b); };
+  const open = span('The session hook reads the command line as written', 'pass it.') + ' ' + span('splits a line by its own small lexer', 'To be closed');
+  ok('README: the paragraphs of open wrappers and of the lexer are found', open.trim().length > 0 && /bash -c/.test(open) && /redirection/.test(open));
+  const sh = 'remote set-head origin feat';
+  for (const [form, cmd] of [
+    ['`command git push`', `command git ${sh}`], ['`builtin`', `builtin git ${sh}`],
+    ['`{ git ...; }`', `{ git ${sh}; }`], ['`! git`', `! git ${sh}`], ['`time [-p] git`', `time -p git ${sh}`], ['time git', `time git ${sh}`],
+    ['`if ...; then git`', `if true; then git ${sh}; fi`], ['then git', `if false; then :; elif true; then git ${sh}; fi`],
+    ['`do git`', `while false; do git ${sh}; done`], ['do git', `for i in 1; do git ${sh}; done`],
+    ['`noglob git`', `noglob git ${sh}`], ['`nocorrect git`', `nocorrect git ${sh}`], ['reserved word', `X=1 time env git ${sh}`],
+  ]) {
+    const w = decide(cmd, proj);
+    ok(`refused: ${cmd}`, refused(w), String(w));
+    ok(`README does not list ${form} as open`, !open.includes(form));
+  }
+  for (const [form, cmd] of [['`repeat 1 git`', `repeat 1 git ${sh}`], ['`{git ...}`', `{git ${sh}}`], ['`command -p git`', `command -p git ${sh}`]]) {
+    ok(`allowed (open): ${cmd}`, decide(cmd, proj) === null, String(decide(cmd, proj)));
+    ok(`README lists ${form} as open`, open.includes(form));
+  }
 } finally {
   fs.rmSync(dir, { recursive: true, force: true });
 }

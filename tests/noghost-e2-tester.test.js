@@ -178,6 +178,8 @@ console.log('R3b. README Known gaps names as open exactly the prefixes the hook 
     ['lexer', lexer, '`repeat 1 git`', `repeat 1 ${sh}`, pr],
     ['lexer', lexer, '`{git ...}`', `{${sh}}`, pr],
     ['train', train, '`command git commit`', 'command git commit -m x', wArc],
+    ['wrappers', wrappers, '`command -p git`', 'command -p git push origin main', pr],
+    ['train', train, '`command -p git commit`', 'command -p git commit -m x', wArc],
   ]) {
     const r = hk(cmd, cwd, hT), refused = typeof r === 'string' && !/^CRASH/.test(r), listed = text.includes(form);
     ok(`R3b. ${where}: ${form} - the hook ${refused ? 'refuses it' : 'allows it'}, so README ${refused ? 'must not list it as open' : 'lists it as open'}`, !/^CRASH/.test(String(r)) && refused !== listed, `refused=${refused} listed=${listed} ${r}`);
