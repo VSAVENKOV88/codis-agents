@@ -200,8 +200,25 @@ no('git commit -m x', p3, henv, ' (relative repoDir and sharedDir)');
 no(`cd ${p3} && git branch -D arc3`, T, henv, ' (relative repoDir and sharedDir)');
 process.chdir(cwd0);
 
+const readme0 = read(path.join(ROOT, 'README.md'));
+console.log('R1. review 1: git -C ~ names the home directory; shell prefixes before git');
+// finding 1: -C ~/<path> is the directory under HOME (as cd ~ above, --git-dir ~ and GIT_DIR ~), not <cwd>/~/<path>
+for (const c of ['git -C ~/wts/w-arc commit -m x', 'git -C ~/wts/w-arc merge t1', 'git -C ~/wts/w-arc reset --hard main', 'git -C ~/wts/w-arc update-ref HEAD main',
+  'git -C ~/main branch -f arc t1', 'git -C ~/main push . t1:arc', 'git -C ~ -C wts/w-arc commit -m x']) no(c, T, home);
+yes('git -C ~/wts/w-t1 commit -m x', wArc, home, ' (-C ~ into another worktree: its branch is judged, not the cwd\'s)');
+// the same line judges -C for the other refusals of the hook: the protected branch and a blanket add
+for (const c of ['git -C ~/main push origin main', 'git -C ~/main add -A']) {
+  const r = hook(c, T, home);
+  ok(`refused (not the train): ${c} (in .)`, typeof r === 'string' && !/^CRASH/.test(r) && !/train/.test(r), r);
+}
+// finding 3: the prefixes of a command (a group, time, if/then, !, a loop) do not hide the git after them
+for (const c of ['{ git commit -m x; }', 'time git commit -m x', 'time -p git commit -m x', 'if true; then git commit -m x; fi', '! git commit -m x',
+  'while false; do git commit -m x; done', 'if git merge t1; then true; fi', 'X=1 time git commit -m x']) no(c, wArc);
+for (const c of ['{ git commit -m x; }', 'time git commit -m x', 'if true; then git commit -m x; fi']) yes(c, wT1);
+ok('R1. Known gaps: git -C with an expansion (git -C "$WT", -C $(...)) is judged in the directory before it', /git -C "\$WT"/.test(readme0) && /-C \$\(/.test(readme0));
+
 console.log('D2. README "Known gaps" names what stays open');
-const readme = read(path.join(ROOT, 'README.md'));
+const readme = readme0;
 const gaps = readme.slice(readme.indexOf('## Known gaps'));
 ok('D2. Known gaps: cd with an expansion (cd "$WT", cd -, cd $(...)) is open for the refusal under a train', /under a train/.test(gaps) && /cd "\$WT"/.test(gaps) && /cd \$\(/.test(gaps));
 ok('D2. Known gaps: checkout --ignore-other-worktrees <arc> && git commit (judged before anything runs)', /--ignore-other-worktrees/.test(gaps));
