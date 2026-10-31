@@ -100,6 +100,8 @@ yes('git checkout -f arc');
 // ---- V: an option value is not an option ----
 no('git commit -m --dry-run');
 no('git merge -m --abort free');
+no('git commit --message --dry-run');   // the long form of the same value option (round 2)
+no('git merge --message --abort free');
 
 // ---- P: ALLOW_PROTECTED_PUSH=1 does not lift the refusal ----
 no('ALLOW_PROTECTED_PUSH=1 git commit -m x');
