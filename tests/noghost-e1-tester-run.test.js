@@ -107,6 +107,8 @@ put(path.join(wArc, 'sub', 'x.txt'), 'x\n');
   yes('git commit --dry-run -m x && git status');
   yes('git commit -am x --dry-run');
   yes('git commit --amend --dry-run');
+  yes('git commit --message=x --dry-run');   // a long option with = takes no next word: the dry run after it counts (mutant M14 survived without this)
+  yes('git commit --file=msg.txt --dry-run');
   yes('git commit --dry-run -m x', path.join(wArc, 'sub'));
   yes(`git -C ${wArc} commit --dry-run -m x`, wT1);
   no(`git -C ${wArc} commit -am x --message=y`, wT1);
