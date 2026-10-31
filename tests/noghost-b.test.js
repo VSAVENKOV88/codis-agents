@@ -29,6 +29,8 @@ const gitC = (cwd, ...a) => spawnSync('git', ['-C', cwd, '-c', 'user.email=t@exa
 const TALLY = '^TOTAL: (\\d+) total$';
 const RERUN = { command: 'cd {wt} && ./one.sh {name}', newRedPattern: '^X (\\S+)  \\(', tallyPattern: TALLY };
 const LOCALP = '^skipped \\(needs-font\\): \\d+ — (.+)$';
+// F3 (coordinator's decision 2026-10-31, variant Б): the single rerun is counted only with uncountedIsRed, not by the group
+const RERUN_ONE = Object.assign({}, RERUN, { uncountedIsRed: true });
 
 function partConfig() {
   const base = { repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s', guardCommand: 'x {wt}' };
@@ -48,13 +50,28 @@ function partConfig() {
   ok('B13. remoteRun.localPattern with a tallyPattern without a count group -> a config error', /guardRerun\.tallyPattern: .*capture group/.test(e), e);
   e = errs({ guardRerun: Object.assign({}, RERUN, { tallyPattern: '^TOTAL: ' }) });
   ok('B12/B13. no selection key: a tallyPattern without a group stays valid (a full run is not counted)', e === '', e);
+  // F3 (coordinator's decision 2026-10-31, variant Б): uncountedIsRed is its own key, a boolean that needs the count
+  e = errs({ guardRerun: Object.assign({}, RERUN, { uncountedIsRed: true, tallyPattern: '^TOTAL: ' }) });
+  ok('F3. uncountedIsRed true with a tallyPattern without a count group -> a config error naming the key', /guardRerun\.uncountedIsRed: .*capture group/.test(e), e);
+  e = errs({ guardRerun: Object.assign({}, RERUN, { uncountedIsRed: true, tallyPattern: '' }) });
+  ok('F3. uncountedIsRed true without tallyPattern -> a config error naming the key', /guardRerun\.uncountedIsRed: /.test(e), e);
+  e = errs({ guardRerun: Object.assign({}, RERUN, { uncountedIsRed: 'yes' }) });
+  ok('F3. uncountedIsRed is a boolean (expected boolean)', /guardRerun\.uncountedIsRed: expected boolean/.test(e), e);
+  e = errs({ guardRerun: Object.assign({}, RERUN, { uncountedIsRed: true }) });
+  ok('F3. uncountedIsRed true with a count group and no selection key -> no error', e === '', e);
+  e = errs({ guardRerun: Object.assign({}, RERUN, { tallyPattern: '^TOTAL: ' }) });
+  ok('F3. no uncountedIsRed and no selection key -> the key is not required (default false)', e === '', e);
   const schema = JSON.parse(read(path.join(ROOT, 'schemas', 'codis-agents.schema.json')));
   ok('docs: the schema of guardRerun.tallyPattern names the count group', /capture group/.test(schema.properties.guardRerun.properties.tallyPattern.description), schema.properties.guardRerun.properties.tallyPattern.description);
+  const uir = schema.properties.guardRerun.properties.uncountedIsRed || {};
+  ok('F3. docs: the schema has uncountedIsRed, a boolean that names the single rerun and the 69', uir.type === 'boolean' && /single rerun/.test(uir.description || '') && /69/.test(uir.description || ''), JSON.stringify(uir));
   const readme = read(path.join(ROOT, 'README.md'));
   const row = (k) => (readme.split('\n').find((l) => l.startsWith(`| \`${k}\``)) || '');
   ok('docs: README guardRerun names the count invariant (selected -> accounted for, else 69)', /accounted for/.test(row('guardRerun')) && /69/.test(row('guardRerun')), row('guardRerun'));
+  ok('F3. docs: README guardRerun names uncountedIsRed (the single rerun is counted only with it)', /uncountedIsRed/.test(row('guardRerun')), row('guardRerun'));
   const rules = read(path.join(ROOT, 'rules', 'multi-agent.md'));
   ok('docs: the rules name the count of a selection as an environment red', /accounted for fewer/.test(rules), '');
+  ok('F3. docs: the rules name uncountedIsRed as the switch of the single rerun count', /uncountedIsRed/.test(rules), '');
   const rc = read(path.join(ROOT, 'workflows', 'role-chain.js'));
   ok('ENV_RC[69] names a run that did not account for its selected guards', /69: '[^'\n]*did not account for its selected guards/.test(rc), (rc.match(/ {2}69: '[^\n]*/) || [''])[0]);
 }
@@ -93,7 +110,7 @@ function partRerunOne(TMP) {
   const run = (out) => {
     fs.writeFileSync(path.join(TMP, 'one.out'), out);
     fs.writeFileSync(log, 'X g/a-run.js  (1.0s, code 1)\nTOTAL: 1 total\n');
-    return G.rerun({ wt: w, log, rc: 1, cfg: RERUN, baseline: '', quarantine: '', readOnly: false, selected: null });
+    return G.rerun({ wt: w, log, rc: 1, cfg: RERUN_ONE, baseline: '', quarantine: '', readOnly: false, selected: null });
   };
   let r = run('TOTAL: 0 total\n');
   ok('B14. the single rerun exits 0 with "0 total" -> not flaky, exit 69, the log says why', r.rc === 69 && !r.flaky.length
@@ -113,9 +130,18 @@ function partRerunOne(TMP) {
   const log2 = path.join(TMP, 'guards-r14b.txt');
   fs.writeFileSync(path.join(TMP, 'one.out'), 'TOTAL: 0 total\n');
   fs.writeFileSync(log2, 'X g/a-run.js  (1.0s, code 1)\nX g/b-run.js  (1.0s, code 1)\nTOTAL: 2 total\n');
-  r = G.rerun({ wt: w2, log: log2, rc: 1, cfg: RERUN, baseline: '', quarantine: '', readOnly: false, selected: null });
+  r = G.rerun({ wt: w2, log: log2, rc: 1, cfg: RERUN_ONE, baseline: '', quarantine: '', readOnly: false, selected: null });
   ok('F1. a repeated red A and a single rerun B that accounts for 0 of 1 -> exit 1 (the red), not 69; A repeated, B not counted',
     r.rc === 1 && r.repeated.map((x) => x.name).join() === 'g/a-run.js' && r.uncounted.join() === 'g/b-run.js' && !r.flaky.length, `${r.rc} ${JSON.stringify(r)} ${read(log2)}`);
+  // F3: the group of tallyPattern alone does not count the single rerun: no uncountedIsRed -> "0 total" is green alone (flaky), as before B14
+  fs.writeFileSync(path.join(TMP, 'one.out'), 'TOTAL: 0 total\n');
+  fs.writeFileSync(log, 'X g/a-run.js  (1.0s, code 1)\nTOTAL: 1 total\n');
+  r = G.rerun({ wt: w, log, rc: 1, cfg: RERUN, baseline: '', quarantine: '', readOnly: false, selected: null });
+  ok('F3. a tallyPattern with a count group and no uncountedIsRed: a single rerun with "0 total" is flaky (exit 0), not counted',
+    r.rc === 0 && r.flaky.includes('g/a-run.js') && !r.uncounted.length, `${r.rc} ${JSON.stringify(r)} ${read(log)}`);
+  r = G.rerun({ wt: w, log, rc: 1, cfg: RERUN_ONE, baseline: '', quarantine: '', readOnly: false, selected: null });
+  ok('F3. the same with uncountedIsRed true: "0 total" -> exit 69, not flaky', r.rc === 69 && !r.flaky.length && r.uncounted.includes('g/a-run.js'),
+    `${r.rc} ${JSON.stringify(r)} ${read(log)}`);
 }
 
 // F2 (review a, round 1): the host reads the log of a selection (guards-<name>.select.txt) when the run has no full log
