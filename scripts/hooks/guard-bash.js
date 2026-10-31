@@ -146,6 +146,38 @@ const MOVES = {
   am: ['abort', 'quit', 'show-current-patch'],
 };
 const ARC_SUBS = new Set([...Object.keys(MOVES), 'reset', 'checkout', 'switch']);
+// The options of those subcommands that take a value (git-<cmd>(1): <arg> in the synopsis). The value is the next word
+// (-m --dry-run is a message, not an option) or the rest of its short word (-mtext); --name=<arg> takes nothing more.
+const VALUE_OPTS = {
+  commit: { short: 'mFCct', long: ['message', 'file', 'reuse-message', 'reedit-message', 'fixup', 'squash', 'author', 'date', 'cleanup', 'template', 'trailer', 'pathspec-from-file'] },
+  merge: { short: 'mFsX', long: ['message', 'file', 'into-name', 'strategy', 'strategy-option', 'cleanup'] },
+  rebase: { short: 'sXx', long: ['strategy', 'strategy-option', 'exec', 'onto'] },
+  'cherry-pick': { short: 'mX', long: ['mainline', 'strategy', 'strategy-option', 'cleanup'] },
+  revert: { short: 'mX', long: ['mainline', 'strategy', 'strategy-option', 'cleanup'] },
+  am: { short: '', long: ['directory', 'exclude', 'include', 'patch-format', 'whitespace'] },
+};
+// The long options of a subcommand as the words that name them (options before --; the words after -- are paths or
+// revisions), and its positional words. A value word is neither.
+function scanOpts(sub, args) {
+  const v = VALUE_OPTS[sub] || { short: '', long: [] };
+  const longs = [], pos = [];
+  for (let k = 0; k < args.length; k++) {
+    const a = args[k];
+    if (a === '--') { pos.push(...args.slice(k + 1)); break; }
+    if (a === '-' || !a.startsWith('-')) { pos.push(a); continue; }
+    if (a.startsWith('--')) {
+      longs.push(a);
+      if (!a.includes('=') && v.long.some((n) => longOpt(a, n))) k++;
+      continue;
+    }
+    for (let j = 1; j < a.length; j++) {
+      if (!v.short.includes(a[j])) continue;
+      if (j === a.length - 1) k++;
+      break;
+    }
+  }
+  return { longs, pos };
+}
 
 // git reset moves the branch only in its commit form, git reset [<mode>] [<commit>] (git-reset(1)); with paths (after
 // --, more than one word, --pathspec-from-file) or --patch it changes the index only, and without a commit it stays.
@@ -171,7 +203,8 @@ function forceCreated(sub, args) {
   for (let k = 0; k < args.length; k++) {
     const a = args[k];
     if (a === '--') break;
-    if (sub === 'switch' && a.startsWith('--') && longOpt(a, 'force-create')) return a.includes('=') ? a.slice(a.indexOf('=') + 1) : (args[k + 1] || '');
+    // --force is an exact option of its own (an alias of --discard-changes), not an abbreviation of --force-create
+    if (sub === 'switch' && a.startsWith('--') && a.split('=')[0] !== '--force' && longOpt(a, 'force-create')) return a.includes('=') ? a.slice(a.indexOf('=') + 1) : (args[k + 1] || '');
     if (a.startsWith('-') && !a.startsWith('--')) {
       const i = a.indexOf(letter);
       if (i > 0) return a.slice(i + 1) || args[k + 1] || '';
@@ -207,7 +240,7 @@ function judgeTrain(sub, args, dir, cfg) {
   let moves = false;
   if (sub === 'checkout' || sub === 'switch') moves = forceCreated(sub, args) === o.base;
   else {
-    const stays = sub === 'reset' ? !resetMoves(args, dir) : args.some((a) => MOVES[sub].some((n) => longOpt(a, n)));
+    const stays = sub === 'reset' ? !resetMoves(args, dir) : scanOpts(sub, args).longs.some((a) => MOVES[sub].some((n) => longOpt(a, n)));
     moves = !stays && currentBranch(dir) === `refs/heads/${o.base}`;
   }
   if (!moves) return null;
