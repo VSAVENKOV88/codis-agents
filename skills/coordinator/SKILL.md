@@ -40,7 +40,10 @@ one. For whatever the owner judges by the screen, show a mockup of all states be
    `train.result`) into the arc's worktree yourself; a stop `arc-red` or `coordinator` halts the queue - fix the arc or
    decide, then `node "${CLAUDE_PLUGIN_ROOT}/scripts/train.js" resume` (`train.js status` shows the halt, the lock and the
    queue); a stop `environment` of the train keeps its entry: free the machine, `train.js resume` if halted, relaunch the
-   task alone. Without the key: `done` -> merge the branch into the integration branch yourself and resolve conflicts. After merging
+   task alone. A service change of yours into the arc (a config, a backlog line) while a train runs rides as a
+   passenger - a service branch from the arc head, its commit, `train.js ride --task <svc> --branch <svc> --head <full
+   sha> --base <arc>` in the background - or waits until `train.js status` says `lock: free`: the session hook refuses
+   a commit or a reset of the arc under a live train. Without the key: `done` -> merge the branch into the integration branch yourself and resolve conflicts. After merging
    the second of parallel branches that touched the same files, run the new and touched guards of both tasks, then
    the full guard run. Each task already had its one full guard run, so after any other merge run a full guard run only at a seam - when the merged branch and another branch merged since the last full run touched the same files; otherwise the CI of the branch decides. Before removing a worktree or a data directory, show the owner the output of
    `node "${CLAUDE_PLUGIN_ROOT}/scripts/wt-remove-check.js" <path>` (ignored data with sizes, the path in code,

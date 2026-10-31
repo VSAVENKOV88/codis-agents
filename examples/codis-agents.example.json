@@ -6,6 +6,7 @@
   "guardCommand": "cd {wt}/server && npm run guards -- --all --concurrency {jobs} --concurrency-file {limitFile}",
   "guardCommandLegacy": "cd {wt}/server && npm run guards -- --all --concurrency {jobs}",
   "guardAdaptiveProbe": { "file": "server/tools/guards.js", "contains": "--concurrency-file" },
+  "guardSubsetCommand": "cd {wt}/server && npm run guards -- --all {onlyArgs} --concurrency {jobs} --concurrency-file {limitFile}",
   "guardRerun": {
     "command": "cd {wt}/server && npm run guards -- --all --only {name}",
     "newRedPattern": "^FAIL (\\S+) ",
@@ -16,6 +17,7 @@
   "remoteRun": {
     "command": "cd {wt}/server && npm run guards -- --all --concurrency {jobs} --concurrency-file {limitFile} --no-font",
     "commandLegacy": "cd {wt}/server && npm run guards -- --all --concurrency {jobs} --no-font",
+    "subsetCommand": "cd {wt}/server && npm run guards -- --all {onlyArgs} --concurrency {jobs} --concurrency-file {limitFile} --no-font",
     "deps": [
       { "files": ["server/package.json", "server/package-lock.json"], "install": "npm ci", "link": { "server/node_modules": "node_modules" } },
       { "files": ["client/package.json", "client/package-lock.json"], "install": "npm ci", "link": { "client/node_modules": "node_modules" } }

@@ -55,7 +55,7 @@ const SPEC = {
   // default below (resolve()); with it both members are required and replace the default.
   guardExclusive: ['object', null],
   // The selection of a task's guards (scripts/guards-select.js, guards-all.sh --select): what a guard file is, which
-  // guards always run, the subset command.
+  // guards always run, the subset command ({jobs} and {limitFile} as guardCommand, else counted as the whole budget).
   guardFiles: ['string[]', ['*-run.js', '*-run.mjs', '*-run.cjs']],
   guardAlways: ['string[]', []],
   guardSubsetCommand: ['string', ''],
@@ -126,8 +126,9 @@ const STAND_REQUIRED = ['project', 'up', 'deploy', 'reset', 'status', 'down'];
 // worktree before the run (medium slot); localPattern - a regexp over the runner's log lines, group 1 a ", "-separated
 // list of guards the runner did not run: they run on this machine after it in a heavy slot by localCommand ({wt},
 // {onlyArgs}; default guardSubsetCommand), and the worse exit code is the run's; subsetCommand - the selection of a task's
-// guards on the runner (guards-all.sh --select; {wt}, {onlyArgs}, needs guardSubsetCommand): without it the selection
-// runs in a heavy slot of this machine, which is not a fallback of an unreachable runner (that stays 69).
+// guards on the runner (guards-all.sh --select; {wt}, {onlyArgs}, needs guardSubsetCommand; {jobs} and {limitFile} as
+// in command, else it is counted as the whole budget and selections go one at a time - config check notes it): without
+// it the selection runs in a heavy slot of this machine, which is not a fallback of an unreachable runner (that stays 69).
 const REMOTE_RUN_SPEC = { command: ['string', ''], commandLegacy: ['string', ''], subsetCommand: ['string', ''], deps: ['any', []], prepare: ['string[]', []], localPattern: ['string', ''], localCommand: ['string', ''] };
 const DEP_SPEC = { files: ['string[]', undefined], install: ['string', undefined], link: ['object', undefined] };
 // A path inside the worktree or the cache directory: relative, no .., no empty or . segment, no quote or newline.
@@ -472,6 +473,13 @@ function resolve(raw, opts = {}) {
     // {jobs} is optional: a runner that sets its own workers is counted as the whole budget (scripts/guards-all.sh).
   }
   if (c.guardSubsetCommand && !c.guardSubsetCommand.includes('{onlyArgs}')) errors.push('guardSubsetCommand: must contain {onlyArgs} (one --only <guard> per selected guard)');
+  // A subset command that drops both {jobs} and {limitFile} while its full command has {jobs} is counted as the whole budget (scripts/guards-all.sh):
+  // its selections go one at a time. A note, not an error - an error refuses every slot of the project (slots.zsh).
+  const wholeNote = (k, sub, fk, full) => {
+    if (sub && full && full.includes('{jobs}') && !sub.includes('{jobs}') && !sub.includes('{limitFile}')) warnings.push(`note: ${k} has no {jobs} (and no {limitFile}) while ${fk} has {jobs}: a selection is counted as the whole worker budget (slots.jobsAlone) and starts only when no other heavy job runs, so selections go one at a time; give it {jobs} and {limitFile} as ${fk} has`);
+  };
+  wholeNote('guardSubsetCommand', c.guardSubsetCommand, 'guardCommand', c.guardCommand);
+  if (c.remoteRun) wholeNote('remoteRun.subsetCommand', c.remoteRun.subsetCommand, 'remoteRun.command', c.remoteRun.command);
   if (!c.guardFiles.length) errors.push('guardFiles: expected at least one glob');
   if (c.guardCommandLegacy && c.guardCommandLegacy.includes('{limitFile}')) errors.push('guardCommandLegacy: must not contain {limitFile} (legacy runners take a fixed worker count)');
   return { config: c, errors, warnings, machineMissing: m.missing };

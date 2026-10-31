@@ -1,5 +1,5 @@
 {
-  "description": "codis-agents: refuses `git add -A` / `git add .` and pushes to protected branches or of protected tags without ALLOW_PROTECTED_PUSH=1. Active only in projects with .claude/codis-agents.json.",
+  "description": "codis-agents: refuses `git add -A` / `git add .`, pushes to protected branches or of protected tags without ALLOW_PROTECTED_PUSH=1, and a commit, a reset or any other move of the arc branch (update-ref, branch -D / -f / -m, a push or fetch into it, worktree add -B; after a literal cd in the line too) while a live train holds the train lock that names it (wait for the train: train.js status). Active only in projects with .claude/codis-agents.json.",
   "hooks": {
     "PreToolUse": [
       {

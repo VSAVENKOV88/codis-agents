@@ -13,7 +13,10 @@
 //                            green-unmerged | conflict | red | seam (the attribution of a red train, below). A result is
 //                            written before its queue entry is removed.
 //   lock/                    the dispatcher's lock: mkdir is atomic (macOS has no flock(1)); lock/owner.json names the
-//                            holder {pid, child, pgid, train, wt, since}. A holder whose pid, child and process group (any
+//                            holder {pid, child, pgid, train, base, wt, since}; base = the arc branch the train moves,
+//                            written as soon as the train has chosen it, before the arc head is read (the session hook
+//                            refuses a commit or a reset of that branch while the holder lives: scripts/hooks/guard-bash.js;
+//                            the reading of the lock is scripts/train-lock.js). A holder whose pid, child and process group (any
 //                            process of it, unless it is the waiter's own group) are all gone is dead:
 //                            the next dispatcher breaks its lock under lock.break (a second mkdir lock naming its pid in
 //                            lock.break/owner.json, the holder rechecked inside, so a fresh lock is never removed; a break
@@ -71,7 +74,7 @@
 //          -> waits for the result of this entry, dispatching trains while it waits; prints the result JSON, or
 //             {verdict: environment, halted: true, reason} while the queue is halted (the entry stays); exit 0;
 //             no entry and no result -> exit 66
-//        train.js status                      -> the halt, the lock and the queue
+//        train.js status                      -> the halt, the lock (its train and arc) and the queue
 //        train.js resume                      -> the coordinator: removes the halt
 // The project config is found as config.js finds it (CODIS_AGENTS_CONFIG first); no config -> exit 78.
 const fs = require('fs');
@@ -80,6 +83,7 @@ const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const C = require('./config');
 const GR = require('./guards-result');
+const TL = require('./train-lock');
 
 const H = __dirname;
 const STALE_MS = 60000;
@@ -101,16 +105,10 @@ const writeAtomic = (f, data) => {
   fs.writeFileSync(t, typeof data === 'string' ? data : JSON.stringify(data, null, 1) + '\n');
   fs.renameSync(t, f);
 };
-const alive = (pid) => { if (!Number.isInteger(pid) || pid <= 0) return false; try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
-// The process group of a pid (ps -o pgid=; node has no getpgid), or 0.
-const pgidOf = (pid) => { const r = spawnSync('ps', ['-o', 'pgid=', '-p', String(pid)], { encoding: 'utf8' }); const n = Number((r.stdout || '').trim()); return Number.isInteger(n) && n > 1 ? n : 0; };
-const OWN_PGID = pgidOf(process.pid);
-// A group lives while any of its processes does (kill(-pgid, 0)). The guard run of a dispatcher is not detached, so it
-// stays in the dispatcher's group: when the dispatcher and its zsh are killed, an orphaned guard worker still holds the
-// lock (coordinator's decision for c3). A group that is our own is no evidence: a waiter started from the same shell job
-// (a test, one terminal) shares it with the dead holder, and it would never let go.
-const groupAlive = (g) => { if (!Number.isInteger(g) || g <= 1 || g === OWN_PGID) return false; try { process.kill(-g, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
-const holderAlive = (o) => !!o && (alive(o.pid) || alive(o.child) || groupAlive(o.pgid));
+// The liveness of a holder - pid, child, process group (coordinator's decision for c3) - is one rule with the session
+// hook's: scripts/train-lock.js.
+const { alive, holderAlive } = TL;
+const OWN_PGID = TL.ownPgid();
 const ageMs = (f) => { try { return Date.now() - fs.statSync(f).mtimeMs; } catch { return 0; } };
 const sleep = (ms) => new Promise((z) => setTimeout(z, ms));
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\n');
@@ -132,7 +130,9 @@ const git = (P, cwd, args, opts = {}) => {
 const rev = (P, ref) => { const r = git(P, P.c.repoDir, ['rev-parse', '--verify', '-q', `${ref}^{commit}`]); return r.rc === 0 ? r.out : ''; };
 
 const TASK = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-const SHA = /^[0-9a-f]{40}$/;
+// A full object name: 40 hex digits (SHA-1), or 64 in a SHA-256 repository (git init --object-format=sha256), as the
+// chain's FULL_SHA (workflows/role-chain.js).
+const SHA = /^([0-9a-f]{40}|[0-9a-f]{64})$/;
 const branchOk = (b) => typeof b === 'string' && !b.startsWith('-') && spawnSync('git', ['check-ref-format', `refs/heads/${b}`]).status === 0;
 const resultFile = (P, task, head) => path.join(P.RES, `${task}-${head}.json`);
 
@@ -148,7 +148,7 @@ function entries(P) {
 }
 
 // ---- the lock ----
-const ownerFile = (P) => path.join(P.LOCK, 'owner.json');
+const ownerFile = (P) => TL.ownerFile(P.LOCK);
 function setOwner(P, extra) {
   const o = Object.assign(readJ(ownerFile(P)) || Object.assign({ pid: process.pid, host: os.hostname(), since: new Date().toISOString() }, OWN_PGID ? { pgid: OWN_PGID } : {}), extra);
   writeAtomic(ownerFile(P), o);
@@ -267,6 +267,8 @@ async function departure(P) {
   const waiting = all.filter((e) => !fs.existsSync(resultFile(P, e.task, e.head)));
   if (!waiting.length) return { departed: false, empty: true, note: 'the queue is empty: nothing leaves' };
   const base = waiting[0].base;
+  // the lock names the arc before its head is read below: from now on the session hook refuses to move it
+  setOwner(P, { train: id, base });
   const pass = waiting.filter((e) => e.base === base);
   const lines = [];
   const record = (o) => writeAtomic(path.join(P.TR, `${id}.json`), Object.assign({ id, base, at: new Date().toISOString() }, o));
@@ -547,6 +549,13 @@ function args(list) {
   return o;
 }
 
+// A head that is not a full sha is refused with its own text and the value as given (p-noghost-d F3/F4): the usage line
+// alone hid an abbreviated head of a role ("3fb1d6dd", 2026-10-30). The chain resolves an abbreviation before the ride
+// (workflows/role-chain.js fullHead); the queue, the result file and the attribution are keyed by the full sha.
+const headOk = (h) => {
+  if (!SHA.test(h || '')) die(64, `head is not a full sha: ${h === undefined ? '(none)' : h === '' ? "''" : h} (40 hex digits, or 64 in a SHA-256 repository; git rev-parse <commit>)`);
+};
+
 // The verdict of a result or a halt as the exit code of `ride` (the chain's wait step returns only the exit code; the
 // workflow reads no files, so the code is the verdict and the details stay in the result file).
 const RIDE_RC = { green: 0, 'green-unmerged': 10, red: 11, seam: 12, conflict: 13, 'arc-red': 14, coordinator: 15 };
@@ -555,7 +564,8 @@ const rideRc = (o) => (o && Object.prototype.hasOwnProperty.call(RIDE_RC, o.verd
 
 // enqueue: {decided, result} | {queued, existing?}; exits on a refusal (65) or a queue that cannot be written (74).
 function enqueue(P, a, USAGE) {
-  if (!TASK.test(a.task || '') || !SHA.test(a.head || '') || !branchOk(a.branch) || !branchOk(a.base)) die(64, `${USAGE}\n  (task: letters, digits . _ -; head: a full sha; branch and base: branch names)`);
+  headOk(a.head);
+  if (!TASK.test(a.task || '') || !branchOk(a.branch) || !branchOk(a.base)) die(64, `${USAGE}\n  (task: letters, digits . _ -; head: a full sha; branch and base: branch names)`);
   // Refused before the queue (coordinator's decisions for c3): the dispatcher moves the arc branch, so the base is a
   // branch of the repository (a commit cannot be moved) and never a protected one (rule push: merges into a protected
   // branch are the owner's call).
@@ -621,7 +631,8 @@ async function main() {
   }
   if (cmd === 'run') { out(await dispatch(P)); return 0; }
   if (cmd === 'await') {
-    if (!TASK.test(a.task || '') || !SHA.test(a.head || '')) die(64, USAGE);
+    headOk(a.head);
+    if (!TASK.test(a.task || '')) die(64, USAGE);
     const r = await awaitEntry(P, a.task, a.head, poll);
     if (!r) die(66, `no queue entry and no result for ${a.task} ${a.head}`);
     out(r); return 0;
@@ -629,7 +640,7 @@ async function main() {
   if (cmd === 'status') {
     const h = readJ(P.HALT), o = readJ(ownerFile(P));
     console.log(h ? `halt: ${h.reason} (since ${h.at}); the coordinator lifts it with train.js resume` : 'halt: none');
-    console.log(o ? `lock: train ${o.train || '-'} by pid ${o.pid} (${holderAlive(o) ? 'alive' : 'dead'}) since ${o.since}` : 'lock: free');
+    console.log(o ? `lock: train ${o.train || '-'}${o.base ? ` for arc ${o.base}` : ''} by pid ${o.pid} (${holderAlive(o) ? 'alive' : 'dead'}) since ${o.since}` : 'lock: free');
     const q = entries(P);
     console.log(`queue: ${q.length}`);
     for (const e of q) console.log(`  ${e.task} ${e.branch} ${e.head} -> ${e.base} (since ${e.enqueuedAt})`);
