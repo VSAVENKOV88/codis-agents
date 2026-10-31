@@ -29,7 +29,7 @@ const gitC = (cwd, ...a) => spawnSync('git', ['-C', cwd, '-c', 'user.email=t@exa
 const TALLY = '^TOTAL: (\\d+) total$';
 const RERUN = { command: 'cd {wt} && ./one.sh {name}', newRedPattern: '^X (\\S+)  \\(', tallyPattern: TALLY };
 const LOCALP = '^skipped \\(needs-font\\): \\d+ — (.+)$';
-// F3 (coordinator's decision 2026-10-31, variant Б): the single rerun is counted only with uncountedIsRed, not by the group
+// F3 (coordinator's decision 2026-10-31, variant B): the single rerun is counted only with uncountedIsRed, not by the group
 const RERUN_ONE = Object.assign({}, RERUN, { uncountedIsRed: true });
 
 function partConfig() {
@@ -50,7 +50,7 @@ function partConfig() {
   ok('B13. remoteRun.localPattern with a tallyPattern without a count group -> a config error', /guardRerun\.tallyPattern: .*capture group/.test(e), e);
   e = errs({ guardRerun: Object.assign({}, RERUN, { tallyPattern: '^TOTAL: ' }) });
   ok('B12/B13. no selection key: a tallyPattern without a group stays valid (a full run is not counted)', e === '', e);
-  // F3 (coordinator's decision 2026-10-31, variant Б): uncountedIsRed is its own key, a boolean that needs the count
+  // F3 (coordinator's decision 2026-10-31, variant B): uncountedIsRed is its own key, a boolean that needs the count
   e = errs({ guardRerun: Object.assign({}, RERUN, { uncountedIsRed: true, tallyPattern: '^TOTAL: ' }) });
   ok('F3. uncountedIsRed true with a tallyPattern without a count group -> a config error naming the key', /guardRerun\.uncountedIsRed: .*capture group/.test(e), e);
   e = errs({ guardRerun: Object.assign({}, RERUN, { uncountedIsRed: true, tallyPattern: '' }) });
