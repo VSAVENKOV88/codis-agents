@@ -408,7 +408,17 @@ review findings.
   `train.js ride --task <svc> --branch <svc> --head <full sha> --base <arc>` in the background (or `enqueue`, then
   `await`: there is no daemon, a waiter dispatches). A dead holder
   is no train; `ALLOW_PROTECTED_PUSH=1` does not lift the refusal; the dispatcher moves the arc from inside node
-  (`spawnSync`), which the hook never sees, and `node train.js ...` is not git.
+  (`spawnSync`), which the hook never sees, and `node train.js ...` is not git. `git reset HEAD` (any mode) moves
+  nothing and is allowed. From any directory of the project's repository the commands that name the arc are refused too
+  (p-noghost-e2): `update-ref refs/heads/<arc>` (and `update-ref HEAD` in its worktree), `branch -f/-m/-M/-c/-C/-d/-D`
+  with the arc among the names (`branch -m <new>` in its worktree), `push` into this repository (`.`, a path,
+  `file://`, a remote whose URL is it) with the arc as a destination, `fetch` / `pull` with the arc as a destination
+  (`heads/<arc>`, `refs/heads/<arc>`, any case, a glob that covers it, `--stdin`), `worktree add -B <arc>`,
+  `rebase <upstream> <arc>`; with `--git-dir` / `--work-tree` / `GIT_DIR` / `GIT_WORK_TREE` on the project's
+  repository the current branch is taken to be the arc. The hook follows a literal `cd` / `pushd` / `popd` in the line
+  (relative, `~`, `CDPATH`, subshells and pipelines as both bash and zsh run them). It reads the train of the config
+  the session names and of the config found from the command's directory, so a session of another project meets it as
+  well; a relative `repoDir` / `sharedDir` is relative to the project root (the parent of `.claude/`).
 - **Post-checks**: after the tester and each reviewer, `role-diff-check.js` compares the worktree with the previous
   role's HEAD; any change a role may not make stops the chain. This, not a tool list, keeps product code out of their
   reach: a hook on Edit/Write would miss `sed -i`, `python -c`, a heredoc or a `git checkout`, while the post-check
@@ -572,6 +582,21 @@ fallback to another slot directory: a second directory would be a second queue t
 - With the protected branches known, glob refspecs (`'refs/heads/*:refs/heads/*'`, `'refs/tags/*:refs/tags/*'`) and
   the matching refspec `:` name no branch or tag the session hook can check, so it lets them through; `pre-push` (while it runs) judges
   every ref they expand to (owner 2026-10-21: backlog).
+
+- The refusal to move the arc under a train reads the line with the same lexer as a push, so the same grammar and
+  wrappers pass it as for a push (`command git commit`, `bash -c`, `eval`, aliases, a redirection before the words).
+  Open besides: a `cd` with an expansion (`cd "$WT"`, `cd $(git rev-parse --show-toplevel)`, `cd -` to the directory of
+  the session before the line, `cd ~user`, `pushd +1`) is not followed and the command after it is not judged for
+  the train (owner's decision 1 for p-noghost-e: a refusal there would stop every `cd "$X" && git commit` of a
+  programmer for the time of each train); `CDPATH` is read from the hook's environment, not the shell's; `git checkout
+  --ignore-other-worktrees <arc> && git commit` (and `git worktree add <path> <arc>`, `git symbolic-ref HEAD
+  refs/heads/<arc>` before a commit in the same line) is judged before anything runs, while the branch of that
+  directory is not the arc yet; a push to this repository through the default remote with no repository on the line,
+  a fetch through refspecs configured for the remote (`remote.<name>.fetch`), URL rewrites (`url.<base>.insteadOf`),
+  subcommands outside the measured table (`filter-branch`, `subtree`, `replace`); commits outside Claude Code
+  (a terminal, scripts) are not seen: there is no git hook for this (decision 7 for p-noghost). The hook judges at the
+  moment of the call: a train that leaves between the check and the command is not seen, and the last line stays the
+  train's own compare-and-swap of the arc head (`arc-moved`, no verdict, the passengers ride again).
 
 - `guardBaseline` must name a flat file `{"<guard name>": "<reason>"}`: `config.js check` validates only that the path
   is relative, and `guards-result.js` refuses any value that is not a string ("the reason of ... is not a string"), so
