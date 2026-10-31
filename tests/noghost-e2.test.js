@@ -137,6 +137,9 @@ for (const c of [`(cd ${wArc} && true); git commit -m x`, `cd ${wArc} | true; gi
   `pushd ${wArc} >/dev/null; popd; git commit -m x`, `pushd ${wT1}; pushd ${wArc}; popd; git commit -m x`, `cd ${wArc} && cd - ; git status`,
   'cd "$WT" && git commit -m x', 'cd $(git rev-parse --show-toplevel) && git commit -m x', 'cd - && git commit -m x', `cd ${wArc} && git status`]) yes(c, wT1);
 
+yes(`cd ${wArc}/no-such-dir; git commit -m x`, wT1);   // the cd fails: the commit runs in w-t1
+yes('cd "$WT" && git commit -m x', wArc, henv, ' (cd with an expansion: not followed, not judged - decision 1, Known gaps)');
+
 console.log('C7. --git-dir / --work-tree / GIT_DIR / GIT_WORK_TREE naming the project\'s repository');
 const gd = path.join(main, '.git'), gdArc = path.join(main, '.git', 'worktrees', 'w-arc');
 for (const c of [`git --git-dir=${gd} --work-tree=${wArc} commit -m x`, `GIT_DIR=${gdArc} git commit -m x`, `GIT_WORK_TREE=${wArc} GIT_DIR=${gdArc} git commit -m x`,
