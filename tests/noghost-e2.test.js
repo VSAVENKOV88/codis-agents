@@ -108,6 +108,14 @@ yes(`git -C ${other} push . arc:arc2`);    // . is the other repository
 yes(`git -C ${other} fetch ${main} main:arc2`);   // fetch into the other repository
 lockAt(LOCK, LIVE);
 no('git push . main:arc');   // the arc checked out (git itself refuses; refused all the same)
+// a bare refspec of a push names its destination too: git-push(1) "If :<dst> is omitted, the same ref as <src> will be
+// updated" (tester round 1, cells P1-P10); HEAD (and @) is the current branch of the repository that sends
+for (const c of [`git push ${main} HEAD`, `git push ${main} @`, `git push ${main} heads/arc`, `git push ${main} 'refs/heads/a*'`,
+  `git push ${main} t9 arc`, `git push --force ${main} +HEAD`]) no(c, other, henv, ' (from another repository on arc)');
+no(`GIT_DIR=${other}/.git git push ${main} arc`, T);
+for (const c of [`git push ${main} t9`, `git push ${main} HEAD:t9`, `git push ${main} ^arc`]) yes(c, other, henv, ' (from another repository on arc)');
+// inside the project's repository a bare name pushes a branch onto itself: nothing moves
+for (const c of ['git push . HEAD', `git push ${main} arc`, `git push ${main} @`, 'git push self HEAD']) yes(c, wArc);
 
 console.log('C4. checkout -B / switch -C / worktree add -B / rebase <up> <arc> from another directory');
 lockAt(LOCK, LIVE2);
