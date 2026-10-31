@@ -61,6 +61,8 @@ function partConfig() {
   ok('F3. uncountedIsRed true with a count group and no selection key -> no error', e === '', e);
   e = errs({ guardRerun: Object.assign({}, RERUN, { tallyPattern: '^TOTAL: ' }) });
   ok('F3. no uncountedIsRed and no selection key -> the key is not required (default false)', e === '', e);
+  const rr = C.resolve(Object.assign({}, base, { guardRerun: RERUN })).config.guardRerun;
+  ok('F3. the resolved guardRerun has uncountedIsRed false when the key is absent (the default is off)', rr.uncountedIsRed === false, JSON.stringify(rr));
   const schema = JSON.parse(read(path.join(ROOT, 'schemas', 'codis-agents.schema.json')));
   ok('docs: the schema of guardRerun.tallyPattern names the count group', /capture group/.test(schema.properties.guardRerun.properties.tallyPattern.description), schema.properties.guardRerun.properties.tallyPattern.description);
   const uir = schema.properties.guardRerun.properties.uncountedIsRed || {};
