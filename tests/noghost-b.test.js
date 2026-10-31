@@ -41,6 +41,9 @@ function partConfig() {
   ok('B13. guardSubsetCommand with an empty tallyPattern -> a config error', /guardRerun\.tallyPattern: required/.test(e), e);
   e = errs({ guardSubsetCommand: 'x {wt} {onlyArgs}', guardRerun: RERUN });
   ok('B13. guardSubsetCommand with a tallyPattern with a count group -> no error', e === '', e);
+  // F4 (review a, round 1): a bad regexp is named once, as a bad regular expression, not also as a missing capture group
+  e = errs({ guardSubsetCommand: 'x {wt} {onlyArgs}', guardRerun: Object.assign({}, RERUN, { tallyPattern: '^TOTAL: (\\d+' }) });
+  ok('F4. a bad tallyPattern with guardSubsetCommand -> one error (bad regular expression), no capture-group error', /guardRerun\.tallyPattern: bad regular expression/.test(e) && !/capture group/.test(e), e);
   e = errs({ remoteRun: { command: 'y {wt}', deps: [], localPattern: LOCALP, localCommand: 'z {wt} {onlyArgs}' }, guardRerun: Object.assign({}, RERUN, { tallyPattern: '^TOTAL: ' }) });
   ok('B13. remoteRun.localPattern with a tallyPattern without a count group -> a config error', /guardRerun\.tallyPattern: .*capture group/.test(e), e);
   e = errs({ guardRerun: Object.assign({}, RERUN, { tallyPattern: '^TOTAL: ' }) });
@@ -102,6 +105,35 @@ function partRerunOne(TMP) {
   r = G.rerun({ wt: w, log: (fs.writeFileSync(log, 'X g/a-run.js  (1.0s, code 1)\nTOTAL: 1 total\n'), fs.writeFileSync(path.join(TMP, 'one.out'), 'TOTAL: 0 total\n'), log), rc: 1,
     cfg: Object.assign({}, RERUN, { tallyPattern: '^TOTAL: (?:\\d+) total$' }), baseline: '', quarantine: '', readOnly: false, selected: null });
   ok('B14. a tallyPattern without a count group (no selection key) -> the single rerun is not counted (as before)', r.rc === 0 && r.flaky.includes('g/a-run.js'), `${r.rc} ${read(log)}`);
+  // F1 (review a, round 1): a real repeated red A and a single rerun of B that accounts for 0 of 1 -> the code of the red
+  // (1), not the environment (69): B is not counted, A is still a regression in the log
+  const w2 = path.join(TMP, 'r14b');
+  fs.mkdirSync(w2, { recursive: true });
+  fs.writeFileSync(path.join(w2, 'one.sh'), `#!/bin/sh\nif [ "$1" = "g/a-run.js" ]; then exit 1; fi\ncat "${TMP}/one.out"\nexit 0\n`, { mode: 0o755 });
+  const log2 = path.join(TMP, 'guards-r14b.txt');
+  fs.writeFileSync(path.join(TMP, 'one.out'), 'TOTAL: 0 total\n');
+  fs.writeFileSync(log2, 'X g/a-run.js  (1.0s, code 1)\nX g/b-run.js  (1.0s, code 1)\nTOTAL: 2 total\n');
+  r = G.rerun({ wt: w2, log: log2, rc: 1, cfg: RERUN, baseline: '', quarantine: '', readOnly: false, selected: null });
+  ok('F1. a repeated red A and a single rerun B that accounts for 0 of 1 -> exit 1 (the red), not 69; A repeated, B not counted',
+    r.rc === 1 && r.repeated.map((x) => x.name).join() === 'g/a-run.js' && r.uncounted.join() === 'g/b-run.js' && !r.flaky.length, `${r.rc} ${JSON.stringify(r)} ${read(log2)}`);
+}
+
+// F2 (review a, round 1): the host reads the log of a selection (guards-<name>.select.txt) when the run has no full log
+function partFetch(TMP) {
+  const H = require('../scripts/guards-remote-host');
+  const root = path.join(TMP, 'host');
+  const dir = path.join(root, 'runs', 'sx');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'run.json'), JSON.stringify({ id: 'R1' }));
+  fs.writeFileSync(path.join(dir, 'rc'), JSON.stringify({ rc: 0 }));
+  fs.writeFileSync(path.join(dir, 'guards-sx.select.txt'), 'SELECTED LOG\nTOTAL: 1 total\n');
+  fs.writeFileSync(path.join(dir, 'out.txt'), 'workers: 2\n');
+  const f = H.OPS.fetch(H.layout({ root }), { name: 'sx', id: 'R1' });
+  ok('F2. the host fetch of a selection reads guards-<name>.select.txt (no full log): the log, no rerun log, the workers',
+    f.log === 'SELECTED LOG\nTOTAL: 1 total\n' && f.rerun === null && f.rc === 0 && f.workers === 2, JSON.stringify(f));
+  fs.writeFileSync(path.join(dir, 'guards-sx.txt'), 'FULL LOG\n');
+  const g = H.OPS.fetch(H.layout({ root }), { name: 'sx', id: 'R1' });
+  ok('F2. a full log, when there is one, is read and the selection log is not', g.log === 'FULL LOG\n', JSON.stringify(g));
 }
 
 const fakeBin = (bin) => {
@@ -270,6 +302,7 @@ part('count', partCount);
 const TMP = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'noghost-b-')));
 try {
   part('single rerun', () => partRerunOne(TMP));
+  part('fetch of a selection log', () => partFetch(TMP));
   if (!(has('zsh') && has('git'))) skip('guards-all.sh end to end', 'zsh or git not found');
   else {
     fs.mkdirSync(path.join(TMP, 'l')); fs.mkdirSync(path.join(TMP, 'r'));
