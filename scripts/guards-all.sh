@@ -66,16 +66,20 @@
 #   selection mode with these guards instead of the diff's - the attribution of a red train (scripts/train.js) runs the
 #   repeated new reds of the train on "arc head + passenger" so. An empty list: "nothing selected", exit 0; a file that
 #   is not a JSON array of names: exit 64.
-# usage: guards-all.sh [--force] [--main-checkout] [--local] [--no-quarantine] [--quarantine-read-only] [--select <base> | --guards <names file>] <worktree>   (a name under worktreeRoot, or a path) -> log in <sharedDir>/guards-<name>.txt (.select.txt)
+# Priority (--priority; scripts/train.js passes it for the full run of a train and for its attribution): the ticket of
+#   this run in the heavy queue is ahead of every waiter without it (slots.zsh, SLOT_PRIORITY=1); trains among
+#   themselves keep the order of arrival; nothing running is stopped. Only this flag sets it, never the name of the
+#   worktree or the run. On the remote runner the flag does not travel yet: the run queues there by its number.
+# usage: guards-all.sh [--force] [--main-checkout] [--local] [--no-quarantine] [--quarantine-read-only] [--priority] [--select <base> | --guards <names file>] <worktree>   (a name under worktreeRoot, or a path) -> log in <sharedDir>/guards-<name>.txt (.select.txt)
 #   A worktree directly under worktreeRoot (by name or by path) logs as guards-<name>.txt; any other path as
 #   guards-<basename>-<cksum of its resolved path>.txt, so two worktrees with the same basename never share a log and
 #   its reuse record.
 H=${0:A:h}
-FORCE=0 LOCAL=0 NOQ=0 QRO= MAINOK=() SELECT= SELBASE= SELFILE= SELTMP= GUARDS= TPL= ONLY=; typeset -a POS
-USAGE="usage: guards-all.sh [--force] [--main-checkout] [--local] [--no-quarantine] [--quarantine-read-only] [--select <base> | --guards <names file> | --selected <names file>] <worktree name or path>"
+FORCE=0 LOCAL=0 NOQ=0 PRIO=0 QRO= MAINOK=() SELECT= SELBASE= SELFILE= SELTMP= GUARDS= TPL= ONLY=; typeset -a POS
+USAGE="usage: guards-all.sh [--force] [--main-checkout] [--local] [--no-quarantine] [--quarantine-read-only] [--priority] [--select <base> | --guards <names file> | --selected <names file>] <worktree name or path>"
 while (( $# )); do
   case $1 in
-    --force) FORCE=1;; --local) LOCAL=1;; --no-quarantine) NOQ=1;; --quarantine-read-only) QRO=ro;; --main-checkout) MAINOK=(--main-checkout);;
+    --force) FORCE=1;; --local) LOCAL=1;; --no-quarantine) NOQ=1;; --quarantine-read-only) QRO=ro;; --priority) PRIO=1;; --main-checkout) MAINOK=(--main-checkout);;
     --select) [[ -n $2 ]] || { print -u2 -r -- "$USAGE"; exit 64; }; SELECT=1 SELBASE=$2; shift;;
     --guards) [[ -n $2 ]] || { print -u2 -r -- "$USAGE"; exit 64; }; SELECT=1 GUARDS=${2:A}; shift;;
     # the guards a selection runs, a JSON array (guards-select.js --names-out): the runner's run of a selection
@@ -181,7 +185,7 @@ RCF=$(_slot_tmp guardsrc) || { print -u2 "guards-all: no temporary file in ${TMP
 trap 'rm -f $RCF ${SELTMP:+$SELFILE}' EXIT
 while true; do
   : > $RCF
-  SLOT_KIND=$kind SLOT_RETRY_RC=75 SLOT_LABEL="guards-all $NAME" slot_run heavy zsh -c '
+  SLOT_KIND=$kind SLOT_RETRY_RC=75 SLOT_PRIORITY=$PRIO SLOT_LABEL="guards-all $NAME" slot_run heavy zsh -c '
     source "$1"; WT="$2"; OUT="$3"; CMD="$4"; mode="$5"; RCF="$6"; GR="$7"; RERUN="$8"; BASELINE="$9"; QFILE="${10}"; QRO="${11}"; SELFILE="${12}"; LPAT="${13}"; TPL="${14}"; ONLY="${15}"
     cd "$WT" || exit 1
     t0=$EPOCHSECONDS said=0

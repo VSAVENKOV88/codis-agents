@@ -139,7 +139,7 @@ const heavyBlocking = (ps) => ps.filter((p) => !['diff', 'left', 'post', 'run'].
     const env = Object.assign({}, process.env, { PATH: bin + path.delimiter + process.env.PATH, CODIS_AGENTS_CONFIG: cfgFile, SLOTS_DIR: path.join(TMP, 'slots'),
       SLOT_LEGACY_LOCK: '', SLOT_POLL: '0.2', SLOT_SAY: '1', SLOT_THIRD_WINDOW: '1', SLOT_HIST_GAP: '2', SLOT_OS: 'darwin', SLOT_HEAVY_N: '1', TMPDIR: path.join(TMP, 'tmp') });
     for (const k of ['GUARDS_EXCLUSIVE_LOCK', 'SLOT_JOURNAL', 'SLOT_MEDIUM_N', 'SLOT_TOTAL_MAX', 'GUARDS_JOBS_ALONE', 'GUARDS_JOBS_SHARED', 'SLOT_EXCL_TOOLS',
-      'SLOT_PATH', 'SLOT_LABEL', 'SLOT_KIND', 'SLOT_RETRY_RC', 'SLOT_SWAP_MIN_MB', 'SLOT_THIRD_FREE_PCT', 'SLOT_THIRD_SWAP_GROW_MB', 'SLOT_PROC', 'GUARDS_EXCL_GLOB', 'GUARDS_EXCL_MARKER']) delete env[k];
+      'SLOT_PATH', 'SLOT_LABEL', 'SLOT_KIND', 'SLOT_RETRY_RC', 'SLOT_PRIORITY', 'SLOT_SWAP_MIN_MB', 'SLOT_THIRD_FREE_PCT', 'SLOT_THIRD_SWAP_GROW_MB', 'SLOT_PROC', 'GUARDS_EXCL_GLOB', 'GUARDS_EXCL_MARKER']) delete env[k];
     const ws = (...a) => { const r = spawnSync(process.execPath, [path.join(SCRIPTS, 'wait-step.js'), ...a], { env, encoding: 'utf8', timeout: 60000 });
       try { return JSON.parse(r.stdout); } catch { return { raw: r.stdout + r.stderr }; } };
     const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
