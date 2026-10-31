@@ -98,6 +98,7 @@ put(path.join(wArc, 'sub', 'x.txt'), 'x\n');
   no('git reset --soft HEAD~1');
   no('git reset --mixed HEAD~1');
   yes('git reset HEAD~1 -- f.txt');
+  yes('git reset HEAD~1 f.txt');   // two words with no --: the first is the tree-ish, f.txt a path (measured, git 2.50: HEAD stays)
   yes('git reset -p HEAD~1');
 
   // ---- X: a dry run and a commit ----
