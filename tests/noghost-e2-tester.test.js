@@ -122,5 +122,67 @@ git(T, 'init', '-q', '-b', 't9', o2); git(o2, 'config', 'core.hooksPath', '/dev/
 for (const c of ['git push p HEAD', 'git push p @', 'git push p t9', 'git push p +HEAD']) yes(c, o2);
 no('git push p HEAD arc2', o2);
 
+console.log('R3. review 1 (round 3): git -C ~/<path> in every form, the shell\'s prefixes before git');
+lockOn('arc');
+const hEnv = (h) => Object.assign({}, henv, { HOME: h });
+const hk = (c, d, env) => { try { return decide({ tool_name: 'Bash', tool_input: { command: c }, cwd: d }, env); } catch (x) { return 'CRASH ' + x.message; } };
+const noH = (c, d, env) => { const r = hk(c, d, env); ok(`refused under the train: ${rel(c)} (in ${path.relative(T, d) || '.'}, HOME ${rel(env.HOME || '-')})`, typeof r === 'string' && /holds the train lock/.test(r), r); };
+const yesH = (c, d, env) => { const r = hk(c, d, env); ok(`allowed under the train: ${rel(c)} (in ${path.relative(T, d) || '.'}, HOME ${rel(env.HOME || '-')})`, r === null, r); };
+const hT = hEnv(T);
+// -C ~ to the arc's worktree through a slash, a subdirectory, a symlink, . and .., two -C, after a cd, with assignments
+for (const c of ['git -C ~/wts/w-arc/ commit -m x', 'git -C ~/wts/w-arc/sub commit -m x', 'git -C ~/link commit -m x',
+  'git -C ~/./wts/w-arc commit -m x', 'git -C ~/wts/../wts/w-arc merge t1', 'git -C ~/wts -C w-arc commit -m x',
+  'cd /tmp && git -C ~/wts/w-arc commit -m x', 'X=1 git -C ~/wts/w-arc commit -m x', 'env X=1 git -C ~/wts/w-arc commit -m x',
+  'time git -C ~/wts/w-arc commit -m x', '{ git -C ~/wts/w-arc merge t1; }']) noH(c, T, hT);
+// -C ~ to the project with the other commands that name the arc (C1, C3, C4) and a --git-dir relative to it
+for (const c of ['git -C ~/main update-ref refs/heads/arc t1', 'git -C ~/main fetch . t1:arc', 'git -C ~/main worktree add ../x -B arc',
+  'git -C ~/main rebase main arc', 'git -C ~/main checkout -B arc', 'git -C ~/wts/w-t1 checkout -B arc',
+  'git -C ~ --git-dir=main/.git branch -f arc t1']) noH(c, T, hT);
+noH('git -C ~ commit -m x', T, hEnv(wArc));   // a bare ~ is HOME itself
+// what -C ~ must not catch: another worktree, a branch that is not the arc, ~user (open: Known gaps), no HOME
+for (const c of ['git -C ~/wts/w-t1 commit -m x', 'git -C ~/main branch -f t1 main', 'git -C ~nobody/wts/w-arc commit -m x']) yesH(c, T, hT);
+yesH('git -C ~/wts/w-arc commit -m x', T, { PATH: process.env.PATH });   // no HOME: nothing to expand, no crash
+// prefixes before git in the arc's worktree: every reserved word and modifier of CD_PREFIX, nested, mixed with assignments
+for (const c of ['if false; then :; elif true; then git commit -m x; fi', 'if false; then :; else git commit -m x; fi',
+  'until true; do git commit -m x; done', 'for i in 1; do git commit -m x; done', 'builtin git commit -m x', 'command git commit -m x',
+  'noglob git commit -m x', 'nocorrect git commit -m x', '{ ! time git commit -m x; }', 'if ! git commit -m x; then :; fi',
+  '! X=1 git commit -m x', 'time X=1 git commit -m x', 'time env X=1 git commit -m x', 'time -p git -C ~/wts/w-arc commit -m x']) noH(c, wArc, hT);
+for (const c of ['if false; then :; elif true; then git commit -m x; fi', 'command git commit -m x', 'builtin git commit -m x',
+  '{ ! time git commit -m x; }', '! git status', 'time git log']) yesH(c, wT1, hT);
+
+console.log('R3b. README Known gaps names as open exactly the prefixes the hook does not judge (living spec)');
+{
+  // a project without a train: the push rule and the set-head rule go through the same judge
+  const pr = path.join(T, 'r3p'); fs.mkdirSync(pr);
+  git(pr, 'init', '-q', '-b', 'main'); put(path.join(pr, '.gitignore'), '.claude/\n'); git(pr, 'add', '.gitignore'); git(pr, 'commit', '-q', '-m', 'b'); git(pr, 'branch', 'feat');
+  put(path.join(pr, '.claude', 'codis-agents.json'), JSON.stringify({ repoDir: pr, worktreeRoot: T, sharedDir: path.join(T, 'r3sh'), protectedBranches: ['main'], protectedTagPattern: '^v[0-9]' }));
+  const readme = fs.readFileSync(path.join(__dirname, '..', 'README.md'), 'utf8');
+  const gaps = readme.slice(readme.indexOf('## Known gaps')).replace(/\s+/g, ' ');
+  // the three places that list forms passing the session hook
+  const span = (from, to) => { const a = gaps.indexOf(from); const b = a < 0 ? -1 : gaps.indexOf(to, a); return a < 0 || b < 0 ? '' : gaps.slice(a, b); };
+  const wrappers = span('The session hook reads the command line as written', 'pass it.');
+  const lexer = span('splits a line by its own small lexer', 'To be closed');
+  const train = span('The refusal to move the arc under a train', ');');   // "... wrappers pass it as for a push (<forms>);"
+  ok('R3b. README: the three lists of open forms are found', wrappers && lexer && train, [wrappers.length, lexer.length, train.length].join(','));
+  const sh = 'git remote set-head origin feat';
+  for (const [where, text, form, cmd, cwd] of [
+    ['wrappers', wrappers, '`command git push`', 'command git push origin main', pr],
+    ['wrappers', wrappers, '`builtin`', 'builtin git push origin main', pr],
+    ['lexer', lexer, '`{ git ...; }`', `{ ${sh}; }`, pr],
+    ['lexer', lexer, '`! git`', `! ${sh}`, pr],
+    ['lexer', lexer, '`time [-p] git`', `time -p ${sh}`, pr],
+    ['lexer', lexer, '`if ...; then git`', `if true; then ${sh}; fi`, pr],
+    ['lexer', lexer, '`do git`', `while false; do ${sh}; done`, pr],
+    ['lexer', lexer, '`noglob git`', `noglob ${sh}`, pr],
+    ['lexer', lexer, '`nocorrect git`', `nocorrect ${sh}`, pr],
+    ['lexer', lexer, '`repeat 1 git`', `repeat 1 ${sh}`, pr],
+    ['lexer', lexer, '`{git ...}`', `{${sh}}`, pr],
+    ['train', train, '`command git commit`', 'command git commit -m x', wArc],
+  ]) {
+    const r = hk(cmd, cwd, hT), refused = typeof r === 'string' && !/^CRASH/.test(r), listed = text.includes(form);
+    ok(`R3b. ${where}: ${form} - the hook ${refused ? 'refuses it' : 'allows it'}, so README ${refused ? 'must not list it as open' : 'lists it as open'}`, !/^CRASH/.test(String(r)) && refused !== listed, `refused=${refused} listed=${listed} ${r}`);
+  }
+}
+
 fs.rmSync(T, { recursive: true, force: true });
 done();
