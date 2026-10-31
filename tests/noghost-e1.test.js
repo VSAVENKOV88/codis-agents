@@ -164,7 +164,8 @@ async function run(script, task, resolve) {
   for (const c of ['git commit -m x', 'git commit --amend --no-edit', 'git status && git commit -m x', 'git commit -qam x']) no(c);   // B1
   for (const c of ['git merge t1', 'git merge --ff-only refs/runs/train/20261030-155647439-1174', 'git pull', 'git pull . t1']) no(c);   // B2
   for (const c of ['git rebase main', 'git cherry-pick t1', 'git revert --no-edit HEAD', 'git am p.patch', 'git merge --continue', 'git cherry-pick --continue']) no(c);   // B3
-  for (const c of ['git reset --hard main', 'git reset main', 'git reset --soft HEAD', 'git reset -q --keep main']) no(c);   // B4
+  for (const c of ['git reset --hard main', 'git reset main', 'git reset -q --keep main']) no(c);   // B4
+  yes('git reset --soft HEAD');   // B4: a reset to HEAD itself does not move the branch (p-noghost-e2, finding 2 of the review of e1)
   for (const c of ['git reset -- f.txt', 'git reset', 'git reset --hard', 'git reset main -- f.txt', 'git reset f.txt', 'git reset -p', 'git reset -p main', 'git reset --patch main']) yes(c);   // B4: --patch changes the index only
   for (const c of ['git checkout -B arc main', 'git switch -C arc main', 'git switch --force-create=arc main', 'git checkout -qB arc main']) no(c);   // B5
   for (const c of ['git status', 'git log --oneline', 'git diff', 'git add f.txt', 'git stash', 'git commit --dry-run -m x', 'git merge --abort',
