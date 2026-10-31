@@ -113,6 +113,9 @@ no('git push . main:arc');   // the arc checked out (git itself refuses; refused
 for (const c of [`git push ${main} HEAD`, `git push ${main} @`, `git push ${main} heads/arc`, `git push ${main} 'refs/heads/a*'`,
   `git push ${main} t9 arc`, `git push --force ${main} +HEAD`]) no(c, other, henv, ' (from another repository on arc)');
 no(`GIT_DIR=${other}/.git git push ${main} arc`, T);
+// a push with GIT_DIR is refused by the push rule unless ALLOW_PROTECTED_PUSH=1, which lifts none of the train's refusals
+no(`ALLOW_PROTECTED_PUSH=1 GIT_DIR=${other}/.git git push ${main} HEAD`, T);   // HEAD of a repository named by GIT_DIR: not read, closed
+yes(`ALLOW_PROTECTED_PUSH=1 GIT_DIR=${main}/.git git push ${main} arc`, other);   // the sending repository is the project's: onto itself
 for (const c of [`git push ${main} t9`, `git push ${main} HEAD:t9`, `git push ${main} ^arc`]) yes(c, other, henv, ' (from another repository on arc)');
 // inside the project's repository a bare name pushes a branch onto itself: nothing moves
 for (const c of ['git push . HEAD', `git push ${main} arc`, `git push ${main} @`, 'git push self HEAD']) yes(c, wArc);
