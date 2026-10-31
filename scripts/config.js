@@ -21,6 +21,11 @@
 //        config.js migrate [file] [--write] -> the older machine keys of the project config moved into the machine
 //                                         file: shown, or written with --write; the project config is never edited
 //                                         (the keys to remove are named); two values - exit 1, nothing written
+//        config.js smoke <worktree> <guard> [<guard of the part here>] [--main-checkout]
+//                                       -> one guard on every path that narrows a guard command to named guards (the
+//                                          selection here, the runner's selection, the part here of a remote run): red
+//                                          (exit 1) on a config error or a path that ran 0 of it; 78 on the main working
+//                                          copy (scripts/config-smoke.js; heavy slots - run it in the background)
 //
 // The machine file (owner 2026-10-21, U2a): settings of the machine shared by every project on it - slot counts and
 // their lock directory, the swap and disk floors, the limit of chains with acceptance in Docker, the coordinator's
@@ -755,6 +760,7 @@ module.exports = { find, load, resolve, placeholderErrors, FILLS, migrate, branc
 if (require.main === module) {
   const [cmd, ...rest] = process.argv.slice(2);
   if (cmd === 'migrate' && rest.some((a) => a.startsWith('--') && a !== '--write')) { console.error('usage: config.js migrate [file] [--write]'); process.exit(64); }
+  if (cmd === 'smoke') process.exit(require('./config-smoke').smoke(rest));
   if (cmd === 'path' && rest[0] === '--from') {
     if (!rest[1]) { console.error('usage: config.js path --from <dir>'); process.exit(64); }
     const env = Object.assign({}, process.env); delete env.CLAUDE_PROJECT_DIR;

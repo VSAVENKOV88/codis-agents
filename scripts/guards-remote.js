@@ -58,6 +58,9 @@ const G = require('./guards-result');
 const { sshOpts, sshE } = require('./corpus-sync');
 const { Stop } = require('./corpus-remote');
 
+// The head of the section of the part here in the log of a remote run: what comes before it is the runner's log
+// (config-smoke.js counts the runner's selection on that part alone).
+const PART_MARK = '\n==== on this machine: ';
 const env = (msg) => new Stop(69, `environment: ${msg}`);
 const say = (s) => process.stdout.write(s + '\n');
 const sleepS = (s) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, s * 1000);
@@ -259,15 +262,8 @@ function run(c, wt, log, name, qfile, opts) {
     }
     if (names.length) {
       const base = log.endsWith('.txt') ? log.slice(0, -4) : log, local = `${base}.local.txt`;
-      const cmd = x.localCommand.replace(/\{wt\}/g, () => q(wt)).replace(/\{onlyArgs\}/g, () => names.map((n) => `--only ${q(n)}`).join(' '));
       say(`on this machine: ${names.length} guard(s) the runner does not run - ${names.join(', ')}`);
-      const fd = fs.openSync(local, 'w');
-      let lr;
-      try {
-        lr = spawnSync('zsh', [path.join(__dirname, 'heavy.sh'), 'zsh', '-c', cmd], { cwd: wt, stdio: ['ignore', fd, fd],
-          env: Object.assign({}, process.env, { SLOT_LABEL: `guards-all ${name} part here` }) });
-      } finally { fs.closeSync(fd); }
-      let lrc = lr.status === null ? 1 : lr.status;
+      let lrc = partHere(x, wt, local, names, `guards-all ${name} part here`);
       // selected N - accounted for N: the part here that ran fewer of its guards is the environment (69), whatever the
       // runner's code - a run without its part here is no verdict (p-noghost B1, B3); no rerun then
       const counted = G.countCheck({ text: fs.readFileSync(local, 'utf8'), cfg: c.guardRerun || {}, selected: names, localPattern: x.localPattern, label: 'the part here' });
@@ -279,7 +275,7 @@ function run(c, wt, log, name, qfile, opts) {
         if (same && lres.quarantineHash !== undefined) qhash = lres.quarantineHash;
       }
       const final = !counted.ok ? 69 : rc !== 0 ? rc : lrc;
-      const section = `\n==== on this machine: guards the runner does not run (remoteRun.localPattern): ${names.join(', ')} ====\n${fs.readFileSync(local, 'utf8')}`
+      const section = `${PART_MARK}guards the runner does not run (remoteRun.localPattern): ${names.join(', ')} ====\n${fs.readFileSync(local, 'utf8')}`
         + (counted.ok ? `\npart here: exit ${lrc}; the run's exit ${final} (the worse of the runner's ${rc} and this part's ${lrc})\n`
           : `\npart here: not counted (the environment); the run's exit 69 whatever the runner's ${rc}\n`);
       fs.appendFileSync(log, section);
@@ -292,6 +288,20 @@ function run(c, wt, log, name, qfile, opts) {
     if (e instanceof Stop && e.code === 69) return fail(e);
     throw e;
   }
+}
+
+// The part here: remoteRun.localCommand with {wt} and {onlyArgs} (--only <guard> per name) filled in - nothing else, a
+// name is never read as a placeholder - run with zsh in a heavy slot of this machine, in the worktree, its output into the
+// file local. -> its exit code (1 when it was killed). Also the part here of config.js smoke (scripts/config-smoke.js).
+function partHere(x, wt, local, names, label) {
+  const cmd = x.localCommand.replace(/\{wt\}/g, () => q(wt)).replace(/\{onlyArgs\}/g, () => names.map((n) => `--only ${q(n)}`).join(' '));
+  const fd = fs.openSync(local, 'w');
+  let lr;
+  try {
+    lr = spawnSync('zsh', [path.join(__dirname, 'heavy.sh'), 'zsh', '-c', cmd], { cwd: wt, stdio: ['ignore', fd, fd],
+      env: Object.assign({}, process.env, { SLOT_LABEL: label }) });
+  } finally { fs.closeSync(fd); }
+  return lr.status === null ? 1 : lr.status;
 }
 
 function main(argv) {
@@ -322,7 +332,7 @@ function main(argv) {
   return run(l.config, wt, log, name, qfile, { subset, selected });
 }
 
-module.exports = { run, runnerConfig, sameQuarantine, attachedOther, BUNDLE, VERSION };
+module.exports = { run, partHere, PART_MARK, runnerConfig, sameQuarantine, attachedOther, BUNDLE, VERSION };
 
 if (require.main === module) {
   try { process.exitCode = main(process.argv.slice(2)); } catch (e) {

@@ -44,7 +44,7 @@ function project(TMP, put0) {
   const put = (f, s, mode) => { fs.mkdirSync(path.dirname(path.join(main, f)), { recursive: true }); fs.writeFileSync(path.join(main, f), s); if (mode) fs.chmodSync(path.join(main, f), mode); };
   // each runner prints the log of its own file and exits with the code of its own file
   for (const r of ['full', 'sub', 'local']) put(`${r}.sh`, `#!/bin/sh\necho "$*" >> "${TMP}/${r}.count"\ncat "${TMP}/${r}.log"\nexit $(cat "${TMP}/${r}.rc" 2>/dev/null || echo 0)\n`, 0o755);
-  put('one.sh', `#!/bin/sh\necho "$1" >> "${TMP}/one.count"\necho "TOTAL: 1 total"\nexit 0\n`, 0o755);
+  put('one.sh', `#!/bin/sh\necho "$1" >> "${TMP}/one.count"\necho "TOTAL: 1 total"\nexit $(cat "${TMP}/one.rc" 2>/dev/null || echo 0)\n`, 0o755);
   put('g/a-run.js', '// a\n'); put('g/b-run.js', '// b\n');
   if (put0) put0(put);
   gitC(main, 'init', '-q', '-b', 'trunk'); gitC(main, 'add', '.'); gitC(main, 'commit', '-q', '-m', 'project');
@@ -56,6 +56,7 @@ function project(TMP, put0) {
       fs.writeFileSync(path.join(TMP, `${r}.rc`), String((o[r] && o[r][0]) || 0));
       fs.rmSync(path.join(TMP, `${r}.count`), { force: true });
     }
+    fs.writeFileSync(path.join(TMP, 'one.rc'), String(o.one || 0));   // the single rerun of a new red: red alone with 1
     fs.rmSync(path.join(TMP, 'one.count'), { force: true });
   };
   const count = (n) => (read(path.join(TMP, `${n}.count`)) || '').split('\n').filter(Boolean);
@@ -128,7 +129,7 @@ function partLocal(TMP) {
   P.set({ sub: [0, 'no tally here\n'] });
   x = smoke(P.xw, 'g/a-run.js');
   ok('D5. a selection here without a tally line -> red', x.status === 1 && /^RED +selection here/m.test(x.all), `${x.status} ${x.all}`);
-  P.set({ sub: [1, 'X g/a-run.js  (1.0s, code 1)\nTOTAL: 1 total\n'] });
+  P.set({ sub: [1, 'X g/a-run.js  (1.0s, code 1)\nTOTAL: 1 total\n'], one: 1 });
   x = smoke(P.xw, 'g/a-run.js');
   ok('D5. the one guard red on the selection here -> red with its exit code (pick a green guard)', x.status === 1 && /^RED +selection here .*exit 1/m.test(x.all), `${x.status} ${x.all}`);
 

@@ -152,7 +152,7 @@ read.
 | `scripts/detect.js` | the facts of a repository for onboarding, read only, as JSON: git (default branch from origin/HEAD, main/master, tag shapes, remotes without passwords, hooksPath), GitHub workflow files, stacks by manifest, venvs, compose services (`docker compose config`, no daemon), ignored data with sizes, what an earlier onboarding left; the contract is in its header |
 | `scripts/env-check.js` | free disk and swap headroom for the preconditions, floors `minFreeDiskGB` and `swapMinMB` of the machine file (the command line wins; 0 - off, said in notes); `--worktree <dir>`: the task worktree is not the main working copy |
 | `scripts/git-hooks/` | `pre-push` (protected branches and tags) and `pre-commit` (cloud conflict copies, extra checks) |
-| `scripts/config.js` | finds, validates and resolves the project config |
+| `scripts/config.js` | finds, validates and resolves the project config; `config.js smoke` runs one guard on every path that narrows a guard command (`scripts/config-smoke.js`) |
 | `examples/`, `schemas/` | an example project config and its JSON schema |
 
 ## Install
@@ -211,6 +211,25 @@ are the shell's, and a shell brace group takes a blank (awk `'{ print }'`, not `
 never the filled string, so a worktree path or a guard name with braces is fine. `guards-select.js --command` fills
 only `{wt}` and `{onlyArgs}` and refuses (78) a `guardSubsetCommand` with `{jobs}` or `{limitFile}`: run
 `guards-all.sh --select` instead.
+
+The check reads templates; whether every path really runs a guard is checked by the smoke run, which takes heavy slots
+(run it in the background):
+
+```sh
+node <plugin>/scripts/config.js smoke <worktree> <guard> [<guard of the part here>]
+```
+
+It runs the one guard on every path that narrows a guard command to named guards: the selection here
+(`guardSubsetCommand`, `guards-all.sh --local --guards`), the runner's selection (`remoteRun.subsetCommand`, only with
+`remote` in the machine file; committed HEAD only) and the part here of a remote run (`remoteRun.localCommand` with
+`remoteRun.localPattern`, the second guard when given - pick one the runner skips). A path is `ok` when it exits 0 and
+its tally (group 1 of `guardRerun.tallyPattern`) counts its guard; `RED` on 0, no tally line or another exit code
+(pick a guard that is green there); `none` when the config has no such path. The full commands (`guardCommand`,
+`remoteRun.command`) have no `{onlyArgs}` and get the static check only. Exit 1 on a config error or a red path, 78 on
+the main working copy (`--main-checkout` as for `guards-all.sh`). The selection paths write the worktree's
+`guards-<name>.select.txt`, the part here `guards-<name>.smoke-local.txt`. A project config whose guard commands
+change is committed only after a green smoke (rules, "A project config's guard commands change only after a green
+smoke"); to try an edited copy first, point `CODIS_AGENTS_CONFIG` at it.
 
 | key | meaning |
 |---|---|
