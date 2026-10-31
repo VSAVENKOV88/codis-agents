@@ -8,6 +8,8 @@
 //       +<arc>, -f, and through a remote of the other repository whose URL is the project (a path, a relative path,
 //       file://, /var for /private/var). Inside the project's repository git push . <arc> pushes the arc onto itself
 //       and stays allowed.
+//   P2  C3 (round 2): the sender named by -C or a literal cd, --repo, --delete / :<arc>, letter case; the project's own
+//       worktree as the sender pushes onto itself (allowed); a sender on another branch: HEAD / @ is that branch
 //   B   C2: git branch -f <arc> with one name (resets it to HEAD), branch -C <arc> with one name (copies the current
 //       branch over it), an option after the names (branch <arc> main -f: git's options parser takes it), -- before
 //       the name; branch -c <new> in the arc's worktree copies and moves nothing; -dr / --remotes delete
@@ -106,6 +108,19 @@ console.log('R. F2: reset forms');
 lockOn('arc');
 for (const c of ['git reset @~1', 'git reset HEAD^', 'git reset --hard ORIG_HEAD']) no(c, wArc);
 for (const c of ['git reset --keep HEAD', 'git reset HEAD -- b.txt', 'git reset -q HEAD']) yes(c, wArc);
+
+console.log('P2. C3 (round 2): the sending repository named by -C or a literal cd, --repo, a delete, letter case, a branch that is not the arc');
+lockOn('arc2');
+// the other repository on arc2 sends; the session sits in a worktree of the project (w-t1)
+for (const c of [`git -C ${other} push p arc2`, `git -C ${other} push p HEAD`, `cd ${other} && git push p arc2`, `cd ${other} && git push p @`,
+  `git -C ${other} push --repo=${main} arc2`, `git -C ${other} push --delete p arc2`, `git -C ${other} push p :arc2`, `git -C ${other} push p ARC2`]) no(c, wT1);
+// the project's own worktree named by -C or cd sends a bare name onto itself: nothing moves
+for (const c of [`git -C ${wT1} push . arc2`, `cd ${wT1} && git push ${main} arc2`, `git -C ${wArc} push . HEAD`]) yes(c, other);
+// a sender on another branch: HEAD / @ is that branch, not the arc
+const o2 = path.join(T, 'o2');
+git(T, 'init', '-q', '-b', 't9', o2); git(o2, 'config', 'core.hooksPath', '/dev/null'); git(o2, 'commit', '-q', '--allow-empty', '-m', 'o'); git(o2, 'remote', 'add', 'p', main);
+for (const c of ['git push p HEAD', 'git push p @', 'git push p t9', 'git push p +HEAD']) yes(c, o2);
+no('git push p HEAD arc2', o2);
 
 fs.rmSync(T, { recursive: true, force: true });
 done();
