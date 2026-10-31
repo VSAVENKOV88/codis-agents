@@ -213,7 +213,9 @@ console.log('R4. round 4 (decision A): the line "Closed" of README Known gaps ag
   const forms = [(c) => `{ ${c}; }`, (c) => `! ${c}`, (c) => `if true; then ${c}; fi`, (c) => `if false; then :; elif true; then ${c}; fi`,
     (c) => `if false; then :; else ${c}; fi`, (c) => `while false; do ${c}; done`, (c) => `until true; do ${c}; done`, (c) => `for i in 1; do ${c}; done`,
     (c) => `time ${c}`, (c) => `time -p ${c}`, (c) => `command ${c}`, (c) => `builtin ${c}`, (c) => `noglob ${c}`, (c) => `nocorrect ${c}`,
-    (c) => `X=1 time env ${c}`, (c) => `Y=1 time Z=2 env W=3 ${c}`, (c) => `{ ! time ${c}; }`, (c) => `command command ${c}`, (c) => `! ! ${c}`];
+    (c) => `X=1 time env ${c}`, (c) => `Y=1 time Z=2 env W=3 ${c}`, (c) => `{ ! time ${c}; }`, (c) => `command command ${c}`, (c) => `! ! ${c}`,
+    // git as the condition right after the reserved word (elif / while / until / if themselves before git; mutant N3)
+    (c) => `if ${c}; then :; fi`, (c) => `if false; then :; elif ${c}; then :; fi`, (c) => `while ${c}; do :; done`, (c) => `until ${c}; do :; done`];
   for (const r of rules) {
     ok(`R4. control: the bare command is refused: ${r}`, typeof hk(r, pr, hT) === 'string', hk(r, pr, hT));
     for (const f of forms) { const c = f(r), w = hk(c, pr, hT); ok(`R4. refused: ${c}`, typeof w === 'string' && !/^CRASH/.test(w), w); }
