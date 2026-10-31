@@ -393,7 +393,12 @@ function judgeTrain(sub, args, dir, repoPaths, ctx) {
 // -> null (allowed) or a refusal reason.
 function judge(words, ctx) {
   let i = 0, allow = ctx.env.ALLOW_PROTECTED_PUSH === '1';
-  while (i < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i])) { if (words[i] === 'ALLOW_PROTECTED_PUSH=1') allow = true; i++; }
+  // The shell's prefixes of a command ({, time [-p], if/then, !, a loop: CD_PREFIX, as before a cd) and assignments.
+  while (i < words.length && (CD_PREFIX.has(words[i]) || /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i]))) {
+    if (words[i] === 'ALLOW_PROTECTED_PUSH=1') allow = true;
+    if (words[i] === 'time' && words[i + 1] === '-p') i++;
+    i++;
+  }
   if (words[i] === 'env') { i++; while (i < words.length && /=/.test(words[i])) { if (words[i] === 'ALLOW_PROTECTED_PUSH=1') allow = true; i++; } }
   if (!(words[i] === 'git' || /\/git$/.test(words[i] || ''))) return null;
   // Paths that name the repository instead of -C: assignments before git (also through env), the line's own, the hook's.
@@ -405,7 +410,7 @@ function judge(words, ctx) {
     if (eq > 0 ? GIT_GLOBAL.exitEq.has(name) : GIT_GLOBAL.exit.has(o)) return null;   // git runs nothing after it
     if (eq < 0 && GIT_GLOBAL.value.has(o)) {
       if (o === '--git-dir' || o === '--work-tree') repoPaths.push(words[i + 1] || '');
-      if (o === '-C') dir = path.resolve(dir, words[i + 1] || '');
+      if (o === '-C') dir = path.resolve(dir, (words[i + 1] || '').replace(/^~(?=\/|$)/, ctx.env.HOME || '~'));   // ~ and ~/ as for cd
       i += 2;
     } else if (eq > 0 && GIT_GLOBAL.eq.has(name)) {
       if (name === '--git-dir' || name === '--work-tree') repoPaths.push(o.slice(eq + 1));

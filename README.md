@@ -585,8 +585,12 @@ fallback to another slot directory: a second directory would be a second queue t
   every ref they expand to (owner 2026-10-21: backlog).
 
 - The refusal to move the arc under a train reads the line with the same lexer as a push, so the same grammar and
-  wrappers pass it as for a push (`command git commit`, `bash -c`, `eval`, aliases, a redirection before the words).
-  Open besides: a `cd` with an expansion (`cd "$WT"`, `cd $(git rev-parse --show-toplevel)`, `cd -` to the directory of
+  wrappers pass it as for a push (`command git commit`, `bash -c`, `eval`, aliases, a redirection before the words);
+  the shell's prefixes of a command (`{ git commit; }`, `time [-p] git commit`, `if ...; then git commit; fi`,
+  `! git commit`, a loop's `do`) and `git -C ~/<path>` (the directory under `HOME`, as for `cd ~`) are judged.
+  Open besides: `git -C` with an expansion (`git -C "$WT" commit`, `git -C $(git rev-parse --show-toplevel) merge`,
+  `-C ~user`) is resolved as a literal path from the directory before it, so the hook judges that directory, not the
+  one git runs in; a `cd` with an expansion (`cd "$WT"`, `cd $(git rev-parse --show-toplevel)`, `cd -` to the directory of
   the session before the line, `cd ~user`, `pushd +1`) is not followed and the command after it is not judged for
   the train (owner's decision 1 for p-noghost-e: a refusal there would stop every `cd "$X" && git commit` of a
   programmer for the time of each train); `CDPATH` is read from the hook's environment, not the shell's; `git checkout
