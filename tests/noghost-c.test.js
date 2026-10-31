@@ -95,10 +95,13 @@ function partLocal(TMP) {
   x = smoke(P.xw, 'g/a-run.js');
   ok('D6. a guardSubsetCommand with {name} -> red (exit 1) naming the key and {name}, no path runs', x.status === 1 && /guardSubsetCommand: \{name\} is not filled in here/.test(x.all)
     && !P.count('sub').length && !P.count('local').length, `${x.status} ${x.all}`);
+  ok('D6. ... the config error is red before any path: "no path ran", no "== config.js smoke:" line and no path summary', /the config .* has errors \(above\); no path ran/.test(x.all)
+    && !/^== config\.js smoke:/m.test(x.all) && !/^(ok|RED|none) +(selection here|runner|part here)/m.test(x.all), x.all);
   write({ remoteRun: { command: 'cd {wt} && ./full.sh --jobs {jobs}', localPattern: LOCALP } });   // localCommand by default = guardSubsetCommand with {jobs}: the case of 2026-10-30
   x = smoke(P.xw, 'g/a-run.js');
   ok('D6. the case of 2026-10-30: localCommand by default guardSubsetCommand with {jobs} -> red naming remoteRun.localCommand and {jobs}', x.status === 1
-    && /remoteRun\.localCommand \(default guardSubsetCommand\): \{jobs\} is not filled in here/.test(x.all) && !P.count('sub').length, `${x.status} ${x.all}`);
+    && /remoteRun\.localCommand \(default guardSubsetCommand\): \{jobs\} is not filled in here/.test(x.all) && !P.count('sub').length
+    && /no path ran/.test(x.all) && !/^== config\.js smoke:/m.test(x.all), `${x.status} ${x.all}`);
 
   // D2 + D4 + D7 + D3 (no runner): every path accounts for its one guard
   write({});
