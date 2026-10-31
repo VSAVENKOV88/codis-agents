@@ -284,7 +284,8 @@ function rerun({ wt, log, rc, cfg, baseline, quarantine, readOnly, selected }) {
       else if (r.status === 0) res.flaky.push(name); else res.repeated.push({ name, rc: code });
     }
     if (!res.repeated.length) res.rc = 0;
-    if (res.uncounted.length) res.rc = 69;
+    // a repeated red stays the code of the red: the environment is named only when no guard repeated (review a, round 1)
+    if (res.uncounted.length && !res.repeated.length) res.rc = 69;
     let qText = '';
     if (res.flaky.length) {
       if (!baseline) qText = 'quarantine off: no guardBaseline in the project config\n';
