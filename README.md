@@ -528,7 +528,7 @@ fallback to another slot directory: a second directory would be a second queue t
 ## Known gaps
 
 - The session hook reads the command line as written: wrappers and indirection (`bash -c 'git push ...'`,
-  `command git push`, `builtin`, `exec`, `eval`, `env` with options such as `env -i` / `env -u NAME`, `$G` or `G=git; $G`
+  `command -p git` (`-p` is an option the hook does not read; git still runs), `exec`, `eval`, `env` with options such as `env -i` / `env -u NAME`, `$G` or `G=git; $G`
   in the place of the command, an alias such as `git -c alias.p=push p` or `git -c alias.x=symbolic-ref x ...`, aliases
   and functions of the user's shell profile) pass it. For a push the git `pre-push` hook of the target repository is a
   second layer, but only while it runs (`git push --no-verify` and `git -c core.hooksPath=...` turn it off, and the
@@ -551,15 +551,19 @@ fallback to another slot directory: a second directory would be a second queue t
   (`GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_<n>` / `GIT_CONFIG_VALUE_<n>`, `GIT_CONFIG_PARAMETERS`). Open; to be closed with
   the wrappers in their own task (owner 2026-10-21).
 - The session hook splits a line by its own small lexer, not by the grammar of the shell (zsh on macOS, bash in
-  Linux), and a git command it does not see as one passes. Open forms (measured with git 2.50, zsh and bash): a leading
-  reserved word or modifier (`{ git ...; }`, `! git`, `time [-p] git`, `if ...; then git`, `do git`, zsh `repeat 1 git`,
-  `noglob git`, `nocorrect git`, `{git ...}`); a redirection before or between the words (`2>/dev/null git ...`,
+  Linux), and a git command it does not see as one passes. Open forms (measured with git 2.50, zsh and bash): a zsh
+  modifier outside its set of prefixes (`repeat 1 git`, `{git ...}` without a space); a redirection before or between the words (`2>/dev/null git ...`,
   `2> /dev/null git`, `&>/dev/null git`, `git 2>/dev/null remote set-head ...`); a line continuation (backslash and
   newline); `$'...'` with escapes (`$'\x73et-head'`) and `$"..."`; backquotes (`` echo `git ...` ``); an expansion in
   the subcommand or its arguments (`$X`, `${X:-set-head}`, `$(printf set-head)`, `git $(echo remote) ...`). To be closed
   in task p-shell (owner 2026-10-21: after p-head2), which refuses an expansion in `git remote`, `git symbolic-ref` and
   `git update-ref`. A push with an expansion (`git push origin "$BRANCH"`, `git push origin HEAD:$B`) stays allowed
   (owner 2026-10-21): `pre-push`, while it runs, is its layer.
+  Closed (p-noghost-e2, coordinator's decision 2026-10-31): the shell's prefixes of a command are judged by every rule
+  of the hook. The reserved words and modifiers `{`, `!`, `if`, `then`, `elif`, `else`, `while`, `until`, `do`, `time`
+  (and `time -p`), `command`, `builtin`, `noglob`, `nocorrect`, nested and mixed with assignments (`X=1 time env git`),
+  are taken off before git, so a protected push, a protected tag, `git remote set-head` and `git add -A` behind them
+  are refused like the bare command (`builtin git` and, in bash, `noglob` / `nocorrect git` run no git at all).
 - Global options of git before the subcommand are read by a table measured against git (`GIT_GLOBAL` in
   `scripts/hooks/guard-bash.js`, checked by `tests/hooks-sec-globals.test.js` against the git it runs on); in a
   project with a config an option outside the table is refused. A git that adds a global option with a value needs a
@@ -585,13 +589,13 @@ fallback to another slot directory: a second directory would be a second queue t
   every ref they expand to (owner 2026-10-21: backlog).
 
 - The refusal to move the arc under a train reads the line with the same lexer as a push, so the same grammar and
-  wrappers pass it as for a push (`command git commit`, `bash -c`, `eval`, aliases, a redirection before the words);
+  wrappers pass it as for a push (`command -p git commit`, `bash -c`, `eval`, aliases, a redirection before the words);
   the shell's prefixes of a command (`{ git commit; }`, `time [-p] git commit`, `if ...; then git commit; fi`,
   `! git commit`, a loop's `do`) and `git -C ~/<path>` (the directory under `HOME`, as for `cd ~`) are judged.
   Open besides: `git -C` with an expansion (`git -C "$WT" commit`, `git -C $(git rev-parse --show-toplevel) merge`,
   `-C ~user`) is resolved as a literal path from the directory before it, so the hook judges that directory, not the
   one git runs in; a `cd` with an expansion (`cd "$WT"`, `cd $(git rev-parse --show-toplevel)`, `cd -` to the directory of
-  the session before the line, `cd ~user`, `pushd +1`) is not followed and the command after it is not judged for
+  the session before the line, `cd ~user`, `pushd +1`, zsh `pushd -q <path>`: an option the hook does not read) is not followed and the command after it is not judged for
   the train (owner's decision 1 for p-noghost-e: a refusal there would stop every `cd "$X" && git commit` of a
   programmer for the time of each train); `CDPATH` is read from the hook's environment, not the shell's; `git checkout
   --ignore-other-worktrees <arc> && git commit` (and `git worktree add <path> <arc>`, `git symbolic-ref HEAD
@@ -602,6 +606,9 @@ fallback to another slot directory: a second directory would be a second queue t
   (a terminal, scripts) are not seen: there is no git hook for this (decision 7 for p-noghost). The hook judges at the
   moment of the call: a train that leaves between the check and the command is not seen, and the last line stays the
   train's own compare-and-swap of the arc head (`arc-moved`, no verdict, the passengers ride again).
+  A relative `sharedDir` is read by the hook from the project root (the parent of `.claude/`), while `train.js` reads
+  it from its own working directory: started anywhere else, the train's lock is not where the hook looks, and the
+  refusal does not fire (open, for the plugin's backlog; a `sharedDir` with `~` or an absolute path is not affected).
 
 - `guardBaseline` must name a flat file `{"<guard name>": "<reason>"}`: `config.js check` validates only that the path
   is relative, and `guards-result.js` refuses any value that is not a string ("the reason of ... is not a string"), so
