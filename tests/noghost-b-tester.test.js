@@ -10,6 +10,10 @@
 //   T3 (meta of a counted 69): the next --select of the same HEAD, clean tree, without --force runs again - never "reused";
 //   T4 (no NaN pass): a count group that captures no digits is a red, not a silent pass;
 //   T5 (count CLI): a selection file that is not a JSON array -> exit 69 with the environment line, not 0.
+//   F3 (owner's variant B, 2026-10-31; tester round 2): uncountedIsRed is the only switch of the single rerun's count:
+//      F3c config (a bad tallyPattern named once; explicit false needs no group), F3u unit (explicit false: 0 of 1 flaky;
+//      true: no tally line -> 69; true: 1 of 1 flaky), F3e end to end (no key: the group alone, 0 of 1 -> flaky; true:
+//      no tally line -> 69 with the environment line in the rerun log).
 // Hermetic: every slots.zsh knob is neutralised and a fake machine stands in front of PATH (tests/slots-hermetic.test.js).
 const fs = require('fs');
 const os = require('os');
@@ -21,6 +25,7 @@ const ok = (n, c, d) => lib.ok(n, c, d === undefined ? d : String(d).slice(0, 90
 
 const ROOT = path.join(__dirname, '..');
 const G = require('../scripts/guards-result');
+const C = require('../scripts/config');
 const read = (f) => { try { return fs.readFileSync(f, 'utf8'); } catch { return null; } };
 const gitC = (cwd, ...a) => spawnSync('git', ['-C', cwd, '-c', 'user.email=t@example.com', '-c', 'user.name=t', ...a], { encoding: 'utf8' });
 const TALLY = '^TOTAL: (\\d+) total$';
@@ -93,6 +98,57 @@ function partSkipped(TMP) {
   ok('B10 e2e. one --only matched several: 5 of 3 selected -> exit 0', x.status === 0, `${x.status} ${read(SEL)}`);
 }
 
+// F3 (owner's variant B, 2026-10-31), tester round 2: uncountedIsRed is the only switch of the single rerun's count.
+// F3c (config, no zsh needed): a bad tallyPattern with uncountedIsRed true is named once; explicit false needs no group.
+function partF3Config() {
+  const base = { repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s', guardCommand: 'x {wt}' };
+  const errs = (o) => C.resolve(Object.assign({}, base, o)).errors.join('; ');
+  let e = errs({ guardRerun: Object.assign({}, RERUN, { uncountedIsRed: true, tallyPattern: '^TOTAL: (\\d+' }) });
+  ok('F3c. uncountedIsRed true with a bad tallyPattern -> "bad regular expression" once, no uncountedIsRed error', /guardRerun\.tallyPattern: bad regular expression/.test(e) && !/uncountedIsRed/.test(e), e);
+  e = errs({ guardRerun: Object.assign({}, RERUN, { uncountedIsRed: false, tallyPattern: '^TOTAL: ' }) });
+  ok('F3c. explicit uncountedIsRed false with a tallyPattern without a group -> no error', e === '', e);
+  e = errs({ guardSubsetCommand: 'x {wt} {onlyArgs}', guardRerun: Object.assign({}, RERUN, { uncountedIsRed: false }) });
+  ok('F3c. explicit uncountedIsRed false with guardSubsetCommand and the group -> no uncountedIsRed error', e === '', e);
+}
+
+// F3u (unit, zsh): the single rerun with an explicit false, and with no tally line under true
+function partF3Unit(TMP) {
+  const w = path.join(TMP, 'f3wt');
+  fs.mkdirSync(w, { recursive: true });
+  fs.writeFileSync(path.join(w, 'one.sh'), `#!/bin/sh\nif [ -n "$(cat "${TMP}/f3.n")" ]; then echo "TOTAL: $(cat "${TMP}/f3.n") total"; fi\nexit 0\n`, { mode: 0o755 });
+  const log = path.join(TMP, 'guards-f3.txt');
+  const cfg = (extra) => Object.assign({}, RERUN, { command: 'cd {wt} && ./one.sh {name}' }, extra);
+  const run = (n, extra) => { fs.writeFileSync(path.join(TMP, 'f3.n'), n); fs.writeFileSync(log, 'X g/a-run.js  (1.0s, code 1)\nTOTAL: 1 total\n'); return G.rerun({ wt: w, log, rc: 1, cfg: cfg(extra), baseline: '', quarantine: '', readOnly: false, selected: null }); };
+  let r = run('0', { uncountedIsRed: false });
+  ok('F3u. explicit uncountedIsRed false: "0 total" for the single rerun -> exit 0, flaky, not counted', r.rc === 0 && r.flaky.includes('g/a-run.js') && !r.uncounted.length, `${r.rc} ${JSON.stringify(r)}`);
+  r = run('', { uncountedIsRed: true });
+  ok('F3u. uncountedIsRed true: no tally line from the single rerun -> exit 69, not flaky', r.rc === 69 && !r.flaky.length && r.uncounted.includes('g/a-run.js') && /environment: the single rerun of g\/a-run\.js/.test(r.envText || ''),
+    `${r.rc} ${JSON.stringify(r)}`);
+  r = run('1', { uncountedIsRed: true });
+  ok('F3u. uncountedIsRed true: "1 total" -> exit 0, flaky (the count is 1 of 1)', r.rc === 0 && r.flaky.includes('g/a-run.js'), `${r.rc} ${JSON.stringify(r)}`);
+}
+
+// F3e (end to end, guards-all.sh): the key absent or true decides the single rerun's count
+function partF3E(TMP) {
+  const f = fixture(TMP);
+  const FULLLOG = path.join(f.shared, 'guards-pt.txt'), RR = path.join(f.shared, 'guards-pt.rerun.txt');
+  const full = (rc, log, one) => { f.clear(); f.set('full.log', log); f.set('full.rc', rc); f.set('one.n', one); };
+  const noKey = JSON.parse(read(f.cfgFile));
+  delete noKey.guardRerun.uncountedIsRed;
+  fs.writeFileSync(f.cfgFile, JSON.stringify(noKey));
+  full(1, 'X g/a-run.js  (1.0s, code 1)\nTOTAL: 3 total\n', 0);
+  let x = f.ga(true, 'pt');
+  ok('F3e. no uncountedIsRed (the group alone): the single rerun "TOTAL: 0 total" -> exit 0, flaky, no environment line',
+    x.status === 0 && /flaky/.test(read(FULLLOG) || '') && !/environment:/.test(read(FULLLOG) || ''), `${x.status} ${(read(FULLLOG) || '').slice(-600)} ${x.all.slice(-300)}`);
+  const withKey = JSON.parse(read(f.cfgFile));
+  withKey.guardRerun.uncountedIsRed = true;
+  fs.writeFileSync(f.cfgFile, JSON.stringify(withKey));
+  full(1, 'X g/a-run.js  (1.0s, code 1)\nTOTAL: 3 total\n', '');
+  x = f.ga(true, 'pt');
+  ok('F3e. uncountedIsRed true: the single rerun with no tally line -> exit 69 with the environment line, not flaky',
+    x.status === 69 && /^environment: the single rerun of g\/a-run\.js has no total line/m.test(read(RR) || '') && /0 flaky, 1 not counted/.test(read(FULLLOG) || ''), `${x.status} ${(read(RR) || '').slice(-600)} ${x.all.slice(-300)}`);
+}
+
 // T1: the single rerun of a new red in a full run (B14 end to end) and T3: a counted 69 is never reused
 function partRerun(TMP) {
   const f = fixture(TMP);
@@ -132,9 +188,11 @@ function partRefuse(TMP) {
 
 const part = (name, f) => { try { f(); } catch (e) { ok(`${name}: no exception`, false, e && e.stack); } };
 part('no NaN pass and count CLI', () => { const T = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'noghost-bt-r-'))); try { partRefuse(T); } finally { fs.rmSync(T, { recursive: true, force: true }); } });
+part('F3 config', partF3Config);
 if (!(has('zsh') && has('git'))) skip('guards-all.sh end to end', 'zsh or git not found');
 else {
-  for (const [name, f] of [['selection with localPattern', partSkipped], ['single rerun and meta', partRerun]]) {
+  part('F3 single rerun unit', () => { const T = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'noghost-bt-f3u-'))); try { partF3Unit(T); } finally { fs.rmSync(T, { recursive: true, force: true }); } });
+  for (const [name, f] of [['selection with localPattern', partSkipped], ['single rerun and meta', partRerun], ['F3 uncountedIsRed end to end', partF3E]]) {
     const T = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'noghost-bt-'))); // each part its own fixture
     try { part(name, () => f(T)); } finally { fs.rmSync(T, { recursive: true, force: true }); }
   }
