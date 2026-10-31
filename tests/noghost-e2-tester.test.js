@@ -19,6 +19,8 @@
 //       a newline instead of ;, -C after cd, git -C <arc> -C sub
 //   G   C7: GIT_DIR on the project's repository with update-ref / branch / fetch into the arc from outside it
 //   R   F2: reset @~1 / HEAD^ / ORIG_HEAD move the arc; reset --keep HEAD, reset HEAD -- <path> do not
+//   R4  round 4 (decision A): README "Closed" names exactly CD_PREFIX; every prefix x protected push / tag / set-head /
+//       add -A / symbolic-ref / update-ref is refused; the open forms are allowed and named; shell claims; pushd -q
 // usage: node tests/noghost-e2-tester.test.js
 const fs = require('fs');
 const os = require('os');
@@ -184,6 +186,68 @@ console.log('R3b. README Known gaps names as open exactly the prefixes the hook 
     const r = hk(cmd, cwd, hT), refused = typeof r === 'string' && !/^CRASH/.test(r), listed = text.includes(form);
     ok(`R3b. ${where}: ${form} - the hook ${refused ? 'refuses it' : 'allows it'}, so README ${refused ? 'must not list it as open' : 'lists it as open'}`, !/^CRASH/.test(String(r)) && refused !== listed, `refused=${refused} listed=${listed} ${r}`);
   }
+}
+
+console.log('R4. round 4 (decision A): the line "Closed" of README Known gaps against the hook - every prefix, every rule');
+{
+  const pr = path.join(T, 'r4p'); fs.mkdirSync(pr);
+  git(pr, 'init', '-q', '-b', 'main'); put(path.join(pr, '.gitignore'), '.claude/\n'); git(pr, 'add', '.gitignore'); git(pr, 'commit', '-q', '-m', 'b'); git(pr, 'branch', 'feat');
+  put(path.join(pr, '.claude', 'codis-agents.json'), JSON.stringify({ repoDir: pr, worktreeRoot: T, sharedDir: path.join(T, 'r4sh'), protectedBranches: ['main'], protectedTagPattern: '^v[0-9]' }));
+  const readme = fs.readFileSync(path.join(__dirname, '..', 'README.md'), 'utf8');
+  const gaps = readme.slice(readme.indexOf('## Known gaps')).replace(/\s+/g, ' ');
+  const a = gaps.indexOf('Closed (p-noghost-e2'), b = a < 0 ? -1 : gaps.indexOf('are refused like the bare command', a);
+  const closed = a < 0 || b < 0 ? '' : gaps.slice(a, b);
+  ok('R4. README: the line "Closed (p-noghost-e2 ...) ... are refused like the bare command" is found', closed.length > 0);
+  // the list of the line is exactly CD_PREFIX of the hook (a prefix added to the hook or to README alone turns this red)
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'hooks', 'guard-bash.js'), 'utf8');
+  const m = /const CD_PREFIX = new Set\(\[([^\]]*)\]\)/.exec(src);
+  const set = m ? [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]) : [];
+  ok('R4. guard-bash.js: CD_PREFIX is read', set.length > 5, set.join(' '));
+  const named = [...closed.matchAll(/`([^`]+)`/g)].map((x) => x[1]).filter((w) => !/\s/.test(w));
+  for (const w of set) ok(`R4. README "Closed" names the prefix \`${w}\` of CD_PREFIX`, named.includes(w), named.join(' '));
+  for (const w of named) ok(`R4. README "Closed" names \`${w}\`, which is in CD_PREFIX`, set.includes(w), set.join(' '));
+  // every prefix form x every rule the line names (a protected push, a protected tag, set-head, add -A) and the two
+  // other origin/HEAD writers: refused like the bare command
+  const rules = ['git push origin main', 'git push origin v1.0', 'git remote set-head origin feat', 'git add -A',
+    'git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/feat', 'git update-ref refs/remotes/origin/HEAD refs/remotes/origin/feat'];
+  const forms = [(c) => `{ ${c}; }`, (c) => `! ${c}`, (c) => `if true; then ${c}; fi`, (c) => `if false; then :; elif true; then ${c}; fi`,
+    (c) => `if false; then :; else ${c}; fi`, (c) => `while false; do ${c}; done`, (c) => `until true; do ${c}; done`, (c) => `for i in 1; do ${c}; done`,
+    (c) => `time ${c}`, (c) => `time -p ${c}`, (c) => `command ${c}`, (c) => `builtin ${c}`, (c) => `noglob ${c}`, (c) => `nocorrect ${c}`,
+    (c) => `X=1 time env ${c}`, (c) => `Y=1 time Z=2 env W=3 ${c}`, (c) => `{ ! time ${c}; }`, (c) => `command command ${c}`, (c) => `! ! ${c}`];
+  for (const r of rules) {
+    ok(`R4. control: the bare command is refused: ${r}`, typeof hk(r, pr, hT) === 'string', hk(r, pr, hT));
+    for (const f of forms) { const c = f(r), w = hk(c, pr, hT); ok(`R4. refused: ${c}`, typeof w === 'string' && !/^CRASH/.test(w), w); }
+  }
+  // the forms README keeps open (wrappers and the lexer paragraph): allowed for every rule and named in Known gaps
+  for (const [form, f] of [['`command -p git`', (c) => `command -p ${c}`], ['`exec`', (c) => `exec ${c}`], ['`eval`', (c) => `eval ${c}`],
+    ['`env -i', (c) => `env -i ${c}`], ['`bash -c', (c) => `bash -c '${c}'`], ['`repeat 1 git`', (c) => `repeat 1 ${c}`], ['`{git ...}`', (c) => `{${c}}`]]) {
+    ok(`R4. README Known gaps names ${form} as open`, gaps.includes(form));
+    for (const r of rules) { const c = f(r); ok(`R4. allowed (open): ${c}`, hk(c, pr, hT) === null, hk(c, pr, hT)); }
+  }
+  ok('R4. allowed: command -v git push origin main (prints the path, runs no git)', hk('command -v git push origin main', pr, hT) === null);
+  // the measured claims of the line about the shells: builtin git runs no git, bash has no noglob / nocorrect, command -p
+  // runs git (so it is open, not closed)
+  const run = (sh, c) => spawnSync(sh, ['-c', c], { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: T } });
+  const bash = run('bash', 'true');
+  if (bash.error) ok('R4. bash is not installed: shell claims skipped', true);
+  else {
+    ok('R4. bash: builtin git --version runs no git', run('bash', 'builtin git --version').status !== 0);
+    ok('R4. bash: noglob git --version runs no git (rc 127)', run('bash', 'noglob git --version').status === 127);
+    ok('R4. bash: nocorrect git --version runs no git (rc 127)', run('bash', 'nocorrect git --version').status === 127);
+    ok('R4. bash: command -p git --version runs git', /git version/.test(run('bash', 'command -p git --version').stdout || ''));
+  }
+  const zsh = run('zsh', 'true');
+  if (zsh.error) ok('R4. zsh is not installed: zsh claims skipped', true);
+  else {
+    ok('R4. zsh: builtin git --version runs no git', run('zsh', 'builtin git --version').status !== 0);
+    ok('R4. zsh: command -p git --version runs git', /git version/.test(run('zsh', 'command -p git --version').stdout || ''));
+  }
+  // the train paragraph: zsh pushd -q <path> is named as not followed; a literal pushd <path> is followed
+  ok('R4. README train paragraph names zsh `pushd -q <path>` as not followed', /pushd -q <path>`: an option the hook does not read\) is not followed/.test(gaps));
+  yesH(`pushd -q ${wArc} && git commit -m x`, T, hT);
+  noH(`pushd ${wArc} && git commit -m x`, T, hT);
+  // the relative sharedDir line of README
+  ok('R4. README names a relative sharedDir (hook from the project root, train.js from its cwd) as open', /A relative `sharedDir` is read by the hook from the project root .{0,60}while `train\.js` reads it from its own working directory/.test(gaps));
 }
 
 fs.rmSync(T, { recursive: true, force: true });
