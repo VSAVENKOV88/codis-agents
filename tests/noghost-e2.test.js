@@ -138,6 +138,7 @@ for (const c of [`(cd ${wArc} && true); git commit -m x`, `cd ${wArc} | true; gi
   'cd "$WT" && git commit -m x', 'cd $(git rev-parse --show-toplevel) && git commit -m x', 'cd - && git commit -m x', `cd ${wArc} && git status`]) yes(c, wT1);
 
 yes(`cd ${wArc}/no-such-dir; git commit -m x`, wT1);   // the cd fails: the commit runs in w-t1
+no(`cd ${wT1}/no-such-dir; git commit -m x`, wArc);   // the cd fails: the commit runs in the arc's worktree
 yes('cd "$WT" && git commit -m x', wArc, henv, ' (cd with an expansion: not followed, not judged - decision 1, Known gaps)');
 
 console.log('C7. --git-dir / --work-tree / GIT_DIR / GIT_WORK_TREE naming the project\'s repository');
