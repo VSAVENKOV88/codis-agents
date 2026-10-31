@@ -32,7 +32,7 @@
 //    From any directory of the project's repository (p-noghost-e2), the commands that name the arc:
 //    update-ref refs/heads/<arc> (or HEAD in the arc's worktree), branch -f/-m/-M/-c/-C/-d/-D with the arc among the names (or -m
 //    <new> in its worktree), push into this repository (., a path, file://, a remote whose URL is it) with the arc as a
-//    destination, fetch / pull with the arc as a destination (a glob that covers it, --stdin), worktree add -B <arc>,
+//    destination (a bare <arc> or HEAD from another repository too), fetch / pull with the arc as a destination (a glob that covers it, --stdin), worktree add -B <arc>,
 //    rebase <upstream> <arc>; with --git-dir / --work-tree / GIT_DIR / GIT_WORK_TREE on the project's repository the
 //    current branch is taken to be the arc (closed). The directory follows a literal cd / pushd / popd in the line
 //    (decision 1 for p-noghost-e; cd with an expansion is not followed and not judged: README "Known gaps"). The
@@ -287,7 +287,8 @@ function dstIsArc(d, base) {
   }
   return new RegExp('^(?:refs/)?(?:heads/)?' + esc(base) + '$', 'iu').test(d);
 }
-// The destination of a refspec ([+]<src>:<dst>), or '' (no colon: no ref of this repository; ^<negative>: none).
+// The destination of a refspec ([+]<src>:<dst>), or '' (no colon: no ref of this repository for a fetch - a push reads
+// it in movesArc; ^<negative>: none).
 const specDst = (spec) => { const s = spec.replace(/^\+/, ''); const c = s.indexOf(':'); return s.startsWith('^') || c < 0 ? '' : s.slice(c + 1); };
 
 // The common git directory a push or fetch repository word names when it is a local repository (., a path, file://,
@@ -315,9 +316,19 @@ function movesArc(sub, args, dir, repoPaths, base, proj, home) {
     const repo = s.vals.find(([n]) => longOpt(n, 'repo'));
     if (repo) targets.push([repo[1], s.pos]);
     if (s.pos.length) targets.push([s.pos[0], s.pos.slice(1)]);
+    // a refspec with no colon names its destination too: "If :<dst> is omitted, the same ref as <src> will be updated"
+    // (git-push(1)); HEAD (or @) is the current branch of the repository that sends (with --git-dir / GIT_DIR not read:
+    // closed). Sent from the project's own repository, such a ref is pushed onto itself and nothing moves.
+    const fromProj = (assume ? repoPaths : [dir]).some((p) => common(p) === proj);
+    const pushDst = (x) => {
+      const t = x.replace(/^\+/, '');
+      if (t.startsWith('^') || t.includes(':')) return specDst(x);
+      if (fromProj) return '';
+      return t === 'HEAD' || t === '@' ? (assume ? base : currentBranch(dir)) : t;
+    };
     return targets.some(([r, specs]) => localRepo(r, dir, home) === proj &&
       // no refspec: push.default and the upstream decide what moves (git push . from a branch whose upstream is the arc)
-      (!specs.length || specs.some((x) => (del ? dstIsArc(x.replace(/^\+/, ''), base) : dstIsArc(specDst(x), base)))));
+      (!specs.length || specs.some((x) => (del ? dstIsArc(x.replace(/^\+/, ''), base) : dstIsArc(pushDst(x), base)))));
   }
   if (!(assume ? [dir, ...repoPaths] : [dir]).some((p) => common(p) === proj)) return false;
   const cur = () => assume || currentBranch(dir) === `refs/heads/${base}`;

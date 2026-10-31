@@ -412,7 +412,8 @@ review findings.
   nothing and is allowed. From any directory of the project's repository the commands that name the arc are refused too
   (p-noghost-e2): `update-ref refs/heads/<arc>` (and `update-ref HEAD` in its worktree), `branch -f/-m/-M/-c/-C/-d/-D`
   with the arc among the names (`branch -m <new>` in its worktree), `push` into this repository (`.`, a path,
-  `file://`, a remote whose URL is it) with the arc as a destination, `fetch` / `pull` with the arc as a destination
+  `file://`, a remote whose URL is it) with the arc as a destination (a bare `<arc>` or `HEAD` from another repository
+  too: git-push(1) updates the same ref as the source), `fetch` / `pull` with the arc as a destination
   (`heads/<arc>`, `refs/heads/<arc>`, any case, a glob that covers it, `--stdin`), `worktree add -B <arc>`,
   `rebase <upstream> <arc>`; with `--git-dir` / `--work-tree` / `GIT_DIR` / `GIT_WORK_TREE` on the project's
   repository the current branch is taken to be the arc. The hook follows a literal `cd` / `pushd` / `popd` in the line
