@@ -48,7 +48,7 @@ fs.chmodSync(path.join(S, 'guards-all.sh'), 0o755);
 const cfgFile = path.join(T, 'cfg.json');
 fs.writeFileSync(cfgFile, JSON.stringify({ repoDir: main, worktreeRoot: wts, sharedDir: shared,
   guardCommand: 'cd {wt} && true', guardSubsetCommand: 'cd {wt} && true {onlyArgs}',
-  guardRerun: { command: 'cd {wt} && true {name}', newRedPattern: '^FAILED (\\S+) ', tallyPattern: '^=== .* in [0-9.]+s ===$' },
+  guardRerun: { command: 'cd {wt} && true {name}', newRedPattern: '^FAILED (\\S+) ', tallyPattern: '^=== (\\d+) \\w+ in [0-9.]+s ===$' },
   worktreeSetup: { scan: [], skip: [], link: [] },
   slots: { lockDir: path.join(T, 'slots'), legacyLock: path.join(T, 'guards.lock') } }));
 const env = Object.assign({}, process.env, { CODIS_AGENTS_CONFIG: cfgFile, PATH: bin + path.delimiter + process.env.PATH, SLOT_OS: 'darwin',

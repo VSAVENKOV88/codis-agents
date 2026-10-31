@@ -642,7 +642,8 @@ fallback to another slot directory: a second directory would be a second queue t
   refs/heads/<arc>` before a commit in the same line) is judged before anything runs, while the branch of that
   directory is not the arc yet; a push to this repository through the default remote with no repository on the line,
   a fetch through refspecs configured for the remote (`remote.<name>.fetch`), URL rewrites (`url.<base>.insteadOf`),
-  subcommands outside the measured table (`filter-branch`, `subtree`, `replace`); commits outside Claude Code
+  subcommands outside the measured table (`filter-branch`, `subtree`, `replace`); `git commit --dry-run --no-dry-run`
+  (the hook reads `--dry-run` and lets it pass, while the later `--no-dry-run` makes git commit); commits outside Claude Code
   (a terminal, scripts) are not seen: there is no git hook for this (decision 7 for p-noghost). The hook judges at the
   moment of the call: a train that leaves between the check and the command is not seen, and the last line stays the
   train's own compare-and-swap of the arc head (`arc-moved`, no verdict, the passengers ride again).
