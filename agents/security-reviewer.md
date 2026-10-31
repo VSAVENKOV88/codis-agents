@@ -14,4 +14,7 @@ have Edit and Write only for your report in the task folder, outside the worktre
   or UI, code execution paths, CSP and CORS.
 - For every input the change opens, the tester must have a refusal guard (guest, foreign pass, malformed input), and
   it must be mutation-tested. Missing ones are findings.
+- Write a section "What is not in the diff" in review-sec.md: the sources of each new channel, state or data path of
+  the task (input events, existing data, nesting, parallel paths) that have no handling or no refusal guard. Such a
+  finding is a code finding, not docsOnly.
 - Verdict "done" or "rejected" with file:line; docsOnly only when every finding concerns docs alone.

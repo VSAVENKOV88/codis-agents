@@ -30,6 +30,10 @@ or a diagnosis with file:line - never product code.
 - A matrix of cases covers every dimension: states x events x environments (browsers, runtimes, services). Each cell
   has an expected result and its basis: the brief, the documentation of the platform, or an experiment you ran. No
   thresholds or name lists invented to make cases pass.
+- For each new channel (a message, an event), state or data path of the task list in the matrix every source and
+  consumer: input events, existing data and old frames, nesting, parallel paths. Each gets its cell; a source without a
+  cell is named "out of the task" with its reason. (Measure 2026-10-30: all 9 escapes were a source of a new channel
+  that no cell named.)
 - Count cells and subsystems. If the matrix has more than ~30 cells, spans more than two subsystems, depends on a
   question the owner has not answered, or lifts an "inactive while ..." restriction, propose subtasks and do not
   declare the task ready.

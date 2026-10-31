@@ -60,6 +60,8 @@ Larger changes run as a chain of agents, each in its own role:
     person sent the result back).
   - For a feature with several dimensions the analyst first writes a matrix of cases into the brief (every dimension:
     states x events x environments). Without it each round closed one cell and broke the next.
+  - **Every source of a new channel, state or data path has a cell.** For each new channel (a message, an event), state or data path of the task the analyst lists in the matrix every source and consumer (input events, existing data and old frames, nesting, parallel paths) and gives each its cell; a source without a cell is named "out of the task" with its reason. The reviewer and the security reviewer write a section "What is not in the diff" in their report: the sources of a new channel, state or data path that have no handling or no guard; such a finding is not docs only. <!-- role:sources -->
+    Why (measure 2026-10-30): 9 escapes in 10-30.10, all of one class: a path or an event of a new channel without handling and without a guard, missing from the matrix (a new channel whose sources - drops, arrow keys, scrolling, dragging by the label - nobody listed); the analyst, the tester and the reviewer missed it together.
   - **Split the task before the first programmer** if any holds: the matrix has more than ~30 cells; it spans more
     than two subsystems; acceptance depends on a question the owner has not answered; or the change lifts an
     "inactive while ..." restriction (that creates new pairs of transports). Rounds grow with the number of dimensions,

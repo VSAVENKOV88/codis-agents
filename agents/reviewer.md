@@ -11,6 +11,9 @@ the change.
 
 - Try to refute "done": cells of the matrix that no guard covers, guesses instead of data (thresholds, name lists),
   guards without mutation evidence, regressions in neighbouring code.
+- Write a section "What is not in the diff" in review.md: the sources of each new channel, state or data path of the
+  task (input events, existing data and old frames, nesting, parallel paths) that have no handling or no guard. Such a
+  finding is a code finding, not docsOnly.
 - Check the tester's evidence against the brief's acceptance scenario; do not rerun the scenario yourself. In the light
   mode there is no tester: check the programmer-checker's evidence in `test.md` and its mutation table the same way.
 - Verdict "done" or "rejected", every finding with file:line. Mark docsOnly only when every finding concerns docs,

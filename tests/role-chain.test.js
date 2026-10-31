@@ -579,6 +579,29 @@ async function run(script, task = T, extra = {}) {
   ok('the security reviewer prompt carries every rule', xs.prompts.some((p) => p.role === 'sec') && !secLack.length, secLack.join(','));
   const lacking = x.prompts.filter((p) => !['diff', 'left', 'post'].includes(p.role)).flatMap((p) => ruleList.filter((r) => !p.prompt.includes(r[1])).map((r) => p.label + ':' + r[0]));
   ok('the prompt of every role (pre, analyst, prog, test, review) carries every rule', roles.size === 5 && !lacking.length, [...roles].join(',') + ' ' + lacking.join(','));
+  // S (p-sources, measure 2026-10-30: 9 escapes of one class - a path or an event of a new channel, state or data path
+  // that no cell named): the analyst lists every source and consumer with a cell each, the reviewers write a section
+  // "What is not in the diff", and such a finding is never docs only.
+  const src = ruleOf('sources');
+  ok('S1. rule sources: every source and consumer of a new channel, state or data path gets a cell or is named out of the task with a reason',
+    /every source/.test(src) && /consumer/.test(src) && /cell/.test(src) && /out of the task/.test(src) && /reason/.test(src), src);
+  ok('S2. rule sources: the reviewers write "What is not in the diff", such a finding is not docs only',
+    /What is not in the diff/.test(src) && /not docs ?only/i.test(src), src);
+  // The role's own instruction, outside the shared rules (the rule text alone reaches every role).
+  const own = (p) => ruleList.reduce((s, r) => s.split(r[1]).join(''), p.prompt);
+  const ownOf = (ps, role) => ps.filter((p) => p.role === role).map(own);
+  const anOwn = ownOf(x.prompts, 'analyst');
+  ok('S3. analyst prompt: lists every source and consumer of each new channel, state or data path, a cell each',
+    anOwn.length > 0 && anOwn.every((s) => /every source/.test(s) && /consumer/.test(s) && /cell/.test(s) && /out of the task/.test(s)), anOwn.join('|'));
+  const rvOwn = ownOf(x.prompts, 'review').concat(ownOf(xs.prompts, 'sec'));
+  ok('S4. reviewer and security reviewer prompts: a section "What is not in the diff" in the report, its finding not docsOnly',
+    ownOf(x.prompts, 'review').length > 0 && ownOf(xs.prompts, 'sec').length > 0
+      && rvOwn.every((s) => /section "What is not in the diff"/.test(s) && /not docsOnly/.test(s)), rvOwn.join('|'));
+  const agentMd = (n) => fs.readFileSync(path.join(ROOT, 'agents', n + '.md'), 'utf8');
+  ok('S5. agents/analyst.md: every source and consumer of a new channel, state or data path, a cell each or out of the task',
+    /every source/.test(agentMd('analyst')) && /out of the task/.test(agentMd('analyst')));
+  ok('S6. agents/reviewer.md and agents/security-reviewer.md: a section "What is not in the diff", not docsOnly',
+    ['reviewer', 'security-reviewer'].every((n) => /What is not in the diff/.test(agentMd(n)) && /not docsOnly/.test(agentMd(n))));
 
   // roleModel / roleModels (owner 2026-10-22: the coordinator on one model, the role agents no higher than the one the
   // config names): roleModel is passed as opts.model of every role agent; roleModels overrides it per role; the cheap
