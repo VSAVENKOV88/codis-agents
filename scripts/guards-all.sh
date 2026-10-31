@@ -16,7 +16,8 @@
 #   late single heavy jobs do not pass it either; exit 75 (budget taken after admission) - back to the queue with the
 #   same ticket (SLOT_RETRY_RC).
 # Command: project config key guardCommand, run with zsh in the worktree; placeholders {wt}, {jobs} (optional),
-#   {limitFile} (optional).
+#   {limitFile} (optional). A placeholder this script does not fill ({onlyArgs} in a full command, {name}, a typo) is
+#   a config error (scripts/config.js FILLS), so slots.zsh refuses 78 naming the key before anything runs.
 # Exit code: the runner's own (the last 25 log lines are printed either way). The runner's code travels through a file,
 #   so a runner that itself exits 75 is never mistaken for "no worker budget" and retried.
 # Rerun (project config key guardRerun; scripts/guards-result.js): after a red full run, still in the same slot, every
@@ -55,6 +56,12 @@
 #   selected", exit 0, no command runs (an empty --only list would run every guard). The selection could not be computed
 #   (git: unknown base, not a repository): exit 65. On the remote runner only with remoteRun.subsetCommand (run name
 #   <name>-select); without that key it runs in a heavy slot here, with a note - an unreachable runner stays 69.
+# Count of a selection (p-noghost, case 2026-10-30: 0 of 10 guards ran and the run exited 0): a run given guards by
+#   --only (--select, --guards, the runner's --selected) compares group 1 of the last guardRerun.tallyPattern line (the
+#   selected guards it accounted for: ran, or skipped by a flag) with the selected guards minus those a
+#   remoteRun.localPattern line of its log names; fewer, or no tally line, is the environment: "environment: the run
+#   accounted for T of N selected guards: ..." appended to the log, exit 69 (meta 69, never reused), before and instead of
+#   the rerun of new reds (scripts/guards-result.js count). A full run is not counted.
 # Named guards (--guards <names file>, a JSON array of guard names as newRedPattern finds them in a log): the same
 #   selection mode with these guards instead of the diff's - the attribution of a red train (scripts/train.js) runs the
 #   repeated new reds of the train on "arc head + passenger" so. An empty list: "nothing selected", exit 0; a file that
@@ -64,7 +71,7 @@
 #   guards-<basename>-<cksum of its resolved path>.txt, so two worktrees with the same basename never share a log and
 #   its reuse record.
 H=${0:A:h}
-FORCE=0 LOCAL=0 NOQ=0 QRO= MAINOK=() SELECT= SELBASE= SELFILE= SELTMP= GUARDS=; typeset -a POS
+FORCE=0 LOCAL=0 NOQ=0 QRO= MAINOK=() SELECT= SELBASE= SELFILE= SELTMP= GUARDS= TPL= ONLY=; typeset -a POS
 USAGE="usage: guards-all.sh [--force] [--main-checkout] [--local] [--no-quarantine] [--quarantine-read-only] [--select <base> | --guards <names file> | --selected <names file>] <worktree name or path>"
 while (( $# )); do
   case $1 in
@@ -111,7 +118,7 @@ if [[ -n $GUARDS ]]; then
   fi
   (( src == 0 )) || exit $src
   SELFILE=$GUARDS
-  CMD=${CMD//\{onlyArgs\}/$ONLY}
+  TPL=$CMD CMD=${CMD//\{onlyArgs\}/$ONLY}   # CMD filled: the meta and the reuse; TPL: what sub() fills
   QRO=select
 elif [[ -n $SELECT ]]; then
   SELERR=$(_slot_tmp guardssel) || { print -u2 "guards-all: no temporary file in ${TMPDIR:-/tmp} (mktemp failed)"; exit 73; }
@@ -128,7 +135,7 @@ elif [[ -n $SELECT ]]; then
   elif (( src != 0 )); then
     print -u2 -r -- "guards-all: guards-select.js exited $src: $SELWHY"; exit $src
   fi
-  CMD=${CMD//\{onlyArgs\}/$ONLY}
+  TPL=$CMD CMD=${CMD//\{onlyArgs\}/$ONLY}   # CMD filled: the meta and the reuse; TPL: what sub() fills
   QRO=select
 else
   CMD=$(cfg guardCommand); LEGACY=$(cfg guardCommandLegacy); PFILE=$(cfg guardAdaptiveProbe.file); PTEXT=$(cfg guardAdaptiveProbe.contains)
@@ -140,6 +147,7 @@ mode=fixed; [[ $CMD == *'{jobs}'* ]] || mode=whole; [[ $CMD == *'{limitFile}'* ]
 kind=full; [[ $mode == whole ]] && kind=whole
 RERUN=$(cfg guardRerun); [[ $RERUN == null ]] && RERUN=   # config get prints null for an unset object key
 BASELINE=$(cfg guardBaseline)
+LPAT=$(cfg remoteRun.localPattern)   # lines of guards a runner skipped by a flag: the count of a selection subtracts them
 QFILE=; [[ -n $BASELINE ]] && (( ! NOQ )) && QFILE=$CODIS_SHARED_DIR/guards-quarantine.json
 ENVID=local RNAME=$NAME SUBSET=()
 if (( ! LOCAL )) && RHOST=$(cfg remote.host) && [[ -n $RHOST ]]; then
@@ -152,11 +160,13 @@ fi
 if (( ! FORCE )) && node "$H/guards-result.js" reuse "$WT" "$OUT" "$CMD" "$ENVID" "$QFILE" > /dev/null 2>&1; then
   tail -40 "$OUT"; print -r -- ""; node "$H/guards-result.js" reuse "$WT" "$OUT" "$CMD" "$ENVID" "$QFILE"; exit 0
 fi
-# A selection whose command has neither {jobs} nor {limitFile} is a runner that sets its own workers: counted as the whole budget, it waits
-# for every other heavy job, so selections and the train's run go one at a time (README guardSubsetCommand). Not an
-# error - a note naming the key that decides here (on the runner its subsetCommand).
-# (the same test as mode=whole above, on the command that runs: on the runner its subsetCommand).
-if [[ -n $SELECT && $CMD != *'{jobs}'* && $CMD != *'{limitFile}'* ]]; then
+# A selection whose command has neither {jobs} nor {limitFile} is a runner that sets its own workers (the test of mode=whole above, on
+# the command that runs): counted as the whole budget, it waits for every other heavy job, so selections and the train's
+# run go one at a time (README guardSubsetCommand). Not an error - a note naming the key that decides here (on the
+# runner its subsetCommand).
+# The runner's own call (--local --guards, scripts/guards-remote-host.js) says nothing: the machine that started the run
+# has said it, naming remoteRun.subsetCommand.
+if [[ -n $SELECT && $CMD != *'{jobs}'* && $CMD != *'{limitFile}'* ]] && { (( ! LOCAL )) || [[ -z $GUARDS ]] }; then
   _ga_key=guardSubsetCommand; [[ $ENVID == remote:* ]] && _ga_key=remoteRun.subsetCommand
   print -u2 -r -- "guards-all: note: $_ga_key has no {jobs} (and no {limitFile}): the selection is counted as the whole worker budget (slots.jobsAlone) and starts only when no other heavy job runs, so selections go one at a time; give it --concurrency {jobs} and {limitFile} as guardCommand has (README, guardSubsetCommand)"
 fi
@@ -172,7 +182,7 @@ trap 'rm -f $RCF ${SELTMP:+$SELFILE}' EXIT
 while true; do
   : > $RCF
   SLOT_KIND=$kind SLOT_RETRY_RC=75 SLOT_LABEL="guards-all $NAME" slot_run heavy zsh -c '
-    source "$1"; WT="$2"; OUT="$3"; CMD="$4"; mode="$5"; RCF="$6"; GR="$7"; RERUN="$8"; BASELINE="$9"; QFILE="${10}"; QRO="${11}"; SELFILE="${12}"
+    source "$1"; WT="$2"; OUT="$3"; CMD="$4"; mode="$5"; RCF="$6"; GR="$7"; RERUN="$8"; BASELINE="$9"; QFILE="${10}"; QRO="${11}"; SELFILE="${12}"; LPAT="${13}"; TPL="${14}"; ONLY="${15}"
     cd "$WT" || exit 1
     t0=$EPOCHSECONDS said=0
     while true; do
@@ -191,24 +201,28 @@ while true; do
       sleep $SLOT_POLL
     done
     node "$GR" meta-start "$WT" "$OUT" "$CMD"
-    sub() { local c=$1; c=${c//\{wt\}/${(q)WT}}; c=${c//\{jobs\}/$2}; c=${c//\{limitFile\}/${(q)SLOT_PATH}.limit}; print -r -- $c }
+    # the template is filled, {onlyArgs} last: a value (a guard name, the worktree path) is never filled in again
+    sub() { local c=$1; c=${c//\{jobs\}/$2}; c=${c//\{limitFile\}/${(q)SLOT_PATH}.limit}; c=${c//\{wt\}/${(q)WT}}; c=${c//\{onlyArgs\}/$ONLY}; print -r -- $c }
     if [[ $mode == adaptive ]]; then
       print -r -- "workers at start: $n (ceiling $GUARDS_JOBS_ALONE, re-evaluated every $SLOT_POLL s; $SLOT_PATH)"
       { while sleep $SLOT_POLL; do slot_guard_plan "$SLOT_PATH" adaptive run > /dev/null; done } &
       tk=$!
-      zsh -c "$(sub "$CMD" $GUARDS_JOBS_ALONE)" > "$OUT" 2>&1; print -r -- $? > "$RCF"
+      zsh -c "$(sub "$TPL" $GUARDS_JOBS_ALONE)" > "$OUT" 2>&1; print -r -- $? > "$RCF"
       pkill -P $tk 2>/dev/null; kill $tk 2>/dev/null   # and its sleep - no orphans
     elif [[ $mode == whole ]]; then
       print -r -- "workers: set by the runner itself (guardCommand has no {jobs}), counted as the whole budget $n ($SLOT_PATH)"
-      zsh -c "$(sub "$CMD" $n)" > "$OUT" 2>&1; print -r -- $? > "$RCF"
+      zsh -c "$(sub "$TPL" $n)" > "$OUT" 2>&1; print -r -- $? > "$RCF"
     else
       print -r -- "workers: $n for the whole run (fixed runner; $SLOT_PATH)"
-      zsh -c "$(sub "$CMD" $n)" > "$OUT" 2>&1; print -r -- $? > "$RCF"
+      zsh -c "$(sub "$TPL" $n)" > "$OUT" 2>&1; print -r -- $? > "$RCF"
     fi
     rm -f "$SLOT_PATH.jobs" "$SLOT_PATH.limit" "$SLOT_PATH.limit.tmp" "$SLOT_PATH.limit.active" "$SLOT_PATH.whole"
     tail -25 "$OUT"
-    if [[ -n $RERUN ]]; then node "$GR" rerun "$WT" "$OUT" "$(<$RCF)" "$RERUN" "$BASELINE" "$QFILE" "$QRO" ${SELFILE:+"$SELFILE"}; print -r -- $? > "$RCF"; fi
-    node "$GR" meta-end "$WT" "$OUT" "$(<$RCF)" "$QFILE"' guards-all "$H/slots.zsh" "$WT" "$OUT" "$CMD" "$mode" "$RCF" "$H/guards-result.js" "$RERUN" "$BASELINE" "$QFILE" "$QRO" "$SELFILE"
+    # selected N - accounted for N (a run given guards by --only): fewer is the environment, 69, before any rerun
+    COUNTED=1
+    if [[ -n $SELFILE ]] && ! node "$GR" count "$OUT" "$RERUN" "$SELFILE" "$LPAT"; then print -r -- 69 > "$RCF"; COUNTED=; fi
+    if [[ -n $RERUN && -n $COUNTED ]]; then node "$GR" rerun "$WT" "$OUT" "$(<$RCF)" "$RERUN" "$BASELINE" "$QFILE" "$QRO" ${SELFILE:+"$SELFILE"}; print -r -- $? > "$RCF"; fi
+    node "$GR" meta-end "$WT" "$OUT" "$(<$RCF)" "$QFILE"' guards-all "$H/slots.zsh" "$WT" "$OUT" "$CMD" "$mode" "$RCF" "$H/guards-result.js" "$RERUN" "$BASELINE" "$QFILE" "$QRO" "$SELFILE" "$LPAT" "${TPL:-$CMD}" "$ONLY"
   rc=$?
   [[ -s $RCF ]] && exit $(<$RCF)          # the runner ran: its code
   (( rc == 75 )) || exit $rc              # 75 without a run: no worker budget - queue again

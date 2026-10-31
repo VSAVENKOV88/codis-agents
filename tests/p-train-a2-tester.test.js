@@ -90,9 +90,9 @@ function partB(TMP) {
   fakeBin(bin);
   const put = (f, s, mode) => { fs.mkdirSync(path.dirname(path.join(w, f)), { recursive: true }); fs.writeFileSync(path.join(w, f), s); if (mode) fs.chmodSync(path.join(w, f), mode); };
   // sub.sh: every argument on its own line; prints the prepared log and exits with the prepared code
-  put('sub.sh', `#!/bin/sh\nfor a in "$@"; do printf '%s\\n' "$a"; done >> "${TMP}/sub.args"\ncat "${TMP}/sub.log"\nexit $(cat "${TMP}/sub.rc")\n`, 0o755);
+  put('sub.sh', `#!/bin/sh\nfor a in "$@"; do printf '%s\\n' "$a"; done >> "${TMP}/sub.args"\ncat "${TMP}/sub.log"\necho "=== $(( $# / 2 )) total ==="\nexit $(cat "${TMP}/sub.rc")\n`, 0o755);
   put('full.sh', '#!/bin/sh\necho "=== full ==="\nexit 0\n', 0o755);
-  put('one.sh', `#!/bin/sh\ngrep -qxF -- "$1" "${TMP}/red.txt" && exit 1\nexit 0\n`, 0o755);
+  put('one.sh', `#!/bin/sh\ngrep -qxF -- "$1" "${TMP}/red.txt" && exit 1\necho "=== 1 total ==="\nexit 0\n`, 0o755);
   put('lib.js', 'module.exports = 1;\n');
   put('g/b-run.js', "require('../lib');\n");
   put('g/c-run.js', '// another area\n');
@@ -101,7 +101,7 @@ function partB(TMP) {
   gitC(w, 'checkout', '-q', '-b', 'task'); put('lib.js', 'module.exports = 2;\n'); gitC(w, 'add', 'lib.js'); gitC(w, 'commit', '-q', '-m', 'change lib');
   const f = path.join(TMP, 'cfg.json');
   fs.writeFileSync(f, JSON.stringify({ repoDir: path.join(TMP, 'main'), worktreeRoot: wts, sharedDir: sh2, guardCommand: 'cd {wt} && ./full.sh', guardSubsetCommand: 'cd {wt} && ./sub.sh {onlyArgs}',
-    guardRerun: { command: 'cd {wt} && ./one.sh {name}', newRedPattern: '^FAILED (\\S+) ', tallyPattern: '^=== .* ===$' },
+    guardRerun: { command: 'cd {wt} && ./one.sh {name}', newRedPattern: '^FAILED (\\S+) ', tallyPattern: '^=== (?:full|(\\d+) total) ===$' },
     guardBaseline: 'known.json', guardAlways: [], protectedBranches: ['base'], slots: { lockDir: path.join(TMP, 'slots'), legacyLock: path.join(TMP, 'guards.lock') } }));
   cleanEnv();
   // N4: the temporary files of guards-all.sh (the names file of a selection among them) go into a TMPDIR of its own
@@ -111,7 +111,7 @@ function partB(TMP) {
   const ga = (...a) => { const r = spawnSync('zsh', [path.join(ROOT, 'scripts', 'guards-all.sh'), '--main-checkout', ...a], { encoding: 'utf8', env, timeout: 120000 }); r.all = (r.stdout || '') + (r.stderr || ''); return r; };
   const SEL = path.join(sh2, 'guards-pw.select.txt');
   const set = (rc, reds) => {
-    fs.writeFileSync(path.join(TMP, 'sub.log'), reds.map((n) => `FAILED ${n} - code 1`).join('\n') + `\n=== ${reds.length} failed ===\n`);
+    fs.writeFileSync(path.join(TMP, 'sub.log'), reds.map((n) => `FAILED ${n} - code 1`).join('\n') + `\n${reds.length} failed\n`);
     fs.writeFileSync(path.join(TMP, 'sub.rc'), String(rc)); fs.writeFileSync(path.join(TMP, 'red.txt'), '');
     fs.rmSync(path.join(TMP, 'sub.args'), { force: true });
   };

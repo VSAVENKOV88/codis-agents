@@ -45,6 +45,7 @@ while (( k++ < 1 )) || [[ -e '$T'/hold.$tag ]]; do
   sleep 0.3
 done
 print -r -- "end $tag $EPOCHREALTIME" >> '$T'/npm.log
+print -r -- "TOTAL: ${#${(M)a:#--only}} total"   # the tally line the count of a selection reads (p-noghost-b)
 exit 0' > $T/bin/npm
 chmod +x $T/bin/*; export PATH=$T/bin:$PATH
 
@@ -63,6 +64,7 @@ WHOLE='cd {wt}/srv && npm run guards -- --all {onlyArgs}'
 LIMITONLY='cd {wt}/srv && npm run guards -- --all {onlyArgs} --concurrency-file {limitFile}'
 # setcfg <guardCommand> <guardSubsetCommand> [remoteRun JSON]
 setcfg() { print -r -- '{"repoDir": "'$T'/main", "worktreeRoot": "'$T'/wts", "sharedDir": "'$T'/shared", "protectedBranches": ["base"],
+  "guardRerun": {"command": "cd {wt} && true {name}", "newRedPattern": "^X (\\S+)", "tallyPattern": "^TOTAL: (\\d+) total$"},
   "guardCommand": "'$1'", "guardSubsetCommand": "'$2'"'${3:+, \"remoteRun\": $3}'}' > $T/cfg.json }
 export CODIS_AGENTS_CONFIG=$T/cfg.json SLOTS_DIR=$T/slots SLOT_OS=darwin
 

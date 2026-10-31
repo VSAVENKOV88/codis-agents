@@ -152,7 +152,7 @@ read.
 | `scripts/detect.js` | the facts of a repository for onboarding, read only, as JSON: git (default branch from origin/HEAD, main/master, tag shapes, remotes without passwords, hooksPath), GitHub workflow files, stacks by manifest, venvs, compose services (`docker compose config`, no daemon), ignored data with sizes, what an earlier onboarding left; the contract is in its header |
 | `scripts/env-check.js` | free disk and swap headroom for the preconditions, floors `minFreeDiskGB` and `swapMinMB` of the machine file (the command line wins; 0 - off, said in notes); `--worktree <dir>`: the task worktree is not the main working copy |
 | `scripts/git-hooks/` | `pre-push` (protected branches and tags) and `pre-commit` (cloud conflict copies, extra checks) |
-| `scripts/config.js` | finds, validates and resolves the project config |
+| `scripts/config.js` | finds, validates and resolves the project config; `config.js smoke` runs one guard on every path that narrows a guard command (`scripts/config-smoke.js`) |
 | `examples/`, `schemas/` | an example project config and its JSON schema |
 
 ## Install
@@ -199,6 +199,38 @@ the main checkout of a linked worktree. Check it with:
 node <plugin>/scripts/config.js check
 ```
 
+Placeholders of the guard commands: every place that fills a command knows its own set (`scripts/config.js` `FILLS`),
+and the check holds each template to it - a placeholder that is not filled in at its place, or an unknown placeholder (a typo
+such as `{job}`), is a config error naming the key and the placeholder, so every slot of the project refuses (78)
+instead of running a command with `{jobs}` left in it (a runner that read it as zero workers ran 0 guards and exited 0).
+`guardCommand` and `remoteRun.command`: `{wt}`, `{jobs}`, `{limitFile}`; `guardCommandLegacy` and
+`remoteRun.commandLegacy`: `{wt}`, `{jobs}`; `guardSubsetCommand` and `remoteRun.subsetCommand`: those of `guardCommand`
+plus `{onlyArgs}`; `remoteRun.localCommand` (by default `guardSubsetCommand`): only `{wt}` and `{onlyArgs}`;
+`guardRerun.command`: `{wt}`, `{name}`. A token is `{identifier}` not right after `$`: `${HOME}`, `{a,b}` and `{1..3}`
+are the shell's, and a shell brace group takes a blank (awk `'{ print }'`, not `'{print}'`). The template is checked,
+never the filled string, so a worktree path or a guard name with braces is fine. `guards-select.js --command` fills
+only `{wt}` and `{onlyArgs}` and refuses (78) a `guardSubsetCommand` with `{jobs}` or `{limitFile}`: run
+`guards-all.sh --select` instead.
+
+The check reads templates; whether every path really runs a guard is checked by the smoke run, which takes heavy slots
+(run it in the background):
+
+```sh
+node <plugin>/scripts/config.js smoke <worktree> <guard> [<guard of the part here>]
+```
+
+It runs the one guard on every path that narrows a guard command to named guards: the selection here
+(`guardSubsetCommand`, `guards-all.sh --local --guards`), the runner's selection (`remoteRun.subsetCommand`, only with
+`remote` in the machine file; committed HEAD only) and the part here of a remote run (`remoteRun.localCommand` with
+`remoteRun.localPattern`, the second guard when given - pick one the runner skips). A path is `ok` when it exits 0 and
+its tally (group 1 of `guardRerun.tallyPattern`) counts its guard; `RED` on 0, no tally line or another exit code
+(pick a guard that is green there); `none` when the config has no such path. The full commands (`guardCommand`,
+`remoteRun.command`) have no `{onlyArgs}` and get the static check only. Exit 1 on a config error or a red path, 78 on
+the main working copy (`--main-checkout` as for `guards-all.sh`). The selection paths write the worktree's
+`guards-<name>.select.txt`, the part here `guards-<name>.smoke-local.txt`. A project config whose guard commands
+change is committed only after a green smoke (rules, "A project config's guard commands change only after a green
+smoke"); to try an edited copy first, point `CODIS_AGENTS_CONFIG` at it.
+
 | key | meaning |
 |---|---|
 | `repoDir` | main checkout; worktrees are created from it (`~` is expanded) |
@@ -206,7 +238,7 @@ node <plugin>/scripts/config.js check
 | `sharedDir` | task folders `<sharedDir>/<task>/` (`BRIEF.md`, `analyst.md`, `prog.md`, `test.md`, `review.md`) and guard logs |
 | `guardCommand` | the full guard run, executed with zsh in the worktree; placeholder `{wt}`, optionally `{jobs}` (the worker count of the slot budget) and `{limitFile}` (a file the runner re-reads for an adaptive worker limit). Without both (a runner that sets its own workers, e.g. `cd {wt} && pytest -q`) the run is counted as the whole budget `slots.jobsAlone` and starts only when that is free: no other heavy job. The log is `<sharedDir>/guards-<name>.txt` for a worktree directly under `worktreeRoot`, `guards-<basename>-<cksum of the path>.txt` for any other path |
 | `guardCommandLegacy`, `guardAdaptiveProbe` | for branches whose runner has no adaptive limit: if `<wt>/<probe.file>` lacks `<probe.contains>`, the legacy command runs with a fixed worker count |
-| `guardRerun` | rerun of new reds one by one after a red full run, in the same slot (`scripts/guards-result.js`): `command` runs one guard (`{wt}`, `{name}`), `newRedPattern` takes the names of new reds from the log (group 1), optional `tallyPattern` (no tally - a cut-off run - nothing reruns) and `maxReruns` (default 10). Red again alone - a new red, the runner's exit code stays; green alone - flaky, listed for the project backlog, not a regression; only flaky - exit 0. Without the key nothing reruns |
+| `guardRerun` | rerun of new reds one by one after a red full run, in the same slot (`scripts/guards-result.js`): `command` runs one guard (`{wt}`, `{name}`), `newRedPattern` takes the names of new reds from the log (group 1), optional `tallyPattern` (no tally - a cut-off run - nothing reruns) and `maxReruns` (default 10). Its capture group 1 is the count of a run given guards by `--only` (`--select`, `--guards`, the runner's selection, the part here): the selected guards the run accounted for (ran, or skipped by a flag); fewer than selected minus those a `remoteRun.localPattern` line names, or no tally line, is the environment - "environment: ... accounted for T of N selected guards: ...", exit 69, before and instead of the rerun; a full run is not counted. Required with a group when `guardSubsetCommand` or `remoteRun.localPattern` is set (config error otherwise). `uncountedIsRed` (boolean, default false) counts the single rerun of a new red the same way: a run that exits 0 with no tally line, or whose tally counts 0 of its guard, is the environment (69), not flaky; without it the group alone does not, and `uncountedIsRed: true` needs the group (config error otherwise). Red again alone - a new red, the runner's exit code stays; green alone - flaky, listed for the project backlog, not a regression; only flaky - exit 0. Without the key nothing reruns |
 | `guardBaseline` | known reds of the project: path, relative to the worktree, of a JSON file `{"<guard name>": "<reason>"}` committed with the project (it changes in the same commit as the fix). Needs `guardRerun`: after a red full run the names that `newRedPattern` finds and the file lists are subtracted before `maxReruns` is counted and never rerun; only known reds - exit 0 and "N known red"; a known name not red in a finished run is named ("known red not red now: X — remove it from the baseline"), on a selection (`guards-all.sh --select`) only among the selected guards, since a known red outside the selection did not run; a missing or broken file is an error line and the runner's exit code stands, never "all known" in silence. With it the quarantine is on: a guard green alone is written into `<sharedDir>/guards-quarantine.json` (same format, `"flaky: <log> <sha7>, green alone, <date>"`, under a lock, outside the worktree so the tracked tree stays clean), every later run subtracts it as known, a broken quarantine file is handled like a broken baseline, and its hash in the meta stops a reuse once it changed; `guards-result.js quarantine-take <wt> <guardBaseline> <file>` moves its entries into the baseline for the coordinator to commit, `quarantine-drop <file> <guard>...` drops them after a fix; entries `flaky:` are never named as "not red now". A run on the remote runner uses the quarantine of this machine: sent with the run, subtracted there, written here from the returned log, its hash in the remote meta (a start that attaches to a run begun with another quarantine - a --no-quarantine call attached to a run that subtracted entries, or a runner that does not say which one included - keeps that run's result, but its meta holds no hash: never reused). Without the key: "quarantine off" |
 | `guardExclusive` | which guards share a machine resource and run one at a time under the exclusive lock (`heavy.sh`): `glob` (zsh patterns of the file name, matched with `extendedglob`; `config.js check` refuses one zsh cannot compile, such as `test_[.py`) and `marker` (the line-comment marker, literal), e.g. `{"glob": ["test_*.py"], "marker": "#"}` for a line `# guards:exclusive — <reason>`. Left out: `*-run.js`, `*-run.mjs` and `//`; given, both are required and replace the default |
 | `guardFiles` | globs of the project's guard files for `scripts/guards-select.js` (default `*-run.js`, `*-run.mjs`, `*-run.cjs` at any depth) |

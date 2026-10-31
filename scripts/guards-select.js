@@ -21,7 +21,8 @@
 //   (none)     one selected guard per line, paths from the repository root
 //   --json     {base, mergeBase, changed, guards: [{path, why: [...]}], command}
 //   --command  the project's guardSubsetCommand with {wt} and {onlyArgs} (one --only <guard> per guard) filled in;
-//              exit 3 when nothing is selected (an empty --only list would run every guard), 78 without the key
+//              exit 3 when nothing is selected (an empty --only list would run every guard), 78 without the key and
+//              78 when it has {jobs} or {limitFile} (only guards-all.sh --select fills them; --json gives command "" then)
 //   --only-args  only the {onlyArgs} part (one --only <guard> per guard, quoted for zsh); exit 3 when nothing is
 //              selected. guards-all.sh --select fills it into guardSubsetCommand here or remoteRun.subsetCommand on the
 //              remote runner. With --names-out <file> it also writes the selected guards there as a JSON array: the
@@ -97,8 +98,11 @@ for (const g of guards) {
 }
 
 const onlyArgs = () => picked.map((p) => `--only ${q(p.path)}`).join(' ');
+// --command fills only {wt} and {onlyArgs}: {jobs} and {limitFile} come from the slot's worker budget, which only
+// guards-all.sh --select has (scripts/config.js FILLS) - a command printed with them left in would run 0 workers.
+const unfilled = () => cfg.placeholderErrors('guardSubsetCommand', config.guardSubsetCommand || '', ['wt', 'onlyArgs']);
 const command = () => {
-  if (!config.guardSubsetCommand) return '';
+  if (!config.guardSubsetCommand || unfilled().length) return '';
   const only = onlyArgs();
   return config.guardSubsetCommand.replace(/\{wt\}/g, () => q(wt)).replace(/\{onlyArgs\}/g, () => only);
 };
@@ -110,6 +114,7 @@ if (a.includes('--json')) {
   process.stdout.write(onlyArgs() + '\n');
 } else if (a.includes('--command')) {
   if (!config.guardSubsetCommand) die(78, `no guardSubsetCommand in the project config ${file}: run the full guard run instead`);
+  if (unfilled().length) die(78, `${unfilled().join('; ')}: {jobs} and {limitFile} are filled in only by guards-all.sh --select (the worker budget of its slot) - run guards-all.sh --select <base> <worktree> instead of --command`);
   if (!picked.length) die(3, 'no guard selected: run your new guards directly');
   process.stdout.write(command() + '\n');
 } else {

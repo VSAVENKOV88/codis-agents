@@ -72,5 +72,8 @@ one. For whatever the owner judges by the screen, show a mockup of all states be
 - Do not resume a multi-task run with `resumeFromRunId`; relaunch each unfinished task alone with `start`.
 - A change to process launch, permissions, Docker or the runtime version is accepted only after a smoke run in the real
   image.
+- An edit of the project config's guard commands (`guardSubsetCommand`, `guardRerun`, `remoteRun`) is committed or used
+  only after a green smoke run on it, `config.js smoke <worktree> <guard> [<guard of the part here>]` (in
+  `${CLAUDE_PLUGIN_ROOT}/scripts`; an edited copy through `CODIS_AGENTS_CONFIG`; in the background, it takes heavy slots).
 - Your own context grows too: around 700k, in a pause between runs, save the continuation point and continue in a fresh
   session or after a compaction.

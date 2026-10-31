@@ -28,8 +28,8 @@ const q = () => { try { return JSON.parse(read(QF)); } catch { return null; } };
 
 // The runner's log: two new reds, the tally; extra lines go before the tally (a guard's own output).
 const LOG = (extra) => ['Guards to run: 4', ...(extra || []), '', '---- NEW RED ----', 'X srv/a-run.js  (1.0s, code 1)', 'X srv/b-run.js  (2.0s, code 1)', '',
-  'TOTAL: 2 green, 2 NEW red, 0 known red'].join('\n') + '\n';
-const RERUN = { command: 'cd {wt} && ./one.sh {name}', newRedPattern: '^[XT] (\\S+(?: \\S+)*?)  \\(', tallyPattern: '^TOTAL: ' };
+  'TOTAL: 2 green, 2 NEW red, 0 known red, 4 total'].join('\n') + '\n';
+const RERUN = { command: 'cd {wt} && ./one.sh {name}', newRedPattern: '^[XT] (\\S+(?: \\S+)*?)  \\(', tallyPattern: '^TOTAL: .*?(\\d+) total$' };
 
 try {
   if (!has('zsh') || !has('perl')) skip('quarantine through the remote runner', 'zsh or perl not found');
@@ -54,8 +54,8 @@ process.exit(r.status === null ? 255 : r.status);
 `, { mode: 0o755 });
     const put = (f, s, mode) => { fs.mkdirSync(path.dirname(path.join(main, f)), { recursive: true }); fs.writeFileSync(path.join(main, f), s); if (mode) fs.chmodSync(path.join(main, f), mode); };
     put('full.sh', `#!/bin/sh\necho "$PWD $*" >> "${T}/full.count"\ncat "${T}/full.log"\nexit $(cat "${T}/full.rc")\n`, 0o755);
-    put('one.sh', `#!/bin/sh\necho "$PWD $1" >> "${T}/one.count"\ngrep -qxF -- "$1" "${T}/red.txt" && exit 1\nexit 0\n`, 0o755);
-    put('local.sh', `#!/bin/sh\necho "$PWD $*" >> "${T}/local.count"\n[ -s "${T}/local.log" ] && cat "${T}/local.log"\nexit $(cat "${T}/local.rc")\n`, 0o755);
+    put('one.sh', `#!/bin/sh\necho "$PWD $1" >> "${T}/one.count"\ngrep -qxF -- "$1" "${T}/red.txt" && exit 1\necho "TOTAL: 1 total"\nexit 0\n`, 0o755);
+    put('local.sh', `#!/bin/sh\necho "$PWD $*" >> "${T}/local.count"\nif [ -s "${T}/local.log" ]; then cat "${T}/local.log"; else echo "TOTAL: $(echo "$*" | grep -o -- '--only' | wc -l | tr -d ' ') total"; fi\nexit $(cat "${T}/local.rc")\n`, 0o755);
     put('known.json', '{}\n');
     git(main, 'init', '-q', '-b', 'trunk'); git(main, 'add', '.'); git(main, 'commit', '-q', '-m', 'project');
     git(main, 'config', 'core.hooksPath', path.join(ROOT, 'scripts', 'git-hooks'));
@@ -160,7 +160,7 @@ process.exit(r.status === null ? 255 : r.status);
 
     // E4: a guard the runner does not run is flaky here - written by the part here; the meta has the hash of the end.
     fs.writeFileSync(QF, '{}\n'); set(1, [], ['skipped (needs-font): 1 — srv/font-run.js']);
-    fs.writeFileSync(path.join(T, 'local.log'), 'X srv/font-run.js  (1.0s, code 1)\nTOTAL: 0 green, 1 NEW red\n'); fs.writeFileSync(path.join(T, 'local.rc'), '1');
+    fs.writeFileSync(path.join(T, 'local.log'), 'X srv/font-run.js  (1.0s, code 1)\nTOTAL: 0 green, 1 NEW red, 1 total\n'); fs.writeFileSync(path.join(T, 'local.rc'), '1');
     x = ga({}, '--force', 'xw');
     Q = q() || {};
     ok('E4: the runner\'s two and the part here\'s one - all three written, exit 0', x.status === 0 && Object.keys(Q).sort().join(',') === 'srv/a-run.js,srv/b-run.js,srv/font-run.js', `${x.status} ${JSON.stringify(Q)}\n${out().slice(-800)}`);

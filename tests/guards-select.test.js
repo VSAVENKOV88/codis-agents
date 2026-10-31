@@ -19,7 +19,7 @@ const repo = path.join(tmp, 'repo');
 const git = (...a) => execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 const put = (f, s) => { fs.mkdirSync(path.dirname(path.join(repo, f)), { recursive: true }); fs.writeFileSync(path.join(repo, f), s); };
 const cfgFile = path.join(tmp, 'cfg.json');
-const writeCfg = (extra) => fs.writeFileSync(cfgFile, JSON.stringify(Object.assign({ repoDir: repo, worktreeRoot: tmp, sharedDir: path.join(tmp, 's') }, extra)));
+const writeCfg = (extra) => fs.writeFileSync(cfgFile, JSON.stringify(Object.assign({ repoDir: repo, worktreeRoot: tmp, sharedDir: path.join(tmp, 's'), guardRerun: { command: 'cd {wt} && run --only {name}', newRedPattern: '^X (\\S+) ', tallyPattern: '^TOTAL: (\\d+) total$' } }, extra)));
 const sel = (...a) => {
   const r = spawnSync(process.execPath, [S, '--wt', repo, '--config', cfgFile, ...a], { encoding: 'utf8' });
   return { code: r.status, out: r.stdout, err: r.stderr, lines: r.stdout.split('\n').filter(Boolean) };

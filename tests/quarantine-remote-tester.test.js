@@ -31,8 +31,8 @@ const q = () => { try { return JSON.parse(read(QF)); } catch { return null; } };
 const sleepMs = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
 const LOG = (extra) => ['Guards to run: 4', ...(extra || []), '', '---- NEW RED ----', 'X srv/a-run.js  (1.0s, code 1)', 'X srv/b-run.js  (2.0s, code 1)', '',
-  'TOTAL: 2 green, 2 NEW red, 0 known red'].join('\n') + '\n';
-const RERUN = { command: 'cd {wt} && ./one.sh {name}', newRedPattern: '^[XT] (\\S+(?: \\S+)*?)  \\(', tallyPattern: '^TOTAL: ' };
+  'TOTAL: 2 green, 2 NEW red, 0 known red, 4 total'].join('\n') + '\n';
+const RERUN = { command: 'cd {wt} && ./one.sh {name}', newRedPattern: '^[XT] (\\S+(?: \\S+)*?)  \\(', tallyPattern: '^TOTAL: .*?(\\d+) total$' };
 
 const kids = [];
 try {
@@ -58,8 +58,8 @@ process.exit(r.status === null ? 255 : r.status);
     const put = (f, s, mode) => { fs.mkdirSync(path.dirname(path.join(main, f)), { recursive: true }); fs.writeFileSync(path.join(main, f), s); if (mode) fs.chmodSync(path.join(main, f), mode); };
     // full.sh: counted first, then (when T/full.sleep holds seconds) slow, so a run can be caught while it goes
     put('full.sh', `#!/bin/sh\necho "$PWD $*" >> "${T}/full.count"\n[ -s "${T}/full.sleep" ] && sleep $(cat "${T}/full.sleep")\ncat "${T}/full.log"\nexit $(cat "${T}/full.rc")\n`, 0o755);
-    put('one.sh', `#!/bin/sh\necho "$PWD $1" >> "${T}/one.count"\ngrep -qxF -- "$1" "${T}/red.txt" && exit 1\nexit 0\n`, 0o755);
-    put('local.sh', `#!/bin/sh\necho "$PWD $*" >> "${T}/local.count"\n[ -s "${T}/local.log" ] && cat "${T}/local.log"\nexit $(cat "${T}/local.rc")\n`, 0o755);
+    put('one.sh', `#!/bin/sh\necho "$PWD $1" >> "${T}/one.count"\ngrep -qxF -- "$1" "${T}/red.txt" && exit 1\necho "TOTAL: 1 total"\nexit 0\n`, 0o755);
+    put('local.sh', `#!/bin/sh\necho "$PWD $*" >> "${T}/local.count"\nif [ -s "${T}/local.log" ]; then cat "${T}/local.log"; else echo "TOTAL: $(echo "$*" | grep -o -- '--only' | wc -l | tr -d ' ') total"; fi\nexit $(cat "${T}/local.rc")\n`, 0o755);
     put('known.json', '{}\n');
     git(main, 'init', '-q', '-b', 'trunk'); git(main, 'add', '.'); git(main, 'commit', '-q', '-m', 'project');
     git(main, 'config', 'core.hooksPath', path.join(ROOT, 'scripts', 'git-hooks'));
@@ -108,7 +108,7 @@ process.exit(r.status === null ? 255 : r.status);
 
     // R6: no quarantine file and nothing flaky - the meta keeps "none"; the file appearing refuses the reuse.
     fs.rmSync(QF, { force: true }); fs.writeFileSync(path.join(T, 'red.txt'), ''); set(0, []);
-    fs.writeFileSync(path.join(T, 'full.log'), 'Guards to run: 2\n\nTOTAL: 2 green, 0 NEW red, 0 known red\n');
+    fs.writeFileSync(path.join(T, 'full.log'), 'Guards to run: 2\n\nTOTAL: 2 green, 0 NEW red, 0 known red, 2 total\n');
     x = ga({}, '--force', 'xw');
     ok('R6: no quarantine file, green - exit 0, no file created here, the run got {}', x.status === 0 && !fs.existsSync(QF) && JSON.stringify(JSON.parse(read(RQ) || 'null')) === '{}', `${x.status} ${fs.existsSync(QF)} ${read(RQ)}`);
     ok('R6: the meta keeps the hash "none" of the missing file', meta().quarantine === 'none', JSON.stringify(meta()));

@@ -1,4 +1,5 @@
 #!/bin/zsh
+# tests:quiet - reads slot plans and timing of a fake machine; red under the load of the parallel phase (review of p-noghost-e1)
 # Tester guard U1b: the edges of the Linux readings that tests/slots-linux.test.sh does not reach, on a FAKE Linux
 # machine (SLOT_OS=linux, SLOT_PROC=<static fake /proc dirs under $T>), so it runs the same on macOS and on Linux.
 #   usage: tests/slots-linux-edges.test.sh

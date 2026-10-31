@@ -21,6 +21,11 @@
 //        config.js migrate [file] [--write] -> the older machine keys of the project config moved into the machine
 //                                         file: shown, or written with --write; the project config is never edited
 //                                         (the keys to remove are named); two values - exit 1, nothing written
+//        config.js smoke <worktree> <guard> [<guard of the part here>] [--main-checkout]
+//                                       -> one guard on every path that narrows a guard command to named guards (the
+//                                          selection here, the runner's selection, the part here of a remote run): red
+//                                          (exit 1) on a config error or a path that ran 0 of it; 78 on the main working
+//                                          copy (scripts/config-smoke.js; heavy slots - run it in the background)
 //
 // The machine file (owner 2026-10-21, U2a): settings of the machine shared by every project on it - slot counts and
 // their lock directory, the swap and disk floors, the limit of chains with acceptance in Docker, the coordinator's
@@ -96,8 +101,9 @@ const SLOT_SPEC = {
 };
 const WT_SPEC = { scan: ['string[]', []], skip: ['string[]', []], link: ['string[]', []] };
 // Rerun of new reds one by one after a full run (scripts/guards-result.js explains why): command ({wt}, {name}),
-// newRedPattern (per log line, group 1 = name), tallyPattern (the log reached its tally), maxReruns.
-const RERUN_SPEC = { command: ['string', undefined], newRedPattern: ['string', undefined], tallyPattern: ['string', ''], maxReruns: ['number', 10] };
+// newRedPattern (per log line, group 1 = name), tallyPattern (the log reached its tally), maxReruns, uncountedIsRed (the
+// single rerun is counted by the group of tallyPattern only with this key: F3, owner's variant B of 2026-10-31).
+const RERUN_SPEC = { command: ['string', undefined], newRedPattern: ['string', undefined], tallyPattern: ['string', ''], maxReruns: ['number', 10], uncountedIsRed: ['boolean', false] };
 const EXCL_SPEC = { glob: ['string[]', undefined], marker: ['string', undefined] };
 const EXCL_DEFAULT = { glob: ['*-run.js', '*-run.mjs'], marker: '//' };
 const PROBE_SPEC = { file: ['string', undefined], contains: ['string', undefined] };
@@ -309,6 +315,40 @@ const getPath = (o, k) => k.split('.').reduce((a, x) => (a == null ? undefined :
 const sameValue = (k, a, b) => (/lockDir|legacyLock/.test(k) && a && b ? path.resolve(a) === path.resolve(b) : a === b);
 const show = (v) => (typeof v === 'string' ? JSON.stringify(v) : String(v));
 
+// The placeholders each guard command template is filled with, by the place that fills it (p-noghost, case
+// 2026-10-30: the part here filled only {wt} and {onlyArgs} of a guardSubsetCommand with {jobs}, the project's runner
+// took "--concurrency {jobs}" literally, ran 0 of 10 guards and exited 0):
+//   guardCommand, remoteRun.command - guards-all.sh sub() (here; on the runner its guardCommand);
+//   guardCommandLegacy, remoteRun.commandLegacy - the same, a fixed worker count (no {limitFile});
+//   guardSubsetCommand, remoteRun.subsetCommand - guards-all.sh --select / --guards: {onlyArgs}, then sub();
+//   remoteRun.localCommand - the part here (scripts/guards-remote.js): {wt} and {onlyArgs} only;
+//   guardRerun.command - one guard alone (scripts/guards-result.js): {wt} and {name}.
+// A token is {identifier} not right after $ (zsh ${VAR} is a parameter; {a,b} and {1..3} are brace expansions, not
+// identifiers). The template is checked, never the filled string: a worktree path or a guard name may hold braces.
+const FILLS = {
+  guardCommand: ['wt', 'jobs', 'limitFile'],
+  guardCommandLegacy: ['wt', 'jobs'],
+  guardSubsetCommand: ['wt', 'jobs', 'limitFile', 'onlyArgs'],
+  'remoteRun.command': ['wt', 'jobs', 'limitFile'],
+  'remoteRun.commandLegacy': ['wt', 'jobs'],
+  'remoteRun.subsetCommand': ['wt', 'jobs', 'limitFile', 'onlyArgs'],
+  'remoteRun.localCommand': ['wt', 'onlyArgs'],
+  'guardRerun.command': ['wt', 'name'],
+};
+const KNOWN_PLACEHOLDERS = [...new Set(Object.values(FILLS).flat())];
+const placeholdersOf = (s) => [...new Set([...String(s).matchAll(/(?<!\$)\{([A-Za-z_][A-Za-z0-9_]*)\}/g)].map((m) => m[1]))];
+const braces = (l) => l.map((k) => `{${k}}`).join(', ');
+// The errors of a template against the placeholders its place fills ([] when it is fine). label names the key in the
+// message (with its default, e.g. "remoteRun.localCommand (default guardSubsetCommand)").
+function placeholderErrors(label, template, fills) {
+  if (typeof template !== 'string') return [];
+  const got = placeholdersOf(template), out = [];
+  const unknown = got.filter((k) => !KNOWN_PLACEHOLDERS.includes(k)), other = got.filter((k) => KNOWN_PLACEHOLDERS.includes(k) && !fills.includes(k));
+  if (other.length) out.push(`${label}: ${braces(other)} ${other.length > 1 ? 'are' : 'is'} not filled in here (only ${braces(fills)})`);
+  for (const k of unknown) out.push(`${label}: unknown placeholder {${k}} (this command is filled with ${braces(fills)} only; a brace group of the shell takes a blank, e.g. awk '{ print }')`);
+  return out;
+}
+
 // opts: machine (a loadMachine() result), env (to load it from; default process.env), file (the project config, for
 // the messages). Returns {config, errors, warnings}.
 function resolve(raw, opts = {}) {
@@ -361,10 +401,13 @@ function resolve(raw, opts = {}) {
   c.coordinatorContextK = mv.coordinatorContextK;
   c.machine = { path: m.path, exists: m.exists, source: m.source };
   c.remote = mv.remote || null;
+  const placeholderChecks = [];   // [key, template, label?]: checked against FILLS[key] at the end
   if (c.remoteRun) {
     const x = c.remoteRun = level(REMOTE_RUN_SPEC, c.remoteRun, 'remoteRun.', errors);
-    if (!x.command) x.command = c.guardCommand;
-    if (!x.commandLegacy) x.commandLegacy = c.guardCommandLegacy;
+    // a key given here is checked against its own place; a default only where its place fills less than its source's
+    if (x.command) placeholderChecks.push(['remoteRun.command', x.command]); else x.command = c.guardCommand;
+    if (x.commandLegacy) placeholderChecks.push(['remoteRun.commandLegacy', x.commandLegacy]); else x.commandLegacy = c.guardCommandLegacy;
+    if (x.subsetCommand) placeholderChecks.push(['remoteRun.subsetCommand', x.subsetCommand]);
     if (x.command && !x.command.includes('{wt}')) errors.push('remoteRun.command: must contain {wt} (the worktree directory)');
     // the selection on the runner (guards-all.sh --select): without the key the selection runs in a heavy slot here
     if (x.subsetCommand) {
@@ -391,7 +434,8 @@ function resolve(raw, opts = {}) {
     if (x.localPattern) {
       try { if (new RegExp(x.localPattern + '|').exec('').length < 2) errors.push('remoteRun.localPattern: needs a capture group (the list of guards)'); }
       catch (e) { errors.push('remoteRun.localPattern: bad regular expression'); }
-      if (!x.localCommand) x.localCommand = c.guardSubsetCommand;
+      if (x.localCommand) placeholderChecks.push(['remoteRun.localCommand', x.localCommand]);
+      else if (c.guardSubsetCommand) { x.localCommand = c.guardSubsetCommand; placeholderChecks.push(['remoteRun.localCommand', x.localCommand, 'remoteRun.localCommand (default guardSubsetCommand)']); }
       if (!x.localCommand) errors.push('remoteRun.localPattern: needs remoteRun.localCommand or guardSubsetCommand (the command that runs those guards here)');
       else for (const k of ['wt', 'onlyArgs']) if (!x.localCommand.includes(`{${k}}`)) errors.push(`remoteRun.localCommand: must contain {${k}}`);
     }
@@ -404,7 +448,10 @@ function resolve(raw, opts = {}) {
   if (c.guardRerun) {
     const g = c.guardRerun = level(RERUN_SPEC, c.guardRerun, 'guardRerun.', errors);
     if (!g.command) errors.push('guardRerun.command: required');
-    else for (const k of ['wt', 'name']) if (!g.command.includes(`{${k}}`)) errors.push(`guardRerun.command: must contain {${k}}`);
+    else {
+      for (const k of ['wt', 'name']) if (!g.command.includes(`{${k}}`)) errors.push(`guardRerun.command: must contain {${k}}`);
+      placeholderChecks.push(['guardRerun.command', g.command]);
+    }
     if (!g.newRedPattern) errors.push('guardRerun.newRedPattern: required');
     else {
       try { if (new RegExp(g.newRedPattern + '|').exec('').length < 2) errors.push('guardRerun.newRedPattern: needs a capture group (the guard name)'); }
@@ -412,6 +459,24 @@ function resolve(raw, opts = {}) {
     }
     if (g.tallyPattern) { try { new RegExp(g.tallyPattern); } catch (e) { errors.push('guardRerun.tallyPattern: bad regular expression'); } }
     if (!(Number.isInteger(g.maxReruns) && g.maxReruns >= 1)) errors.push('guardRerun.maxReruns: expected a positive integer');
+    // uncountedIsRed (F3): a single rerun that exits 0 is green alone only when its tally counts it; that needs the group
+    if (g.uncountedIsRed) {
+      let group = false; // null: a bad regexp, named above
+      try { group = !!g.tallyPattern && new RegExp(g.tallyPattern + '|').exec('').length > 1; } catch { group = null; }
+      if (group === false) errors.push('guardRerun.uncountedIsRed: needs guardRerun.tallyPattern with a capture group (the count of the single rerun: group 1 = the selected guards it accounted for, e.g. "^TOTAL: .* (\\d+) total$")');
+    }
+  }
+  // selected N - accounted for N (p-noghost, coordinator's decision 1 of 2026-10-31): a run given guards by --only (a
+  // selection, the attribution of a train, the part here) is counted by group 1 of guardRerun.tallyPattern, so with
+  // guardSubsetCommand or remoteRun.localPattern the key and its group are required - never a silent pass without it
+  const counted = c.guardSubsetCommand ? 'guardSubsetCommand' : c.remoteRun && c.remoteRun.localPattern ? 'remoteRun.localPattern' : '';
+  if (counted) {
+    const tp = c.guardRerun && c.guardRerun.tallyPattern;
+    let group = false; // null: a bad regexp, which is named above (review a, round 1: no second error for it)
+    try { group = !!tp && new RegExp(tp + '|').exec('').length > 1; } catch { group = null; }
+    const why = `with ${counted} a run given guards by --only is counted by it: group 1 = the number of selected guards the run accounted for (ran, or skipped by a flag), e.g. "^TOTAL: .* (\\d+) total$"`;
+    if (!tp) errors.push(`guardRerun.tallyPattern: required ${why}`);
+    else if (group === false) errors.push(`guardRerun.tallyPattern: needs a capture group ${why}`);
   }
   if (c.guardBaseline) {
     if (!c.guardRerun) errors.push('guardBaseline: needs guardRerun (the names of the reds come from the log by guardRerun.newRedPattern)');
@@ -473,15 +538,18 @@ function resolve(raw, opts = {}) {
     // {jobs} is optional: a runner that sets its own workers is counted as the whole budget (scripts/guards-all.sh).
   }
   if (c.guardSubsetCommand && !c.guardSubsetCommand.includes('{onlyArgs}')) errors.push('guardSubsetCommand: must contain {onlyArgs} (one --only <guard> per selected guard)');
-  // A subset command that drops both {jobs} and {limitFile} while its full command has {jobs} is counted as the whole budget (scripts/guards-all.sh):
+  // A subset command that drops both {jobs} and {limitFile} while its full command has either is counted as the whole budget (scripts/guards-all.sh):
   // its selections go one at a time. A note, not an error - an error refuses every slot of the project (slots.zsh).
   const wholeNote = (k, sub, fk, full) => {
-    if (sub && full && full.includes('{jobs}') && !sub.includes('{jobs}') && !sub.includes('{limitFile}')) warnings.push(`note: ${k} has no {jobs} (and no {limitFile}) while ${fk} has {jobs}: a selection is counted as the whole worker budget (slots.jobsAlone) and starts only when no other heavy job runs, so selections go one at a time; give it {jobs} and {limitFile} as ${fk} has`);
+    const fullHas = full ? ['jobs', 'limitFile'].filter((p) => full.includes(`{${p}}`)) : [];
+    if (sub && fullHas.length && !sub.includes('{jobs}') && !sub.includes('{limitFile}')) warnings.push(`note: ${k} has no {jobs} (and no {limitFile}) while ${fk} has ${braces(fullHas)}: a selection is counted as the whole worker budget (slots.jobsAlone) and starts only when no other heavy job runs, so selections go one at a time; give it {jobs} and {limitFile} as ${fk} has`);
   };
   wholeNote('guardSubsetCommand', c.guardSubsetCommand, 'guardCommand', c.guardCommand);
   if (c.remoteRun) wholeNote('remoteRun.subsetCommand', c.remoteRun.subsetCommand, 'remoteRun.command', c.remoteRun.command);
   if (!c.guardFiles.length) errors.push('guardFiles: expected at least one glob');
-  if (c.guardCommandLegacy && c.guardCommandLegacy.includes('{limitFile}')) errors.push('guardCommandLegacy: must not contain {limitFile} (legacy runners take a fixed worker count)');
+  // every place knows what it fills: a placeholder it leaves in the command, or an unknown one, is an error
+  const top = ['guardCommand', 'guardCommandLegacy', 'guardSubsetCommand'].filter((k) => c[k]).map((k) => [k, c[k]]);
+  for (const [k, t, label] of top.concat(placeholderChecks)) errors.push(...placeholderErrors(label || k, t, FILLS[k]));
   return { config: c, errors, warnings, machineMissing: m.missing };
 }
 
@@ -687,11 +755,12 @@ function shellLines(c) {
   return Object.entries(v).map(([k, x]) => (x === '' ? `[[ -v ${k} ]] || ${k}=''` : `: \${${k}:=${q(x)}}`)).join('\n');
 }
 
-module.exports = { find, load, resolve, migrate, branches, anonUrl, remoteHead, pushBranches, shellLines, machinePath, loadMachine, MACHINE_SPEC, MACHINE_SLOT_SPEC, REMOTE_SPEC, REMOTE_RUN_SPEC, DEP_SPEC, EXTRA_SPEC, MACHINE_VERSION, SPEC, SLOT_SPEC, RERUN_SPEC, EXCL_SPEC, EXCL_DEFAULT, STAND_SPEC, STAND_REQUIRED, WT_SPEC, PROBE_SPEC, HOOKS_SPEC, STANDING_SPEC, PRE_SPEC, ROLES, MODEL_ALIASES, MODEL_ROLES, expand };
+module.exports = { find, load, resolve, placeholderErrors, FILLS, migrate, branches, anonUrl, remoteHead, pushBranches, shellLines, machinePath, loadMachine, MACHINE_SPEC, MACHINE_SLOT_SPEC, REMOTE_SPEC, REMOTE_RUN_SPEC, DEP_SPEC, EXTRA_SPEC, MACHINE_VERSION, SPEC, SLOT_SPEC, RERUN_SPEC, EXCL_SPEC, EXCL_DEFAULT, STAND_SPEC, STAND_REQUIRED, WT_SPEC, PROBE_SPEC, HOOKS_SPEC, STANDING_SPEC, PRE_SPEC, ROLES, MODEL_ALIASES, MODEL_ROLES, expand };
 
 if (require.main === module) {
   const [cmd, ...rest] = process.argv.slice(2);
   if (cmd === 'migrate' && rest.some((a) => a.startsWith('--') && a !== '--write')) { console.error('usage: config.js migrate [file] [--write]'); process.exit(64); }
+  if (cmd === 'smoke') process.exit(require('./config-smoke').smoke(rest));
   if (cmd === 'path' && rest[0] === '--from') {
     if (!rest[1]) { console.error('usage: config.js path --from <dir>'); process.exit(64); }
     const env = Object.assign({}, process.env); delete env.CLAUDE_PROJECT_DIR;
