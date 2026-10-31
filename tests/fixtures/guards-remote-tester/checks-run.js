@@ -95,7 +95,7 @@ process.exit(r.status === null ? 255 : r.status);
     // full.sh - the runner's guard command: prints full.log, exits 0; local.sh - the subset command here: one line per
     // argument into local.args (so the arguments it got are seen exactly), exit 0.
     put('full.sh', `#!/bin/sh\necho "$PWD" >> "${T}/full.count"\ncat "${T}/full.log"\nexit 0\n`, 0o755);
-    put('local.sh', `#!/bin/sh\nfor a in "$@"; do printf '%s\\n' "$a" >> "${T}/local.args"; done\necho "local: $#"\nexit 0\n`, 0o755);
+    put('local.sh', `#!/bin/sh\nfor a in "$@"; do printf '%s\\n' "$a" >> "${T}/local.args"; done\necho "local: $#"\necho "TOTAL: $(( $# / 2 )) total"\nexit 0\n`, 0o755);
     put('pkg/package.json', '{"name":"pkg"}\n'); put('pkg/package-lock.json', '{"lockfileVersion":3}\n');
     put('.env.example', 'TRACKED=1\n');
     put('.gitignore', 'pkg/data/\npkg/node_modules\n');
@@ -123,6 +123,8 @@ process.exit(r.status === null ? 255 : r.status);
     const cfgFile = path.join(T, 'cfg.json');
     fs.writeFileSync(cfgFile, JSON.stringify({ repoDir: main, worktreeRoot: wts, sharedDir: shared, guardCommand: 'cd {wt} && ./full.sh {jobs}',
       guardSubsetCommand: 'cd {wt} && ./local.sh {onlyArgs}', worktreeSetup: { scan: ['pkg'] }, protectedBranches: ['trunk'],
+      // the count of the part here (p-noghost): local.sh prints one tally line per run
+      guardRerun: { command: 'cd {wt} && ./local.sh --only {name}', newRedPattern: '^X (\\S+)  \\(', tallyPattern: '^TOTAL: (\\d+) total$' },
       remoteRun: { command: 'cd {wt} && ./full.sh {jobs} --no-font',
         deps: [{ files: ['pkg/package.json', 'pkg/package-lock.json'], install: 'mkdir -p node_modules && echo ok > node_modules/marker', link: { 'pkg/node_modules': 'node_modules' } }],
         localPattern: '^skipped \\(needs-font\\): \\d+ — (.+)$' } }));

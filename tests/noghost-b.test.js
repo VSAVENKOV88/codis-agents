@@ -123,7 +123,7 @@ function partLocal(TMP) {
   for (const d of [bin, shared, w]) fs.mkdirSync(d, { recursive: true });
   fakeBin(bin);
   const put = (f, s, mode) => { fs.mkdirSync(path.dirname(path.join(w, f)), { recursive: true }); fs.writeFileSync(path.join(w, f), s); if (mode) fs.chmodSync(path.join(w, f), mode); };
-  put('full.sh', `#!/bin/sh\necho "$*" >> "${TMP}/full.count"\ncat "${TMP}/sub.log"\nexit $(cat "${TMP}/sub.rc")\n`, 0o755);
+  put('full.sh', `#!/bin/sh\necho "run $*" >> "${TMP}/full.count"\ncat "${TMP}/sub.log"\nexit $(cat "${TMP}/sub.rc")\n`, 0o755);
   put('sub.sh', `#!/bin/sh\necho "$*" >> "${TMP}/sub.count"\ncat "${TMP}/sub.log"\nexit $(cat "${TMP}/sub.rc")\n`, 0o755);
   put('one.sh', `#!/bin/sh\necho "$1" >> "${TMP}/one.count"\necho "TOTAL: 1 total"\nexit 0\n`, 0o755);
   for (const g of ['a', 'b', 'c']) put(`g/${g}-run.js`, `// ${g}\n`);

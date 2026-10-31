@@ -16,6 +16,10 @@
 //    never rerun; only known reds -> exit 0 and "N known red". A known name that is not red in a finished run is named
 //    ("known red not red now: X — remove it from the baseline"), the code is not changed for it. A baseline that is
 //    missing or broken is an error line and the runner's code stands: never "all known" in silence.
+//    A single rerun that exits 0 is green alone only when it accounted for its guard: with a capture group in
+//    tallyPattern (required with guardSubsetCommand or remoteRun.localPattern) a single run whose tally counts 0, or that
+//    has no tally line, is neither flaky nor a new red - "environment: the single rerun of G accounted for 0 of 1 ...",
+//    exit 69 (p-noghost B14: 0 run guards would otherwise be "green alone" and go into the quarantine).
 //    Quarantine (p-train, UC-5): a guard red in the full run and green alone is written into the project's quarantine
 //    file <sharedDir>/guards-quarantine.json, the same flat format: {"<guard>": "flaky: <log> <sha7>, green alone,
 //    <date>"} ("quarantined: G (<file>)" in the summary). It lives outside the worktree on purpose: the tracked tree
@@ -52,6 +56,11 @@
 //        guards-result.js quarantine-take <wt> <guardBaseline> <quarantine file> [<guard>...]
 //          -> the entries (all, or the named ones) move into guardBaseline of the worktree, which the caller commits
 //        guards-result.js quarantine-drop <quarantine file> <guard>...   -> the named entries leave the quarantine
+//        guards-result.js count <log> <guardRerun JSON> <selected file> [<localPattern> [<label>]]   -> "selected N -
+//          accounted for N" of a run given guards by --only (guards-all.sh with a selection, the part here of a remote run):
+//          group 1 of the last tally line against the selected guards minus those a localPattern line names as skipped;
+//          fewer, no tally line or a pattern without a group -> "environment: <label> accounted for T of N selected
+//          guards: ..." appended to the log and printed, exit 69; otherwise exit 0, nothing written
 //        guards-result.js only-args <names file>   -> {onlyArgs} of guardSubsetCommand for the guards of a JSON array of
 //          names (guards-all.sh --guards: the attribution of a red train), one --only <guard> each, quoted for zsh;
 //          exit 3 when the list is empty, 64 when the file is not a JSON array of non-empty names
@@ -70,6 +79,38 @@ function newReds(log, cfg) {
   for (const m of log.matchAll(re)) { const n = (m[1] || '').trim(); if (n && !names.includes(n)) names.push(n); }
   const tally = !cfg.tallyPattern || new RegExp(cfg.tallyPattern, 'm').test(log);
   return { names, tally };
+}
+
+// The count of a run given guards by --only (p-noghost, case 2026-10-30: the part here ran 0 of 10 guards and exited 0).
+// Group 1 of guardRerun.tallyPattern is the number of selected guards the run accounted for (ran, or skipped by a flag);
+// the last tally line of the text decides. -> a number, null when the text has no tally line, undefined when the pattern
+// has no capture group (the count cannot be read).
+const hasGroup = (re) => { try { return new RegExp(`${re}|`).exec('').length > 1; } catch { return false; } };
+function tallyCount(text, pattern) {
+  if (!pattern || !hasGroup(pattern)) return undefined;
+  let n = null;
+  for (const m of String(text).matchAll(new RegExp(pattern, 'gm'))) if (m[1] !== undefined && /^\d+$/.test(m[1])) n = Number(m[1]);
+  return n;
+}
+// "Selected N - accounted for N": selected - the guards given by --only; skipped - those of them the text names on a
+// localPattern line (group 1, ", "-separated: skipped by a flag of the runner, legitimately not run). Fewer accounted for
+// than selected minus skipped, or no tally line, is the environment: the run did not run its guards, its exit code says
+// nothing about them. -> {ok, total, need, skipped, text}; text ("environment: ...") is '' when ok.
+function countCheck({ text, cfg, selected, localPattern, label }) {
+  const S = [...new Set(selected || [])], who = label || 'the run';
+  const skipped = [];
+  if (localPattern) {
+    for (const m of String(text).matchAll(new RegExp(localPattern, 'gm'))) {
+      for (const n of (m[1] || '').split(/,\s*/)) if (n.trim() && S.includes(n.trim()) && !skipped.includes(n.trim())) skipped.push(n.trim());
+    }
+  }
+  const need = S.length - skipped.length, list = S.join(', ');
+  const total = tallyCount(text, cfg && cfg.tallyPattern);
+  const bad = (why) => ({ ok: false, total, need, skipped, text: `environment: ${who} ${why} - its exit code says nothing about them (guardRerun.tallyPattern, README)\n` });
+  if (total === undefined) return bad(`cannot be counted: guardRerun.tallyPattern ${JSON.stringify(cfg && cfg.tallyPattern || '')} has no capture group (the number of guards it accounted for) for its ${S.length} selected guards: ${list}`);
+  if (total === null) return bad(`has no total line (guardRerun.tallyPattern) for its ${S.length} selected guards: ${list}`);
+  if (total < need) return bad(`accounted for ${total} of ${S.length} selected guards: ${list}${skipped.length ? ` (${skipped.length} skipped by a flag: ${skipped.join(', ')})` : ''}`);
+  return { ok: true, total, need, skipped, text: '' };
 }
 
 const rerunLog = (log) => (log.endsWith('.txt') ? log.slice(0, -4) : log) + '.rerun.txt';
@@ -195,7 +236,7 @@ const quarantineHash = (file) => { try { return sha256(fs.readFileSync(path.reso
 // selected: the guards a selection ran (an array; null or left out - a full run): a known red that is not red in the
 // log is called stale only when it is among them, since a known red outside the selection never ran.
 function rerun({ wt, log, rc, cfg, baseline, quarantine, readOnly, selected }) {
-  const res = { rc, repeated: [], flaky: [], known: [], quarantined: [], text: '' };
+  const res = { rc, repeated: [], flaky: [], uncounted: [], known: [], quarantined: [], text: '' };
   const head = '==== rerun of new reds one by one (guardRerun) ====\n';
   const finish = (text) => { res.text = text; fs.appendFileSync(log, '\n' + text); return res; };
   let bl = null, ql = { known: {} };
@@ -237,9 +278,13 @@ function rerun({ wt, log, rc, cfg, baseline, quarantine, readOnly, selected }) {
       const r = spawnSync('zsh', ['-c', cmd], { cwd: wt, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
       const code = r.status === null ? `signal ${r.signal}` : r.status;
       fs.appendFileSync(details, `${r.stdout || ''}${r.stderr || ''}${r.error ? r.error.message + '\n' : ''}==== exit ${code}\n\n`);
-      if (r.status === 0) res.flaky.push(name); else res.repeated.push({ name, rc: code });
+      // B14: a single run that exits 0 and accounted for 0 of 1 is not green alone (the count, when the pattern has one)
+      const one = r.status === 0 && tallyCount('', cfg.tallyPattern) !== undefined ? countCheck({ text: `${r.stdout || ''}${r.stderr || ''}`, cfg, selected: [name], label: `the single rerun of ${name}` }) : null;
+      if (one && !one.ok) { res.uncounted.push(name); fs.appendFileSync(details, one.text); res.envText = (res.envText || '') + one.text; }
+      else if (r.status === 0) res.flaky.push(name); else res.repeated.push({ name, rc: code });
     }
     if (!res.repeated.length) res.rc = 0;
+    if (res.uncounted.length) res.rc = 69;
     let qText = '';
     if (res.flaky.length) {
       if (!baseline) qText = 'quarantine off: no guardBaseline in the project config\n';
@@ -256,7 +301,8 @@ function rerun({ wt, log, rc, cfg, baseline, quarantine, readOnly, selected }) {
     text = head + knownText
       + res.repeated.map((x) => `new red, red again alone: ${x.name} (exit ${x.rc})\n`).join('')
       + res.flaky.map((n) => `flaky, red under load, green alone: ${n}\n`).join('')
-      + `rerun: ${fresh.length} new reds -> ${res.repeated.length} repeated, ${res.flaky.length} flaky${res.known.length ? `; ${res.known.length} known red` : ''}; exit ${res.rc}\n`
+      + (res.envText || '')
+      + `rerun: ${fresh.length} new reds -> ${res.repeated.length} repeated, ${res.flaky.length} flaky${res.uncounted.length ? `, ${res.uncounted.length} not counted (the environment)` : ''}${res.known.length ? `; ${res.known.length} known red` : ''}; exit ${res.rc}\n`
       + (res.flaky.length ? `flaky guards (not a regression; put them into the project backlog): ${res.flaky.join(', ')}\n` : '')
       + qText
       + `single runs: ${details}\n`;
@@ -339,7 +385,7 @@ function reusable(wt, log, command, env = 'local', quarantine = '') {
     text: `reused, HEAD ${short}: the full run of ${m.finishedAt} on this HEAD with a clean tracked tree ended with exit 0 (log ${log}); --force runs again` };
 }
 
-module.exports = { newReds, rerun, readBaseline, subst, metaStart, metaEnd, reusable, rerunLog,
+module.exports = { newReds, tallyCount, countCheck, rerun, readBaseline, subst, metaStart, metaEnd, reusable, rerunLog,
   quarantineFile, readQuarantine, addQuarantine, dropQuarantine, takeQuarantine, quarantineHash, writeFlaky, flakyInLog, repeatedInLog };
 
 if (require.main === module) {
@@ -359,6 +405,16 @@ if (require.main === module) {
     }
     if (r.text) process.stdout.write('\n' + r.text);
     process.exit(r.rc > 255 ? 1 : r.rc);
+  } else if (cmd === 'count') {
+    // count <log> <guardRerun JSON> <selected file> [<localPattern> [<label>]]: the args shift by one (no wt)
+    const [, lg, rr, sf2, lp, label] = process.argv.slice(2);
+    let sel = null, rcfg = null;
+    try { sel = JSON.parse(fs.readFileSync(sf2, 'utf8')); } catch { /* below */ }
+    try { rcfg = rr ? JSON.parse(rr) : null; } catch { /* below */ }
+    const why = !Array.isArray(sel) ? `the selected guards file ${sf2} is not a JSON array of names` : null;
+    const r = why ? { ok: false, text: `environment: ${why}\n` } : countCheck({ text: fs.readFileSync(lg, 'utf8'), cfg: rcfg || {}, selected: sel, localPattern: lp || '', label: label || '' });
+    if (!r.ok) { fs.appendFileSync(lg, '\n' + r.text); process.stdout.write('\n' + r.text); }
+    process.exit(r.ok ? 0 : 69);
   } else if (cmd === 'only-args') {
     // wt holds the names file here: guards-result.js only-args <names file>
     let names = null;
@@ -392,5 +448,5 @@ if (require.main === module) {
       if (r.missing.length) console.log(`not in the quarantine: ${r.missing.join(', ')}`);
       process.exit(r.missing.length ? 1 : 0);
     } catch (e) { console.error(`${cmd}: ${e.message}`); process.exit(1); }
-  } else { console.error('usage: guards-result.js rerun|meta-start|meta-end|reuse|quarantine-take|quarantine-drop|only-args ...'); process.exit(64); }
+  } else { console.error('usage: guards-result.js rerun|count|meta-start|meta-end|reuse|quarantine-take|quarantine-drop|only-args ...'); process.exit(64); }
 }

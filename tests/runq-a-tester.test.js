@@ -33,7 +33,7 @@ function partConfig() {
   const T = fs.mkdtempSync(path.join(os.tmpdir(), 'runq-a-tester-cfg-'));
   try {
     const f = path.join(T, 'cfg.json');
-    fs.writeFileSync(f, JSON.stringify({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s', guardCommand: FULLC, guardSubsetCommand: BOTH,
+    fs.writeFileSync(f, JSON.stringify({ repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s', guardCommand: FULLC, guardSubsetCommand: BOTH, guardRerun: { command: 'cd {wt} && ./full.sh --only {name}', newRedPattern: '^X (\\S+) ', tallyPattern: '^TOTAL: .*?(\\d+) total$' },
       remoteRun: { command: FULLC + ' --no-font', subsetCommand: LIMITONLY + ' --no-font' } }));
     const r = spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'config.js'), 'check', f], { encoding: 'utf8' });
     const all = (r.stdout || '') + (r.stderr || '');
@@ -65,7 +65,7 @@ const r = spawnSync('sh', ['-c', cmd], { stdio: 'inherit', env, cwd: ${JSON.stri
 process.exit(r.status === null ? 255 : r.status);
 `, { mode: 0o755 });
   const put = (f, s, mode) => { fs.mkdirSync(path.dirname(path.join(main, f)), { recursive: true }); fs.writeFileSync(path.join(main, f), s); if (mode) fs.chmodSync(path.join(main, f), mode); };
-  put('full.sh', `#!/bin/sh\necho "$PWD $*" >> "${TMP}/full.count"\necho "Guards to run: 1"\necho "TOTAL: 0 NEW red"\nexit 0\n`, 0o755);
+  put('full.sh', `#!/bin/sh\necho "$PWD $*" >> "${TMP}/full.count"\necho "Guards to run: 1"\necho "TOTAL: 0 NEW red, 1 total"\nexit 0\n`, 0o755);
   put('srv/a-run.js', '// a\n');
   gitC(main, 'init', '-q', '-b', 'trunk'); gitC(main, 'add', '.'); gitC(main, 'commit', '-q', '-m', 'project');
   const xw = path.join(wts, 'xw');
@@ -81,7 +81,7 @@ process.exit(r.status === null ? 255 : r.status);
   fs.writeFileSync(path.join(S, '.config', 'codis-agents', 'machine.json'), JSON.stringify({ configVersion: 1, swapMinMB: 0, minFreeDiskGB: 0, slots: { lockDir: path.join(S, 'slots'), jobsAlone: 14, jobsShared: 7 } }));
   const cfgFile = path.join(TMP, 'cfg.json');
   const setCfg = (subset) => fs.writeFileSync(cfgFile, JSON.stringify({ repoDir: main, worktreeRoot: wts, sharedDir: shared, guardCommand: 'cd {wt} && ./full.sh --concurrency {jobs} --concurrency-file {limitFile}',
-    guardSubsetCommand: WHOLE, protectedBranches: ['trunk'],
+    guardSubsetCommand: WHOLE, protectedBranches: ['trunk'], guardRerun: { command: 'cd {wt} && ./full.sh --only {name}', newRedPattern: '^X (\\S+) ', tallyPattern: '^TOTAL: .*?(\\d+) total$' },
     remoteRun: { command: 'cd {wt} && ./full.sh --concurrency {jobs} --concurrency-file {limitFile}', subsetCommand: subset } }));
   cleanEnv();
   const SRV_ENV = JSON.stringify({ SLOT_OS: 'darwin', SLOT_POLL: '0.2', SLOT_SAY: '1', SLOT_THIRD_WINDOW: '1', SLOT_HIST_GAP: '2' });

@@ -194,7 +194,8 @@ const cleanEnv = () => {
     'SLOT_SWAP_MIN_MB', 'SLOT_THIRD_FREE_PCT', 'SLOT_THIRD_SWAP_GROW_MB', 'SLOT_PROC']) delete process.env[k];
   for (const k of Object.keys(process.env)) if (/^(SLOT_|SLOTS_|GUARDS_|CODIS_)/.test(k)) delete process.env[k];
 };
-const RERUN = { command: 'cd {wt} && ./one.sh {name}', newRedPattern: '^FAILED (\\S+) ', tallyPattern: '^=== .* ===$' };
+// the tally line: '=== full ===' of a full run, '=== N total ===' of a run given guards by --only (the count, p-noghost-b)
+const RERUN = { command: 'cd {wt} && ./one.sh {name}', newRedPattern: '^FAILED (\\S+) ', tallyPattern: '^=== (?:full|(\\d+) total) ===$' };
 const gitC = (cwd, ...a) => spawnSync('git', ['-C', cwd, '-c', 'user.email=t@example.com', '-c', 'user.name=t', ...a], { encoding: 'utf8' });
 
 function partB(TMP) {
@@ -203,8 +204,8 @@ function partB(TMP) {
   fakeBin(bin);
   const put = (f, s, mode) => { fs.mkdirSync(path.dirname(path.join(w, f)), { recursive: true }); fs.writeFileSync(path.join(w, f), s); if (mode) fs.chmodSync(path.join(w, f), mode); };
   put('full.sh', `#!/bin/sh\necho "run $*" >> "${TMP}/full.count"\necho "=== full ==="\nexit 0\n`, 0o755);
-  put('sub.sh', `#!/bin/sh\necho "$*" >> "${TMP}/sub.count"\ncat "${TMP}/sub.log"\nexit $(cat "${TMP}/sub.rc")\n`, 0o755);
-  put('one.sh', `#!/bin/sh\necho "$1" >> "${TMP}/one.count"\ngrep -qxF -- "$1" "${TMP}/red.txt" && exit 1\nexit 0\n`, 0o755);
+  put('sub.sh', `#!/bin/sh\necho "$*" >> "${TMP}/sub.count"\ncat "${TMP}/sub.log"\necho "=== $(echo "$*" | grep -o -- '--only' | wc -l | tr -d ' ') total ==="\nexit $(cat "${TMP}/sub.rc")\n`, 0o755);
+  put('one.sh', `#!/bin/sh\necho "$1" >> "${TMP}/one.count"\ngrep -qxF -- "$1" "${TMP}/red.txt" && exit 1\necho "=== 1 total ==="\nexit 0\n`, 0o755);
   put('known.json', '{"g/b-run.js": "known: a test entry"}\n');
   put('lib.js', 'module.exports = 1;\n');
   put('g/b-run.js', "require('../lib');\n");
@@ -222,7 +223,7 @@ function partB(TMP) {
   const ga = (...a) => { const r = spawnSync('zsh', [path.join(ROOT, 'scripts', 'guards-all.sh'), '--main-checkout', ...a], { encoding: 'utf8', env, timeout: 120000 }); r.all = (r.stdout || '') + (r.stderr || ''); return r; };
   const count = (n) => (read(path.join(TMP, n)) || '').split('\n').filter(Boolean);
   const set = (rc, reds, redAlone) => {
-    fs.writeFileSync(path.join(TMP, 'sub.log'), reds.map((n) => `FAILED ${n} - code 1`).join('\n') + `\n=== ${reds.length} failed ===\n`);
+    fs.writeFileSync(path.join(TMP, 'sub.log'), reds.map((n) => `FAILED ${n} - code 1`).join('\n') + `\n${reds.length} failed\n`);
     fs.writeFileSync(path.join(TMP, 'sub.rc'), String(rc)); fs.writeFileSync(path.join(TMP, 'red.txt'), (redAlone || []).map((n) => n + '\n').join(''));
     for (const c of ['sub.count', 'one.count', 'full.count']) fs.rmSync(path.join(TMP, c), { force: true });
   };
@@ -290,8 +291,8 @@ process.exit(r.status === null ? 255 : r.status);
 `, { mode: 0o755 });
   const put = (f, s, mode) => { fs.mkdirSync(path.dirname(path.join(main, f)), { recursive: true }); fs.writeFileSync(path.join(main, f), s); if (mode) fs.chmodSync(path.join(main, f), mode); };
   put('full.sh', `#!/bin/sh\necho "$PWD $*" >> "${TMP}/full.count"\ncat "${TMP}/full.log"\nexit $(cat "${TMP}/full.rc")\n`, 0o755);
-  put('one.sh', `#!/bin/sh\necho "$PWD $1" >> "${TMP}/one.count"\ngrep -qxF -- "$1" "${TMP}/red.txt" && exit 1\nexit 0\n`, 0o755);
-  put('local.sh', `#!/bin/sh\necho "$PWD $*" >> "${TMP}/local.count"\nexit 0\n`, 0o755);
+  put('one.sh', `#!/bin/sh\necho "$PWD $1" >> "${TMP}/one.count"\ngrep -qxF -- "$1" "${TMP}/red.txt" && exit 1\necho "TOTAL: 1 total"\nexit 0\n`, 0o755);
+  put('local.sh', `#!/bin/sh\necho "$PWD $*" >> "${TMP}/local.count"\necho "TOTAL: $(echo "$*" | grep -o -- '--only' | wc -l | tr -d ' ') total"\nexit 0\n`, 0o755);
   put('known.json', '{}\n');
   put('srv/a-run.js', '// a\n'); put('srv/c-run.js', '// c\n');
   gitC(main, 'init', '-q', '-b', 'trunk'); gitC(main, 'add', '.'); gitC(main, 'commit', '-q', '-m', 'project');
@@ -307,7 +308,7 @@ process.exit(r.status === null ? 255 : r.status);
   fs.mkdirSync(path.join(S, '.config', 'codis-agents'), { recursive: true });
   fs.writeFileSync(path.join(S, '.config', 'codis-agents', 'machine.json'), JSON.stringify({ configVersion: 1, swapMinMB: 0, minFreeDiskGB: 0, slots: { lockDir: path.join(S, 'slots'), heavy: 2, medium: 2, total: 4, jobsAlone: 4, jobsShared: 2 } }));
   const cfgFile = path.join(TMP, 'cfg.json');
-  const RR = { newRedPattern: '^[XT] (\\S+)  \\(', tallyPattern: '^TOTAL: ', command: 'cd {wt} && ./one.sh {name}' };
+  const RR = { newRedPattern: '^[XT] (\\S+)  \\(', tallyPattern: '^TOTAL: .*?(\\d+) total$', command: 'cd {wt} && ./one.sh {name}' };
   const setCfg = (subset) => fs.writeFileSync(cfgFile, JSON.stringify({ repoDir: main, worktreeRoot: wts, sharedDir: shared, guardCommand: 'cd {wt} && ./full.sh {jobs}', guardRerun: RR,
     guardSubsetCommand: 'cd {wt} && ./local.sh {onlyArgs}', protectedBranches: ['trunk'], guardBaseline: 'known.json',
     remoteRun: Object.assign({ command: 'cd {wt} && ./full.sh {jobs}', localPattern: '^skipped \\(needs-font\\): \\d+ — (.+)$' }, subset ? { subsetCommand: 'cd {wt} && ./full.sh {onlyArgs}' } : {}) }));
@@ -324,7 +325,7 @@ process.exit(r.status === null ? 255 : r.status);
     fs.rmSync(sshLog, { force: true });
   };
   const SEL = path.join(shared, 'guards-xw.select.txt'), QF = path.join(shared, 'guards-quarantine.json');
-  const LOGC = ['Guards to run: 1', 'skipped (needs-font): 1 — srv/c-run.js', '---- NEW RED ----', 'X srv/a-run.js  (1.0s, code 1)', 'TOTAL: 1 NEW red'].join('\n') + '\n';
+  const LOGC = ['Guards to run: 1', 'skipped (needs-font): 1 — srv/c-run.js', '---- NEW RED ----', 'X srv/a-run.js  (1.0s, code 1)', 'TOTAL: 1 NEW red, 2 total'].join('\n') + '\n';
 
   // S12: with remoteRun.subsetCommand the selection runs on the runner; localPattern part here; flaky not written
   setCfg(true); fs.rmSync(QF, { force: true });
@@ -351,7 +352,7 @@ process.exit(r.status === null ? 255 : r.status);
   setCfg(true);
   fs.writeFileSync(path.join(xw, 'known.json'), JSON.stringify({ 'srv/a-run.js': 'known: selected', 'srv/z-run.js': 'known: not selected' }) + '\n');
   gitC(xw, 'add', 'known.json'); gitC(xw, 'commit', '-q', '-m', 'known reds');
-  set(0, ['Guards to run: 2', 'TOTAL: 0 NEW red'].join('\n') + '\n', []);
+  set(0, ['Guards to run: 2', 'TOTAL: 0 NEW red, 2 total'].join('\n') + '\n', []);
   x = ga({}, '--force', '--select', 'trunk', 'xw');
   ok('C-E1. the runner\'s green selection: a selected known red that ran green is "not red now"', x.status === 0 && /known red not red now: srv\/a-run\.js/.test(read(SEL) || ''), `${x.status} ${(read(SEL) || '').slice(-800)}`);
   ok('C-E1. ... and a known red outside the selection is not (it did not run)', x.status === 0 && !/not red now: srv\/z-run\.js/.test(read(SEL) || ''), `${x.status} ${(read(SEL) || '').slice(-800)}`);
@@ -359,15 +360,16 @@ process.exit(r.status === null ? 255 : r.status);
 
 function partConfig() {
   const C = require('../scripts/config');
-  const base = { repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s', guardCommand: 'x {wt}', guardSubsetCommand: 'x {wt} {onlyArgs}' };
+  const base = { repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s', guardCommand: 'x {wt}', guardSubsetCommand: 'x {wt} {onlyArgs}', guardRerun: RERUN };
   const errs = (rr) => C.resolve(Object.assign({}, base, { remoteRun: Object.assign({ command: 'y {wt}' }, rr) })).errors;
   ok('Q3. config: remoteRun.subsetCommand with {wt} and {onlyArgs} validates', errs({ subsetCommand: 'y {wt} {onlyArgs}' }).length === 0, errs({ subsetCommand: 'y {wt} {onlyArgs}' }).join('; '));
   ok('Q3. config: remoteRun.subsetCommand without {onlyArgs} is an error', errs({ subsetCommand: 'y {wt}' }).some((e) => /remoteRun\.subsetCommand/.test(e)));
   ok('Q3. config: remoteRun.subsetCommand without {wt} is an error', errs({ subsetCommand: 'y {onlyArgs}' }).some((e) => /remoteRun\.subsetCommand/.test(e)));
   const G = require('../scripts/guards-remote');
-  const c = { remoteRun: { command: 'full {wt} {jobs}', commandLegacy: 'legacy {wt}' }, guardAdaptiveProbe: { file: 'f', contains: 'c' } };
+  const c = { remoteRun: { command: 'full {wt} {jobs}', commandLegacy: 'legacy {wt}', subsetCommand: 'sub {wt} {onlyArgs}' }, guardAdaptiveProbe: { file: 'f', contains: 'c' } };
   const rc = G.runnerConfig(c, "sub {wt} --only 'a'");
-  ok('Q3. runnerConfig with a subset command: the runner runs it, no legacy command or probe', rc.guardCommand === "sub {wt} --only 'a'" && !rc.guardCommandLegacy && !rc.guardAdaptiveProbe, JSON.stringify(rc));
+  // p-noghost-b (review of p-noghost-a): the runner gets the template and fills {onlyArgs} from the selected names itself
+  ok('Q3. runnerConfig with a subset command: the runner gets the template as its guardSubsetCommand, no legacy command or probe', rc.guardSubsetCommand === 'sub {wt} {onlyArgs}' && !rc.guardCommandLegacy && !rc.guardAdaptiveProbe, JSON.stringify(rc));
 }
 
 (async () => {

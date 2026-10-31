@@ -53,7 +53,7 @@ while IFS='|' read -r name cond; do
   if sh -c "$cond"; then echo "FAILED $name - red"; failed=$((failed+1)); else echo "PASSED $name"; passed=$((passed+1)); fi
 done < "$T/rules"
 [ "$SUBSET" = 0 ] && [ -f "$T/notally" ] && { echo "cut off"; exit 1; }
-echo "=== $failed failed, $passed passed in 0.1s ==="
+echo "=== $failed failed, $passed passed, $((failed+passed)) total in 0.1s ==="
 [ "$ENV" = 1 ] && exit 69
 [ "$failed" = 0 ]
 `);
@@ -62,7 +62,7 @@ const cfgFile = path.join(T, 'cfg.json');
 fs.writeFileSync(cfgFile, JSON.stringify({ repoDir: main, worktreeRoot: wts, sharedDir: shared,
   guardCommand: `cd {wt} && ${G}`,
   guardSubsetCommand: `cd {wt} && ${G} --subset {onlyArgs}`,
-  guardRerun: { command: `cd {wt} && ${G} --only {name}`, newRedPattern: '^FAILED (\\S+) ', tallyPattern: '^=== .* in [0-9.]+s ===$' },
+  guardRerun: { command: `cd {wt} && ${G} --only {name}`, newRedPattern: '^FAILED (\\S+) ', tallyPattern: '^=== .*?(\\d+) total in [0-9.]+s ===$' },
   guardBaseline: 'known.json',
   worktreeSetup: { scan: ['data'], skip: [], link: [] },
   slots: { lockDir: path.join(T, 'slots'), legacyLock: path.join(T, 'guards.lock') } }));

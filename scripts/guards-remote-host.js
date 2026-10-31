@@ -20,7 +20,8 @@
 //                          codis-agents.json (the project config of the run on the runner: its paths, the project's guard
 //                          command, rerun and baseline keys), guards-quarantine.json (the quarantine of the machine
 //                          that started the run, subtracted read-only), host.js (the job), guards-<name>.txt and
-//                          .meta.json (the runner's log), rc (the final code, written last), fetched (the Mac took the result);
+//                          .meta.json (the runner's log; guards-<name>.select.txt of a selection, guards-all.sh --guards
+//                          on guards-selected.json), rc (the final code, written last), fetched (the Mac took the result);
 //                          runs/<name>.lock serialises two starts of one name
 // A start of the same name and SHA while that run lives - or ended and was not fetched yet - attaches to it (a second
 // wait step, a new agent after a killed one) and answers with the quarantine that run was begun with; a start of another SHA stops the earlier run of that name first (its
@@ -169,7 +170,9 @@ const OPS = {
     const out = read('out.txt') || '';
     const w = /^workers(?: at start)?: (\d+)/m.exec(out) || /counted as the whole budget (\d+)/.exec(out);
     fs.writeFileSync(path.join(dir, 'fetched'), new Date().toISOString() + '\n');
-    return { rc: rc.rc, log: read(`guards-${name}.txt`), rerun: read(`guards-${name}.rerun.txt`), out: out.length > (1 << 18) ? out.slice(-(1 << 18)) : out, workers: w ? Number(w[1]) : null };
+    // a selection runs as guards-all.sh --guards: its log is guards-<name>.select.txt (the run's directory is new per start)
+    const lg = read(`guards-${name}.txt`) !== null ? '' : '.select';
+    return { rc: rc.rc, log: read(`guards-${name}${lg}.txt`), rerun: read(`guards-${name}${lg}.rerun.txt`), out: out.length > (1 << 18) ? out.slice(-(1 << 18)) : out, workers: w ? Number(w[1]) : null };
   },
   // The job itself (detached, its stdout and stderr are out.txt): worktree, corpus, dependencies, prepare, the check
   // for .env*, then the runner's own guards-all.sh. The exit code goes to rc whatever happens.
@@ -213,7 +216,7 @@ function job(R, input, name, sha, dir, say) {
     if (!Array.isArray(input.selected) || !input.selected.every((n) => typeof n === 'string')) throw env('the selected guards sent with the run are not a list of names - no run');
     const selFile = path.join(dir, 'guards-selected.json');
     writeJSON(selFile, input.selected);
-    selArgs = ['--selected', selFile];
+    selArgs = ['--guards', selFile];   // the runner fills {onlyArgs} of its guardSubsetCommand from the names (never a filled command)
   }
   const medium = (cmd, cwd, what) => {
     const r = spawnSync('zsh', [path.join(plugin, 'scripts', 'medium.sh'), 'zsh', '-c', cmd], { cwd, env: childEnv, stdio: ['ignore', 'inherit', 'inherit'] });

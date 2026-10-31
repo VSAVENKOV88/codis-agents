@@ -454,6 +454,18 @@ function resolve(raw, opts = {}) {
     if (g.tallyPattern) { try { new RegExp(g.tallyPattern); } catch (e) { errors.push('guardRerun.tallyPattern: bad regular expression'); } }
     if (!(Number.isInteger(g.maxReruns) && g.maxReruns >= 1)) errors.push('guardRerun.maxReruns: expected a positive integer');
   }
+  // selected N - accounted for N (p-noghost, coordinator's decision 1 of 2026-10-31): a run given guards by --only (a
+  // selection, the attribution of a train, the part here) is counted by group 1 of guardRerun.tallyPattern, so with
+  // guardSubsetCommand or remoteRun.localPattern the key and its group are required - never a silent pass without it
+  const counted = c.guardSubsetCommand ? 'guardSubsetCommand' : c.remoteRun && c.remoteRun.localPattern ? 'remoteRun.localPattern' : '';
+  if (counted) {
+    const tp = c.guardRerun && c.guardRerun.tallyPattern;
+    let group = false;
+    try { group = !!tp && new RegExp(tp + '|').exec('').length > 1; } catch { /* a bad regexp is named above */ }
+    const why = `with ${counted} a run given guards by --only is counted by it: group 1 = the number of selected guards the run accounted for (ran, or skipped by a flag), e.g. "^TOTAL: .* (\\d+) total$"`;
+    if (!tp) errors.push(`guardRerun.tallyPattern: required ${why}`);
+    else if (!group) errors.push(`guardRerun.tallyPattern: needs a capture group ${why}`);
+  }
   if (c.guardBaseline) {
     if (!c.guardRerun) errors.push('guardBaseline: needs guardRerun (the names of the reds come from the log by guardRerun.newRedPattern)');
     if (path.isAbsolute(c.guardBaseline) || /^~/.test(c.guardBaseline)) errors.push(`guardBaseline: a path relative to the worktree (the file is committed with the project), not ${c.guardBaseline}`);

@@ -55,6 +55,7 @@ while (( k++ < 1 )) || [[ -e '$T'/hold.$tag ]]; do
   sleep 0.3
 done
 print -r -- "end $tag $EPOCHREALTIME" >> '$T'/npm.log
+print -r -- "TOTAL: ${#${(M)a:#--only}} total"   # the tally line the count of a selection reads (p-noghost-b)
 exit 0' > $T/bin/npm
 chmod +x $T/bin/*; export PATH=$T/bin:$PATH
 
@@ -73,6 +74,7 @@ ADAPT='cd {wt}/srv && npm run guards -- --all {onlyArgs} --concurrency {jobs} --
 WHOLE='cd {wt}/srv && npm run guards -- --all {onlyArgs}'
 FULL='cd {wt}/srv && npm run guards -- --all --concurrency {jobs} --concurrency-file {limitFile}'
 setcfg() { print -r -- '{"repoDir": "'$T'/main", "worktreeRoot": "'$T'/wts", "sharedDir": "'$T'/shared", "protectedBranches": ["base"],
+  "guardRerun": {"command": "cd {wt} && true {name}", "newRedPattern": "^X (\\S+)", "tallyPattern": "^TOTAL: (\\d+) total$"},
   "guardCommand": "'$FULL'", "guardSubsetCommand": "'$1'"}' > $T/cfg.json }
 export CODIS_AGENTS_CONFIG=$T/cfg.json
 

@@ -10,7 +10,7 @@
   "guardRerun": {
     "command": "cd {wt}/server && npm run guards -- --all --only {name}",
     "newRedPattern": "^FAIL (\\S+) ",
-    "tallyPattern": "^TOTAL: ",
+    "tallyPattern": "^TOTAL: .* (\\d+) total$",
     "maxReruns": 10
   },
   "guardBaseline": "server/known-red.json",

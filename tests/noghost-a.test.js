@@ -29,7 +29,8 @@ const git = (cwd, ...a) => spawnSync('git', ['-C', cwd, '-c', 'user.email=t@exam
 
 const FULL = 'cd {wt}/srv && npm run guards -- --all --concurrency {jobs} --concurrency-file {limitFile}';
 const SUBJ = 'cd {wt}/srv && npm run guards -- --all {onlyArgs} --concurrency {jobs} --concurrency-file {limitFile}';
-const base = { repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s', guardCommand: FULL };
+// the count of a selection (p-noghost-b): guardSubsetCommand needs guardRerun.tallyPattern with a group
+const base = { repoDir: '/r', worktreeRoot: '/w', sharedDir: '/s', guardCommand: FULL, guardRerun: { command: 'cd {wt} && run --only {name}', newRedPattern: '^X (\\S+) ', tallyPattern: '^TOTAL: (\\d+) total$' } };
 const res = (o) => C.resolve(Object.assign({}, base, o));
 const errs = (o) => res(o).errors.join('; ');
 const RR = { command: FULL + ' --no-font', deps: [], localPattern: '^skipped \\(needs-font\\): \\d+ - (.+)$' };

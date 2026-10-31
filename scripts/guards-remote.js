@@ -34,15 +34,20 @@
 //      --no-quarantine call attached to a run that subtracted entries, and an attach to a runner that does not say which
 //      quarantine its run was begun with: never reused). A broken
 //      quarantine here, or one the runner refuses or cannot write, is an environment red (69), never a run without it.
-//   8. The selection of a task's guards (guards-all.sh --select, remoteRun.subsetCommand): --subset <command> is the
-//      runner's guard command instead of remoteRun.command (its {onlyArgs} filled in here; no legacy command), the meta
-//      keeps that command (a selection is never reused for a full run, nor the other way), and the quarantine is read
+//   8. The selection of a task's guards (guards-all.sh --select, remoteRun.subsetCommand): --subset <command> (its
+//      {onlyArgs} filled in here) is what the meta keeps; the runner gets the template remoteRun.subsetCommand as its
+//      guardSubsetCommand and runs guards-all.sh --guards on the selected names (no legacy command), so a name is never
+//      filled in or read as a placeholder there; --subset needs --selected (64 without it). The meta keeps that command (a selection is never reused for a full run, nor the other way), and the quarantine is read
 //      only: the flaky guards of a selection go into the role's report, never into the quarantine. --selected <file>
 //      (a JSON array of the selected guards, guards-select.js --names-out) goes with the job: the runner's rerun and
 //      the part here call a known red "not red now" only among them (a known red outside the selection did not run).
 // Placeholders: the part here fills {wt} and {onlyArgs} of remoteRun.localCommand and nothing else; a template with
 //   another one ({jobs}, {limitFile}, a typo) is refused with 78 at the start of run(), before any ssh (scripts/config.js
 //   FILLS; config.js load refuses such a config already).
+// Count (p-noghost): the part here is a run given guards by --only - its tally (group 1 of guardRerun.tallyPattern)
+//   must account for the guards it was given minus those a localPattern line of its log names; fewer, or no tally line,
+//   appends "environment: the part here accounted for T of N selected guards: ..." and the run's exit is 69, also over a
+//   red runner (no rerun of the part here then). The runner's selection is counted by the runner's own guards-all.sh.
 // usage: guards-remote.js run <worktree> <log> <name> [<quarantine file>] [--subset <command> [--selected <file>]]
 //   (guards-all.sh passes the quarantine file; '' - off)
 const fs = require('fs');
@@ -99,9 +104,19 @@ function gitState(wt) {
 }
 
 // The project config of the run on the runner: the guard keys of this project; its paths are set there.
+// A selection (subset: truthy) sends the template remoteRun.subsetCommand as the runner's guardSubsetCommand, never the
+// command filled with the guard names: the runner's guards-all.sh --guards fills {onlyArgs} from the selected names
+// itself, so a guard named with braces (x{jobs}-run.js) is neither filled in by its sub() nor read as a placeholder by
+// its config check (review of p-noghost-a); with localPattern and localCommand, so the runner's count of the selection
+// subtracts the guards it skipped by a flag (its machine has no remote: the part here never runs there).
 function runnerConfig(c, subset) {
   const x = c.remoteRun;
-  const o = { guardCommand: subset || x.command, protectedBranches: [], reportLanguage: c.reportLanguage, guardExclusive: c.guardExclusive };
+  const o = { protectedBranches: [], reportLanguage: c.reportLanguage, guardExclusive: c.guardExclusive };
+  if (subset) {
+    o.guardSubsetCommand = x.subsetCommand;
+    if (x.command) o.guardCommand = x.command;
+    if (x.localPattern && x.localCommand) o.remoteRun = { localPattern: x.localPattern, localCommand: x.localCommand };
+  } else o.guardCommand = x.command;
   if (x.commandLegacy && !subset) { o.guardCommandLegacy = x.commandLegacy; if (c.guardAdaptiveProbe) o.guardAdaptiveProbe = c.guardAdaptiveProbe; }
   if (c.guardRerun) o.guardRerun = c.guardRerun;
   if (c.guardBaseline) o.guardBaseline = c.guardBaseline;
@@ -134,6 +149,7 @@ function run(c, wt, log, name, qfile, opts) {
   const subset = (opts && opts.subset) || '';
   const selected = (opts && opts.selected) || null;
   const r = c.remote, x = c.remoteRun, envId = `remote:${r.host}`;
+  if (subset && !selected) throw new Stop(64, 'guards-remote: a selection (--subset) needs --selected <file>: the runner fills its guardSubsetCommand from the selected names');
   // 6. the part here fills only {wt} and {onlyArgs}: any other placeholder of its template refuses the run before the
   // runner is contacted (config.js load says so too; this holds for a config object that did not come through it)
   if (x.localPattern && x.localCommand) {
@@ -252,16 +268,20 @@ function run(c, wt, log, name, qfile, opts) {
           env: Object.assign({}, process.env, { SLOT_LABEL: `guards-all ${name} part here` }) });
       } finally { fs.closeSync(fd); }
       let lrc = lr.status === null ? 1 : lr.status;
-      if (c.guardRerun) {
+      // selected N - accounted for N: the part here that ran fewer of its guards is the environment (69), whatever the
+      // runner's code - a run without its part here is no verdict (p-noghost B1, B3); no rerun then
+      const counted = G.countCheck({ text: fs.readFileSync(local, 'utf8'), cfg: c.guardRerun || {}, selected: names, localPattern: x.localPattern, label: 'the part here' });
+      if (!counted.ok) { fs.appendFileSync(local, '\n' + counted.text); lrc = 69; } else if (c.guardRerun) {
         // the meta follows the part here only when the quarantine is still the one of this run (nobody changed it since)
         const same = qfile && G.quarantineHash(qfile) === qhash;
         const lres = G.rerun({ wt, log: local, rc: lrc, cfg: c.guardRerun, baseline: c.guardBaseline || '', quarantine: qfile, readOnly: subset ? 'select' : false, selected });
         lrc = lres.rc;
         if (same && lres.quarantineHash !== undefined) qhash = lres.quarantineHash;
       }
-      const final = rc !== 0 ? rc : lrc;
+      const final = !counted.ok ? 69 : rc !== 0 ? rc : lrc;
       const section = `\n==== on this machine: guards the runner does not run (remoteRun.localPattern): ${names.join(', ')} ====\n${fs.readFileSync(local, 'utf8')}`
-        + `\npart here: exit ${lrc}; the run's exit ${final} (the worse of the runner's ${rc} and this part's ${lrc})\n`;
+        + (counted.ok ? `\npart here: exit ${lrc}; the run's exit ${final} (the worse of the runner's ${rc} and this part's ${lrc})\n`
+          : `\npart here: not counted (the environment); the run's exit 69 whatever the runner's ${rc}\n`);
       fs.appendFileSync(log, section);
       say(tail(section, 25));
       rc = final;

@@ -290,7 +290,7 @@ const ENV_RC = {
   72: 'the run was refused before it started: no ps or pgrep',
   73: 'the run was refused before it started: mktemp failed',
   65: 'the selection could not be computed: guards-select.js failed (git: unknown base, not a repository)',
-  69: 'the remote runner: unreachable, a host key mismatch, another plugin version, a refused push or a vanished run (no run on this machine instead)',
+  69: 'the remote runner (unreachable, a host key mismatch, another plugin version, a refused push or a vanished run - no run on this machine instead), or a run that did not account for its selected guards (its tally counts fewer than it was given by --only, or it has no tally line)',
 }
 const envFull = (tag, r) => {
   const why = `exit ${r.rc}: ${ENV_RC[r.rc]}${r.error ? ` (${r.error})` : ''}; log ${r.log}`
