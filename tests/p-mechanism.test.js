@@ -308,5 +308,33 @@ const MOC = /^First answer "mechanism or cells\?"/;
   const rd = flat('README.md');
   ok('M5. README: Changes in 0.4.16 names the mechanism step', /## Changes in 0\.4\.16[^#]*mechanism/.test(read('README.md')), '');
   ok('M5. README: how the chain decides - status mechanism and "mechanism or cells?"', /status `mechanism`/.test(rd) && /"mechanism or cells\?"/.test(rd), '');
+  // ---- M8 (0.4.16, tails of the p-mechanism review) ----
+  // 1. the section "Mechanism" of the analystFirst analyst makes it the author (st.mechSection), so the pass names the
+  //    section it replaces and every later round names that author; without the section nothing changes (B2).
+  const AS8 = await schemaOf('ANALYST_SCHEMA');
+  ok('M8 1. ANALYST_SCHEMA: mechanismSection, a boolean', AS8.properties.mechanismSection && AS8.properties.mechanismSection.type === 'boolean', JSON.stringify(AS8.properties.mechanismSection));
+  const AF = Object.assign({}, T, { noAnalysis: undefined, analystFirst: true });
+  const ANM = Object.assign({}, AN, { mechanismSection: true });
+  const FIRST = /written last by the analyst before the first programmer/;
+  x = await run({ pre: [PRE], analyst: [ANM], prog: [PROG], test: [GREEN], review: [D] }, AF);
+  ok('M8 1. analystFirst asks the analyst to report mechanismSection', /mechanismSection/.test(pOf(x, 'analyst')), pOf(x, 'analyst'));
+  ok('M8 1. analystFirst wrote a section "Mechanism" -> the programmer and the tester name it and its author',
+    x.r.status === 'done' && FIRST.test(pOf(x, 'prog')) && FIRST.test(pOf(x, 'test')), pOf(x, 'prog'));
+  x = await run({ pre: [PRE], analyst: [ANM, AN], prog: [MECH, PROG], test: [GREEN], review: [D] }, AF);
+  rs = reasonOf(pOf(x, 'analyst', 1));
+  ok('M8 1. analystFirst with a section -> the pass names the section it replaces (its author) and still keeps the other sections',
+    x.r.status === 'done' && x.trace === 'pre>analyst>prog>analyst>prog>test>review' && /your section replaces it and names it/.test(rs) && FIRST.test(rs) && PASS_KEEP(rs), x.trace + ' ' + rs);
+  ok('M8 1. ... and the programmer after the pass names the pass, not the analystFirst analyst', byPass(pOf(x, 'prog', 1), '1') && !FIRST.test(pOf(x, 'prog', 1)), pOf(x, 'prog', 1));
+  x = await run({ pre: [PRE], analyst: [ANM, AN], prog: [PROG, P2, P3], test: [RED('r1'), RED('r2'), GREEN], review: [D] }, AF);
+  rs = reasonOf(pOf(x, 'analyst', 1));
+  ok('M8 1. analystFirst with a section -> the analyst of the second red tester round names it as the mechanism now', MOC.test(rs) && FIRST.test(rs), rs);
+  x = await run({ pre: [PRE], analyst: [AN, AN], prog: [MECH, PROG], test: [GREEN], review: [D] }, AF);
+  rs = reasonOf(pOf(x, 'analyst', 1));
+  ok('M8 1. analystFirst without a section -> no author before the pass (B2 unchanged)', !FIRST.test(pOf(x, 'prog')) && !/your section replaces it/.test(rs), rs);
+  // 2. the coordinator says in start that a pass was made: in the coordinator skill, the role-chain skill and the rules.
+  const START = /start[^.]*pass[^.]*mechanism|mechanism[^.]*pass[^.]*start/;
+  ok('M8 2. coordinator skill: a relaunch with start names a pass "Mechanism" already made', START.test(flat('skills/coordinator/SKILL.md')), '');
+  ok('M8 2. role-chain skill: the same in the field start', START.test(flat('skills/role-chain/SKILL.md')), '');
+  ok('M8 2. rules: the same in the line role:mechanism', START.test((read('rules/multi-agent.md').match(/[^\n]*<!-- role:mechanism -->/) || [''])[0]), '');
   done();
 })();
