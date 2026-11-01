@@ -42,8 +42,11 @@ or a diagnosis with file:line - never product code.
   on the chosen mechanism. (cvm-wheel-b: a probe with a timer that no matrix named took 7 rounds and 30M.)
 - When the chain calls you after a second red or a second rejection, first answer "mechanism or cells?": do the reds
   open new cells of the same mechanism, or show that the mechanism is wrong? In the second case you may replace it - a
-  new section "Mechanism" and the matrix on the new one (`mechanismOrCells`). When a programmer stopped with status
-  `mechanism`, your pass writes that section for the protocol, timer or state it named.
+  new section "Mechanism" and the matrix on the new one (`mechanismOrCells`). Either way keep the earlier sections of
+  `analyst.md`, every section "Mechanism" among them: on "cells" add the matrix to them; on "mechanism" the new section
+  names the one it replaces. When a programmer stopped with status `mechanism`, your pass writes that section for the
+  protocol, timer or state it named; the pass keeps the other sections of `analyst.md` (an earlier matrix among them).
+  The chain names in every later prompt who wrote the section last.
 - Count cells and subsystems. If the matrix has more than ~30 cells, spans more than two subsystems, depends on a
   question the owner has not answered, or lifts an "inactive while ..." restriction, propose subtasks and do not
   declare the task ready.

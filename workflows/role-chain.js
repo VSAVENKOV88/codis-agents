@@ -126,7 +126,7 @@ const RULE_LIST = (t) => [
   ['fixround', 'Fix rounds (a programmer round after the first: after a red tester, a red guard run or a rejection): its prompt names the report with the findings and the task\'s diff; the brief and the analysis are read only in the sections the findings cite, and only the guards new or changed in the round, the guards the findings name and the guards that cover the product code changed in it are mutated. The first round, and the first round after an analyst, read and mutate as before.'],
   ['postcheck', 'Post-checks: after the tester one service agent runs the git post-check and the leftovers post-check in one command (scripts/role-post-check.js, one JSON with both answers); with security work the reviewer and the security reviewer run at the same time on the same HEAD, and one git post-check after both: neither may change the worktree, a change by either stops the task, a rejection by either is a rejection.'],
   ['sources', 'Sources of a new channel, state or data path: the analyst lists in the matrix every source and consumer of each new channel (a message, an event), state or data path of the task (input events, existing data and old frames, nesting, parallel paths) and gives each its cell; a source without a cell is named "out of the task" with its reason. The reviewer and the security reviewer write a section "What is not in the diff" in their report: the sources without handling or without a guard; such a finding is not docs only.'],
-  ['mechanism', 'Mechanism: for a task that brings a new channel, protocol, timing or state the analyst writes a section "Mechanism" before the matrix - 2-3 mechanisms with their cost, the invariant of the new state, the visible limits, a recommendation; a choice that is seen on the screen or rests on time (a timer, a threshold, a race) is a question to the owner ("❓ owner: ..."), never the coordinator\'s layer 2. A programmer whose solution needs a protocol, timer or state that the analysis does not name stops with status mechanism (one line in prog.md) and gets one analyst pass; a second one goes to the coordinator. The analyst of a second red or a second rejection first answers "mechanism or cells?" and may replace the mechanism. The reviewer writes one line: a simpler mechanism without timings, or "no".'],
+  ['mechanism', 'Mechanism: for a task that brings a new channel, protocol, timing or state the analyst writes a section "Mechanism" before the matrix - 2-3 mechanisms with their cost, the invariant of the new state, the visible limits, a recommendation; a choice that is seen on the screen or rests on time (a timer, a threshold, a race) is a question to the owner ("❓ owner: ..."), never the coordinator\'s layer 2. A programmer whose solution needs a protocol, timer or state that the analysis does not name stops with status mechanism (one line in prog.md) and gets one analyst pass; a second one goes to the coordinator. The analyst of a second red or a second rejection first answers "mechanism or cells?" and may replace the mechanism (a new section that names the one it replaces); an answer "cells" keeps every section "Mechanism", and every later role is told who wrote the section last. The reviewer writes one line: a simpler mechanism without timings, or "no".'],
   ['specs', 'Living specs (UX specs, state models, gap lists) change in the same commit as the behaviour they describe.'],
   ['push', PROTECTED ? `Do not push, do not merge into ${PROTECTED}, do not create tags.`
     : NONE_PROTECTED ? 'Do not push, do not merge, do not create tags (the project config protects no branch: protectedBranches [], so no branch is protected by the hooks, and pushing and merging stay the owner\'s call).'
@@ -419,10 +419,14 @@ function baseOf(t) {
   return ''
 }
 const analysisLine = (a) => (a.mode === 'none' ? `No analysis: ${a.reason}` : `The analysis to follow: ${a.path}`)
-// The analyst's pass after a status mechanism is recorded in the run (st.mechanism = the round of the pass): every later
-// programmer, programmer-checker and tester prompt names its section, so a round that knows only the old analysis does not
-// bring the rejected mechanism back (review 1 of p-mechanism). A later analyst may replace the section (mechanismOrCells).
-const mechLine = (t, st) => (st && st.mechanism ? `\nThe mechanism of this task: section "Mechanism" of ${t.dir}/analyst.md (the analyst's pass after the status mechanism of round ${st.mechanism}; the latest such section if a later analyst replaced it) - build and check by it, not by a mechanism of your own.` : '')
+// Who wrote the section "Mechanism" of analyst.md last in this run (st.mechSection): the analyst's pass after a status
+// mechanism, or a later analyst (second rejection, second red tester round, second red train) that answered "mechanism";
+// an answer "cells" leaves it. Every later programmer, programmer-checker and tester prompt and every later analyst names
+// it, so a round that knows only the old analysis does not bring the rejected mechanism back (reviews 1 and 2 of
+// p-mechanism). st.mechanism stays the round of the pass alone: it decides the route of a second status mechanism. The
+// workflow reads no files, so a section written in an earlier run is not named here (the limit is per run).
+const mechAuthor = (t, st) => (st && st.mechSection ? `section "Mechanism" of ${t.dir}/analyst.md (written last by ${st.mechSection}; build and check by it)` : '')
+const mechLine = (t, st) => (st && st.mechSection ? `\nThe mechanism of this task: ${mechAuthor(t, st)} - not a mechanism of your own.` : '')
 
 // Paths a fix "for docs" may touch without a tester round: docs, and guards and fixtures (guard wording; the paths the
 // tester may change, config testerWritable). A fix touching anything else - a comment in product code - is confirmed
@@ -450,7 +454,10 @@ Check: ${t.dir}/BRIEF.md exists and contains an acceptance scenario in the real 
 // cvm-wheel-b a probe with a 1500 ms timer took 7 rounds and 30M, and its flicker was seen by the owner an hour after the
 // acceptance. Whether a task has a mechanism to choose is judged by its sense, never by a field or the preconditions.
 const MECH_SECTION = 'Mechanism: when the task brings a new channel (a message, an event), protocol, timing or state - judged by its sense in the brief and the analysis, no field marks it - write a section "Mechanism" before the matrix: 2-3 mechanisms with their cost, the invariant of the new state (when it holds and what every event does to it), the visible limits (engine, memory, timing) and a recommendation. A choice that is seen on the screen or rests on time (a timer, a threshold, a race) goes into questions as "❓ owner: ..." - layer 3, not the coordinator\'s layer 2; build the cells on the chosen mechanism.'
-const MECH_OR_CELLS = 'First answer "mechanism or cells?" (mechanismOrCells): do these reds open new cells of the same mechanism, or do they show that the mechanism is wrong (it needs timers, thresholds, races or a provenance it cannot get)? In the second case you may replace the mechanism: a new section "Mechanism" in analyst.md (2-3 mechanisms with their cost, the invariant, the visible limits, the choice; a choice seen on the screen or resting on time goes into questions as "❓ owner: ...") and the matrix of cases on the new mechanism. Then: '
+const KEEP_SECTIONS = (t) => `Keep the earlier sections of ${t.dir}/analyst.md, every section "Mechanism" among them: on "cells" add the matrix to them; on "mechanism" write a new section "Mechanism" that names the one it replaces.`
+const MECH_OR_CELLS = (t, st) => `First answer "mechanism or cells?" (mechanismOrCells): do these reds open new cells of the same mechanism, or do they show that the mechanism is wrong (it needs timers, thresholds, races or a provenance it cannot get)? In the second case you may replace the mechanism: a new section "Mechanism" in analyst.md (2-3 mechanisms with their cost, the invariant, the visible limits, the choice; a choice seen on the screen or resting on time goes into questions as "❓ owner: ...") and the matrix of cases on the new mechanism. ${st && st.mechSection ? `The mechanism now: ${mechAuthor(t, st)}. ` : ''}${KEEP_SECTIONS(t)} Then: `
+// A later analyst's answer "mechanism" makes it the author of the section (st.mechSection); "cells" leaves the author.
+const mechBy = (st, a, who) => { if (a && a.mechanismOrCells === 'mechanism') st.mechSection = `the analyst of the second ${who}` }
 const REWORK = (t, a) => (a && a.mechanismOrCells === 'mechanism' ? ` The analyst replaced the mechanism (section "Mechanism" of ${t.dir}/analyst.md): rework the code by it, and rewrite the guards of the old mechanism that no longer hold instead of patching them.` : '')
 const MECH_STATUS = 'status=mechanism (before the code, one line in prog.md: what and why) if your solution needs a protocol, timer or state that the analysis and the brief do not name (a probe, a poll, a wait for an answer, a new state machine): the analyst gets one pass and you continue on its section "Mechanism".'
 const analyst = (t, why) => agent(`You are the ANALYST/DIAGNOSER (read code only; you write only ${t.dir}/analyst.md). ${RULES(t)}
@@ -610,7 +617,9 @@ async function progMech(t, st, task, n, fix) {
   if (st.mechanism) return again(n, p)
   st.mechanism = String(n)
   log(`${t.title}: programmer ${n} - status mechanism - analyst`)
-  const a = await analyst(t, `the programmer stopped with status mechanism in round ${n}: its solution needs a protocol, timer or state that the analysis does not name - "${p.summary || '?'}" (its line in ${t.dir}/prog.md). Write a section "Mechanism" into ${t.dir}/analyst.md: 2-3 mechanisms with their cost (the programmer's among them), the invariant of the new state, the visible limits, a recommendation, then the cells the chosen mechanism adds. A choice seen on the screen or resting on time goes into questions as "❓ owner: ..." (the task stops for the owner); otherwise name the mechanism the programmer follows.`)
+  const now = st.mechSection ? ` The mechanism now: ${mechAuthor(t, st)}; your section replaces it and names it.` : ''
+  st.mechSection = `the analyst's pass after the status mechanism of round ${n}`
+  const a = await analyst(t, `the programmer stopped with status mechanism in round ${n}: its solution needs a protocol, timer or state that the analysis does not name - "${p.summary || '?'}" (its line in ${t.dir}/prog.md). Keep the other sections of ${t.dir}/analyst.md (the matrix of an earlier analyst among them) and add to it a section "Mechanism":${now} 2-3 mechanisms with their cost (the programmer's among them), the invariant of the new state, the visible limits, a recommendation, then the cells the chosen mechanism adds. A choice seen on the screen or resting on time goes into questions as "❓ owner: ..." (the task stops for the owner); otherwise name the mechanism the programmer follows.`)
   if (!a) return { fail: 'the analyst returned no result' }
   if (!a.ready || a.split.length || a.questions.length) return { fail: 'analyst after the status mechanism: split or an answer is needed', split: a.split, questions: a.questions, analyst: a.summary }
   const p2 = await prog(t, `The analyst answered your status mechanism in ${t.dir}/analyst.md (section "Mechanism"): build on the mechanism it names.${REWORK(t, a)} Your task as before:\n${task}`, `${n}m`, fix, st)
@@ -748,8 +757,9 @@ async function work(t, st) {
 
   // Second rejection for code -> analyst in the same run, then one full round; a third rejection goes to the coordinator.
   st.analyst = 'rejection'
-  const a = await analyst(t, `${MECH_OR_CELLS}second review rejection for code (${t.dir}/review.md):\n${rv.review}`)
+  const a = await analyst(t, `${MECH_OR_CELLS(t, st)}second review rejection for code (${t.dir}/review.md):\n${rv.review}`)
   if (!a) return stop(t, 'the analyst returned no result')
+  mechBy(st, a, 'review rejection')
   if (!a.ready || a.split.length || a.questions.length) return stop(t, 'analyst after the second rejection: split or an answer is needed', { split: a.split, questions: a.questions, analyst: a.summary })
   const b2 = await buildAndTest(t, st, `After the second review rejection the analyst wrote ${t.dir}/analyst.md - fix according to it and to review.md.${REWORK(t, a)}`, 'A', 2)
   if (b2.fail) return stop(t, `after the analyst: ${b2.fail}`, b2)
@@ -763,8 +773,9 @@ async function work(t, st) {
 // stops the task (why 'tester red after analyst'), and so does a second rejection after it.
 async function afterRedAnalyst(t, st, x) {
   st.analyst = 'tester-red'
-  const a = await analyst(t, `${MECH_OR_CELLS}the second red tester round for the product in this task (rule "Red tester rounds are counted per task"). Inputs: the tester's findings in ${t.dir}/test.md (every round) and the programmer's rounds in ${t.dir}/prog.md. Write the matrix of cases those findings belong to - every dimension the reds opened, not only the failed cells - and the cause of the reds with file:line, so the next programmer round closes the whole matrix at once. Last red:\n${x.test || ''}`)
+  const a = await analyst(t, `${MECH_OR_CELLS(t, st)}the second red tester round for the product in this task (rule "Red tester rounds are counted per task"). Inputs: the tester's findings in ${t.dir}/test.md (every round) and the programmer's rounds in ${t.dir}/prog.md. Write the matrix of cases those findings belong to - every dimension the reds opened, not only the failed cells - and the cause of the reds with file:line, so the next programmer round closes the whole matrix at once. Last red:\n${x.test || ''}`)
   if (!a) return stop(t, 'the analyst returned no result')
+  mechBy(st, a, 'red tester round')
   if (!a.ready || a.split.length || a.questions.length) return stop(t, 'analyst after the second red tester round: split or an answer is needed', { split: a.split, questions: a.questions, analyst: a.summary })
   const b = await buildAndTest(t, st, `After the second red tester round the analyst wrote ${t.dir}/analyst.md - a matrix of cases from the tester's findings: red guards for its cells, then the fix of every cell, according to it and to ${t.dir}/test.md.${REWORK(t, a)}`, 'T', 1)
   if (b.fail) return stop(t, b.stopWhy || `after the analyst: ${b.fail}`, b)
@@ -886,8 +897,9 @@ async function ride(t, st, review) {
       if (!st.analyst && st.trainReds >= 2) {
         st.analyst = 'train-red'
         log(`${t.title}: train ${n} - the second red train of the task - analyst`)
-        const a = await analyst(t, `${MECH_OR_CELLS}the second red train for this task (the integration train after the review; like the second red tester round). Inputs: the train results ${results.join(', ')} (each names its train log, its attribution log and the guards red on the arc head + this branch alone) and the programmer's rounds in ${t.dir}/prog.md. Write the matrix of cases those reds belong to and their cause with file:line, so the next programmer round closes the whole matrix at once.`)
+        const a = await analyst(t, `${MECH_OR_CELLS(t, st)}the second red train for this task (the integration train after the review; like the second red tester round). Inputs: the train results ${results.join(', ')} (each names its train log, its attribution log and the guards red on the arc head + this branch alone) and the programmer's rounds in ${t.dir}/prog.md. Write the matrix of cases those reds belong to and their cause with file:line, so the next programmer round closes the whole matrix at once.`)
         if (!a) return stop(t, 'the analyst returned no result', { review, train: info })
+        mechBy(st, a, 'red train')
         if (!a.ready || a.split.length || a.questions.length) return stop(t, 'analyst after the second red train: split or an answer is needed', { split: a.split, questions: a.questions, analyst: a.summary, review, train: info })
         task = `After the second red train the analyst wrote ${t.dir}/analyst.md - a matrix of cases from the train's reds (${results.join(', ')}): red guards for its cells, then the fix of every cell.${REWORK(t, a)} ${FIX_TAIL}`
         fix = null

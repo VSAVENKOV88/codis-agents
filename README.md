@@ -379,8 +379,11 @@ review findings.
   second red or rejection), then the same programmer round again on that section; a second `mechanism` in the run, or
   the pass with questions, stops the task for the coordinator. The analyst of a second red tester round, a second
   rejection or a second red train first answers "mechanism or cells?" (`mechanismOrCells`) and may replace the
-  mechanism; then the programmer reworks by it. After the pass every later programmer, programmer-checker and tester
-  prompt names the section "Mechanism" of `analyst.md` and the round of the pass. The reviewer writes one line "Mechanism:" - a simpler mechanism
+  mechanism (a new section that names the one it replaces); an answer "cells" keeps every section "Mechanism" and adds
+  the matrix to the earlier sections, and the pass keeps the other sections. The run records who wrote the section
+  last (the pass of round N, or the analyst of the second rejection, red tester round or red train that answered
+  "mechanism"): every later programmer, programmer-checker, tester and analyst prompt names it. The limit of one pass is
+  per run: a relaunch with `start` begins a new count, and the coordinator says in `start` if a pass was made. The reviewer writes one line "Mechanism:" - a simpler mechanism
   without timings, or "no".
 - **Programmer** commits a red guard, then the code, then mutation-tests the guards after the commit and runs the full
   guard suite in a heavy slot - or, with `guardSubsetCommand` in the config, the programmer runs only its new guards and
@@ -604,8 +607,10 @@ fallback to another slot directory: a second directory would be a second queue t
   `mechanism` -> one analyst pass inside the run -> the programmer again, a second one to the coordinator; "mechanism
   or cells?" first for the analyst of a second red tester round, a second rejection or a second red train, with the
   right to replace the mechanism (`mechanismOrCells` in its answer); one line "Mechanism:" in the reviewer's report.
-  The pass is recorded in the run, and every later programmer, programmer-checker and tester prompt names its section
-  "Mechanism" of `analyst.md`. The rule is marked `role:mechanism` and reaches every role prompt.
+  The run records by whom the section "Mechanism" was written last (the pass or a later analyst that answered
+  "mechanism"), and every later programmer, programmer-checker, tester and analyst prompt names that author; an answer "cells" keeps
+  every section "Mechanism" (the matrix is added to the earlier sections), and the pass keeps the other sections. The
+  rule is marked `role:mechanism` and reaches every role prompt.
 
 ## Changes in 0.4.14
 
