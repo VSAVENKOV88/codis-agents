@@ -14,9 +14,13 @@
 // The round is merge only when all hold:
 //   - head is a merge of two parents: the first is before (so the round is this one commit, nothing after it), the
 //     second an ancestor of the arc;
-//   - the files where head differs from the automatic merge of its parents (git merge-tree --write-tree: the
-//     conflicted files keep their markers there, so every hand resolution and every hand edit differs) all match the
-//     globs. Code the arc brought without a conflict equals the automatic merge and is not counted: it is the arc's.
+//   - every file git merge-tree --write-tree names as conflicted matches the globs: a conflict is a conflict even when
+//     its resolution equals the tree merge-tree writes for it (modify/delete kept, a binary conflict resolved by the
+//     first side, a text conflict committed with the very markers merge-tree writes), so the tree alone does not
+//     show it;
+//   - the files where head differs from that automatic merge of its parents (hand resolutions and hand edits) all
+//     match the globs. Code the arc brought without a conflict equals the automatic merge and is not counted: it is
+//     the arc's.
 // A glob without "/" matches the file name at any depth; with "/" the path from the repository root; * and ? stay
 // within one path segment, ** crosses segments (the same rule as stand.imageFiles).
 const path = require('path');
@@ -63,16 +67,17 @@ function check(a) {
   if (anc.rc === 1) return no(`the merged commit ${ps[1]} is not an ancestor of the arc ${a.base}`);
   if (anc.rc !== 0) throw new Error(`git merge-base: ${anc.err}`);
   // The automatic merge of the parents; exit 1 means conflicts, the tree still comes first (markers in the files).
-  const mt = git('merge-tree', '--write-tree', '--no-messages', ...ps);
+  // -z --name-only: "<tree>\0<conflicted path>\0...", each conflicted path once.
+  const mt = git('merge-tree', '--write-tree', '--no-messages', '--name-only', '-z', ...ps);
   if (mt.rc !== 0 && mt.rc !== 1) throw new Error(`git merge-tree: ${mt.err}`);
-  const auto = mt.out.split('\n')[0];
+  const [auto, ...conflicted] = mt.out.split('\0').filter(Boolean);
   if (!/^[0-9a-f]{40,64}$/.test(auto)) throw new Error(`git merge-tree gave no tree: ${mt.out.slice(0, 200)}`);
   const d = git('diff', '--name-only', '--no-renames', '-z', auto, `${head}^{tree}`);
   if (d.rc !== 0) throw new Error(`git diff: ${d.err}`);
-  const files = d.out.split('\0').filter(Boolean);
+  const files = [...new Set([...conflicted, ...d.out.split('\0').filter(Boolean)])];
   const outside = files.filter((f) => !matches(a.files, f));
-  if (outside.length) return no(`resolved or edited by hand outside mergeOnlyFiles: ${outside.join(', ')}`, files);
-  return { mergeOnly: true, reason: `one merge of the arc ${a.base}; resolved by hand: ${files.join(', ') || 'nothing'}`, files };
+  if (outside.length) return no(`conflicted, resolved or edited by hand outside mergeOnlyFiles: ${outside.join(', ')}`, files);
+  return { mergeOnly: true, reason: `one merge of the arc ${a.base}; conflicted or resolved by hand: ${files.join(', ') || 'nothing'}`, files };
 }
 
 if (require.main === module) {
