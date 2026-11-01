@@ -1,7 +1,7 @@
 export const meta = {
   name: 'role-chain',
   description: 'Role chain over tasks in parallel: preconditions -> (analyst) -> programmer -> tester -> reviewer (+ security reviewer); fix rounds; an analyst after the second rejection or the second red tester round',
-  whenToUse: 'Started by the codis-agents:role-chain skill, which reads .claude/codis-agents.json and passes it. args: {owner: "the owner\'s request, verbatim", config: <resolved project config>, tasks: [{key, title, wt, branch, accept, dir?, gdir?, start?, kind: feature | defect | tail (exactly one), analystFirst | analysis | noAnalysis (exactly one), feature?, spec?, useCases?, useCasesFirst?, stack?, security?, base?, mode?}]}; with guardSubsetCommand a reviewed task rides the integration train (scripts/train.js ride) before it is done',
+  whenToUse: 'Started by the codis-agents:role-chain skill, which reads .claude/codis-agents.json and passes it. args: {owner: "the owner\'s request, verbatim", config: <resolved project config>, tasks: [{key, title, wt, branch, accept, dir?, gdir?, start?, kind: feature | defect | tail (exactly one), analystFirst | analysis | noAnalysis (exactly one), feature?, spec?, useCases?, useCasesFirst?, stack?, security?, base?, mode?, prior?}]}; with guardSubsetCommand a reviewed task rides the integration train (scripts/train.js ride) before it is done',
   phases: [
     { title: 'Preconditions', detail: 'brief, worktree, branch, open questions' },
     { title: 'Analyst', detail: 'matrix of cases or a diagnosis (before the programmer, after the second rejection, or after the second red tester round)' },
@@ -46,6 +46,11 @@ export const meta = {
 // guardSubsetCommand it is required and is not a protected branch - the branch of the arc, coordinator's decision 6 of
 // p-train-ac, 2026-10-29),
 // mode ("full", the default, or "light": one programmer-checker, the selection step (INNER), one reviewer - see work()).
+// prior (p-testerred-route): the counts of earlier runs of this task, for a relaunch - {testerReds?, trainReds?,
+// rejections?, analyst?, mechanism?}, checked before any agent (priorOf); the result of every run carries them as counts
+// (countsOf), seed included, so the coordinator copies counts into the next prior and recounts nothing. The counters of a task live in st, which every run starts empty, and
+// the script reads no files, so without it a relaunch with start began every count from zero: in cvm-wheel-c (run
+// wf_68338028-44b) the first red tester round of the relaunch was the second of the task and went to the programmer.
 
 const ARGS = typeof args === 'string' ? JSON.parse(args) : (args || {})
 const OWNER = ARGS.owner || ''
@@ -134,11 +139,11 @@ const RULE_LIST = (t) => [
   ['stand', CFG.stand && CFG.stand.project
     ? `Shared stand: acceptance in Docker goes to the project's stand ${CFG.stand.project} by ticket (${SCRIPTS}/stand.sh take|deploy|release|status), not to a stack of your own, unless the task's commits change its image files (${SCRIPTS}/stand.sh image-diff, exit 1 -> own stack as before). The take process is the holder: keep it running in the background until release. Call every stand.sh command from one directory: its project config is found from there (take, deploy and status print it), not from your worktree. Never bring the stand up or down, never release another worktree's ticket.`
     : 'Shared stand: the project config has none (no section stand), so acceptance in Docker uses a stack of the task.'],
-  ['testerred', 'Red tester rounds are counted per task: the second red verdict for the product (any cells, not only the same ones) sends the task to the analyst inside the same run - a matrix of cases from the tester\'s findings in test.md and their cause (prog.md) - then one round programmer -> tester -> review on that matrix; a red tester round after that analyst stops the task for the coordinator. A red of the environment (verdict environment) does not count. Tester: in test.md name every failed case with its expected and actual result and its round, so the analyst builds the matrix from them.'],
+  ['testerred', 'Red tester rounds are counted per task, across runs (a relaunch carries the counts of the earlier run in the task field prior - the field counts of that run\'s result, copied: testerReds, trainReds, rejections, analyst, mechanism): the second red verdict for the product (any cells, not only the same ones) sends the task to the analyst inside the same run - a matrix of cases from the tester\'s findings in test.md and their cause (prog.md) - then one round programmer -> tester -> review on that matrix; a red tester round after that analyst stops the task for the coordinator. A red of the environment (verdict environment) does not count. Tester: in test.md name every failed case with its expected and actual result and its round, so the analyst builds the matrix from them.'],
   ['fixround', 'Fix rounds (a programmer round after the first: after a red tester, a red guard run or a rejection): its prompt names the report with the findings and the task\'s diff; the brief and the analysis are read only in the sections the findings cite, and only the guards new or changed in the round, the guards the findings name and the guards that cover the product code changed in it are mutated. The first round, and the first round after an analyst, read and mutate as before.'],
   ['postcheck', 'Post-checks: after the tester one service agent runs the git post-check and the leftovers post-check in one command (scripts/role-post-check.js, one JSON with both answers); with security work the reviewer and the security reviewer run at the same time on the same HEAD, and one git post-check after both: neither may change the worktree, a change by either stops the task, a rejection by either is a rejection.'],
   ['sources', 'Sources of a new channel, state or data path: the analyst lists in the matrix every source and consumer of each new channel (a message, an event), state or data path of the task (input events, existing data and old frames, nesting, parallel paths) and gives each its cell; a source without a cell is named "out of the task" with its reason. The reviewer and the security reviewer write a section "What is not in the diff" in their report: the sources without handling or without a guard; such a finding is not docs only.'],
-  ['mechanism', 'Mechanism: for a task that brings a new channel, protocol, timing or state the analyst writes a section "Mechanism" before the matrix - 2-3 mechanisms with their cost, the invariant of the new state, the visible limits, a recommendation; a choice that is seen on the screen or rests on time (a timer, a threshold, a race) is a question to the owner ("❓ owner: ..."), never the coordinator\'s layer 2. A programmer whose solution needs a protocol, timer or state that the analysis does not name stops with status mechanism (one line in prog.md) and gets one analyst pass; a second one goes to the coordinator. The analyst of a second red or a second rejection first answers "mechanism or cells?" and may replace the mechanism (a new section that names the one it replaces); an answer "cells" keeps every section "Mechanism", and every later role is told who wrote the section last. The reviewer writes one line: a simpler mechanism without timings, or "no".'],
+  ['mechanism', 'Mechanism: for a task that brings a new channel, protocol, timing or state the analyst writes a section "Mechanism" before the matrix - 2-3 mechanisms with their cost, the invariant of the new state, the visible limits, a recommendation; a choice that is seen on the screen or rests on time (a timer, a threshold, a race) is a question to the owner ("❓ owner: ..."), never the coordinator\'s layer 2. A programmer whose solution needs a protocol, timer or state that the analysis does not name stops with status mechanism (one line in prog.md) and gets one analyst pass per task; a second one goes to the coordinator (also after a pass of an earlier run, passed as prior.mechanism). The analyst of a second red or a second rejection first answers "mechanism or cells?" and may replace the mechanism (a new section that names the one it replaces); an answer "cells" keeps every section "Mechanism", and every later role is told who wrote the section last. The reviewer writes one line: a simpler mechanism without timings, or "no".'],
   ['specs', 'Living specs (UX specs, state models, gap lists) change in the same commit as the behaviour they describe.'],
   ['push', PROTECTED ? `Do not push, do not merge into ${PROTECTED}, do not create tags.`
     : NONE_PROTECTED ? 'Do not push, do not merge, do not create tags (the project config protects no branch: protectedBranches [], so no branch is protected by the hooks, and pushing and merging stay the owner\'s call).'
@@ -418,6 +423,38 @@ function modeOf(t) {
   if (t.stack) return { error: 'mode light has no acceptance in a Docker stack (stack): run it in the full mode with a tester' }
   return { light: true }
 }
+// The counts of earlier runs of a task (p-testerred-route, mechanism M-A of its analysis): {prior: {...}} or {error}. The
+// rules count red tester rounds, red trains, the one analyst of a second red or rejection and the one pass "Mechanism"
+// per task, while st lives one run; the coordinator copies the field counts of the last run's result (countsOf), and it
+// seeds st (chain()). Only the exact values count, nothing is inferred: testerReds and trainReds - integers >= 0 (red
+// verdicts for the product; environment reds and seam, conflict, arc-red trains are not counted), rejections - review
+// rejections since the last analyst of the task (the next one is the second; review 1 of p-testerred-route: a run that
+// stopped after rejection 1 began the count again), analyst - which
+// analyst of the task already ran (tester-red, rejection, train-red), mechanism - true when the pass after a status
+// mechanism was made (no pass: leave it out). The light mode has no tester, so testerReds above 0 is refused there.
+const PRIOR_ANALYSTS = ['tester-red', 'rejection', 'train-red']
+const PRIOR_KEYS = ['testerReds', 'trainReds', 'rejections', 'analyst', 'mechanism']
+function priorOf(t, light) {
+  if (t.prior === undefined) return { prior: {} }
+  const p = t.prior
+  const why = 'prior holds the counts of earlier runs of this task (the field counts of the last run\'s result): {testerReds?: integer >= 0, trainReds?: integer >= 0, rejections?: integer >= 0, analyst?: "tester-red" | "rejection" | "train-red", mechanism?: true}'
+  if (!p || typeof p !== 'object' || Array.isArray(p)) return { error: `prior must be an object, not ${JSON.stringify(p)}: ${why}` }
+  const unknown = Object.keys(p).filter((k) => !PRIOR_KEYS.includes(k))
+  if (unknown.length) return { error: `prior has unknown keys ${unknown.join(', ')}: ${why}` }
+  for (const k of ['testerReds', 'trainReds', 'rejections']) {
+    if (p[k] !== undefined && !(Number.isInteger(p[k]) && p[k] >= 0)) return { error: `prior.${k} must be an integer >= 0, not ${JSON.stringify(p[k])}: ${why}` }
+  }
+  if (p.analyst !== undefined && !PRIOR_ANALYSTS.includes(p.analyst)) return { error: `prior.analyst must be one of ${PRIOR_ANALYSTS.join(', ')}, not ${JSON.stringify(p.analyst)}: ${why}` }
+  if (p.mechanism !== undefined && p.mechanism !== true) return { error: `prior.mechanism must be true (no pass made: leave it out), not ${JSON.stringify(p.mechanism)}: ${why}` }
+  if (light && p.testerReds > 0) return { error: `prior.testerReds ${p.testerReds} with mode light: the light mode has no tester, so its red tester rounds are not counted - run the task in the full mode or drop testerReds` }
+  return { prior: p }
+}
+const PRIOR_MECH = 'an earlier run (prior.mechanism)'
+// The counts of a run, in the shape of prior (review 1 of p-testerred-route): every result of a task carries them, the
+// seed included, so the next run's prior is a copy and nobody recounts reds from test.md (cvm-wheel-c lost one that way).
+const countsOf = (st) => Object.assign({ testerReds: st.reds || 0, trainReds: st.trainReds || 0, rejections: st.rejections || 0 },
+  st.analyst ? { analyst: st.analyst } : {}, st.mechanism ? { mechanism: true } : {})
+const priorLine = (p) => PRIOR_KEYS.filter((k) => p[k] !== undefined).map((k) => `${k} ${p[k]}`).join(', ')
 // The base of a task with ONE_RUN (coordinator's decision 6 of p-train-ac, 2026-10-29): required, since the selection
 // diffs against it, and not a protected branch - the branch of the arc. '' when it passes, otherwise why not.
 function baseOf(t) {
@@ -436,8 +473,9 @@ const analysisLine = (a) => (a.mode === 'none' ? `No analysis: ${a.reason}` : `T
 // mechanism, or a later analyst (second rejection, second red tester round, second red train) that answered "mechanism";
 // an answer "cells" leaves it. Every later programmer, programmer-checker and tester prompt and every later analyst names
 // it, so a round that knows only the old analysis does not bring the rejected mechanism back (reviews 1 and 2 of
-// p-mechanism). st.mechanism stays the round of the pass alone: it decides the route of a second status mechanism. The
-// workflow reads no files, so a section written in an earlier run is not named here (the limit is per run).
+// p-mechanism). st.mechanism stays the round of the pass alone: it decides the route of a second status mechanism (a pass
+// of an earlier run arrives as prior.mechanism). The workflow reads no files, so the author of a section written in an
+// earlier run is not named here.
 const mechAuthor = (t, st) => (st && st.mechSection ? `section "Mechanism" of ${t.dir}/analyst.md (written last by ${st.mechSection}; build and check by it)` : '')
 const mechLine = (t, st) => (st && st.mechSection ? `\nThe mechanism of this task: ${mechAuthor(t, st)} - not a mechanism of your own.` : '')
 
@@ -629,7 +667,7 @@ async function progStep(t, st, task, n, report, sameStops, mergeCheck) {
 async function progMech(t, st, task, n, fix) {
   const p = await prog(t, task, n, fix, st)
   if (!p || p.status !== 'mechanism') return { p }
-  const again = (q, r) => ({ fail: `programmer ${q}: status mechanism again after the analyst's pass - the coordinator decides on the mechanism: ${r.summary || '?'}`, questions: r.questions || [], mechanism: r.summary || '' })
+  const again = (q, r) => ({ fail: `programmer ${q}: status mechanism again after the analyst's pass${st.mechanism === PRIOR_MECH ? ' made in an earlier run (prior.mechanism)' : ''} - the coordinator decides on the mechanism: ${r.summary || '?'}`, questions: r.questions || [], mechanism: r.summary || '' })
   if (st.mechanism) return again(n, p)
   st.mechanism = String(n)
   log(`${t.title}: programmer ${n} - status mechanism - analyst`)
@@ -643,11 +681,12 @@ async function progMech(t, st, task, n, fix) {
   return { p: p2 }
 }
 
-// Red tester rounds for the product are counted per task (st.reds; environment reds never reach here). The second one,
-// in any cells, sends the task to the analyst inside the same run (redAnalyst in work()); a red after that analyst stops
-// the task for the coordinator. Only one analyst of a second red, a second rejection or a second red train runs inside
-// a run (the mechanism pass after a status mechanism is apart, st.mechanism): after the analyst of the second rejection
-// (st.analyst = 'rejection') the tester rounds stay as before. Why: cvm-xy-1 (2026-10-23) - four tester -> programmer
+// Red tester rounds for the product are counted per task (st.reds, seeded by prior.testerReds of earlier runs;
+// environment reds never reach here). The second one, in any cells, sends the task to the analyst inside the same run
+// (redAnalyst in work()); a red after that analyst stops the task for the coordinator. Only one analyst of a second red,
+// a second rejection or a second red train runs per task (st.analyst, seeded by prior.analyst; the mechanism pass after
+// a status mechanism is apart, st.mechanism): after the analyst of the second rejection (st.analyst = 'rejection') the
+// tester rounds stay as before. Why: cvm-xy-1 (2026-10-23) - four tester -> programmer
 // rounds in a row, each red opening a new cell of a matrix nobody had written; the count stood only on rejections.
 function testerRed(t, st, round, tr) {
   st.reds = (st.reds || 0) + 1
@@ -684,6 +723,10 @@ async function reviewLoop(t, st, tag) {
   const r1 = x1.rv
   log(`${t.title}: review ${tag}1 - ${r1.verdict}`)
   if (r1.verdict === 'done') return { ok: r1 }
+  // Rejections count per task since its last analyst (st.rejections, seeded by prior.rejections): after a rejection of an
+  // earlier run this one is the second.
+  st.rejections = (st.rejections || 0) + 1
+  if (st.rejections >= 2) return { fail: 'second review rejection', second: true, docsOnly: r1.docsOnly, review: r1.summary }
   const before = st.head
   const sp = await progStep(t, st, `Review ${tag}1 - rejected${r1.docsOnly ? ' for docs only: fix the docs, guard wording or comments it names and change no behaviour' : ''}. Fix according to ${t.dir}/review.md:\n${r1.summary}`, `${tag}r`, `${t.dir}/review.md`)
   if (sp.fail) return sp
@@ -709,7 +752,7 @@ async function reviewLoop(t, st, tag) {
   if (x2.fail) return x2
   const r2 = x2.rv
   log(`${t.title}: review ${tag}2 - ${r2.verdict}`)
-  if (r2.verdict !== 'done') return { fail: 'second review rejection', second: true, docsOnly: r2.docsOnly, review: r2.summary }
+  if (r2.verdict !== 'done') { st.rejections += 1; return { fail: 'second review rejection', second: true, docsOnly: r2.docsOnly, review: r2.summary } }
   if (r1.docsOnly && !byPaths && r2.fixBehaviourUnchanged !== true) {
     log(`${t.title}: rejected "for docs", the fix touches ${other.join(', ') || 'unreported files'} and the review did not confirm it changes no behaviour - tester round`)
     const xt = await testAfter()
@@ -724,7 +767,9 @@ async function chain(t0) {
   if (TESTER_WRITABLE_MISSING) return stop(t0, 'preconditions', { problems: [TESTER_WRITABLE_MISSING], questions: [TESTER_WRITABLE_MISSING] })
   const kd = kindOf(t0)
   if (kd.error) return stop(t0, 'preconditions', { problems: [kd.error], questions: [kd.error] })
-  const refuse = (e) => Object.assign(stop(t0, 'preconditions', { problems: [e], questions: [e] }), { kind: kd.kind })
+  // A refusal after a valid prior carries it as counts (nothing ran, so the next run's prior is the same seed).
+  let seed = null
+  const refuse = (e) => Object.assign(stop(t0, 'preconditions', { problems: [e], questions: [e] }), { kind: kd.kind }, seed ? { counts: seed } : {})
   const an = analysisOf(t0)
   if (an.error) return refuse(an.error)
   const uc = useCasesOf(t0)
@@ -732,12 +777,19 @@ async function chain(t0) {
   if (kd.kind === 'feature' && !uc.path) return refuse(NO_UC_ERR)
   const md = modeOf(t0)
   if (md.error) return refuse(md.error)
+  const pr = priorOf(t0, md.light)
+  if (pr.error) return refuse(pr.error)
+  if (t0.prior !== undefined) seed = countsOf({ reds: pr.prior.testerReds, trainReds: pr.prior.trainReds, rejections: pr.prior.rejections, analyst: pr.prior.analyst, mechanism: pr.prior.mechanism })
   const bs = baseOf(t0)
   if (bs) return refuse(bs)
   const t = Object.assign({}, t0, { kind: kd.kind, an, uc: uc.first ? '' : uc.path || '', ucFirst: uc.first ? uc.path : '', light: md.light })
-  const withAn = (r) => Object.assign({}, r, { kind: kd.kind, analysis: an }, nonBlank(t0.feature) ? { feature: t0.feature.trim() } : {}, md.light ? { mode: 'light' } : {},
+  const withAn = (r) => Object.assign({}, r, { kind: kd.kind, analysis: an, counts: countsOf(st) }, nonBlank(t0.feature) ? { feature: t0.feature.trim() } : {}, md.light ? { mode: 'light' } : {},
     uc.path && !r.useCases ? { useCases: uc.path } : {})
-  const st = { head: '', leftovers: [] }
+  // The counters of the task start from the counts of its earlier runs (prior); without prior from zero, as before.
+  const p0 = pr.prior
+  const st = { head: '', leftovers: [], reds: p0.testerReds || 0, priorReds: p0.testerReds || 0, trainReds: p0.trainReds || 0,
+    rejections: p0.rejections || 0, analyst: p0.analyst || '', mechanism: p0.mechanism ? PRIOR_MECH : '' }
+  if (priorLine(p0)) log(`${t.title}: prior runs of the task - ${priorLine(p0)} (the counters start from them)`)
   const pc = await pre(t)
   if (!pc) return withAn(stop(t, 'the precondition check returned no result'))
   if (!pc.ok || pc.blockingQuestions.length) return withAn(stop(t, 'preconditions', { problems: pc.problems, questions: pc.blockingQuestions }))
@@ -768,14 +820,18 @@ async function work(t, st) {
   if (t.light) return light(t, st)
   const b = await buildAndTest(t, st, t.start || 'Start with red guards for the cells of the brief (and analyst.md, if any).', '', 3)
   if (b.redAnalyst) return afterRedAnalyst(t, st, b)
-  if (b.fail) return stop(t, b.fail, b)
+  if (b.fail) return stop(t, b.stopWhy || b.fail, b)
   const rv = await reviewLoop(t, st, '')
   if (rv.ok) return ride(t, st, rv.ok.summary)
   if (rv.redAnalyst) return afterRedAnalyst(t, st, rv)
-  if (!rv.second || rv.docsOnly) return stop(t, rv.fail, rv)
+  if (!rv.second || rv.docsOnly) return stop(t, rv.stopWhy || rv.fail, rv)
+  // The analyst of the task already ran in an earlier run (prior.analyst): one analyst per task, so a second rejection
+  // for code after it stops the task, as it does after the analyst of this run.
+  if (st.analyst) return stop(t, `after the analyst: ${rv.fail}`, rv)
 
   // Second rejection for code -> analyst in the same run, then one full round; a third rejection goes to the coordinator.
   st.analyst = 'rejection'
+  st.rejections = 0
   const a = await analyst(t, `${MECH_OR_CELLS(t, st)}second review rejection for code (${t.dir}/review.md):\n${rv.review}`)
   if (!a) return stop(t, 'the analyst returned no result')
   mechBy(st, a, 'review rejection')
@@ -800,7 +856,8 @@ async function afterRedAnalyst(t, st, x) {
 async function redAnalystRound(t, st, x) {
   const out = (r) => ({ out: r })
   st.analyst = 'tester-red'
-  const a = await analyst(t, `${MECH_OR_CELLS(t, st)}the second red tester round for the product in this task (rule "Red tester rounds are counted per task"). Inputs: the tester's findings in ${t.dir}/test.md (every round) and the programmer's rounds in ${t.dir}/prog.md. Write the matrix of cases those findings belong to - every dimension the reds opened, not only the failed cells - and the cause of the reds with file:line, so the next programmer round closes the whole matrix at once. Last red:\n${x.test || ''}`)
+  st.rejections = 0
+  const a = await analyst(t, `${MECH_OR_CELLS(t, st)}the second red tester round for the product in this task (rule "Red tester rounds are counted per task")${st.priorReds ? ` - this count includes ${st.priorReds} red tester round${st.priorReds > 1 ? 's' : ''} of earlier runs of this task (task field prior), in test.md as well` : ''}. Inputs: the tester's findings in ${t.dir}/test.md (every round) and the programmer's rounds in ${t.dir}/prog.md. Write the matrix of cases those findings belong to - every dimension the reds opened, not only the failed cells - and the cause of the reds with file:line, so the next programmer round closes the whole matrix at once. Last red:\n${x.test || ''}`)
   if (!a) return out(stop(t, 'the analyst returned no result'))
   mechBy(st, a, 'red tester round')
   if (!a.ready || a.split.length || a.questions.length) return out(stop(t, 'analyst after the second red tester round: split or an answer is needed', { split: a.split, questions: a.questions, analyst: a.summary }))
@@ -823,6 +880,8 @@ async function light(t, st) {
   if (x1.fail) return stop(t, x1.fail, x1)
   log(`${t.title}: review 1 (light) - ${x1.rv.verdict}`)
   if (x1.rv.verdict === 'done') return ride(t, st, x1.rv.summary)
+  st.rejections = (st.rejections || 0) + 1
+  if (st.rejections >= 2) return stop(t, LIGHT_SECOND, { second: true, docsOnly: x1.rv.docsOnly, review: x1.rv.summary })
   const before = st.head
   const s2 = await progStep(t, st, `Review 1 - rejected${x1.rv.docsOnly ? ' for docs only: fix the docs, guard wording or comments it names and change no behaviour' : ''}. Fix according to ${t.dir}/review.md, and run the acceptance again if the fix touches what it checks:\n${x1.rv.summary}`, 'r', `${t.dir}/review.md`)
   if (s2.fail) return stop(t, s2.fail, Object.assign({}, s2, { review: x1.rv.summary }))
@@ -830,9 +889,10 @@ async function light(t, st) {
   if (x2.fail) return stop(t, x2.fail, x2)
   log(`${t.title}: review 2 (light) - ${x2.rv.verdict}`)
   if (x2.rv.verdict === 'done') return ride(t, st, x2.rv.summary)
-  return stop(t, 'second review rejection in the light mode: the coordinator relaunches the task in the full mode (drop mode "light": tester, analyst after a second rejection)',
-    { second: true, docsOnly: x2.rv.docsOnly, review: x2.rv.summary })
+  st.rejections += 1
+  return stop(t, LIGHT_SECOND, { second: true, docsOnly: x2.rv.docsOnly, review: x2.rv.summary })
 }
+const LIGHT_SECOND = 'second review rejection in the light mode: the coordinator relaunches the task in the full mode (drop mode "light": tester, analyst after a second rejection)'
 
 // ---- The integration train after the review (p-train-c3, W1-W15 of p-train-ac) ----
 // With guardSubsetCommand a task whose review is done rides the train: one wait step runs scripts/train.js ride
@@ -954,6 +1014,7 @@ async function ride(t, st, review) {
       if (st.analyst === 'train-red') return stop(t, `train red after analyst (train ${n})`, { review, train: info })
       if (!st.analyst && st.trainReds >= 2) {
         st.analyst = 'train-red'
+        st.rejections = 0
         log(`${t.title}: train ${n} - the second red train of the task - analyst`)
         const a = await analyst(t, `${MECH_OR_CELLS(t, st)}the second red train for this task (the integration train after the review; like the second red tester round). Inputs: the train results ${results.join(', ')} (each names its train log, its attribution log and the guards red on the arc head + this branch alone) and the programmer's rounds in ${t.dir}/prog.md. Write the matrix of cases those reds belong to and their cause with file:line, so the next programmer round closes the whole matrix at once.`)
         if (!a) return stop(t, 'the analyst returned no result', { review, train: info })

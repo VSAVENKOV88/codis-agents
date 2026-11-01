@@ -28,7 +28,8 @@ Only tasks the owner asked for in this conversation. For each task:
 | `branch` | the task branch checked out in the worktree |
 | `accept` | the acceptance scenario in the real environment, copied from the brief |
 | `gdir` | optional: argument of `guards-all.sh` (default `wt`) |
-| `start` | optional: what is new for the first programmer (e.g. "continue from prog.md"); the coordinator says in `start` when an earlier run already made the analyst pass after a status `mechanism` (the limit of one pass is per run) |
+| `start` | optional: what is new for the first programmer (e.g. "continue from prog.md"); text for the programmer only - the workflow counts nothing from it (the counts of earlier runs go into `prior`) |
+| `prior` | optional, for a relaunch: what earlier runs of this task did, so the counters of the task go on from there - `{testerReds?: integer >= 0` (red tester verdicts for the product, not `environment`), `trainReds?: integer >= 0` (red trains, `red` only), `rejections?: integer >= 0` (review rejections since the last analyst of the task), `analyst?: "tester-red" \| "rejection" \| "train-red"` (the analyst of a second red tester round, rejection or red train already ran), `mechanism?: true` (the analyst pass after a status `mechanism` was made)`}`; copy the field `counts` of the last run's result as it is (every task result carries it, the seed included), never recount from `test.md`. A wrong value or key stops the task before any agent; `testerReds` above 0 is refused with `mode: "light"` |
 | `kind` | exactly one of `"feature"` (new behaviour: it needs `useCases` or `useCasesFirst`), `"defect"` (a bug), `"tail"` (a small leftover); without it or with another value the task stops before any agent |
 | `analystFirst` | `true`: the brief needs a matrix or a diagnosis before code (default for defects) - the analyst runs first |
 | `analysis` | absolute path of an existing analyst or diagnosis report of this task (an earlier analyst that proposed the split, a diagnoser run outside the chain - put its report into the task folder); it must lie in the task folder or in the folder of its `feature`, never be the arc specification; the preconditions check it exists, is non-empty and is a matrix or diagnosis of this task; the programmer gets it by name |
@@ -74,7 +75,9 @@ role agents are unavailable).
 
 - Each task returns `done` or `stopped` with the reason, questions, proposed split or review findings. A stop with
   `environment` is a red the product did not cause (a cut-off full run, a refused slot queue, disk or swap, Docker): free the
-  machine and relaunch the task with `start` pointing to its report, without a programmer round. Relay them to the
+  machine and relaunch the task with `start` pointing to its report, without a programmer round. Every relaunch carries
+  `prior` = the `counts` of the last run's result, copied (red tester rounds and red trains for the product, review
+  rejections, an analyst that ran, a pass "Mechanism"), so the counts of the task go on. Relay them to the
   owner; write the owner's answers into the brief yourself (verbatim, dated) before the next run.
 - A light task (`mode: "light"`) stopped after a second rejection goes to the coordinator with the proposal of the
   full mode: relaunch it without `mode` (tester, analyst after a second rejection), `start` pointing to its reports.
