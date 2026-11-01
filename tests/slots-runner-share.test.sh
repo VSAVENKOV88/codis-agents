@@ -21,6 +21,7 @@
 #   E2 a selection runs with 6, the train comes: the selection drops to 1, the train starts with 5 and goes to 6 when
 #      the selection ends; the sum never exceeds 6.
 #   E3 two runs without priority - as before: 3 each.
+#   E4 two runs with the priority - as before: 3 each (the admission of the second knows its priority).
 H=${0:A:h:h}/scripts
 zmodload zsh/datetime
 T=$(mktemp -d "${${TMPDIR:-/tmp}%/}/slots-share.XXXXXX")
@@ -165,6 +166,18 @@ unhold se se2; wait $E3A $E3B
 t1=( $(trace se) ) t2=( $(trace se2) )
 ok 'E3 two runs without priority: the second starts with 3, the first drops to 3' '[[ $t2[1] == 3 && "${(j: :)t1}" == 6*\ 3* ]]' "se: ${t1[*]} | se2: ${t2[*]}"
 ok 'E3 no priority mark in their workers lines' '! grep -q -- "--priority" $T/e3a.out $T/e3b.out' "$(cat $T/e3a.out $T/e3b.out)"
+waitlong allfree
+
+# ---- E4: two runs with the priority (two trains; a train and its attribution) - they share as before: the second is
+#      admitted into the slot (slot_run passes the priority to the admission) and the first sheds to 3 ----
+nlog; ticks tr 1; ticks se2 1; hold tr; hold se2
+$H/guards-all.sh --priority tr > $T/e4a.out 2>&1 & E4A=$!
+waitlong '[[ $(last tr) == 6 ]]'
+$H/guards-all.sh --priority se2 > $T/e4b.out 2>&1 & E4B=$!
+waitlong '[[ -n $(last se2) && $(last tr) == 3 ]]'
+unhold tr se2; wait $E4A $E4B
+t1=( $(trace tr) ) t2=( $(trace se2) )
+ok 'E4 two runs with the priority: the second starts with 3 while the first runs, the first drops to 3' '[[ $t2[1] == 3 && "${(j: :)t1}" == 6*\ 3* ]]' "tr: ${t1[*]} | se2: ${t2[*]}"
 
 print -r -- "TOTAL: $pass ok, $fail fail"
 (( fail == 0 ))
