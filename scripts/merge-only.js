@@ -4,11 +4,13 @@
 // after a train conflict the round merges the arc head into the branch; when it touched only docs by hand, the workflow
 // skips the selection on the new HEAD - the train runs the full suite over the same tree anyway.)
 //
-// usage: merge-only.js <before> <head> --base <arc> [--wt <dir>] [--files <glob>]...
+// usage: merge-only.js <before> <head> --base <arc> [--wt <dir>] [--files <glob>]... [--guards <glob>]...
 //   before  the head of the branch before the round (the head the train rode)
 //   head    the head after the round
 //   --base  the arc branch the train merges into
 //   --files the project's mergeOnlyFiles globs; none - never merge only (the key is off, the behaviour as before)
+//   --guards the project's guardFiles globs (default: the default of the config key, *-run.js|mjs|cjs): a file that
+//           matches them is a guard, not docs, even when it matches --files too (docs/** with guards under docs/)
 // prints JSON {mergeOnly, reason, files[, error]}; exit 0 merge only, 1 not, 2 an error (bad arguments, git).
 //
 // The round is merge only when all hold:
@@ -19,22 +21,26 @@
 //     first side, a text conflict committed with the very markers merge-tree writes), so the tree alone does not
 //     show it;
 //   - the files where head differs from that automatic merge of its parents (hand resolutions and hand edits) all
-//     match the globs. Code the arc brought without a conflict equals the automatic merge and is not counted: it is
+//     match the globs;
+//   - none of those files (conflicted or by hand) is a guard (--guards): a guard is code even under a docs glob. Code the arc brought without a conflict equals the automatic merge and is not counted: it is
 //     the arc's.
 // A glob without "/" matches the file name at any depth; with "/" the path from the repository root; * and ? stay
 // within one path segment, ** crosses segments (the same rule as stand.imageFiles).
 const path = require('path');
 const { spawnSync } = require('child_process');
 const { matches } = require('./stand');
+const { SPEC } = require('./config');
+
+const GUARD_DEFAULT = SPEC.guardFiles[1];
 
 function parse(argv) {
-  const a = { pos: [], files: [] };
+  const a = { pos: [], files: [], guards: [] };
   for (let i = 0; i < argv.length; i++) {
     const k = argv[i];
-    if (k === '--base' || k === '--wt' || k === '--files') {
+    if (k === '--base' || k === '--wt' || k === '--files' || k === '--guards') {
       const v = argv[++i];
       if (v === undefined) return { error: `${k} needs a value` };
-      if (k === '--files') a.files.push(v); else a[k.slice(2)] = v;
+      if (k === '--files' || k === '--guards') a[k.slice(2)].push(v); else a[k.slice(2)] = v;
     } else if (k.startsWith('--')) return { error: `unknown option ${k}` };
     else a.pos.push(k);
   }
@@ -75,6 +81,9 @@ function check(a) {
   const d = git('diff', '--name-only', '--no-renames', '-z', auto, `${head}^{tree}`);
   if (d.rc !== 0) throw new Error(`git diff: ${d.err}`);
   const files = [...new Set([...conflicted, ...d.out.split('\0').filter(Boolean)])];
+  const guardGlobs = a.guards.length ? a.guards : GUARD_DEFAULT;
+  const guards = files.filter((f) => matches(guardGlobs, f));
+  if (guards.length) return no(`conflicted, resolved or edited by hand in a guard (guardFiles), not docs: ${guards.join(', ')}`, files);
   const outside = files.filter((f) => !matches(a.files, f));
   if (outside.length) return no(`conflicted, resolved or edited by hand outside mergeOnlyFiles: ${outside.join(', ')}`, files);
   return { mergeOnly: true, reason: `one merge of the arc ${a.base}; conflicted or resolved by hand: ${files.join(', ') || 'nothing'}`, files };

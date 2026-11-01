@@ -93,5 +93,5 @@ ok('W. mergeCmd passes guardFiles as --guards', !!m && /--guards/.test(m[0]) && 
 
 // R: the README names it
 const flat = read('README.md').replace(/\s+/g, ' ');
-ok('R. README: merge-only.js treats a file of guardFiles as a guard, not docs', /merge-only\.js[^|]*--guards/.test(flat) && /guardFiles[^|]*not docs|guard, not docs/.test(flat));
+ok('R. README: merge-only.js treats a file of guardFiles as a guard, not docs', /merge-only\.js` \| `<before>[^|]*--guards/.test(flat) && /guardFiles[^|]*not docs|guard, not docs/.test(flat));
 done();

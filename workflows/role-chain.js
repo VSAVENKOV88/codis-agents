@@ -788,10 +788,13 @@ const MAX_RIDES = 4
 // the train's: it runs the full suite over the arc and the branch. Why (cvm-line-shell 2026-11-01): select-t1 took 21 min
 // after a merge that resolved only canvas-model.md; 8 of 15 conflicts before the trains were in docs only.
 const MERGE_GLOBS = Array.isArray(CFG.mergeOnlyFiles) ? CFG.mergeOnlyFiles.filter((g) => typeof g === 'string' && g.trim() !== '') : []
+// The project's guardFiles go along: a file under a docs glob that is a guard keeps the selection (merge-only.js --guards;
+// without the key merge-only.js takes the key's default).
+const GUARD_GLOBS = Array.isArray(CFG.guardFiles) ? CFG.guardFiles.filter((g) => typeof g === 'string' && g.trim() !== '') : []
 const MERGE_SCHEMA = { type: 'object', properties: {
   mergeOnly: { type: 'boolean' }, reason: { type: 'string' }, files: { type: 'array', items: { type: 'string' } }, error: { type: 'string' },
 }, required: ['mergeOnly'] }
-const mergeCmd = (t, before, head) => `node ${SCRIPTS}/merge-only.js ${sq(before)} ${sq(head)} --base ${sq(String(t.base).trim())} --wt ${sq(t.wt)}${MERGE_GLOBS.map((g) => ` --files ${sq(g)}`).join('')}`
+const mergeCmd = (t, before, head) => `node ${SCRIPTS}/merge-only.js ${sq(before)} ${sq(head)} --base ${sq(String(t.base).trim())} --wt ${sq(t.wt)}${MERGE_GLOBS.map((g) => ` --files ${sq(g)}`).join('')}${GUARD_GLOBS.map((g) => ` --guards ${sq(g)}`).join('')}`
 const mergeOnly1 = (t, n, before, head, retry) => agent(`Run one command and return its JSON output as the schema fields (change nothing, analyse nothing):
 ${mergeCmd(t, before, head)}
 Exit 0, 1 and 2 all print JSON: return its fields as printed. If it prints no JSON - mergeOnly=false, error = the error text.`,
