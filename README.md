@@ -359,7 +359,8 @@ scope - context for every role, cited by the matrix, the tester's acceptance fol
 `guards-select.js`; required with `guardSubsetCommand`: the branch of the arc, a branch of the repository, not a commit
 and not a protected branch, since the train moves it), `mode` (`mode: "light"` for a small task: one programmer-checker,
 the selection step, one reviewer, then the train - see below), `prior` (for a relaunch: the counts of earlier runs of
-the task - `testerReds`, `trainReds`, `analyst`, `mechanism: true` - from which its counters go on; 0.4.17). For a feature, `useCasesFirst: true` with `analystFirst` has the
+the task - `testerReds`, `trainReds`, `rejections`, `analyst`, `mechanism: true` - from which its counters go on: a copy
+of the field `counts` that every task result carries; 0.4.17). For a feature, `useCasesFirst: true` with `analystFirst` has the
 analyst write only the use cases with their open questions and stops the task with status `use-cases-review`; after
 the review with the owner the coordinator relaunches it with `useCases` and `analystFirst`.
 Each task ends `done`, `use-cases-review` or `stopped` with the reason, the open questions, a proposed split or the
@@ -616,6 +617,11 @@ fallback to another slot directory: a second directory would be a second queue t
   the same run, and a second rejection for code stops it without a second analyst; with `mechanism: true` a status
   `mechanism` goes to the coordinator. The analyst of the second red names the reds of earlier runs. `start` stays text
   for the programmer; the line "say in `start` that a pass was made" of 0.4.16 is replaced by `prior.mechanism`.
+  Every task result carries `counts` in the shape of `prior`, the seed included (a refusal after a valid `prior` carries
+  the seed, a refused `prior` none): the coordinator copies it into the next `prior` and recounts nothing from `test.md`
+  (review 1: a hand count lost a red in cvm-wheel-c, and would count an environment round). `prior.rejections` carries
+  the review rejections since the last analyst of the task: after a run stopped past rejection 1, the relaunch's first
+  rejection is the second (analyst, or a stop after an analyst, or the coordinator in the light mode).
 
 ## Changes in 0.4.16
 

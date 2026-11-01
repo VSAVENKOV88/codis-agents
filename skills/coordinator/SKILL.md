@@ -71,9 +71,9 @@ one. For whatever the owner judges by the screen, show a mockup of all states be
   with sizes and symbolic links that lead into it, from `scripts/wt-remove-check.js`. A clean `git status` does not show
   ignored files.
 - Do not resume a multi-task run with `resumeFromRunId`; relaunch each unfinished task alone with `start`.
-  The counters of a task are per task, across runs: a relaunch passes what earlier runs did in the task field `prior`
-  (`testerReds`, `trainReds`, `analyst`, `mechanism: true`), read from their results and `test.md` (red verdicts for the
-  product only, not `environment`); without it the second red tester round of the task goes to the programmer and the
+  The counters of a task are per task, across runs: every task result carries `counts`, and a relaunch copies the last
+  run's `counts` into the task field `prior` (`testerReds`, `trainReds`, `rejections`, `analyst`, `mechanism: true`) as
+  they are - never recounted from `test.md` (a hand count lost a red in cvm-wheel-c); without it the second red tester round of the task goes to the programmer and the
   analyst or the pass "Mechanism" may run twice. `start` stays text for the programmer.
 - A change to process launch, permissions, Docker or the runtime version is accepted only after a smoke run in the real
   image.

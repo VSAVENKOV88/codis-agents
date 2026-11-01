@@ -223,7 +223,7 @@ const refused = (x, re) => x.r.status === 'stopped' && x.r.why === 'precondition
   ok('C7. run 2 with prior = counts of run 1: the first red train -> analyst', x.r.status === 'done' && x.trace === 'pre>prog>test>review>analyst>prog>review', J(x));
   // C8. refusals: a refusal after a valid prior carries the seed; a refused prior carries no counts.
   x = await run({}, withP({ testerReds: 1 }, T), ONE);
-  ok('C8. refused on the base (no base with the selection) -> counts = the seed', refused(x, /base/) && JSON.stringify(x.r.counts) === JSON.stringify({ testerReds: 1 }), J(x));
+  ok('C8. refused on the base (no base with the selection) -> counts = the seed', refused(x, /base/) && JSON.stringify(x.r.counts) === JSON.stringify({ testerReds: 1, trainReds: 0, rejections: 0 }), J(x));
   x = await run({}, withP({ testerReds: -1 }));
   ok('C8. a refused prior -> no counts in the result', refused(x, /prior/) && x.r.counts === undefined, J(x));
   x = await run({ pre: [{ ok: false, problems: ['p'], blockingQuestions: [] }] }, withP({ trainReds: 2 }));
