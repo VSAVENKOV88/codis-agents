@@ -12,7 +12,7 @@
 //   N1-N4  the train with a seed: the second red train counts the earlier runs; a seeded analyst stops or is not repeated;
 //   M1-M2  the pass "Mechanism" with a seed: a status mechanism after a pass of an earlier run goes to the coordinator;
 //   L1     the light mode counts a seeded red train;
-//   C1-C9  review 1: every result carries `counts` in the shape of prior (with the seed), and a result passed as the next
+//   C1-C10 review 1: every result carries `counts` in the shape of prior (with the seed), and a result passed as the next
 //          run's prior gives the route of one run (red, rejection, red train, pass, environment not counted);
 //          review rejections of an earlier run (prior.rejections) count toward the second rejection;
 //   D1-D6  the rule, the skills, README and the version name the field, the result's counts and the limit per task.
@@ -237,6 +237,19 @@ const refused = (x, re) => x.r.status === 'stopped' && x.r.why === 'precondition
   ok('C9. light mode, seed rejections 1, review 1 rejected -> stopped as the second rejection in the light mode, no fix round',
     x.r.status === 'stopped' && /second review rejection in the light mode/.test(x.r.why) && x.trace === 'pre>prog>review' && x.r.counts && x.r.counts.rejections === 2, J(x));
 
+  // C10. the count of rejections in every place it changes: a second rejection counts 2 (full and light), the analyst of
+  // a red tester round and of a red train starts it again (one more fix round after it, as after the rejection analyst).
+  x = await run({ pre: [PRE], prog: [PROG, P2], test: [GREEN, GREEN], review: [REJ, Object.assign({}, REJ, { docsOnly: true })] });
+  ok('C10. rejection, second rejection for docs -> stopped, counts rejections 2', x.r.status === 'stopped' && x.r.counts && x.r.counts.rejections === 2, J(x));
+  x = await run({ pre: [PRE], prog: [PROG, P2], review: [REJ, REJ] }, Object.assign({}, T, { mode: 'light' }));
+  ok('C10. light: rejection, rejection -> stopped, counts rejections 2', x.r.status === 'stopped' && x.r.counts && x.r.counts.rejections === 2, J(x));
+  x = await run({ pre: [PRE], prog: [PROG, P2, P3, P4], test: [GREEN, RED(), GREEN, GREEN], analyst: [AN], review: [REJ, REJ, D] }, withP({ testerReds: 1 }));
+  ok('C10. rejection, red after the fix -> analyst tester-red, then a rejection -> a fix round (the count starts again), not a stop',
+    x.r.status === 'done' && x.trace === 'pre>prog>test>review>prog>test>analyst>prog>test>review>prog>test>review' && x.r.counts.rejections === 1, J(x));
+  x = await run({ pre: [PRE], prog: [PROG, P2], test: [GREEN], review: [D, D], analyst: [AN], train: [ride(11), ride(0)] }, withP({ trainReds: 1, rejections: 1 }, TB), ONE);
+  ok('C10. seed rejections 1, the analyst of the second red train -> counts rejections 0',
+    x.r.status === 'done' && x.trace === 'pre>prog>test>review>analyst>prog>review' && x.r.counts.rejections === 0, J(x));
+
   // ---- D. the documents name the field ----
   const rule = (id) => (read('rules/multi-agent.md').match(new RegExp(`[^\\n]*<!-- role:${id} -->`)) || [''])[0];
   ok('D1. rule role:testerred: counted per task across runs, a relaunch passes the counts in prior', /prior/.test(rule('testerred')) && /testerReds/.test(rule('testerred')) && /earlier run/.test(rule('testerred')), rule('testerred'));
@@ -252,7 +265,9 @@ const refused = (x, re) => x.r.status === 'stopped' && x.r.why === 'precondition
   ok('D4. README: Changes in 0.4.17 names prior', /## Changes in 0\.4\.17[\s\S]*?`prior`[\s\S]*?## Changes in 0\.4\.16/.test(rd), '');
   ok('D4. version 0.4.17 in package.json and plugin.json', /"version": "0\.4\.17"/.test(read('package.json')) && /"version": "0\.4\.17"/.test(read('.claude-plugin/plugin.json')), '');
   ok('D5. rule role:testerred and both skills: copy the counts of the run results (counts), the field rejections',
-    /`counts`/.test(rule('testerred')) && /rejections/.test(rule('testerred')) && /`counts`/.test(rc) && /rejections/.test(rc) && /`counts`/.test(co), rule('testerred'));
+    /`counts`/.test(rule('testerred')) && /rejections/.test(rule('testerred')) && /`counts`/.test(co) && /`counts`/.test(rc), rule('testerred'));
+  const prow = (read('skills/role-chain/SKILL.md').match(/^\| `prior` \|.*$/m) || [''])[0];
+  ok('D5. role-chain skill: the row `prior` says copy counts of the last result, and names rejections', /`counts`/.test(prow) && /rejections/.test(prow) && /never recount/.test(prow), prow);
   ok('D5. README Changes in 0.4.17 names counts and rejections', /## Changes in 0\.4\.17[\s\S]*?`counts`[\s\S]*?rejections[\s\S]*?## Changes in 0\.4\.16/.test(rd), '');
   ok('D6. rule role:mechanism and RULE_LIST: the pass is per task, not "inside the run" / "in the run"',
     !/inside the run|in the run\b/.test(rule('mechanism')) && !/pass inside the run|mechanism` in the run|in the run\b/.test((pOf(x, 'prog').match(/Mechanism: for a task[^\n]*/) || [''])[0]), rule('mechanism'));
