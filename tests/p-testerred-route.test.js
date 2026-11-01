@@ -174,7 +174,7 @@ const refused = (x, re) => x.r.status === 'stopped' && x.r.why === 'precondition
   x = await run({ pre: [PRE], prog: [PROG], test: [GREEN], review: [D] });
   ok('D1. RULE_LIST testerred reaches the prompts with the field prior', ['prog', 'test', 'review'].every((r) => /Red tester rounds are counted per task[^\n]*prior/.test(pOf(x, r))), pOf(x, 'prog'));
   ok('D2. rule role:mechanism: a pass of an earlier run is passed as prior.mechanism, not said in start',
-    /prior[^.]*mechanism/.test(rule('mechanism')) && !/says in `start`/.test(rule('mechanism')), rule('mechanism'));
+    /prior(: \{mechanism: true\}|\.mechanism)/.test(rule('mechanism')) && !/says in `start`/.test(rule('mechanism')), rule('mechanism'));
   ok('D2. RULE_LIST mechanism names prior.mechanism', /prior\.mechanism/.test(pOf(x, 'prog')), pOf(x, 'prog'));
   const rc = flat('skills/role-chain/SKILL.md'), co = flat('skills/coordinator/SKILL.md');
   ok('D3. role-chain skill: a row `prior` with its keys', /\| `prior` \|/.test(rc) && ['testerReds', 'trainReds', 'analyst', 'mechanism'].every((k) => rc.includes(k)) && !/says in `start` when an earlier run/.test(rc), '');

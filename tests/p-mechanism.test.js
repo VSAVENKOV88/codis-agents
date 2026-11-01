@@ -338,6 +338,6 @@ const MOC = /^First answer "mechanism or cells\?"/;
   const PRIOR = /prior[^.]*mechanism/;
   ok('M8 2. coordinator skill: a relaunch passes a pass "Mechanism" already made in prior', PRIOR.test(flat('skills/coordinator/SKILL.md')), '');
   ok('M8 2. role-chain skill: the same in the field prior', /\| `prior` \|[^\n]*mechanism/.test(read('skills/role-chain/SKILL.md')), '');
-  ok('M8 2. rules: the same in the line role:mechanism', PRIOR.test((read('rules/multi-agent.md').match(/[^\n]*<!-- role:mechanism -->/) || [''])[0]), '');
+  ok('M8 2. rules: the same in the line role:mechanism', /prior(: \{mechanism: true\}|\.mechanism)/.test((read('rules/multi-agent.md').match(/[^\n]*<!-- role:mechanism -->/) || [''])[0]), '');
   done();
 })();
