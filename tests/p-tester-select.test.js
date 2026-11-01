@@ -112,6 +112,25 @@ async function partA() {
   const lp = prompts(x, 'prog')[0] || '';
   ok('A9. light mode: no tester round; the programmer-checker runs no selection of its own',
     x.r.status === 'done' && prompts(x, 'test').length === 0 && !/--select '[0-9a-f]{40}'/.test(lp), x.trace);
+  // A10 (review 1): over the WHOLE prompt of every role, not only step 4 - the selection of the task from its base
+  // (guards-all.sh --select <base>) is named only as the workflow's run, never as a command for the role (the rule
+  // role:slots once named it as "the selection of guards" for every role, next to step 4 of the tester).
+  x = await run({ pre: [PRE], prog: [PROG, P2], test: [RED, GREEN], review: [{ verdict: 'rejected', docsOnly: false, summary: 'r' }, D], run: [REDR, OKR, OKR, OKR, OKR] });
+  const BASE_SEL = "guards-all.sh --select 'arc'";
+  const bad = [];
+  for (const p of x.prompts.filter((q) => ['prog', 'test', 'review'].includes(q.role))) {
+    for (let i = p.prompt.indexOf(BASE_SEL); i >= 0; i = p.prompt.indexOf(BASE_SEL, i + 1)) {
+      const before = p.prompt.slice(Math.max(0, i - 160), i);
+      if (!/the workflow (runs|ran)/.test(before)) bad.push(`${p.label}: ...${p.prompt.slice(Math.max(0, i - 160), i + 60)}`);
+    }
+  }
+  const roles = new Set(x.prompts.map((q) => q.role));
+  ok('A10. whole prompts of programmer, tester and reviewer: the base selection appears only as the workflow\'s run',
+    roles.has('prog') && roles.has('test') && roles.has('review') && bad.length === 0, bad.join('\n') || x.trace);
+  const slotsLine = (p) => (p.match(/Heavy work goes through memory slots:[^\n]*?rejoins the queue at the end\)\./) || [''])[0];
+  const tsl = slotsLine(prompts(x, 'test')[0] || '');
+  ok('A10. the slots rule in the tester prompt names no selection from the base and no other selection than step 4',
+    tsl !== '' && !tsl.includes("--select 'arc'") && !/--select '[0-9a-f]{40}'/.test(tsl), tsl);
 }
 
 function partB() {
