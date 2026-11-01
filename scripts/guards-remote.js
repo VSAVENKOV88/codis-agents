@@ -41,6 +41,10 @@
 //      only: the flaky guards of a selection go into the role's report, never into the quarantine. --selected <file>
 //      (a JSON array of the selected guards, guards-select.js --names-out) goes with the job: the runner's rerun and
 //      the part here call a known red "not red now" only among them (a known red outside the selection did not run).
+//   9. The train's priority (--priority; guards-all.sh --priority, the full run of a train and its attribution,
+//      p-runner-share): the job carries priority: true and the runner's guards-all.sh runs with --priority - first in
+//      the runner's slot queue and in its worker budget (slots.zsh, slot_guard_plan "Priority": runs without it yield).
+//      An attached run keeps the priority it was begun with.
 // Placeholders: the part here fills {wt} and {onlyArgs} of remoteRun.localCommand and nothing else; a template with
 //   another one ({jobs}, {limitFile}, a typo) is refused with 78 at the start of run(), before any ssh (scripts/config.js
 //   FILLS; config.js load refuses such a config already).
@@ -48,7 +52,7 @@
 //   must account for the guards it was given minus those a localPattern line of its log names; fewer, or no tally line,
 //   appends "environment: the part here accounted for T of N selected guards: ..." and the run's exit is 69, also over a
 //   red runner (no rerun of the part here then). The runner's selection is counted by the runner's own guards-all.sh.
-// usage: guards-remote.js run <worktree> <log> <name> [<quarantine file>] [--subset <command> [--selected <file>]]
+// usage: guards-remote.js run <worktree> <log> <name> [<quarantine file>] [--subset <command> [--selected <file>]] [--priority]
 //   (guards-all.sh passes the quarantine file; '' - off)
 const fs = require('fs');
 const path = require('path');
@@ -151,6 +155,7 @@ const OTHER_Q = 'another quarantine (an attached run)';
 function run(c, wt, log, name, qfile, opts) {
   const subset = (opts && opts.subset) || '';
   const selected = (opts && opts.selected) || null;
+  const priority = !!(opts && opts.priority);
   const r = c.remote, x = c.remoteRun, envId = `remote:${r.host}`;
   if (subset && !selected) throw new Stop(64, 'guards-remote: a selection (--subset) needs --selected <file>: the runner fills its guardSubsetCommand from the selected names');
   // 6. the part here fills only {wt} and {onlyArgs}: any other placeholder of its template refuses the run before the
@@ -198,7 +203,7 @@ function run(c, wt, log, name, qfile, opts) {
       if (p.status !== 0) throw env(`git push of ${sha.slice(0, 12)} to the runner was refused (exit ${p.status}): ${clean(tail(p.stderr, 5))}`);
     } else say(`commit ${sha.slice(0, 12)} already on ${r.host} - nothing sent`);
     const job = Object.assign({ plugin: r.plugin, corpus: c.worktreeSetup.scan.length > 0, deps: x.deps, prepare: x.prepare, config: runnerConfig(c, subset) },
-      quarantine ? { quarantine } : {}, selected ? { selected } : {});
+      quarantine ? { quarantine } : {}, selected ? { selected } : {}, priority ? { priority: true } : {});
     const st = remoteOp(r, 'start', { name, sha, bundle: BUNDLE, job });
     id = st.id;
     say(st.attached ? `attached to the run ${id} on ${r.host} (${st.state}): no second run` : `started the run ${id} on ${r.host}${st.stopped ? ` (stopped the earlier run ${st.stopped} of ${name})` : ''}`);
@@ -314,6 +319,9 @@ function main(argv) {
     return v;
   };
   const subset = take('--subset') || '';
+  const pi = argv.indexOf('--priority');
+  const priority = pi >= 0;
+  if (priority) argv = argv.slice(0, pi).concat(argv.slice(pi + 1));
   const sfile = take('--selected');
   let selected = null;
   if (sfile !== undefined) {
@@ -322,14 +330,14 @@ function main(argv) {
     if (!Array.isArray(selected) || !selected.every((n) => typeof n === 'string')) throw new Stop(64, `guards-remote.js: the selected guards file ${sfile} is not a JSON array of names`);
   }
   const [cmd, wt, log, name, qfile] = argv;
-  if (cmd !== 'run' || !wt || !log || !name) throw new Stop(64, 'usage: guards-remote.js run <worktree> <log> <name> [<quarantine file>] [--subset <command> [--selected <file>]]');
+  if (cmd !== 'run' || !wt || !log || !name) throw new Stop(64, 'usage: guards-remote.js run <worktree> <log> <name> [<quarantine file>] [--subset <command> [--selected <file>]] [--priority]');
   const file = C.find();
   if (!file) throw new Stop(78, 'guards-remote: no project config found (set CODIS_AGENTS_CONFIG)');
   const l = C.load(file);
   if (l.errors.length) throw new Stop(78, l.errors.map((e) => 'codis-agents config: ' + e).join('\n'));
   if (!l.config.remote) throw new Stop(78, `guards-remote: no key remote in the machine file ${l.config.machine.path} - no runner`);
   if (!l.config.remoteRun) throw new Stop(78, `guards-remote: no remoteRun in the project config ${file} - the runner does not know how to prepare this project`);
-  return run(l.config, wt, log, name, qfile, { subset, selected });
+  return run(l.config, wt, log, name, qfile, { subset, selected, priority });
 }
 
 module.exports = { run, partHere, PART_MARK, runnerConfig, sameQuarantine, attachedOther, BUNDLE, VERSION };

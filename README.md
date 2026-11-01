@@ -491,9 +491,18 @@ while it waits in the queue, its ticket is dropped and it rejoins the queue at t
   goes by ticket number between the heads of the two queues (a priority ticket is the head of its queue), the command does not inherit the priority, and only the flag sets it, never a name like
   `train-*`. Known limits: a waiter of an older copy of the plugin on the same slot directory (a CI runner user with its
   own copy) ignores the priority and takes the head by number, so every copy that waits on one slot directory is
-  updated together; on the remote runner the flag does not travel yet (the run queues there by its number);
+  updated together. With a remote runner the flag travels with the run (`guards-remote.js --priority`, the job's
+  `priority`): the runner's own `guards-all.sh` runs with `--priority`, first in the runner's queue and its budget;
 - all full guard runs together use at most `slots.jobsAlone` workers (6), `slots.jobsShared` (3) next to another
-  heavy job, re-evaluated during the run for runners that read `{limitFile}`.
+  heavy job, re-evaluated during the run for runners that read `{limitFile}`;
+- the train goes first in that budget too (p-runner-share): a run with `--priority` never shares its workers with a
+  full run without it. A selection that comes while the train runs waits outside the slot (first in the queue) or
+  takes what the train leaves of `slots.jobsAlone`; a selection already running re-evaluates down to 1 worker (its
+  running guards finish, nothing is stopped) and the train takes the rest, then all of it when the selection ends.
+  Two trains, or two runs without the priority, share as before; a single `heavy.sh` job counts as before. The
+  workers line of the log ends with `(--priority: the train; ...)`. On the runner the budget is the runner's own
+  `slots.jobsAlone` (measured 2026-11-01: a train alone 14-16 min, with the selections of neighbouring tasks
+  20-26 min, when it shed to its share).
 
 The thresholds are measurements from a 16 GB machine; every one can be overridden from the environment (see the top of
 `scripts/slots.zsh`).
