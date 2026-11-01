@@ -135,7 +135,7 @@ function partB() {
     put('src/model-run.js', "require('./model');\n");
     put('tests/fixtures/cards.json', '[]\n');
     put('tests/cards-run.js', "require('./fixtures/cards.json');\n");
-    put('tests/layout-run.js', "// reads tests/fixtures/layout.txt\n");
+    put('tests/layout-run.js', "// reads the fixture by its name only\nconst f = fixture('layout');\n");
     put('tests/fixtures/layout.txt', 'a\n');
     put('tests/other-run.js', "console.log('other');\n");
     put('tests/semgrep-diff-run.js', '// scans the diff\n');
@@ -153,7 +153,7 @@ function partB() {
     git('add', 'tests/fixtures/cards.json', 'tests/fixtures/layout.txt', 'tests/model-tester-run.js'); git('commit', '-qm', 'tester');
     const fromProg = sel(progHead);
     ok('B1. from the programmer\'s HEAD: the guard importing a fixture the tester changed is selected (outside its diff)', fromProg.includes('tests/cards-run.js'), fromProg.join());
-    ok('B2. from the programmer\'s HEAD: the guard naming a fixture the tester changed is selected', fromProg.includes('tests/layout-run.js'), fromProg.join());
+    ok('B2. from the programmer\'s HEAD: the guard naming a fixture the tester changed (by its name without the extension) is selected', fromProg.includes('tests/layout-run.js'), fromProg.join());
     ok('B3. from the programmer\'s HEAD: the tester\'s new guard and guardAlways are selected', fromProg.includes('tests/model-tester-run.js') && fromProg.includes('tests/semgrep-diff-run.js'), fromProg.join());
     ok('B4. from the programmer\'s HEAD: the programmer\'s product guard (already green in the workflow\'s selection) and unrelated guards are not selected',
       !fromProg.includes('src/model-run.js') && !fromProg.includes('tests/other-run.js'), fromProg.join());
@@ -175,7 +175,7 @@ function partC() {
   ok('C1. rules role:onerun: no commit of the tester - no selection of its own', /no commit of the tester - no selection of its own/.test(line), line.slice(-900));
   const readme = read('README.md');
   ok('C2. README: the tester\'s selection is of its own diff (`guards-all.sh --select <programmer HEAD>`), not the same selection',
-    /`guards-all\.sh --select <the programmer's HEAD>`/.test(readme) && !/runs its guards and the same selection/.test(readme) && !/the tester runs the same selection after its own commits/.test(readme));
+    (readme.match(/`guards-all\.sh --select <the programmer's HEAD>`/g) || []).length >= 2 && !/and the same selection\b/.test(readme) && !/the tester runs the same selection after its own commits/.test(readme));
   const tester = read('agents/tester.md');
   ok('C3. agents/tester.md: after your commits the selection of your own diff from the programmer\'s HEAD',
     /`guards-all\.sh --select <the programmer's HEAD>`/.test(tester) && !/the selection again, `guards-all\.sh --select <base>`/.test(tester), tester);
