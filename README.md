@@ -614,6 +614,13 @@ fallback to another slot directory: a second directory would be a second queue t
   "mechanism"), and every later programmer, programmer-checker, tester and analyst prompt names that author; an answer "cells" keeps
   every section "Mechanism" (the matrix is added to the earlier sections), and the pass keeps the other sections. The
   rule is marked `role:mechanism` and reaches every role prompt.
+- **The analyst before the first programmer can be the author of the mechanism** (review of p-mechanism). The
+  analystFirst analyst says in its answer whether it wrote a section "Mechanism" (`mechanismSection`); when it did, the
+  run records it as the section's author, so the pass after a later status `mechanism` names the section it replaces
+  and every later round and analyst names that author. Before, the pass added a second section without naming the first.
+- **A pass made in an earlier run is said in `start`** (review of p-mechanism). The limit of one pass is per run, so a
+  relaunch with `start` begins a new count; the coordinator names a pass already made in `start`. The line is now in
+  the rule `role:mechanism`, the coordinator skill and the role-chain skill (field `start`), not only in README.
 
 ## Changes in 0.4.15
 
