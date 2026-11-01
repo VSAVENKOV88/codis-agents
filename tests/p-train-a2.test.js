@@ -89,8 +89,9 @@ async function partA() {
   const tp = pOf(x, 'test');
   ok('S2. the tester gets the selection log (its own file), not the log of a full run',
     tp.includes('/d/wait-select-1.guards.txt') && tp.includes('/d/wait-select-1.log') && !tp.includes('guards-w.txt') && /no full guard run in the task/i.test(tp), tp);
-  ok('S2. the tester runs its selection after its own commits through guards-all.sh --select in the background',
-    tp.includes("/p/scripts/guards-all.sh --select 'arc' 'w'") && /run_in_background/.test(tp), tp);
+  // p-tester-select: the tester's own selection is of its diff from the programmer's HEAD ('P'), not from the base
+  ok('S2. the tester runs its selection after its own commits through guards-all.sh --select <the programmer\'s HEAD> in the background',
+    tp.includes("/p/scripts/guards-all.sh --select 'P' 'w'") && /run_in_background/.test(tp), tp);
   // S3: red -> programmer with the log -> selection again on the new HEAD; at most MAX rounds
   x = await run({ pre: [PRE], prog: [PROG, P2], run: [REDR, OKR], test: [GREEN], review: [D] });
   ok('S3. a red selection -> a programmer round with its log -> the selection on the new HEAD -> tester',
