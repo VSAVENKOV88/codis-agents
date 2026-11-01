@@ -13,6 +13,10 @@
 //      coordinator or the environment.
 //   O6 a conflict round that is only the merge of the arc with docs resolved (mergeOnlyFiles) -> no tester.
 //   O7 innerSelect true or absent: the selection steps as before; the key is checked by scripts/config.js.
+//   O8 light mode (no tester role): a red train fixed in the product gets no tester and no tester post-check; the
+//      programmer-checker runs the acceptance of the cells the fix touches itself (test.md), then the second review.
+//   O9 the analyst of a red short tester round does not start a ride inside the ride: the rides of a run are numbered
+//      once (train-1, train-2, ...: step ids, logs and labels unique) and MAX_RIDES counts all of them.
 // usage: node tests/train-only.test.js
 const fs = require('fs');
 const os = require('os');
@@ -148,6 +152,26 @@ const G = (train, more = {}) => Object.assign({ pre: [PRE], prog: [PROG], test: 
   ok('O6. a conflict resolved only in docs (merge-only) -> no tester, review, train', x.r.status === 'done' && /prog>merge:x:t1>review/.test(x.full) && !/train-1>prog>(merge:x:t1>)?test/.test(x.full), x.full);
   x = await run(G([ride(13), ride(0)], { prog: [PROG, P2], test: [GREEN, GREEN], review: [D, D], merge: [{ mergeOnly: false, reason: 'code' }] }), T, MO);
   ok('O6. a conflict resolved in code -> tester', x.r.status === 'done' && /prog>merge:x:t1>test/.test(x.full), x.full);
+
+  // ---- O8: light mode - no tester after a red train; the programmer-checker's own acceptance ----
+  const L = Object.assign({}, T, { mode: 'light' });
+  x = await run({ pre: [PRE], prog: [PROG, P2], review: [D, D], train: [ride(11), ride(0)] }, L);
+  ok('O8. light: red train fixed in the product -> programmer-checker -> review -> the train again, no tester and no tester post-check',
+    x.r.status === 'done' && x.full === 'pre>prog>review>diff:x:reviewer>run:x:train-1>prog>review>diff:x:reviewer>run:x:train-2>left:x:end', x.full);
+  const lp = pOf(x, 'prog', 1);
+  ok('O8. light: the fix prompt asks the programmer-checker for the acceptance of the cells the fix touches in test.md (no tester follows)',
+    /PROGRAMMER-CHECKER/.test(lp) && /there is no tester round in the light mode: run the acceptance of the cells the fix touches yourself/.test(lp) && !/a fix that touches the product gets a short tester round, then/.test(lp), lp.slice(-900));
+
+  // ---- O9: no ride inside a ride ----
+  const RIDES = (x) => x.prompts.filter((p) => p.role === 'run' && /:train-/.test(p.label)).map((p) => p.label);
+  x = await run(G([ride(11), ride(0)], { prog: [PROG, P2, P3, P4], test: [RED, GREEN, RED, GREEN], review: [D, D], analyst: [AN] }));
+  ok('O9. short tester red (the second red of the task) -> analyst -> T round -> review -> the next ride is train-2, not train-1 again',
+    x.r.status === 'done' && /analyst/.test(x.trace) && JSON.stringify(RIDES(x)) === '["run:x:train-1","run:x:train-2"]', `${JSON.stringify(RIDES(x))} ${x.full} ${JSON.stringify(x.r)}`);
+  const labels = x.prompts.filter((p) => ['test', 'review'].includes(p.role)).map((p) => p.label);
+  ok('O9. tester and review labels of the run are unique', new Set(labels).size === labels.length, labels.join(' '));
+  x = await run(G([ride(11), ride(11), ride(11), ride(11), ride(0)], { prog: [PROG, P2, P3, P4, Object.assign({}, GUARD2, { head: 'P5' }), Object.assign({}, GUARD2, { head: 'P6' })], test: [RED, GREEN, RED, GREEN], review: [D, D, D, D], analyst: [AN] }));
+  ok('O9. MAX_RIDES counts every ride of the run: four rides in all, then the coordinator',
+    x.r.status === 'stopped' && RIDES(x).length === 4 && /after 4 rides/.test(x.r.why || ''), `${JSON.stringify(RIDES(x))} ${JSON.stringify(x.r)}`);
 
   // ---- O7: the default keeps the selection; the key in config.js, the schema, the rule, the README ----
   x = await run(G([ride(0)]), T, CFG);
