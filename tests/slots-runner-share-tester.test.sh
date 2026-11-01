@@ -20,6 +20,13 @@
 #   E2 end to end: a train runs, a selection already runs at 1 next to it, a second selection comes: the second never
 #      starts while the train runs, the train goes 5 -> 6 when the first selection ends, the sum never exceeds 6; the
 #      second starts after the train ends.
+# Round 3 (review R1: the train counts a selection as max(limit, running)):
+#   T6 a selection whose limit file holds garbage (not a number), nothing running - the train counts it as the whole
+#      budget ("0 1"), as the old path does, not as 0;
+#   E3 end to end: a selection has planned 6 and its runner is still looking for its guards (no worker started, no
+#      .limit.active); the train that comes then does not start 6 next to it: it waits in the slot, the selection
+#      re-evaluates to 1 before its runner starts, the train starts with 5 ("workers at start: 5"), the sum never
+#      exceeds 6, and the train takes 6 after the selection ends (no deadlock between the two waits).
 H=${0:A:h:h}/scripts
 zmodload zsh/datetime
 T=$(mktemp -d "${${TMPDIR:-/tmp}%/}/slots-share-t.XXXXXX")
@@ -50,6 +57,7 @@ print -r -- '#!/bin/zsh
 zmodload zsh/datetime; tag=${PWD:h:t}; jf=; a=("$@")
 for i in {1..$#a}; do [[ $a[i] == --concurrency-file ]] && jf=$a[i+1]; done
 print -r -- "start $tag $EPOCHREALTIME $*" >> '$T'/npm.log
+while [[ -e '$T'/disc.$tag ]]; do sleep 0.1; done
 k=0
 while (( k++ < 1 )) || [[ -e '$T'/hold.$tag ]]; do
   [[ -n $jf ]] && { l=$(<$jf); print -rn -- "$l " >> '$T'/npm.$tag.trace; print -r -- "$l" > $jf.active; print -r -- "$tag $l" >> '$T'/npm.ticks; }
@@ -72,7 +80,7 @@ started() { grep -q "^start $1 " $T/npm.log 2>/dev/null }
 
 [[ -f $H/slots.zsh ]] || { print -r -- "  FAIL no $H/slots.zsh"; exit 1; }
 typeset -A STUBS
-trap 'unhold tr se s2; rm -f $T/single.hold; for p in ${(k)STUBS}; do pkill -P $p 2>/dev/null; kill $p 2>/dev/null; done; wait 2>/dev/null; rm -rf $T' EXIT
+trap 'unhold tr se s2; rm -f $T/single.hold $T/disc.se; for p in ${(k)STUBS}; do pkill -P $p 2>/dev/null; kill $p 2>/dev/null; done; wait 2>/dev/null; rm -rf $T' EXIT
 
 # ---- T: slot_guard_plan with a stub neighbour (budget 6, share 3) ----
 source $H/slots.zsh
@@ -102,6 +110,9 @@ print -r -- 'adaptive priority' > $H3.jobs; print -r -- 3 > $H3.limit; print -r 
 r=$(plan adaptive run)
 ok 'T5 two adaptive trains at 3 each - a running selection re-evaluates to 1, limit 1' '[[ "$r" == "1 0" && "$(<$H1.limit)" == 1 ]]' "plan: $r; limit $(<$H1.limit 2>/dev/null)"
 rm -f $H3.jobs $H3.limit $H3.limit.active
+nb adaptive garbage
+r=$(plan adaptive start priority)
+ok 'T6 a selection with a garbage limit and nothing running - the train counts it as the whole budget ("0 1"), not 0' '[[ "$r" == "0 1" ]]' "plan: $r"
 rm -f $H2.jobs $H2.limit $H2.limit.active
 for p in ${(k)STUBS}; do pkill -P $p 2>/dev/null; kill $p 2>/dev/null; done; wait 2>/dev/null; STUBS=()
 rm -f $SLOTS_DIR/heavy.*.lock.*(N)
@@ -155,6 +166,31 @@ ok 'E2 the second selection starts after the train ends' 'started s2' "$(cat $T/
 unhold s2; wait $E2B
 over=$(awk '{v[$1]=$2; s=0; for (k in v) s+=v[k]; if (s>6) print NR": "$0" sum "s}' $T/npm.ticks | head -3)
 ok 'E2 the three runs never ran more than 6 together' '[[ -z $over ]]' "$over"
+
+
+# ---- E3: a selection has planned 6, its runner still looks for its guards (no .limit.active); the train comes ----
+waitlong allfree
+: > $T/npm.log; : > $T/npm.ticks; rm -f $T/npm.*.trace(N)
+hold se; touch $T/disc.se
+$H/guards-all.sh se > $T/e3s.out 2>&1 & E3S=$!
+waitlong 'started se'
+lf=( $SLOTS_DIR/heavy.*.lock.limit(N) )
+ok 'E3 setup: the selection planned 6 and wrote no running guards yet' '[[ $#lf == 1 && "$(<$lf[1])" == 6 && ! -e $lf[1].active ]]' "limits: $lf; $(cat $T/e3s.out)"
+hold tr
+$H/guards-all.sh --priority tr > $T/e3t.out 2>&1 & E3T=$!
+waitlong 'started tr' 150
+ok 'E3 the train starts (no deadlock with the selection that has not started its workers)' 'started tr' "$(cat $T/e3t.out)"
+ok 'E3 the train starts with 5, not 6 next to the 6 the selection planned' 'grep -q "workers at start: 5 " $T/e3t.out && ! grep -q "workers at start: 6 " $T/e3t.out' "$(cat $T/e3t.out)"
+rm -f $T/disc.se
+waitlong '[[ $(last se) == 1 && $(last tr) == 5 ]]' 100
+ok 'E3 the selection runner starts with 1 (its limit dropped before it started), the train runs 5' '[[ $(last se) == 1 && $(last tr) == 5 ]]' "se: $(trace se) | tr: $(trace tr)"
+ok 'E3 the train never ran 6 while the selection ran' '[[ " $(trace tr) " != *" 6 "* ]]' "tr: $(trace tr)"
+unhold se; wait $E3S
+waitlong '[[ $(last tr) == 6 ]]' 100
+ok 'E3 the selection ended - the train grows to 6' '[[ $(last tr) == 6 ]]' "tr: $(trace tr)"
+unhold tr; wait $E3T
+over=$(awk '{v[$1]=$2; s=0; for (k in v) s+=v[k]; if (s>6) print NR": "$0" sum "s}' $T/npm.ticks | head -3)
+ok 'E3 the selection and the train never ran more than 6 together' '[[ -z $over ]]' "$over"
 
 print -r -- "TOTAL: $pass ok, $fail fail"
 (( fail == 0 ))
