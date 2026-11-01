@@ -13,6 +13,13 @@
 //   T7. after the analyst of the second red tester round (st.analyst set) a mechanism still gets its one pass;
 //   T8. light mode: a second mechanism after the pass stops the task for the coordinator, no review;
 //   T9. the mechanism pass's analyst prompt also carries the section "Mechanism" and does not ask "mechanism or cells?".
+//   (round after review 1: the section "Mechanism" of the pass reaches later rounds, mechLine)
+//   T10. a pass in a later round (round 2 after a red tester): the rounds before it do not name the section, the round
+//        of the pass itself (2m) and the tester after it name it with round 2 (not round 1);
+//   T11. the programmer of round T (after the analyst of the second red tester round) and of round A (after the analyst
+//        of the second rejection) name the section of a pass made in round 1;
+//   T12. light mode: a pass in round r (after a rejection) - the round rm names round r; round 1 did not;
+//   T13. the reviewer after a pass reads analyst.md, where the section lives (the consumer reached by its own reading).
 // usage: node tests/p-mechanism-tester.test.js
 const fs = require('fs');
 const path = require('path');
@@ -142,5 +149,32 @@ const SEL_RED = { done: true, rc: 1, seconds: 1, log: '/d/wait.log', tail: '1 ne
   const ap = pOf(x, 'analyst');
   ok('T9. the mechanism pass prompt: the section "Mechanism" (2-3 mechanisms, ❓ owner, layer 3) and no "mechanism or cells?" reason',
     /2-3 mechanisms/.test(ap) && /layer 3, not the coordinator's layer 2/.test(ap) && !MOC.test(reasonOf(ap)), reasonOf(ap));
+
+  // ---- round after review 1: mechLine ----
+  const SECT = /section "Mechanism" of \/d\/analyst\.md/;
+  const secRound = (s, r) => new RegExp('section "Mechanism" of /d/analyst\\.md[^\\n]*status mechanism of round ' + r + ';').test(s);
+  // T10
+  x = await run({ pre: [PRE], prog: [PROG, MECH, P2], analyst: [AN], test: [RED('r1'), GREEN], review: [D] });
+  ok('T10. pass in round 2: flow prog>test>prog>analyst>prog>test>review', x.r.status === 'done' && x.trace === 'pre>prog>test>prog>analyst>prog>test>review', x.trace + ' ' + JSON.stringify(x.r));
+  ok('T10. round 1, tester 1 and the round that stopped (2) do not name the section',
+    !SECT.test(pOf(x, 'prog', 0)) && !SECT.test(pOf(x, 'test', 0)) && !SECT.test(pOf(x, 'prog', 1)), pOf(x, 'test', 0).slice(0, 300));
+  ok('T10. round 2m names the section with round 2', ofRole(x, 'prog')[2].label === 'prog:x#2m' && secRound(pOf(x, 'prog', 2), '2'), pOf(x, 'prog', 2).slice(0, 600));
+  ok('T10. the tester after the pass names it with round 2, not round 1', secRound(pOf(x, 'test', 1), '2') && !secRound(pOf(x, 'test', 1), '1'), pOf(x, 'test', 1).slice(0, 600));
+  // T11
+  x = await run({ pre: [PRE], prog: [MECH, PROG, P2, P3], analyst: [AN, AN], test: [RED('r1'), RED('r2'), GREEN], review: [D] });
+  ok('T11. round T after the second-red analyst names the section of the pass of round 1',
+    x.r.status === 'done' && ofRole(x, 'prog')[3].label === 'prog:x#T1' && secRound(pOf(x, 'prog', 3), '1') && secRound(pOf(x, 'test', 2), '1'), x.trace + ' ' + ofRole(x, 'prog').map((p) => p.label).join(','));
+  x = await run({ pre: [PRE], prog: [MECH, PROG, P2, P3], analyst: [AN, AN], test: [GREEN, GREEN, GREEN], review: [REJ, REJ, D] });
+  const pa = ofRole(x, 'prog').find((p) => /#A1$/.test(p.label));
+  ok('T11. round A after the second-rejection analyst names the section of the pass of round 1',
+    x.r.status === 'done' && !!pa && secRound(pa.prompt, '1'), x.trace + ' ' + ofRole(x, 'prog').map((p) => p.label).join(','));
+  // T12
+  x = await run({ pre: [PRE], prog: [PROG, MECH, P2], analyst: [AN], review: [REJ, D] }, Object.assign({}, T, { mode: 'light' }));
+  ok('T12. light mode: pass in round r - round 1 does not name it, round rm names round r',
+    x.r.status === 'done' && !SECT.test(pOf(x, 'prog', 0)) && ofRole(x, 'prog')[2].label === 'prog:x#rm' && secRound(pOf(x, 'prog', 2), 'r'), x.trace + ' ' + ofRole(x, 'prog').map((p) => p.label).join(','));
+  // T13
+  x = await run({ pre: [PRE], prog: [MECH, PROG], analyst: [AN], test: [GREEN], review: [D] });
+  ok('T13. the reviewer after a pass reads analyst.md (the section "Mechanism" is in it)',
+    x.r.status === 'done' && /Read BRIEF\.md, analyst\.md/.test(pOf(x, 'review')), pOf(x, 'review').slice(0, 300));
   done();
 })();
