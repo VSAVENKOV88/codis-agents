@@ -64,6 +64,9 @@ const SPEC = {
   guardFiles: ['string[]', ['*-run.js', '*-run.mjs', '*-run.cjs']],
   guardAlways: ['string[]', []],
   guardSubsetCommand: ['string', ''],
+  // Globs of the docs files of the project (p-merge-docs): a train conflict round that only merges the arc and resolves
+  // these files by hand skips the selection (scripts/merge-only.js). Empty - off, every round gets its selection.
+  mergeOnlyFiles: ['string[]', []],
   worktreeSetup: ['object', null],
   slots: ['object', null],
   reportLanguage: ['string', 'English'],
@@ -532,6 +535,7 @@ function resolve(raw, opts = {}) {
   for (const [k, list] of [['testerWritable', c.testerWritable || []]]) {
     for (const re of list) { try { new RegExp(re); } catch (e) { errors.push(`${k}: bad regular expression ${re}`); } }
   }
+  for (const g of c.mergeOnlyFiles || []) if (!g || /\n/.test(g)) errors.push(`mergeOnlyFiles: an empty or multi-line glob: ${JSON.stringify(g)}`);
   try { new RegExp(c.protectedTagPattern); } catch (e) { errors.push('protectedTagPattern: bad regular expression'); }
   for (const k of ['guardCommand', 'guardCommandLegacy']) {
     if (c[k] && !c[k].includes('{wt}')) errors.push(`${k}: must contain {wt} (the worktree directory)`);
