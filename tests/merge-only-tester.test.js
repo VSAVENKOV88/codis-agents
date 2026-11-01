@@ -13,6 +13,12 @@
 //   T6  an octopus merge (three parents)                                                -> exit 1
 //   T7  a mode change (chmod +x) of a code file in the merge commit                     -> exit 1
 //   T8  modify/delete conflict in docs only, resolved by keeping                        -> exit 0
+// Round 2 (the conflicted list of merge-tree --name-only -z joins the diff):
+//   T9  directory/file conflict in code (arc adds file src/x, branch adds src/x/a.js)  -> exit 1
+//   T10 rename/rename conflict in code (both sides rename src/code.js differently)     -> exit 1
+//   T11 docs conflict while the arc renamed src/code.js cleanly and the branch edited it -> exit 0 (no code conflict)
+//   T12 two docs conflicts with spaces and a non-ASCII name, nothing in code            -> exit 0, both named once
+//   T13 docs conflict resolved by git merge -X ours (no hand edit), code auto-merged    -> exit 0
 // usage: node tests/merge-only-tester.test.js
 const fs = require('fs');
 const os = require('os');
@@ -147,6 +153,84 @@ const BASE = { 'docs/a.md': 'one\ntwo\nthree\n', 'src/code.js': 'a\nb\nc\n', 'sr
   x = run(s.r, [s.before, s.head, '--base', 'arc', ...FILES]);
   ok('T8. modify/delete conflict in docs/old.md (docs only), kept -> exit 0, merge only',
     x.rc === 0 && x.j && x.j.mergeOnly === true, x.out);
+
+  // ---- T9: directory/file conflict in code ----
+  s = scene(BASE, { files: { 'docs/a.md': 'one\nARC\nthree\n', 'src/x': 'file\n' } },
+    { files: { 'docs/a.md': 'one\nTASK\nthree\n', 'src/x/a.js': 'dir\n' } },
+    (r) => {
+      docsBoth(r);
+      // keep both: the branch's directory stays, the arc's file goes to the name git gave it (src/x~arc)
+      const st = r.git('status', '--porcelain').out;
+      for (const line of st.split('\n')) { const f = line.slice(3); if (f && !/^docs\//.test(f)) r.git('add', '--', f); }
+      r.git('add', '-A', '--', 'src');
+    });
+  x = run(s.r, [s.before, s.head, '--base', 'arc', ...FILES]);
+  ok('T9. directory/file conflict at src/x (code) -> exit 1, not merge only',
+    x.rc === 1 && x.j && x.j.mergeOnly === false && (x.j.files || []).some((f) => /^src\//.test(f)), x.out);
+
+  // ---- T10: rename/rename conflict in code ----
+  x = { rc: -1 };
+  {
+    const r = repo(BASE);
+    r.g('checkout', '-q', '-b', 'arc');
+    r.write('docs/a.md', 'one\nARC\nthree\n'); r.g('add', '--', 'docs/a.md'); r.g('mv', 'src/code.js', 'src/arc-name.js');
+    r.g('commit', '-q', '-m', 'arc');
+    r.g('checkout', '-q', '-b', 'task', 'main');
+    r.write('docs/a.md', 'one\nTASK\nthree\n'); r.g('add', '--', 'docs/a.md'); r.g('mv', 'src/code.js', 'src/task-name.js');
+    r.g('commit', '-q', '-m', 'task');
+    const before = r.g('rev-parse', 'HEAD');
+    r.git('merge', '-q', '--no-commit', '--no-ff', 'arc');
+    docsBoth(r);
+    // resolution: keep the branch's name only (what merge-tree's tree may not hold)
+    r.git('rm', '-q', '--cached', '--ignore-unmatch', '--', 'src/code.js', 'src/arc-name.js');
+    try { fs.rmSync(path.join(r.d, 'src/arc-name.js'), { force: true }); } catch { /* none */ }
+    r.g('add', '--', 'src/task-name.js');
+    r.g('commit', '-q', '--no-edit');
+    x = run(r, [before, r.g('rev-parse', 'HEAD'), '--base', 'arc', ...FILES]);
+  }
+  ok('T10. rename/rename conflict of src/code.js -> exit 1, not merge only',
+    x.rc === 1 && x.j && x.j.mergeOnly === false, x.out);
+
+  // ---- T11: the arc renamed code cleanly, the branch edited it: no code conflict ----
+  {
+    const r = repo(BASE);
+    r.g('checkout', '-q', '-b', 'arc');
+    r.write('docs/a.md', 'one\nARC\nthree\n'); r.g('add', '--', 'docs/a.md'); r.g('mv', 'src/code.js', 'src/moved.js');
+    r.g('commit', '-q', '-m', 'arc');
+    r.g('checkout', '-q', '-b', 'task', 'main');
+    const before = r.commit({ 'docs/a.md': 'one\nTASK\nthree\n', 'src/code.js': 'a\nb\nc\nTASK\n' }, 'task');
+    r.git('merge', '-q', '--no-commit', '--no-ff', 'arc');
+    docsBoth(r);
+    r.g('commit', '-q', '--no-edit');
+    x = run(r, [before, r.g('rev-parse', 'HEAD'), '--base', 'arc', ...FILES]);
+    ok('T11. arc renamed src/code.js, the branch edited it, docs conflict -> exit 0, files [docs/a.md]',
+      x.rc === 0 && x.j && x.j.mergeOnly === true && JSON.stringify(x.j.files) === '["docs/a.md"]', x.out);
+  }
+
+  // ---- T12: two docs conflicts, names with spaces and non-ASCII ----
+  {
+    const A = 'docs/with space.md', B = 'docs/ГЭПы.md';
+    s = scene(Object.assign({}, BASE, { [A]: '1\n2\n3\n', [B]: '1\n2\n3\n' }),
+      { files: { [A]: '1\nARC\n3\n', [B]: '1\nARC\n3\n', 'src/code.js': 'ARC\nb\nc\n' } },
+      { files: { [A]: '1\nTASK\n3\n', [B]: '1\nTASK\n3\n' } },
+      (r) => { for (const f of [A, B]) { r.write(f, '1\nTASK ARC\n3\n'); r.g('add', '--', f); } });
+    x = run(s.r, [s.before, s.head, '--base', 'arc', ...FILES]);
+    ok('T12. two docs conflicts (space, non-ASCII), arc code clean -> exit 0, both named once',
+      x.rc === 0 && x.j && x.j.mergeOnly === true && JSON.stringify([...(x.j.files || [])].sort()) === JSON.stringify([A, B].sort()), x.out);
+  }
+
+  // ---- T13: docs conflict resolved by -X ours (no hand edit), code auto-merged ----
+  {
+    const r = repo(BASE);
+    r.g('checkout', '-q', '-b', 'arc');
+    r.commit({ 'docs/a.md': 'one\nARC\nthree\n', 'src/code.js': 'ARC\nb\nc\n' }, 'arc');
+    r.g('checkout', '-q', '-b', 'task', 'main');
+    const before = r.commit({ 'docs/a.md': 'one\nTASK\nthree\n', 'src/code.js': 'a\nb\nTASK\n' }, 'task');
+    r.g('merge', '-q', '--no-edit', '-X', 'ours', 'arc');
+    x = run(r, [before, r.g('rev-parse', 'HEAD'), '--base', 'arc', ...FILES]);
+    ok('T13. docs conflict resolved by -X ours, src/code.js merged cleanly -> exit 0, files [docs/a.md]',
+      x.rc === 0 && x.j && x.j.mergeOnly === true && JSON.stringify(x.j.files) === '["docs/a.md"]', x.out);
+  }
 
   done();
 })().catch((e) => { console.error(e); process.exit(1); });
