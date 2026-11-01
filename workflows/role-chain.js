@@ -419,6 +419,10 @@ function baseOf(t) {
   return ''
 }
 const analysisLine = (a) => (a.mode === 'none' ? `No analysis: ${a.reason}` : `The analysis to follow: ${a.path}`)
+// The analyst's pass after a status mechanism is recorded in the run (st.mechanism = the round of the pass): every later
+// programmer, programmer-checker and tester prompt names its section, so a round that knows only the old analysis does not
+// bring the rejected mechanism back (review 1 of p-mechanism). A later analyst may replace the section (mechanismOrCells).
+const mechLine = (t, st) => (st && st.mechanism ? `\nThe mechanism of this task: section "Mechanism" of ${t.dir}/analyst.md (the analyst's pass after the status mechanism of round ${st.mechanism}; the latest such section if a later analyst replaced it) - build and check by it, not by a mechanism of your own.` : '')
 
 // Paths a fix "for docs" may touch without a tester round: docs, and guards and fixtures (guard wording; the paths the
 // tester may change, config testerWritable). A fix touching anything else - a comment in product code - is confirmed
@@ -478,21 +482,21 @@ const guardsPart = (t) => (ONE_RUN
 // over product code changed in it (review 1). fix = { report, before }: the report
 // with the findings and the HEAD before the round (the previous role's); the first round passes none.
 const fixPart = (t, n, fix) => (fix ? `\nFix round ${n} (not the first): do not reread the whole task. Read the findings of this round in ${fix.report} and the task's diff (git -C ${sq(t.wt)} log --oneline ${baseArg(t)}..HEAD, git -C ${sq(t.wt)} diff ${baseArg(t)}..HEAD); read BRIEF.md, the analysis and the arc specification only in the sections the findings cite, and of prog.md only its last round. Mutations in this round only for the guards new or changed in it (git -C ${sq(t.wt)} diff --name-only ${fix.before ? sq(fix.before) : '<the HEAD before this round>'}..HEAD after your commits), the guards the findings name (a finding "guard G has no mutation" is fixed by mutating G) and the guards that cover the product code changed in it (a fix under an unchanged guard is still mutation-tested): a table of this round's mutants; the tables of earlier rounds stay as they are.` : '')
-const prog = (t, task, n, fix) => (t.light ? progLight(t, task, n, fix) : agent(`You are the PROGRAMMER. ${RULES(t)} Report: ${t.dir}/prog.md (round ${n}).
-${analysisLine(t.an)}
+const prog = (t, task, n, fix, st) => (t.light ? progLight(t, task, n, fix, st) : agent(`You are the PROGRAMMER. ${RULES(t)} Report: ${t.dir}/prog.md (round ${n}).
+${analysisLine(t.an)}${mechLine(t, st)}
 ${task}${fixPart(t, n, fix)}
 Order: red guard -> commit -> code -> commit -> mutations AFTER the commit (table in prog.md) -> ${guardsPart(t)}. status=blocked if you cannot go on without the owner's answer; ${MECH_STATUS}${note('programmer')}`,
   Object.assign({ label: `prog:${t.key}#${n}`, phase: 'Programmer', schema: PROG_SCHEMA, agentType: roleType('programmer') }, modelOf('programmer'))))
 // Light mode: one programmer-checker does the programmer's work and the tester's acceptance; the reviewer follows.
-const progLight = (t, task, n, fix) => agent(`You are the PROGRAMMER-CHECKER of a task in the light mode: there is no tester role, so you also run the acceptance. ${RULES(t)} Reports: ${t.dir}/prog.md (round ${n}) and ${t.dir}/test.md (your acceptance, round ${n}; keep earlier rounds).
-${analysisLine(t.an)}
+const progLight = (t, task, n, fix, st) => agent(`You are the PROGRAMMER-CHECKER of a task in the light mode: there is no tester role, so you also run the acceptance. ${RULES(t)} Reports: ${t.dir}/prog.md (round ${n}) and ${t.dir}/test.md (your acceptance, round ${n}; keep earlier rounds).
+${analysisLine(t.an)}${mechLine(t, st)}
 ${task}${fixPart(t, n, fix)}
 Order: red guard -> commit -> code -> commit -> mutations AFTER the commit (table in prog.md) -> ${guardsPart(t)} -> your own acceptance in the real environment: ${t.accept} Evidence (logs, numbers, screenshots) goes into ${t.dir}/test.md and files with the prefix test-; put the result and where its evidence is into acceptance. status=ready only when the acceptance is met; status=blocked if you cannot go on without the owner's answer; ${MECH_STATUS}${note('programmer')}`,
   Object.assign({ label: `prog:${t.key}#${n}`, phase: 'Programmer', schema: PROG_SCHEMA, agentType: roleType('programmer') }, modelOf('programmer')))
 
 // Acceptance on the project's shared stand (config stand, scripts/stand.sh): image-diff decides whether it fits.
 const standSteps = (t) => (CFG.stand && CFG.stand.project ? ` On the project's shared stand ${CFG.stand.project}: (a) ${SCRIPTS}/stand.sh image-diff --wt ${sq(t.wt)} --base <the commit this task branched from> - exit 0: the stand fits, exit 1: the task changes the stand's image files and needs ${t.stack ? 'its own stack (below)' : 'its own stack: write "❓ coordinator: own stack needed, image files changed" into test.md and give the verdict environment'}; (b) ${SCRIPTS}/stand.sh take --wt ${sq(t.wt)} with run_in_background - it waits in the queue ("position N") and then holds the ticket while it runs: wait (Monitor, slices of at most 270 s) for its line "ticket taken by"; (c) ${SCRIPTS}/stand.sh deploy ${sq(t.wt)} (your committed HEAD; it runs in a medium slot); (d) the scenario against the stand; (e) ${SCRIPTS}/stand.sh release --wt ${sq(t.wt)} as soon as the evidence is saved, also after a red (the next tester waits for it). A take refused with "not up" or "reset failed" is an environment red for the coordinator.` : '')
-const test = (t, n, st) => agent(`You are the TESTER. You do not change product code. ${RULES(t)} Report: ${t.dir}/test.md (round ${n}; keep earlier rounds).
+const test = (t, n, st) => agent(`You are the TESTER. You do not change product code. ${RULES(t)} Report: ${t.dir}/test.md (round ${n}; keep earlier rounds).${mechLine(t, st)}
 1. An independent inventory before reading the diff (inputs, places, cells) - compare it with the programmer's coverage.
 2. Your own guards for what is not covered -> commit -> mutations after the commit.
 3. Acceptance in the real environment: ${t.accept}${standSteps(t)}${t.stack ? ` ${CFG.stand && CFG.stand.project ? 'Only when the stand does not fit, your' : 'Your'} own stack: docker compose -p ${t.stack}; afterwards remove it with its images and volumes: docker compose -p ${t.stack} down -v --rmi all.` : ''} Evidence (logs, numbers, screenshots) goes into ${t.dir} with the prefix test-.${t.uc ? ` Build the acceptance along the flows of the use cases (the main flow, every alternative flow, all errors): ${t.uc}.` : ''}
@@ -600,23 +604,24 @@ async function progStep(t, st, task, n, report, sameStops, mergeCheck) {
 // a second rejection still comes) and the programmer runs the same round again on its section "Mechanism"; a second
 // mechanism in the run, or a pass with questions or not ready, stops the task for the coordinator. {p} or {fail}.
 async function progMech(t, st, task, n, fix) {
-  const p = await prog(t, task, n, fix)
+  const p = await prog(t, task, n, fix, st)
   if (!p || p.status !== 'mechanism') return { p }
   const again = (q, r) => ({ fail: `programmer ${q}: status mechanism again after the analyst's pass - the coordinator decides on the mechanism: ${r.summary || '?'}`, questions: r.questions || [], mechanism: r.summary || '' })
   if (st.mechanism) return again(n, p)
-  st.mechanism = true
+  st.mechanism = String(n)
   log(`${t.title}: programmer ${n} - status mechanism - analyst`)
   const a = await analyst(t, `the programmer stopped with status mechanism in round ${n}: its solution needs a protocol, timer or state that the analysis does not name - "${p.summary || '?'}" (its line in ${t.dir}/prog.md). Write a section "Mechanism" into ${t.dir}/analyst.md: 2-3 mechanisms with their cost (the programmer's among them), the invariant of the new state, the visible limits, a recommendation, then the cells the chosen mechanism adds. A choice seen on the screen or resting on time goes into questions as "❓ owner: ..." (the task stops for the owner); otherwise name the mechanism the programmer follows.`)
   if (!a) return { fail: 'the analyst returned no result' }
   if (!a.ready || a.split.length || a.questions.length) return { fail: 'analyst after the status mechanism: split or an answer is needed', split: a.split, questions: a.questions, analyst: a.summary }
-  const p2 = await prog(t, `The analyst answered your status mechanism in ${t.dir}/analyst.md (section "Mechanism"): build on the mechanism it names.${REWORK(t, a)} Your task as before:\n${task}`, `${n}m`, fix)
+  const p2 = await prog(t, `The analyst answered your status mechanism in ${t.dir}/analyst.md (section "Mechanism"): build on the mechanism it names.${REWORK(t, a)} Your task as before:\n${task}`, `${n}m`, fix, st)
   if (p2 && p2.status === 'mechanism') return again(`${n}m`, p2)
   return { p: p2 }
 }
 
 // Red tester rounds for the product are counted per task (st.reds; environment reds never reach here). The second one,
 // in any cells, sends the task to the analyst inside the same run (redAnalyst in work()); a red after that analyst stops
-// the task for the coordinator. Only one analyst runs inside a run: after the analyst of the second rejection
+// the task for the coordinator. Only one analyst of a second red, a second rejection or a second red train runs inside
+// a run (the mechanism pass after a status mechanism is apart, st.mechanism): after the analyst of the second rejection
 // (st.analyst = 'rejection') the tester rounds stay as before. Why: cvm-xy-1 (2026-10-23) - four tester -> programmer
 // rounds in a row, each red opening a new cell of a matrix nobody had written; the count stood only on rejections.
 function testerRed(t, st, round, tr) {

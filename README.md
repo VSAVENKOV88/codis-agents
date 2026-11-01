@@ -379,7 +379,8 @@ review findings.
   second red or rejection), then the same programmer round again on that section; a second `mechanism` in the run, or
   the pass with questions, stops the task for the coordinator. The analyst of a second red tester round, a second
   rejection or a second red train first answers "mechanism or cells?" (`mechanismOrCells`) and may replace the
-  mechanism; then the programmer reworks by it. The reviewer writes one line "Mechanism:" - a simpler mechanism
+  mechanism; then the programmer reworks by it. After the pass every later programmer, programmer-checker and tester
+  prompt names the section "Mechanism" of `analyst.md` and the round of the pass. The reviewer writes one line "Mechanism:" - a simpler mechanism
   without timings, or "no".
 - **Programmer** commits a red guard, then the code, then mutation-tests the guards after the commit and runs the full
   guard suite in a heavy slot - or, with `guardSubsetCommand` in the config, the programmer runs only its new guards and
@@ -603,7 +604,8 @@ fallback to another slot directory: a second directory would be a second queue t
   `mechanism` -> one analyst pass inside the run -> the programmer again, a second one to the coordinator; "mechanism
   or cells?" first for the analyst of a second red tester round, a second rejection or a second red train, with the
   right to replace the mechanism (`mechanismOrCells` in its answer); one line "Mechanism:" in the reviewer's report.
-  The rule is marked `role:mechanism` and reaches every role prompt.
+  The pass is recorded in the run, and every later programmer, programmer-checker and tester prompt names its section
+  "Mechanism" of `analyst.md`. The rule is marked `role:mechanism` and reaches every role prompt.
 
 ## Changes in 0.4.14
 
