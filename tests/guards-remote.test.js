@@ -328,6 +328,16 @@ process.exit(r.status === null ? 255 : r.status);
     const jr = journal();
     ok('B2a-21: one journal line of class remote here, and no heavy slot taken here', jr.filter((l) => l[4] === 'remote').length === 1 && jr.filter((l) => l[4] === 'heavy').length === 0, JSON.stringify(jr));
     ok('B2a-21: the remote journal line carries the exit code and the worktree', (() => { const l = jr.find((r) => r[4] === 'remote'); return l && l[8] === '1' && l[9] === xw; })(), JSON.stringify(jr));
+    // p-runner-share: the train's priority travels with the run - the job carries it and the runner's guards-all.sh runs
+    // with --priority (its queue and its worker budget: runs without it yield); a run without the flag carries none.
+    const job = (n) => JSON.parse(read(path.join(R, 'runs', n, 'job.json')) || '{}');
+    const rout = (n) => read(path.join(R, 'runs', n, 'out.txt')) || '';
+    ok('p-runner-share: a run without --priority - no priority in the job, the runner\'s workers line without it', !('priority' in job('xw')) && /^workers/m.test(rout('xw')) && !/^workers[^\n]*--priority/m.test(rout('xw')), JSON.stringify(job('xw')) + ' ' + rout('xw'));
+    set(0, [], false);
+    x = ga('--force', '--priority', 'xw');
+    ok('p-runner-share: guards-all.sh --priority with the remote key - exit 0 on the runner', x.status === 0 && count('full.count') === 1, `${x.status} ${x.stdout}${x.stderr}`);
+    ok('p-runner-share: the job carries priority: true', job('xw').priority === true, JSON.stringify(job('xw')));
+    ok('p-runner-share: the runner\'s guards-all.sh ran with --priority (its workers line says so, and it is shown here)', /^workers[^\n]*--priority/m.test(rout('xw')) && /runner: workers[^\n]*--priority/.test(x.stdout), rout('xw') + ' | ' + x.stdout);
     ok('B2a-21: waiting lines name the remote run', /waiting for remote run xw@/.test(all), all);
 
     // B2a-9: the SHA is on the runner - no transfer; B2a-11: the same hash - no install.
