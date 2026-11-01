@@ -182,6 +182,32 @@ Larger changes run as a chain of agents, each in its own role:
   open"), not just a feature name. The review checks the scenario, not the wording.
 - A workflow gives agents only tasks the owner asked for, and says so explicitly; an agent that sees "the owner asked only for H" next to task F refuses F. <!-- role:scope -->
 
+## Waves: product chains in batches, one digest
+
+- **At most three product chains at once, launched as one wave.** A product task is prepared before its chain starts:
+  the brief with its acceptance, the use cases and the matrix (or a diagnosis), the section "Mechanism" when the task
+  brings a new channel, protocol, timing or state, a mockup of all states for whatever the owner judges by the screen,
+  and the list of the owner's experiments. All open questions of the preparation go to the owner as one list, each
+  with a recommendation; the wave starts only after the answers, all its chains together, on the owner's word. The
+  tasks of one wave touch different surfaces; a task that continues another one (its next part, a task that waits
+  for its result) goes into the next wave. A chain of the process plugin is apart: at most one, its questions go into
+  the same digest.
+- **No question to the owner while a wave runs.** Layers 1 and 2 are decided by the coordinator as before (written
+  into the brief as candidates); a question of layer 3 stops only its own task, which waits for the digest, and the
+  others go on. A relaunch inside the wave that needs no answer of the owner (after an analyst, an environment stop,
+  a train verdict) is allowed; a relaunch that needs one goes through the digest. The only exception is something
+  irreversible or a threat to data or security: that goes to the owner at once.
+- **One digest per wave.** When every task of the wave is either done or waits for the owner, the coordinator writes
+  one page, per task: the result; what to check on the screen (steps, browser); the owner's questions, each with a
+  recommendation and the principle it may contradict; the coordinator's candidate decisions, which the owner may
+  overturn; the tails for the backlog. The same digest carries the questions of the next wave's preparation, which runs
+  while the current wave runs. One sitting with the owner answers all of it; then the next wave starts and the waiting
+  tasks are relaunched. Merges by the train and the progress board go on without the owner, as before.
+  Why (owner 2026-11-01, translated: "today the cognitive load was excessive - a risk of wrong or contradictory
+  decisions from me"): on 2026-11-01 about six product chains ran at once and their questions reached the owner one by
+  one through the day (a mechanism, two defects, mockups, plugin measures); questions born inside a chain cannot all be
+  prepared away, but they can wait for one sitting.
+
 ## Waiting, context and cost
 
 - **Never sit idle longer than 270 s at a time.** Prompt caches of workflow agents expire after about 5 minutes; after a longer pause the whole context is written again (such pauses were 21 % of all token spend before this rule, 7.4 % after it). Run anything long through Bash `run_in_background` and wait with Monitor in slices of at most 270 s. An agent with no output for 10 minutes is killed. A long deterministic step (the selection of a task's guards after a programmer round, with `guardSubsetCommand`) is waited for by the workflow's wait step, a cheap agent, not by a role. A role waits for its own heavy commands itself, in slices, while its process is alive in the slot queue or running, and does not end its work to wait: the chain has no status "continue after the wait" (a role returns only its verdict), and a handover would not pay (in a long episode a role spends about 0.37-0.43M per hour of waiting, while a fresh role costs 0.13-0.33M to read in plus about 0.06M per handover, and the waiting itself remains). <!-- role:pauses -->

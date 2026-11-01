@@ -34,7 +34,9 @@ one. For whatever the owner judges by the screen, show a mockup of all states be
 4. **Worktree.** `${CLAUDE_PLUGIN_ROOT}/scripts/wt-setup.sh <name> <branch> [base]`.
 5. **Run.** Skill `codis-agents:role-chain` with the tasks. Independent tasks run in parallel; heavy steps queue in
    the memory slots, so do not start more chains than the machine's slots can serve. At most two chains with
-   acceptance in Docker at once.
+   acceptance in Docker at once. Product chains go in waves (rule "Waves"): at most three, prepared and answered by the
+   owner before the start, launched together on the owner's word; no question to the owner while the wave runs (a
+   layer 3 question stops only its task); one digest per wave when every task is done or waits.
 6. **Route.** With `guardSubsetCommand` the branch of a `done` task has ridden the integration train already: `green`
    - the arc branch moved, nothing to merge; `green-unmerged` - merge `refs/runs/train/<id>` (named in the task's
    `train.result`) into the arc's worktree yourself; a stop `arc-red` or `coordinator` halts the queue - fix the arc or

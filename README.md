@@ -123,6 +123,9 @@ reach that person: rules that answer themselves, questions batched with a recomm
 description for anything visual, and a two-page model a human can hold in their head next to the long list the agents
 read.
 
+So product chains go in waves: at most three, prepared and answered before the start, launched together; a question
+born inside a chain stops only its task until one digest per wave (rule "Waves" in `rules/multi-agent.md`).
+
 ## What is inside
 
 | path | what |
@@ -600,6 +603,14 @@ holds no memory slot: its memory is its own fixed ceiling.
 
 An invalid project config is a refusal for every slot and stand script (exit 78 with the errors), never a silent
 fallback to another slot directory: a second directory would be a second queue that the first one does not see.
+
+## Changes in 0.4.17 (unreleased)
+
+- **Waves** (owner 2026-11-01): at most three product chains at once, prepared (brief, use cases and matrix,
+  "Mechanism", mockup, experiments) and answered by the owner before they start together; no question to the owner
+  while a wave runs - a layer 3 question stops only its task; one digest per wave (results, what to check on the
+  screen, questions with recommendations and the principle each may contradict, candidate decisions, tails) when every
+  task is done or waits. A coordinator rule only: the workflow does not count chains.
 
 ## Changes in 0.4.16
 
