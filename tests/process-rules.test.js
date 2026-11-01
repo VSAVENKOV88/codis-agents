@@ -115,7 +115,7 @@ ok('C5. rules: the old "the programmer runs only its new guards and the selectio
 ok('C6. agents/programmer.md: no selection of its own with guardSubsetCommand', !/run your new guards and the selection/.test(read('agents/programmer.md')) && /run no\s+full run and no selection/.test(read('agents/programmer.md')));
 ok('C6. README: guards-select.js is the tester\'s selection, not "the guards a programmer runs instead of the full suite"', !/guards a programmer runs instead of the full suite/.test(read(README)));
 ok('rules: the selection line is marked role:onerun', /[Nn]o full guard run in the task[^\n]*<!-- role:onerun -->/.test(rules));
-ok('RULE_LIST onerun: the workflow runs the selection (guards-all.sh --select), roles run no full suite', /\['onerun', ONE_RUN\s*\?\s*`No full guard run in the task[^`]*\$\{selectRun\(t\)\}/.test(wf));
+ok('RULE_LIST onerun: the workflow runs the selection (guards-all.sh --select), roles run no full suite', /\['onerun', ONE_RUN && !INNER\s*\?\s*`No selection and no full guard run in the task \(innerSelect false\)[^`]*`\s*:\s*ONE_RUN\s*\?\s*`No full guard run in the task[^`]*\$\{selectRun\(t\)\}/.test(wf));
 ok('rules: the rerun line is marked role:rerun', /flaky[^\n]*<!-- role:rerun -->/.test(rules));
 ok('RULE_LIST rerun: guards-all reruns alone, flaky to the report for the backlog', /\['rerun', [^\n]*guards-all\.sh reruns each one alone[^\n]*Flaky guards[^\n]*backlog/.test(wf));
 // Docker cleanup (owner 2026-10-14, after old test stacks filled the disk): the role:docker line reaches every role.
