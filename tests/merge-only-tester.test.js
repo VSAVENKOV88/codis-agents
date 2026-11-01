@@ -209,7 +209,7 @@ const BASE = { 'docs/a.md': 'one\ntwo\nthree\n', 'src/code.js': 'a\nb\nc\n', 'sr
 
   // ---- T12: two docs conflicts, names with spaces and non-ASCII ----
   {
-    const A = 'docs/with space.md', B = 'docs/ГЭПы.md';
+    const A = 'docs/with space.md', B = 'docs/na\u00efve r\u00e9sum\u00e9.md';
     s = scene(Object.assign({}, BASE, { [A]: '1\n2\n3\n', [B]: '1\n2\n3\n' }),
       { files: { [A]: '1\nARC\n3\n', [B]: '1\nARC\n3\n', 'src/code.js': 'ARC\nb\nc\n' } },
       { files: { [A]: '1\nTASK\n3\n', [B]: '1\nTASK\n3\n' } },
