@@ -115,7 +115,8 @@ async function partA() {
   // A10 (review 1): over the WHOLE prompt of every role, not only step 4 - the selection of the task from its base
   // (guards-all.sh --select <base>) is named only as the workflow's run, never as a command for the role (the rule
   // role:slots once named it as "the selection of guards" for every role, next to step 4 of the tester).
-  x = await run({ pre: [PRE], prog: [PROG, P2], test: [RED, GREEN], review: [{ verdict: 'rejected', docsOnly: false, summary: 'r' }, D], run: [REDR, OKR, OKR, OKR, OKR] });
+  const P3 = Object.assign({}, PROG, { head: 'd'.repeat(40) }), P4 = Object.assign({}, PROG, { head: 'e'.repeat(40) });
+  x = await run({ pre: [PRE], prog: [PROG, P2, P3, P4], test: [RED, GREEN, GREEN], review: [{ verdict: 'rejected', docsOnly: false, summary: 'r' }, D], run: [REDR, OKR, OKR, OKR, OKR, OKR] });
   const BASE_SEL = "guards-all.sh --select 'arc'";
   const bad = [];
   for (const p of x.prompts.filter((q) => ['prog', 'test', 'review'].includes(q.role))) {
