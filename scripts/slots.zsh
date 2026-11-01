@@ -564,9 +564,11 @@ slot_is_exclusive_guard() {
 #     fixed one - and the priority neighbour never counts as one it waits for in the slot (it does not shed);
 #     it neither halves its share. So a selection that comes while the train runs waits outside the slot, first in the
 #     queue, or takes what is left; a running one re-evaluates down to 1 (an adaptive runner reads 0 as no limit);
-#   * the run with the priority counts a neighbour without it only by what it cannot give back at once: its running
-#     guards (adaptive) or its fixed N - nothing running is stopped - and never shares with it; an adaptive one counts as
-#     a neighbour that sheds (the train waits for it in the slot).
+#   * the run with the priority counts a neighbour without it only by what it cannot give back at once: max(its limit,
+#     its running guards) (adaptive; the limit because a selection that has just planned starts that many before its
+#     runner writes the running count - at most one SLOT_POLL of the train's time; no limit - it waits and holds nothing)
+#     or its fixed N - nothing running is stopped - and never shares with it; an adaptive one counts as a neighbour
+#     that sheds (the train waits for it in the slot).
 # Runs of the same priority (two trains, or no priority anywhere) share as before; a single heavy job (not a full run)
 # and the legacy lock are not full runs and count as before for both. The budget is GUARDS_JOBS_ALONE (slots.jobsAlone
 # of the machine file) - on the runner its own.
@@ -586,9 +588,13 @@ _slot_heavy_scan() {
         # a full run of the other priority: never shared with, only subtracted
         if [[ $j[1] == fixed ]]; then n=${j[2]}; [[ $n == <-> ]] || n=$GUARDS_JOBS_ALONE; (( held += n ))
         elif [[ -n $mp ]]; then
-          a=0
+          # it yields: max(limit, running) - the limit too, since a selection that has just planned starts that many
+          # before its runner writes .limit.active (counting only running guards let both start the whole budget);
+          # no limit - it waits in its slot and holds nothing. It sheds: I wait for it in the slot
+          a=0 l=0
           [[ -s $f.limit.active ]] && a=$(<$f.limit.active); [[ $a == <-> ]] || a=$GUARDS_JOBS_ALONE
-          (( held += a, ad++ ))                                  # it yields: what runs now; it sheds, I wait for it in the slot
+          [[ -s $f.limit ]] && l=$(<$f.limit); [[ $l == <-> ]] || l=$GUARDS_JOBS_ALONE
+          (( held += (a > l ? a : l), ad++ ))
         else (( held += GUARDS_JOBS_ALONE ))                     # an adaptive train grows to the whole budget: I yield all of it
         fi
         continue

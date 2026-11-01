@@ -499,7 +499,8 @@ while it waits in the queue, its ticket is dropped and it rejoins the queue at t
   full run without it. A selection that comes while the train runs waits outside the slot (first in the queue) or
   takes what a train with a fixed worker count leaves of `slots.jobsAlone` (an adaptive train claims all of it, whatever
   share it started at); a selection already running re-evaluates down to 1 worker (its
-  running guards finish, nothing is stopped) and the train takes the rest, then all of it when the selection ends.
+  running guards finish, nothing is stopped) and the train takes the rest - beside what the selection runs or has just
+  planned to start, whichever is more - then all of it when the selection ends.
   Two trains, or two runs without the priority, share as before; a single `heavy.sh` job counts as before. The
   workers line of the log ends with `(--priority: the train; ...)`. On the runner the budget is the runner's own
   `slots.jobsAlone` (measured 2026-11-01: a train alone 14-16 min, with the selections of neighbouring tasks
