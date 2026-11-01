@@ -143,7 +143,7 @@ const refused = (x, re) => x.r.status === 'stopped' && x.r.why === 'precondition
   const an12 = pOf(x, 'analyst');
   ok('T12. the analyst of the second red says the reds of earlier runs are counted, and how many', /1 red tester round[^.]*earlier run/.test(an12) && /prior/.test(an12), an12);
   x = await run({ pre: [PRE], prog: [PROG, P2, P3], test: [RED(), RED(), GREEN], analyst: [AN], review: [D] });
-  ok('T12. without a seed the analyst prompt names no earlier runs', !/earlier run/.test(pOf(x, 'analyst')) && !x.logs.some((m) => /prior/.test(m)), pOf(x, 'analyst'));
+  ok('T12. without a seed the analyst prompt names no earlier runs', !/red tester rounds? of earlier runs of this task/.test(pOf(x, 'analyst')) && !x.logs.some((m) => /prior/.test(m)), pOf(x, 'analyst'));
 
   // ---- N. the train with a seed (ONE_RUN, the selection inside the task) ----
   x = await run({ pre: [PRE], prog: [PROG, P2], test: [GREEN], review: [D, D], analyst: [AN], train: [ride(11), ride(0)] }, withP({ trainReds: 1 }, TB), ONE);

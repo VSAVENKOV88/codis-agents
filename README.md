@@ -358,7 +358,8 @@ scope - context for every role, cited by the matrix, the tester's acceptance fol
 `stack` (the tester's own compose project), `security`, `base` (the branch or commit the task started from, for
 `guards-select.js`; required with `guardSubsetCommand`: the branch of the arc, a branch of the repository, not a commit
 and not a protected branch, since the train moves it), `mode` (`mode: "light"` for a small task: one programmer-checker,
-the selection step, one reviewer, then the train - see below). For a feature, `useCasesFirst: true` with `analystFirst` has the
+the selection step, one reviewer, then the train - see below), `prior` (for a relaunch: the counts of earlier runs of
+the task - `testerReds`, `trainReds`, `analyst`, `mechanism: true` - from which its counters go on; 0.4.17). For a feature, `useCasesFirst: true` with `analystFirst` has the
 analyst write only the use cases with their open questions and stops the task with status `use-cases-review`; after
 the review with the owner the coordinator relaunches it with `useCases` and `analystFirst`.
 Each task ends `done`, `use-cases-review` or `stopped` with the reason, the open questions, a proposed split or the
@@ -384,7 +385,7 @@ review findings.
   the matrix to the earlier sections, and the pass keeps the other sections. The run records who wrote the section
   last (the analyst before the first programmer when it wrote one - `mechanismSection` in its answer -, the pass of round N, or the analyst of the second rejection, red tester round or red train that answered
   "mechanism"): every later programmer, programmer-checker, tester and analyst prompt names it. The limit of one pass is
-  per run: a relaunch with `start` begins a new count, and the coordinator says in `start` if a pass was made (rules, coordinator and role-chain skills). The reviewer writes one line "Mechanism:" - a simpler mechanism
+  per task: a relaunch passes a pass made in an earlier run as `prior: {mechanism: true}` (0.4.17; rules, coordinator and role-chain skills). The reviewer writes one line "Mechanism:" - a simpler mechanism
   without timings, or "no".
 - **Programmer** commits a red guard, then the code, then mutation-tests the guards after the commit and runs the full
   guard suite in a heavy slot - or, with `guardSubsetCommand` in the config, the programmer runs only its new guards and
@@ -600,6 +601,21 @@ holds no memory slot: its memory is its own fixed ceiling.
 
 An invalid project config is a refusal for every slot and stand script (exit 78 with the errors), never a silent
 fallback to another slot directory: a second directory would be a second queue that the first one does not see.
+
+## Changes in 0.4.17
+
+- **The counters of a task survive a relaunch: the task field `prior`** (p-testerred-route; the owner's request
+  2026-11-01: "fix the failure in the plugin"). The rules count red tester rounds, red trains, the one analyst of a
+  second red or rejection and the one pass "Mechanism" per task, but the workflow kept them for one run: a relaunch
+  with `start` began from zero. In cvm-wheel-c (run wf_68338028-44b) the first red tester round of the relaunch was the
+  second of the task and went to the programmer; the analyst came one red later. Now a relaunch passes
+  `prior: {testerReds?, trainReds?, analyst?: "tester-red" | "rejection" | "train-red", mechanism?: true}` from the
+  results of its earlier runs and `test.md`; the workflow checks it before any agent (a wrong value or key, or
+  `testerReds` above 0 in the light mode, stops the task on preconditions), starts its counters from it and logs it.
+  With a seeded `analyst` a red tester round (or, for `train-red`, a red train) stops the task as after the analyst of
+  the same run, and a second rejection for code stops it without a second analyst; with `mechanism: true` a status
+  `mechanism` goes to the coordinator. The analyst of the second red names the reds of earlier runs. `start` stays text
+  for the programmer; the line "say in `start` that a pass was made" of 0.4.16 is replaced by `prior.mechanism`.
 
 ## Changes in 0.4.16
 
