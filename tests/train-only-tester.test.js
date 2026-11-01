@@ -2,6 +2,7 @@
 'use strict';
 // p-train-only, the tester's cells (round 1), beyond tests/train-only.test.js O1-O7:
 //   U1 innerSelect false without guardSubsetCommand is inert (the programmer's full run, no train);
+//   U1b innerSelect true without guardSubsetCommand: no selection text in role prompts;
 //   U2 the analyst's round after the second red train has no selection, the tester runs;
 //   U3 arc-red / coordinator / queue environment of a ride: no fix round, no short tester;
 //   U4 a conflict fixed in the product without mergeOnlyFiles -> the short tester round;
@@ -84,7 +85,13 @@ const G = (train, more = {}) => Object.assign({ pre: [PRE], prog: [PROG], test: 
   let x = await run({ pre: [PRE], prog: [PROG], test: [GREEN], review: [D] }, T, NOSUB);
   const pp = pOf(x, 'prog');
   ok('U1. innerSelect false without guardSubsetCommand: no selection, no train, the programmer runs the full run as before',
-    x.r.status === 'done' && !selects(x).length && !x.prompts.some((p) => /:train-/.test(p.label)) && /full run \/p\/scripts\/guards-all\.sh w/.test(pp) && !/innerSelect false/.test(pp), `${x.full} | ${pp.slice(0, 300)}`);
+    x.r.status === 'done' && !selects(x).length && !x.prompts.some((p) => /:train-/.test(p.label)) && /full run \/p\/scripts\/guards-all\.sh w/.test(pp) && !/guards-all\.sh --select/.test(pp) && !/innerSelect false/.test(pp), `${x.full} | ${pp.slice(0, 300)}`);
+
+  // U1b: innerSelect true (the default) without guardSubsetCommand: the selection texts never reach a role (INNER needs ONE_RUN)
+  const NOSUB_T = Object.assign({}, NOSUB, { innerSelect: true });
+  x = await run({ pre: [PRE], prog: [PROG], test: [GREEN], review: [D] }, T, NOSUB_T);
+  ok('U1b. innerSelect true without guardSubsetCommand: no selection step and no selection in any role prompt',
+    x.r.status === 'done' && !selects(x).length && x.prompts.filter((p) => ['prog', 'test', 'review'].includes(p.role)).every((p) => !/guards-all\.sh --select/.test(p.prompt)), x.full);
 
   // ---- U2: the analyst after the second red train - its round has no selection either, and the tester runs ----
   x = await run(G([ride(11), ride(11), ride(0)], { prog: [PROG, P2, P3, P4], test: [GREEN, GREEN, GREEN, GREEN], review: [D, D, D, D], analyst: [AN] }));
