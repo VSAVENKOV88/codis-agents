@@ -51,7 +51,8 @@ one. For whatever the owner judges by the screen, show a mockup of all states be
    split becomes new briefs, a second rejection goes to the analyst.
 7. **Questions.** Decide by three layers (rules, "Coordinator"): a question that follows from an accepted principle -
    decide it, write "decided by principle N" into the brief, tell the owner in one line; no principle, but the answer is
-   reversible and local (one task; not a storage format, an address, sharing, data deletion or security) - decide it,
+   reversible and local (one task; not a storage format, an address, sharing, data deletion or security; not a
+   mechanism whose choice is seen on the screen or rests on time - rules, "A mechanism is challenged") - decide it,
    mark it "coordinator's decision, not from the model - candidate" in the brief and list it in your report so the
    owner can overturn it; everything the owner judges by the screen (look, placement, UI wording), anything new,
    irreversible, or two principles in conflict - to the owner as one list, each question with a recommendation. Roles
