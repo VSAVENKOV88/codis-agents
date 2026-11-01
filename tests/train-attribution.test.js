@@ -16,7 +16,8 @@
 //   R8 g on the pairs now red, now green (flaky on a pair) -> the coordinator, no automatic decision.
 // Coordinator's decision (c2): the log of the train's full run without its tally -> the environment, not a red train.
 // The fixture is a throwaway project: guards are lines "name|shell condition" of $T/rules, red when the condition holds
-// in the worktree; $SUBSET is 1 in the selection mode, so a guard can be red under the suite and green alone.
+// in the worktree; $SUBSET is 1 in the selection mode, so a guard can be red under the suite and green alone. A name
+// with "/" is a guard file: it runs only where that file is in the tree, as a project's runner does (p-train-only R9).
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -59,6 +60,7 @@ failed=0; passed=0
 while IFS='|' read -r name cond; do
   [ -n "$name" ] || continue
   if [ -n "$ONLY" ]; then case "$ONLY " in *" $name "*) ;; *) continue;; esac; fi
+  case "$name" in */*) [ -f "$name" ] || continue;; esac
   if sh -c "$cond"; then echo "FAILED $name - red"; failed=$((failed+1)); else echo "PASSED $name"; passed=$((passed+1)); fi
 done < "$T/rules"
 [ "$SUBSET" = 0 ] && [ -f "$T/notally" ] && { echo "cut off"; exit 1; }
@@ -298,6 +300,39 @@ async function main_() {
   h = haltJ();
   ok('no tally in the train\'s log -> environment, halted, n1 stays, no attribution run', o && o.verdict === 'environment' && h && /^environment: /.test(h.reason || '') && /tally/.test(h.reason || '')
     && !result('n1', n1) && queued() === 'n1' && !subsetCalls().length, `${r.stdout}${r.stderr} ${JSON.stringify(h)}`);
+  clean();
+
+  // ---- R9 (p-train-only, train 20261101-132215552-80147 of cvm-feel-a3): a guard file the passenger brought is not on
+  // the arc head. Running it there accounted for 0 of 1 (guards-all.sh exit 69) and the queue halted as the environment;
+  // a guard absent from a tree is not run on it: absent on the bare arc -> not the arc's red; red on "arc + X" -> X red.
+  rules({ 'g9/new-run.sh': 'true' });
+  arc = rev('arc');
+  const x9 = branch('x9', ['g9/new-run.sh']);
+  enq('x9');
+  clearCalls();
+  r = tr('run'); o = last(r);
+  let r9 = result('x9', x9);
+  ok('R9 a new guard file of the one passenger, red in the train -> x9 red with that guard, the queue does not halt',
+    r9 && r9.verdict === 'red' && Array.isArray(r9.guards) && r9.guards.join() === 'g9/new-run.sh' && !haltJ() && o && o.verdict === 'red',
+    `${r.stdout}${r.stderr} ${JSON.stringify(r9)} ${JSON.stringify(haltJ())}`);
+  sc = subsetCalls();
+  ok('R9 the absent guard is not run on the bare arc head: one selection run, on arc + x9',
+    sc.length === 1 && treeOf(sc[0], arc, { x9 }) === 'x9' && sc[0].only.join() === 'g9/new-run.sh', JSON.stringify(sc));
+  ok('R9 the attribution log says the guard is not on the bare arc head', r9 && /the bare arc head: not in (that|its) tree: g9\/new-run\.sh/.test(read(r9.attribution) || ''), r9 && read(r9.attribution));
+  clean();
+  // two passengers, the guard file brought by p9 only: not run on the arc nor on arc + q9; p9 red, q9 rides on
+  rules({ 'g9/p-run.sh': 'true' });
+  const p9 = branch('p9', ['g9/p-run.sh']), q9 = branch('q9', ['f-q9.txt']);
+  enq('p9'); enq('q9');
+  clearCalls();
+  r = tr('run'); o = last(r);
+  ok('R9 two passengers: the one who brought the red guard file -> red, the other stays in the queue, no halt',
+    result('p9', p9) && result('p9', p9).verdict === 'red' && !result('q9', q9) && queued() === 'q9' && !haltJ(),
+    `${r.stdout}${r.stderr} ${queued()} ${JSON.stringify(haltJ())}`);
+  sc = subsetCalls();
+  ok('R9 two passengers: the guard runs only on arc + p9', sc.length === 1 && treeOf(sc[0], arc, { p9, q9 }) === 'p9', JSON.stringify(sc));
+  r = tr('run'); o = last(r);
+  ok('R9 the next train takes q9 -> green', o && o.verdict === 'green' && o.passengers.join() === 'q9', r.stdout + r.stderr);
   clean();
 
   ok('no train worktree is left behind', !ls(wts).some((n) => n.startsWith('train-')), ls(wts).join());
