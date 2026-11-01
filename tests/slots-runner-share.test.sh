@@ -12,7 +12,10 @@
 #        re-evaluation gives 1 (the floor of a running adaptive run: 0 means no limit), so it drains to 1;
 #     U3 a selection runs 6 - a train gets 0 and waits IN the slot (1 neighbour that sheds), its share written
 #        "adaptive priority" for the neighbours; U4 the selection drained to 1 - the train gets 5 (what the selection
-#        still runs is subtracted: nothing running is stopped), not the share 3; U5 a fixed selection with 6 until its
+#        still runs is subtracted: nothing running is stopped), not the share 3; U4b a selection that has just planned
+#        (limit N, its runner has not written its running guards yet) counts as its limit - max(limit, running) -
+#        else train and selection would start 2 x the budget together; U4c a selection waiting in its slot (no limit)
+#        holds nothing - the train 6; U5 a fixed selection with 6 until its
 #        end - the train 0, outside the slot; U6 a fixed selection with 2 - the train 4;
 #     U7 a train with a fixed 2 - a selection takes the rest, 4; U8 two trains - they share as before (3 each);
 #     U9 no priority anywhere - exactly as before (adaptive 6/6 -> "0 1"; 3/3 -> "3 1").
@@ -102,6 +105,12 @@ nb adaptive 1 1
 ok 'U4 the selection drained to 1 - the train gets 5, not its share 3' '[[ "$(plan adaptive start priority)" == "5 1" && "$(<$H1.limit)" == 5 ]]' "$(plan adaptive start priority)"
 nb adaptive 1 4
 ok 'U4 ... 4 still running (limit 1) - the train gets 2: running guards are not stopped' '[[ "$(plan adaptive start priority)" == "2 1" ]]' "$(plan adaptive start priority)"
+nb adaptive 6
+ok 'U4b the selection has just planned 6 and its runner has not written its running guards yet - the train gets 0, not 6 (max(limit, running): it would start 6 next to the 6 the selection is about to start)' '[[ "$(plan adaptive start priority)" == "0 1" ]]' "$(plan adaptive start priority)"
+nb adaptive 2
+ok 'U4b ... limit 2 and nothing running yet - the train gets 4' '[[ "$(plan adaptive start priority)" == "4 1" ]]' "$(plan adaptive start priority)"
+nb adaptive
+ok 'U4c a selection waiting in its slot (no limit, nothing running) - the train gets 6: it holds no workers' '[[ "$(plan adaptive start priority)" == "6 1" ]]' "$(plan adaptive start priority)"
 nb 'fixed 6'
 ok 'U5 a fixed selection with 6 until its end - the train 0, outside the slot; "fixed 0 priority"' '[[ "$(plan fixed start priority)" == "0 0" && "$(<$H1.jobs)" == "fixed 0 priority" ]]' "$(plan fixed start priority); $(<$H1.jobs)"
 nb 'fixed 2'
