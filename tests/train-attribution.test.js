@@ -335,6 +335,35 @@ async function main_() {
   ok('R9 the next train takes q9 -> green', o && o.verdict === 'green' && o.passengers.join() === 'q9', r.stdout + r.stderr);
   clean();
 
+  // ---- R10 (tester of p-train-only): R holds both a guard file of the arc head and a new one a passenger brought ----
+  // (a) the old guard green on the bare arc: only it runs there (the new one is absent), both on arc + x10 -> x10 red
+  arcCommit('g10/old-run.sh');
+  rules({ 'g10/old-run.sh': '[ -f f-x10.txt ]', 'g10/new-run.sh': 'true' });
+  arc = rev('arc');
+  const x10 = branch('x10', ['g10/new-run.sh', 'f-x10.txt']);
+  enq('x10');
+  clearCalls();
+  r = tr('run'); o = last(r);
+  const r10 = result('x10', x10);
+  ok('R10a an old guard file and a new one in R: x10 red with both, no halt',
+    r10 && r10.verdict === 'red' && (r10.guards || []).slice().sort().join() === 'g10/new-run.sh,g10/old-run.sh' && !haltJ(), `${r.stdout}${r.stderr} ${JSON.stringify(r10)} ${JSON.stringify(haltJ())}`);
+  sc = subsetCalls();
+  const onArc = sc.filter((c) => treeOf(c, arc, { x10 }) === 'arc'), onX = sc.filter((c) => treeOf(c, arc, { x10 }) === 'x10');
+  ok('R10a the bare arc head runs only the old guard; arc + x10 runs both',
+    onArc.length === 1 && onArc[0].only.join() === 'g10/old-run.sh' && onX.length === 1 && onX[0].only.slice().sort().join() === 'g10/new-run.sh,g10/old-run.sh', JSON.stringify(sc));
+  clean();
+  // (b) the old guard red on the bare arc too: arc-red naming it, not the environment
+  rules({ 'g10/old-run.sh': 'true', 'g10/new2-run.sh': 'true' });
+  const y10 = branch('y10', ['g10/new2-run.sh']);
+  enq('y10');
+  clearCalls();
+  r = tr('run'); o = last(r);
+  h = haltJ();
+  ok('R10b the old guard red on the bare arc, the new one absent there -> arc-red naming the old guard, not the environment',
+    o && o.verdict === 'arc-red' && h && h.verdict === 'arc-red' && /g10\/old-run\.sh/.test(h.reason || '') && !/^environment/.test(h.reason || '') && !result('y10', y10),
+    `${r.stdout}${r.stderr} ${JSON.stringify(h)}`);
+  rules({}); clean();
+
   ok('no train worktree is left behind', !ls(wts).some((n) => n.startsWith('train-')), ls(wts).join());
 
   // ---- guards-all.sh --guards: the selection mode for named guards ----
