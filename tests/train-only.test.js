@@ -99,6 +99,8 @@ const G = (train, more = {}) => Object.assign({ pre: [PRE], prog: [PROG], test: 
     !/guards-all\.sh --select/.test(tp) && /train/.test(tp) && /first/.test(tp) && !/The workflow ran the selection/.test(tp), tp);
   ok('O1. the onerun rule in every role prompt says the train is the first run of all guards (innerSelect false)',
     [pp, tp, pOf(x, 'review')].every((p) => /innerSelect/.test(p) && /no selection/i.test(p)), pOf(x, 'review'));
+  ok('O1. the rerun rule (innerSelect false) names no selection: the train reruns new reds alone, no role runs guards-all.sh',
+    [pp, tp].every((p) => /No role runs guards-all\.sh in the task/.test(p) && !/New reds of a selection/.test(p)), pp);
   x = await run(G([ride(0)], { prog: [PROG, P2], test: [RED, GREEN] }));
   ok('O1. a red tester round and its fix: no selection after the fix round either',
     x.r.status === 'done' && !selects(x).length && x.trace === 'pre>prog>test>prog>test>review', x.full);
