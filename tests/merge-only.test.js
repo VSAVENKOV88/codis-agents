@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 'use strict';
-// p-merge-docs (diagnosis (b) of p-select-precise, owner 2026-11-01 "по сужению выборок по твоей рекомендации"): after a
+// p-merge-docs (diagnosis (b) of p-select-precise, the owner took the recommendation, 2026-11-01): after a
 // train verdict 13 (conflict) the programmer merges the arc head into the branch and resolves the conflict. When that
 // round is the merge alone and every file it resolved by hand is docs - the project's mergeOnlyFiles globs - the
 // workflow skips the selection on the new HEAD (it would rerun ~21 min of guards for a docs file the train runs anyway)
@@ -25,8 +25,8 @@ const read = (f) => { try { return fs.readFileSync(path.join(ROOT, f), 'utf8'); 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'codis-merge-only-'));
 process.on('exit', () => { try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* best effort */ } });
 
-const ENV = Object.assign({}, process.env, { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.invalid', GIT_COMMITTER_NAME: 't',
-  GIT_COMMITTER_EMAIL: 't@example.invalid', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' });
+const ENV = Object.assign({}, process.env, { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't', GIT_COMMITTER_NAME: 't',
+  GIT_COMMITTER_EMAIL: 't', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' });
 let nRepo = 0;
 function repo() {
   const d = path.join(tmp, `r${++nRepo}`);

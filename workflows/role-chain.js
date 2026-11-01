@@ -534,7 +534,9 @@ const envProg = (n, p) => ({ fail: `programmer ${n}: red from the environment, n
 // the same (the selection holds guardAlways, the scanners of the diff - S8 of p-train-ac).
 // sameStops (a train fix round): a round with no commit returns {p, same: true} before any selection - the coordinator
 // decides on a red the programmer explained (UC-8 2d).
-async function progStep(t, st, task, n, report, sameStops) {
+// mergeCheck (a train conflict round with mergeOnlyFiles, p-merge-docs): before the selection scripts/merge-only.js checks
+// the round; a round that is only the merge of the arc with docs resolved by hand returns {p, mergeOnly} without one.
+async function progStep(t, st, task, n, report, sameStops, mergeCheck) {
   const prev = st.head
   const p = await prog(t, task, n, report ? { report, before: st.head } : null)
   if (!p) return { fail: 'the programmer returned no result' }
@@ -544,6 +546,10 @@ async function progStep(t, st, task, n, report, sameStops) {
   if (sameStops && head === prev) return { p, same: true }
   st.head = head
   if (!ONE_RUN) return { p }
+  if (mergeCheck) {
+    const mo = await mergeOnlyStep(t, n, prev, head)
+    if (mo) { log(`${t.title}: merge-only docs: selection skipped on ${head} (${mo.reason || ''})`); return { p, mergeOnly: mo } }
+  }
   let merged = p, tag = n
   for (let k = 0; ; k++) {
     if (st.selAt && st.head === st.selAt) { log(`${t.title}: the selection on ${st.head} is done - not repeated`); return { p: merged } }
@@ -767,13 +773,34 @@ const TRAIN_ENV = {
   78: 'the dispatcher found no project config',
 }
 const MAX_RIDES = 4
+// A conflict round that is only the merge of the arc, with every file resolved by hand in the project's docs
+// (mergeOnlyFiles), skips the selection (p-merge-docs; diagnosis (b); the owner took the recommendation on narrowing
+// selections, 2026-11-01).
+// The check is scripts/merge-only.js run by a cheap service step (the workflow runs no command itself): exit 0 yes, 1 no,
+// 2 an error; an answer without a boolean or with an error is repeated once, and a doubt keeps the selection. The seam is
+// the train's: it runs the full suite over the arc and the branch. Why (cvm-line-shell 2026-11-01): select-t1 took 21 min
+// after a merge that resolved only canvas-model.md; 8 of 15 conflicts before the trains were in docs only.
+const MERGE_GLOBS = Array.isArray(CFG.mergeOnlyFiles) ? CFG.mergeOnlyFiles.filter((g) => typeof g === 'string' && g.trim() !== '') : []
+const MERGE_SCHEMA = { type: 'object', properties: {
+  mergeOnly: { type: 'boolean' }, reason: { type: 'string' }, files: { type: 'array', items: { type: 'string' } }, error: { type: 'string' },
+}, required: ['mergeOnly'] }
+const mergeCmd = (t, before, head) => `node ${SCRIPTS}/merge-only.js ${sq(before)} ${sq(head)} --base ${sq(String(t.base).trim())} --wt ${sq(t.wt)}${MERGE_GLOBS.map((g) => ` --files ${sq(g)}`).join('')}`
+const mergeOnly1 = (t, n, before, head, retry) => agent(`Run one command and return its JSON output as the schema fields (change nothing, analyse nothing):
+${mergeCmd(t, before, head)}
+Exit 0, 1 and 2 all print JSON: return its fields as printed. If it prints no JSON - mergeOnly=false, error = the error text.`,
+  checkOpts(`merge:${t.key}:${n}`, 'Train', MERGE_SCHEMA, retry))
+const mergeAnswered = (r) => !!(r && typeof r.mergeOnly === 'boolean' && !r.error)
+async function mergeOnlyStep(t, n, before, head) {
+  const { res } = await checkTwice(t, `merge-only check of ${before}..${head}`, mergeAnswered, (retry) => mergeOnly1(t, n, before, head, retry))
+  return mergeAnswered(res) && res.mergeOnly === true ? res : null
+}
 const resultOf = (t, head) => `${CFG.sharedDir}/train/result/${t.key}-${head}.json`
 const rideCmd = (t, head) => `${CFG.configPath ? `CODIS_AGENTS_CONFIG=${sq(CFG.configPath)} ` : ''}node ${SCRIPTS}/train.js ride --task ${sq(t.key)} --branch ${sq(t.branch)} --head ${sq(head)} --base ${sq(String(t.base).trim())} --dir ${sq(t.dir)}`
 const FIX_TAIL = 'Commit on the branch (a red guard first when none covers it, mutations after the commit); do not run the selection or a full run yourself: the workflow runs the selection on your new HEAD, then the second review of the diff, then the train again. If there is nothing to fix on the branch (a known or a stale guard), explain it in prog.md and commit nothing: the coordinator decides.'
 const trainTask = (t, v, res) => {
   const base = String(t.base).trim()
   if (v === 'red') return `The integration train came back red for your branch (verdict red): read the result ${res} - its train log (log), the attribution log (attribution) and the guards red on the arc head ${base} + your branch alone (guards); copies of the logs are in ${t.dir}. Fix the red on the branch. ${FIX_TAIL}`
-  if (v === 'conflict') return `The integration train excluded your branch: merging it into the train conflicts (verdict conflict; the files are in ${res}, field files). Your fix: merge the head of the arc branch ${base} into your branch ${t.branch} and resolve the conflict, then check the guards of those files. ${FIX_TAIL}`
+  if (v === 'conflict') return `The integration train excluded your branch: merging it into the train conflicts (verdict conflict; the files are in ${res}, field files). Your fix: merge the head of the arc branch ${base} into your branch ${t.branch} and resolve the conflict, then check the guards of those files. ${FIX_TAIL}${MERGE_GLOBS.length ? ` When every file you resolve matches mergeOnlyFiles (${MERGE_GLOBS.join(', ')}), commit the merge alone - one merge commit, no other edits and no other commits: the workflow then skips the selection (scripts/merge-only.js) and goes to the second review and the train.` : ''}`
   return `The integration train found a seam (verdict seam): your branch is green alone on the arc head but red together with its partner, named in ${res} (partner, partnerBranch; the guards in guards; partnerResult is the partner's own result - it arrived first and rode before you). Your fix: merge the head of the arc branch ${base} into your branch ${t.branch} (it holds the partner once partnerResult is green) and fix the seam with it on that head. ${FIX_TAIL}`
 }
 async function ride(t, st, review) {
@@ -817,10 +844,11 @@ async function ride(t, st, review) {
       }
     }
     const before = st.head
-    const s = await progStep(t, st, task || trainTask(t, v, res), `t${n}`, fix, true)
+    const s = await progStep(t, st, task || trainTask(t, v, res), `t${n}`, fix, true, v === 'conflict' && MERGE_GLOBS.length > 0)
     if (s.fail) return stop(t, s.fail, Object.assign({}, s, { review, train: info }))
     if (s.same) return stop(t, `train ${n} (${v}): the programmer committed nothing (the red explained, not fixed: ${s.p && s.p.summary || '?'}) - the coordinator decides; the branch is not queued again`, { review, train: info })
-    const x = await reviewChecked(t, st, `t${n}`, `only the diff of the fix after train ${n} (git diff ${before}..${st.head}): does it answer the train's ${v} (${res}) and change nothing else`)
+    const skipped = s.mergeOnly ? `; merge-only docs: selection skipped - the round is only the merge of the arc ${String(t.base).trim()} and every file resolved by hand matches mergeOnlyFiles (${(s.mergeOnly.files || []).join(', ') || 'none'}); check that the resolution keeps the content of both sides` : ''
+    const x = await reviewChecked(t, st, `t${n}`, `only the diff of the fix after train ${n} (git diff ${before}..${st.head}): does it answer the train's ${v} (${res}) and change nothing else${skipped}`)
     if (x.fail) return stop(t, x.fail, Object.assign({}, x, { train: info }))
     log(`${t.title}: review t${n} - ${x.rv.verdict}`)
     if (x.rv.verdict !== 'done') return stop(t, `train ${n} (${v}): the review of the fix rejected it - the coordinator decides`, { review: x.rv.summary, train: info })
