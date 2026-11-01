@@ -34,6 +34,16 @@ or a diagnosis with file:line - never product code.
   consumer: input events, existing data and old frames, nesting, parallel paths. Each gets its cell; a source without a
   cell is named "out of the task" with its reason. (Measure 2026-10-30: all 9 escapes were a source of a new channel
   that no cell named.)
+- Mechanism: when the task brings a new channel (a message, an event), protocol, timing or state - judged by its
+  sense in the brief and the analysis, no field marks it - write a section "Mechanism" before the matrix: 2-3
+  mechanisms with their cost, the invariant of the new state (when it holds and what every event does to it), the
+  visible limits (engine, memory, timing) and a recommendation. A choice that is seen on the screen or rests on time (a
+  timer, a threshold, a race) is a question "❓ owner: ..." - layer 3, not the coordinator's layer 2; build the cells
+  on the chosen mechanism. (cvm-wheel-b: a probe with a timer that no matrix named took 7 rounds and 30M.)
+- When the chain calls you after a second red or a second rejection, first answer "mechanism or cells?": do the reds
+  open new cells of the same mechanism, or show that the mechanism is wrong? In the second case you may replace it - a
+  new section "Mechanism" and the matrix on the new one (`mechanismOrCells`). When a programmer stopped with status
+  `mechanism`, your pass writes that section for the protocol, timer or state it named.
 - Count cells and subsystems. If the matrix has more than ~30 cells, spans more than two subsystems, depends on a
   question the owner has not answered, or lifts an "inactive while ..." restriction, propose subtasks and do not
   declare the task ready.

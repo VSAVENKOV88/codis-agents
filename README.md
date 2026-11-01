@@ -42,6 +42,7 @@ flowchart LR
   pre --> analyst[Analyst<br/>matrix, split]
   analyst -->|over ~30 cells: split| coord
   analyst --> prog[Programmer<br/>red guard, then code]
+  prog -->|mechanism: one pass| analyst
   prog --> tester[Tester<br/>own inventory, acceptance]
   tester -->|red| prog
   tester --> reviewer[Reviewer<br/>tries to refute]
@@ -72,7 +73,8 @@ When a role asks a question, the coordinator:
 
 1. answers it itself when an accepted principle answers it, and writes "decided by principle N" into the brief;
 2. answers it itself when no principle does but the answer is reversible and local (one task; not a storage format, an
-   address, sharing, data deletion or security), marked "coordinator's decision, not from the model - candidate" and
+   address, sharing, data deletion or security; not a mechanism whose choice is seen on the screen or rests on time),
+   marked "coordinator's decision, not from the model - candidate" and
    listed in its report so the owner can overturn it;
 3. sends everything else - everything the owner judges by looking at the screen (look, placement, UI wording),
    anything new or irreversible, two principles in conflict - to the owner as one list, each question with a
@@ -98,6 +100,7 @@ it. Agents do not replace that.
 | a feature took three days with about ten owner questions per task; one decision flipped three times | a specification of the whole arc before its first task; one numbered `PRINCIPLES.md` with "Replaces:" lines |
 | a decision the owner made never reached the list and was never started | a decision not in the principles is lost; the list is the only list |
 | a layout arrived "locally" with a mockup, no decision behind it, and had to be redone | what the owner judges by the screen is never decided by an agent; a mockup of all states before code |
+| a programmer invented a height probe with a timer that no matrix named; its flicker was one question among 36, the second analyst wrote more cells of the same probe: 7 rounds, 30M, and the owner saw the flicker after the acceptance | a mechanism is challenged before cells: a section "Mechanism" of the analyst (choices seen on the screen or resting on time go to the owner), status `mechanism` of the programmer, "mechanism or cells?" first for the analyst of a second red, a line of the reviewer |
 | a UX spec last touched at a redesign said nothing about the features built after it | living specs change in the same commit as the behaviour they describe |
 | one task was re-scoped three times mid-flight and cost twice the median | split before the first programmer: over ~30 cells or more than two subsystems |
 | the precondition check stopped tasks with an incomplete acceptance three times in one day | acceptance is a scenario in the real environment |
@@ -368,6 +371,16 @@ review findings.
 - **Analyst** before the programmer when the task is marked `analystFirst`; a proposal to split stops the chain. With
   `analysis` the phase logs the reused report, with `noAnalysis` the reason. With `useCasesFirst` it writes only the
   use cases and the task stops for the owner's review.
+- **Mechanism** (p-mechanism): for a task with a new channel, protocol, timing or state the analyst writes a section
+  "Mechanism" before the matrix (2-3 mechanisms with their cost, the invariant, the visible limits, a recommendation);
+  a choice seen on the screen or resting on time goes into its questions as "❓ owner: ..." and the task stops for the
+  owner before the programmer. A programmer whose solution needs a protocol, timer or state that the analysis does not
+  name stops with status `mechanism`: one analyst pass inside the run (it does not take the place of the analyst of a
+  second red or rejection), then the same programmer round again on that section; a second `mechanism` in the run, or
+  the pass with questions, stops the task for the coordinator. The analyst of a second red tester round, a second
+  rejection or a second red train first answers "mechanism or cells?" (`mechanismOrCells`) and may replace the
+  mechanism; then the programmer reworks by it. The reviewer writes one line "Mechanism:" - a simpler mechanism
+  without timings, or "no".
 - **Programmer** commits a red guard, then the code, then mutation-tests the guards after the commit and runs the full
   guard suite in a heavy slot - or, with `guardSubsetCommand` in the config, the programmer runs only its new guards and
   mutations, and the workflow runs the selection of the task's guards.
@@ -580,6 +593,17 @@ holds no memory slot: its memory is its own fixed ceiling.
 
 An invalid project config is a refusal for every slot and stand script (exit 78 with the errors), never a silent
 fallback to another slot directory: a second directory would be a second queue that the first one does not see.
+
+## Changes in 0.4.15
+
+- **A mechanism is challenged before cells** (p-mechanism; owner 2026-11-01: "yes to the step 'challenge the
+  mechanism'"; diagnosis mechanism-gap: four tasks of one window, about 75-85M above their price, no new role). The
+  analyst's section "Mechanism" for a task with a new channel, protocol, timing or state, with a choice seen on the
+  screen or resting on time as a question to the owner (an exception from layer 2); the programmer's status
+  `mechanism` -> one analyst pass inside the run -> the programmer again, a second one to the coordinator; "mechanism
+  or cells?" first for the analyst of a second red tester round, a second rejection or a second red train, with the
+  right to replace the mechanism (`mechanismOrCells` in its answer); one line "Mechanism:" in the reviewer's report.
+  The rule is marked `role:mechanism` and reaches every role prompt.
 
 ## Changes in 0.4.14
 

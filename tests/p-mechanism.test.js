@@ -145,7 +145,7 @@ const MOC = /^First answer "mechanism or cells\?"/;
   x = await run({ pre: [PRE], prog: [PROG, P2, P3], test: [RED('r1'), RED('r2'), GREEN], analyst: [Object.assign({}, AN, { mechanismOrCells: 'mechanism' })], review: [D] });
   let rs = reasonOf(pOf(x, 'analyst'));
   ok('M3. the analyst of the second red tester round first answers "mechanism or cells?" and may replace the mechanism',
-    MOC.test(rs) && /may replace the mechanism/.test(rs) && /section "Mechanism"/.test(rs) && /matrix of cases/.test(rs) && rs.includes('r2'), rs);
+    MOC.test(rs) && /may replace the mechanism/.test(rs) && /section "Mechanism"/.test(rs) && /matrix of cases/.test(rs) && pOf(x, 'analyst').includes('r2'), rs);
   ok('M3. its answer "mechanism" reaches the programmer: rework by the new section "Mechanism", not only cells',
     /replaced the mechanism/.test(pOf(x, 'prog', 2)) && /section "Mechanism"/.test(pOf(x, 'prog', 2)), pOf(x, 'prog', 2));
   x = await run({ pre: [PRE], prog: [PROG, P2, P3], test: [RED('r1'), RED('r2'), GREEN], analyst: [Object.assign({}, AN, { mechanismOrCells: 'cells' })], review: [D] });
