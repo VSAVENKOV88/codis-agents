@@ -12,6 +12,8 @@
 //   M3. the analyst of the second red tester round, of the second rejection and of the second red train first answers
 //       "mechanism or cells?" and may replace the mechanism; its answer mechanismOrCells reaches the next programmer;
 //   M4. the reviewer (prompt and agents/reviewer.md) writes one line: a simpler mechanism without timings, or "no";
+//   M6. (review 1) the pass is recorded in the run: every later programmer, programmer-checker and tester prompt names
+//       the section "Mechanism" of analyst.md and the round of the pass;
 //   M5. the rule: a line marked role:mechanism in rules/multi-agent.md (the exception from layer 2 and its Why), a
 //       RULE_LIST entry carried by every role prompt, the coordinator skill's layer 2, README (section, Changes in 0.4.15).
 // usage: node tests/p-mechanism.test.js
@@ -168,6 +170,26 @@ const MOC = /^First answer "mechanism or cells\?"/;
   rs = reasonOf(pOf(x, 'analyst'));
   ok('M3. the analyst of the second red train first answers "mechanism or cells?"', x.r.status === 'done' && MOC.test(rs) && /may replace the mechanism/.test(rs) && /\/s\/train\/result\//.test(rs), x.trace + ' ' + rs);
   ok('M3. after the train analyst\'s "mechanism" the programmer reworks by the new section', /replaced the mechanism/.test(pOf(x, 'prog', 2)), pOf(x, 'prog', 2));
+
+  // ---- M6 (review 1): the section "Mechanism" of the pass reaches every later round ----
+  // The pass writes the mechanism into analyst.md; a later round that knows only the old analysis can bring the
+  // rejected mechanism back (the cvm-wheel-b class). Later programmer, programmer-checker and tester prompts name it.
+  const MREF = /section "Mechanism" of \/d\/analyst\.md[^\n]*round 1\b/;
+  const mref = (s) => MREF.test(s);
+  x = await run({ pre: [PRE], prog: [MECH, PROG, P2], analyst: [AN], test: [RED('r1'), GREEN], review: [D] });
+  ok('M6. after the pass: the tester prompt names the section "Mechanism" of analyst.md (pass in round 1)', x.r.status === 'done' && mref(pOf(x, 'test')), pOf(x, 'test'));
+  ok('M6. after the pass: the fix round after a red tester names it', mref(pOf(x, 'prog', 2)), pOf(x, 'prog', 2));
+  x = await run({ pre: [PRE], prog: [MECH, PROG, P2], analyst: [AN], test: [GREEN, GREEN], review: [REJ, D] });
+  ok('M6. after the pass: the fix round after a rejection names it', x.r.status === 'done' && mref(pOf(x, 'prog', 2)), x.trace + ' ' + pOf(x, 'prog', 2));
+  x = await run({ pre: [PRE], prog: [MECH, PROG, P2], analyst: [AN], test: [GREEN], review: [D], train: [ride(0)],
+    sel: [{ done: true, rc: 1, seconds: 1, log: '/d/wait.log', tail: '1 new red' }] }, TB, ONE);
+  ok('M6. after the pass: the round after a red selection names it', x.r.status === 'done' && mref(pOf(x, 'prog', 2)), x.full + ' ' + pOf(x, 'prog', 2));
+  x = await run({ pre: [PRE], prog: [MECH, PROG, P2], analyst: [AN], test: [GREEN], review: [D, D], train: [ride(11), ride(0)] }, TB, ONE);
+  ok('M6. after the pass: the fix round after a red train names it', x.r.status === 'done' && mref(pOf(x, 'prog', 2)), x.full + ' ' + JSON.stringify(x.r) + ' ' + pOf(x, 'prog', 2));
+  x = await run({ pre: [PRE], prog: [MECH, PROG, P2], analyst: [AN], review: [REJ, D] }, Object.assign({}, T, { mode: 'light' }));
+  ok('M6. light mode: the programmer-checker round after a rejection names it', x.r.status === 'done' && mref(pOf(x, 'prog', 2)), x.trace + ' ' + pOf(x, 'prog', 2));
+  x = await run({ pre: [PRE], prog: [PROG, P2], test: [RED('r1'), GREEN], review: [D] });
+  ok('M6. without a pass no round names a section "Mechanism" of analyst.md', x.r.status === 'done' && !/section "Mechanism" of \/d\/analyst\.md/.test(pOf(x, 'prog', 1) + pOf(x, 'test') + pOf(x, 'test', 1)), pOf(x, 'prog', 1));
 
   // ---- M4: the reviewer's line ----
   x = await run({ pre: [PRE], prog: [PROG], test: [GREEN], review: [D] });
