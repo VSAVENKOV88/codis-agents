@@ -9,6 +9,13 @@
 //   U5 the short tester round's own commit is carried to the second review and the ride;
 //   U6 the fix-round prompt after a red train names the short tester round, no selection;
 //   U7 innerSelect true: the selection after every programmer round, no short tester.
+// Round after review 1 (beyond O8/O9):
+//   V1 after the analyst of a red short tester round (inside the ride loop) a red short tester round of the next ride
+//      stops the task ("tester red after analyst"), no second analyst, rides train-1, train-2 only;
+//   V2 that analyst not ready (questions) -> stopped, no further ride;
+//   V3 the ride after that analyst carries the review summary and the head of the analyst's round;
+//   V4 light mode: a seam or a conflict fixed in the product -> no tester either, the light fix prompt;
+//   V5 after the analyst of the second red train a short tester red twice -> "still red after a fix round", one analyst.
 // usage: node tests/train-only-tester.test.js
 const fs = require('fs');
 const os = require('os');
@@ -124,5 +131,36 @@ const G = (train, more = {}) => Object.assign({ pre: [PRE], prog: [PROG], test: 
   x = await run(G([ride(11), ride(0)], { prog: [PROG, P2, P3], test: [RED, GREEN], review: [D, D] }), T, Object.assign({}, CFG, { innerSelect: true }));
   ok('U7. innerSelect true: selection after every programmer round (1, the tester fix, the train fix), no short tester',
     x.r.status === 'done' && selects(x).length === 3 && x.trace === 'pre>prog>test>prog>test>review>prog>review', `${x.trace} | ${x.full}`);
+  // ---- V1-V5: round after review 1 ----
+  const RIDES = (x) => x.prompts.filter((p) => p.role === 'run' && /:train-/.test(p.label)).map((p) => p.label);
+  const nOf = (x, role) => x.prompts.filter((p) => p.role === role).length;
+  const P5 = Object.assign({}, PROG, { head: 'P5' });
+  x = await run(G([ride(11), ride(11)], { prog: [PROG, P2, P3, P4, P5], test: [RED, GREEN, RED, GREEN, RED], review: [D, D], analyst: [AN] }));
+  ok('V1. after the analyst of a red short tester round: the next ride red, short tester red -> stopped (tester red after analyst), one analyst, two rides',
+    x.r.status === 'stopped' && /tester red after analyst/.test(x.r.why || '') && nOf(x, 'analyst') === 1 && JSON.stringify(RIDES(x)) === '["run:x:train-1","run:x:train-2"]',
+    `${JSON.stringify(RIDES(x))} ${x.full} ${JSON.stringify(x.r)}`);
+  const NR = Object.assign({}, AN, { ready: false, questions: ['q?'] });
+  x = await run(G([ride(11)], { prog: [PROG, P2, P3], test: [RED, GREEN, RED], review: [D], analyst: [NR] }));
+  ok('V2. that analyst needs an answer -> stopped, no further ride, no T round',
+    x.r.status === 'stopped' && /analyst after the second red tester round/.test(x.r.why || '') && RIDES(x).length === 1 && nOf(x, 'prog') === 3,
+    `${JSON.stringify(RIDES(x))} ${x.full} ${JSON.stringify(x.r)}`);
+  const DT = Object.assign({}, D, { summary: 'T-round review' });
+  x = await run(G([ride(11), ride(0)], { prog: [PROG, P2, P3, P4], test: [RED, GREEN, RED, Object.assign({}, GREEN, { head: 'TT' })], review: [D, DT], analyst: [AN] }));
+  const r2 = (x.prompts.filter((p) => /:train-2/.test(p.label))[0] || { prompt: '' }).prompt;
+  ok('V3. the ride after that analyst carries the review of its T round and the head after its tester',
+    x.r.status === 'done' && x.r.review === 'T-round review' && r2.includes("--head '\\''TT'\\''") && nOf(x, 'review') === 2,
+    `${x.full} ${JSON.stringify(x.r)} ${r2.slice(-200)}`);
+  const L = Object.assign({}, T, { mode: 'light' });
+  for (const rc of [12, 13]) {
+    x = await run({ pre: [PRE], prog: [PROG, P2], review: [D, D], train: [ride(rc), ride(0)] }, L);
+    const lp = pOf(x, 'prog', 1);
+    ok(`V4. light mode, ${rc === 12 ? 'seam' : 'conflict'} fixed in the product -> programmer-checker -> review -> train, no tester; the light fix prompt`,
+      x.r.status === 'done' && x.full === 'pre>prog>review>diff:x:reviewer>run:x:train-1>prog>review>diff:x:reviewer>run:x:train-2>left:x:end'
+      && /no tester round in the light mode/i.test(lp) && !/gets a short tester round, then the second review/.test(lp), `${x.full} | ${lp.slice(-400)}`);
+  }
+  x = await run(G([ride(11), ride(11)], { prog: [PROG, P2, P3, P4], test: [GREEN, GREEN, RED, RED], review: [D, D], analyst: [AN] }));
+  ok('V5. after the analyst of the second red train: short tester red, fix, red again -> still red after a fix round, one analyst',
+    x.r.status === 'stopped' && /still red after a fix round/.test(x.r.why || '') && nOf(x, 'analyst') === 1 && RIDES(x).length === 2,
+    `${JSON.stringify(RIDES(x))} ${x.full} ${JSON.stringify(x.r)}`);
   done();
 })();
