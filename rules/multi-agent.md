@@ -203,8 +203,14 @@ Larger changes run as a chain of agents, each in its own role:
 - **The train goes first in the heavy queue.** Its full run and the attribution of a red train ask for the priority
   explicitly (`guards-all.sh --priority`); a priority ticket is ahead of every waiting heavy job without it, trains keep
   their order of arrival among themselves, nothing running is stopped, and nothing gets the priority from its name.
+  The priority holds in the worker budget and on the remote runner too: the flag travels with the remote run, and a
+  run with it never shares its workers with a full run without it - a selection that comes waits or takes what a
+  train with a fixed worker count leaves of `slots.jobsAlone` (the runner's own there; an adaptive train claims all of
+  it), a selection already running drops to one worker while its running guards finish.
   Why (2026-10-30): a train waited 16 minutes behind task selections that queued before it, and the arc waits for the
-  train.
+  train. Why the budget and the runner (2026-11-01): on the runner a train alone took 14-16 minutes, with the
+  selections of neighbouring tasks 20-26: the flag did not travel there, and an adaptive train shed to its share
+  whenever a selection came.
 - Guards that share a resource (a fixed port, a shared temp dir or corpus file, a docker project) carry
   `// guards:exclusive — <reason>` (the comment marker of the project's language, config key `guardExclusive`) and
   run one at a time under their own lock.

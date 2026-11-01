@@ -393,13 +393,14 @@ _slot_q_where() {
 
 # Under admit.lock: may the first of the queue of class $1, kind $2, take a slot now -> $SLOT_PICK / $SLOT_WHY.
 # Kind "whole" is a full run whose runner sets its own workers (guardCommand without {jobs}): it is counted as the
-# whole budget, so it is admitted only when its budget is the whole GUARDS_JOBS_ALONE.
+# whole budget, so it is admitted only when its budget is the whole GUARDS_JOBS_ALONE. $3 "priority": the train's
+# budget (slot_guard_plan, "Priority").
 _slot_admit() {
-  local class=$1 kind=$2 sc n
+  local class=$1 kind=$2 prio=$3 sc n
   _slot_pick $class
   [[ -n $SLOT_PICK && $class == heavy && $kind == (full|whole) ]] || return 0
-  sc=( $(_slot_heavy_scan $SLOT_PICK) )
-  n=$(slot_jobs_budget $sc[1] $sc[2] $(( sc[3] + sc[5] )))
+  sc=( $(_slot_heavy_scan $SLOT_PICK $prio) )
+  n=$(slot_jobs_budget $sc[1] $sc[2] $(( sc[3] + sc[5] )) $sc[6])
   if [[ $kind == whole ]]; then
     (( n >= GUARDS_JOBS_ALONE )) || SLOT_PICK= SLOT_WHY="$(slot_whole_why $n)"
   elif (( n == 0 && sc[4] == 0 )); then
@@ -459,7 +460,7 @@ slot_run() {
         elif _slot_q_where $qf $class; pos=$SLOT_QPOS; (( pos > 1 )); then
           why="$(( pos - 1 )) ahead; the first is ticket ${SLOT_QHEAD}"
         else
-          _slot_admit $class $kind; slot=$SLOT_PICK; why=$SLOT_WHY
+          _slot_admit $class $kind $prio; slot=$SLOT_PICK; why=$SLOT_WHY
           m=$SLOT_M h=$SLOT_H
           if [[ -n $slot && -n $SLOT_QOTHER ]] && (( m + h + 1 >= SLOT_TOTAL_MAX )); then
             o=( ${=SLOT_QOTHER} )
@@ -487,7 +488,7 @@ slot_run() {
             # single heavy job behind it may take the next slot at once (as next to a fixed run), and the run's own plan
             # in the slot would then see a neighbour and give 0 - back to the queue behind that job, over and over.
             if [[ $kind == whole ]]; then
-              print -r -- $GUARDS_JOBS_ALONE > $slot.whole; print -r -- "fixed $GUARDS_JOBS_ALONE" > $slot.jobs
+              print -r -- $GUARDS_JOBS_ALONE > $slot.whole; print -r -- "fixed $GUARDS_JOBS_ALONE${prio:+ priority}" > $slot.jobs
             fi
             rm -f $qf; qf=                                     # ticket used - the next in the queue is now first
             zsystem flock -u $fd
@@ -554,16 +555,51 @@ slot_is_exclusive_guard() {
 #   counted as the ceiling 6.
 # A newcomer with no budget (0) waits: inside the slot if there is an adaptive neighbour (it will see the newcomer and
 # shed workers), outside the slot if the neighbours have fixed counts (holding the slot would be wasted).
+# Priority (p-runner-share; guards-all.sh --priority - the full run of a train and its attribution, here and on the
+# remote runner): the train goes first in the worker budget too, not only in the queue. A full run with the priority
+# marks its share "fixed N priority" / "adaptive priority". Between a run with the priority and one without it:
+#   * the run without it yields: the priority neighbour's claim is subtracted from its budget whole - ALONE for an
+#     adaptive one, whatever its limit or running guards now (it grows to the whole budget at its next re-evaluation;
+#     subtracting only max(limit, running) froze a train that started next to a selection at that share), N of a
+#     fixed one - and the priority neighbour never counts as one it waits for in the slot (it does not shed);
+#     it neither halves its share. So a selection that comes while the train runs waits outside the slot, first in the
+#     queue, or takes what is left; a running one re-evaluates down to 1 (an adaptive runner reads 0 as no limit);
+#   * the run with the priority counts a neighbour without it only by what it cannot give back at once: max(its limit,
+#     its running guards) (adaptive; the limit because a selection that has just planned starts that many before its
+#     runner writes the running count - at most one SLOT_POLL of the train's time; no limit - it waits and holds nothing)
+#     or its fixed N - nothing running is stopped - and never shares with it; an adaptive one counts as a neighbour
+#     that sheds (the train waits for it in the slot).
+# Runs of the same priority (two trains, or no priority anywhere) share as before; a single heavy job (not a full run)
+# and the legacy lock are not full runs and count as before for both. The budget is GUARDS_JOBS_ALONE (slots.jobsAlone
+# of the machine file) - on the runner its own.
 
-# _slot_heavy_scan <my slot> -> "other_heavy full_runs sum_fixed adaptive_neighbours sum_adaptive"
+# _slot_heavy_scan <my slot> [priority] -> "other_heavy full_runs sum_fixed adaptive_neighbours sum_adaptive held"
+#   the first five count the neighbours I share with (as before); held - workers of neighbours of the other priority
+#   (see above), subtracted from my budget only
 _slot_heavy_scan() {
-  local me=$1 i f others=0 full=0 fx=0 ad=0 adnow=0 j a l
+  local me=$1 mp=${2:+1} i f others=0 full=0 fx=0 ad=0 adnow=0 held=0 j a l n np
   for i in {1..$_SLOT_HEAVY_MAX}; do
     f=$SLOTS_DIR/heavy.$i.lock; [[ $f == $me ]] && continue
     _slot_busy $f || continue
-    (( others++ ))
     if [[ -s $f.jobs ]]; then
-      j=( $(<$f.jobs) )
+      j=( $(<$f.jobs) ); np=
+      [[ $j[-1] == priority ]] && np=1
+      if [[ $np != $mp ]]; then
+        # a full run of the other priority: never shared with, only subtracted
+        if [[ $j[1] == fixed ]]; then n=${j[2]}; [[ $n == <-> ]] || n=$GUARDS_JOBS_ALONE; (( held += n ))
+        elif [[ -n $mp ]]; then
+          # it yields: max(limit, running) - the limit too, since a selection that has just planned starts that many
+          # before its runner writes .limit.active (counting only running guards let both start the whole budget);
+          # no limit - it waits in its slot and holds nothing. It sheds: I wait for it in the slot
+          a=0 l=0
+          [[ -s $f.limit.active ]] && a=$(<$f.limit.active); [[ $a == <-> ]] || a=$GUARDS_JOBS_ALONE
+          [[ -s $f.limit ]] && l=$(<$f.limit); [[ $l == <-> ]] || l=$GUARDS_JOBS_ALONE
+          (( held += (a > l ? a : l), ad++ ))
+        else (( held += GUARDS_JOBS_ALONE ))                     # an adaptive train grows to the whole budget: I yield all of it
+        fi
+        continue
+      fi
+      (( others++ ))
       if [[ $j[1] == fixed ]]; then (( full++, fx += ${j[2]:-$GUARDS_JOBS_ALONE} ))
       else
         a=0 l=0
@@ -573,32 +609,40 @@ _slot_heavy_scan() {
         (( full++, ad++, adnow += (a > l ? a : l) ))
       fi
     elif [[ -f $f.who ]] && grep -q ' guards-all ' $f.who; then
-      (( full++, fx += GUARDS_JOBS_ALONE ))
+      # a full run that has not written its share yet: it plans after me (under admit.lock) and sees mine; for a run
+      # with the priority it counts as a single heavy job until then (an adaptive train takes the rest at its next
+      # re-evaluation), for one without - as before, the ceiling
+      (( others++ ))
+      [[ -n $mp ]] || (( full++, fx += GUARDS_JOBS_ALONE ))
+    else (( others++ ))
     fi
   done
   _slot_busy "$SLOT_LEGACY_LOCK" && (( others++, full++, fx += GUARDS_JOBS_ALONE ))
-  print -r -- $others $full $fx $ad $adnow
+  print -r -- $others $full $fx $ad $adnow $held
 }
 
-# slot_jobs_budget <other_heavy> <neighbour_full_runs> <their_workers> -> workers for me (0 - wait)
+# slot_jobs_budget <other_heavy> <neighbour_full_runs> <their_workers> [held] -> workers for me (0 - wait)
+#   held: workers of neighbours of the other priority (_slot_heavy_scan), subtracted from the budget, no share with them
 slot_jobs_budget() {
-  local others=$1 full=$2 used=$3 s r
-  (( others == 0 )) && { print -r -- $GUARDS_JOBS_ALONE; return }
-  s=$(( GUARDS_JOBS_ALONE / (full + 1) )); (( s > GUARDS_JOBS_SHARED )) && s=$GUARDS_JOBS_SHARED
-  r=$(( GUARDS_JOBS_ALONE - used )); (( r < 0 )) && r=0
+  local others=$1 full=$2 used=$3 held=${4:-0} s r
+  if (( others == 0 )); then s=$GUARDS_JOBS_ALONE
+  else s=$(( GUARDS_JOBS_ALONE / (full + 1) )); (( s > GUARDS_JOBS_SHARED )) && s=$GUARDS_JOBS_SHARED
+  fi
+  r=$(( GUARDS_JOBS_ALONE - used - held )); (( r < 0 )) && r=0
   print -r -- $(( s < r ? s : r ))
 }
 
-# slot_guard_plan <my slot> <fixed|whole|adaptive> <start|run> -> "workers_for_me adaptive_neighbours"
+# slot_guard_plan <my slot> <fixed|whole|adaptive> <start|run> [priority] -> "workers_for_me adaptive_neighbours"
 # Under the admission lock: two newcomers do not count the same remainder. Writes my share for the neighbours:
 # fixed -> "fixed N"; whole (a runner without {jobs}) -> "fixed GUARDS_JOBS_ALONE" when the whole budget is mine (reserved
 # at admission in <slot>.whole, or no other heavy job now), else "fixed 0" and "0 0" (wait outside the slot); adaptive -> "adaptive" and the limit in <slot>.limit (at start only when N >= 1; mid-run at least
-# 1: the runner reads 0 as "no limit"). No lock within 30 s - 0 (wait), nothing written.
+# 1: the runner reads 0 as "no limit"). With the train's priority (4th argument "priority") the share ends in
+# " priority" ("fixed N priority", "adaptive priority"). No lock within 30 s - 0 (wait), nothing written.
 slot_guard_plan() {
-  local me=$1 mode=$2 phase=$3 fd n=0 ad=0 sc
+  local me=$1 mode=$2 phase=$3 pr=${4:+ priority} fd n=0 ad=0 sc
   if zsystem flock -t 30 -f fd $SLOTS_DIR/admit.lock 2>/dev/null; then
-    sc=( $(_slot_heavy_scan $me) )
-    n=$(slot_jobs_budget $sc[1] $sc[2] $(( sc[3] + sc[5] ))); ad=$sc[4]
+    sc=( $(_slot_heavy_scan $me ${4:+priority}) )
+    n=$(slot_jobs_budget $sc[1] $sc[2] $(( sc[3] + sc[5] )) $sc[6]); ad=$sc[4]
     # whole: the budget reserved at admission (<slot>.whole, slot_run) is mine, whoever came after it. Without the
     # reservation: an adaptive neighbour sheds only to its share, never to 0, so waiting in the slot cannot help - "0 0"
     if [[ $mode == whole ]]; then
@@ -607,9 +651,9 @@ slot_guard_plan() {
       fi
       ad=0
     fi
-    if [[ $mode == (fixed|whole) ]]; then print -r -- "fixed $n" > $me.jobs
+    if [[ $mode == (fixed|whole) ]]; then print -r -- "fixed $n$pr" > $me.jobs
     else
-      print -r -- adaptive > $me.jobs
+      print -r -- "adaptive$pr" > $me.jobs
       [[ $phase == run ]] && (( n < 1 )) && n=1
       (( n >= 1 )) && print -r -- $n > $me.limit.tmp && mv -f $me.limit.tmp $me.limit
     fi

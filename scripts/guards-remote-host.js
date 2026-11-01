@@ -282,7 +282,9 @@ function job(R, input, name, sha, dir, say) {
   noSecrets(wt, sha, 'the prepare commands');
 
   phase('full run: guards-all.sh of the runner');
-  const g = spawnSync('zsh', [path.join(plugin, 'scripts', 'guards-all.sh'), '--force', '--local', withQ ? '--quarantine-read-only' : '--no-quarantine', ...selArgs, wt], { cwd: wt, env: childEnv, stdio: ['ignore', 'inherit', 'inherit'] });
+  // the train's priority (job.priority): first in the runner's slot queue and in its worker budget
+  const prio = input.priority === true ? ['--priority'] : [];
+  const g = spawnSync('zsh', [path.join(plugin, 'scripts', 'guards-all.sh'), '--force', '--local', withQ ? '--quarantine-read-only' : '--no-quarantine', ...prio, ...selArgs, wt], { cwd: wt, env: childEnv, stdio: ['ignore', 'inherit', 'inherit'] });
   return g.status === null ? 69 : g.status;
 }
 

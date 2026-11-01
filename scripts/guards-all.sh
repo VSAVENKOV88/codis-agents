@@ -69,7 +69,12 @@
 # Priority (--priority; scripts/train.js passes it for the full run of a train and for its attribution): the ticket of
 #   this run in the heavy queue is ahead of every waiter without it (slots.zsh, SLOT_PRIORITY=1); trains among
 #   themselves keep the order of arrival; nothing running is stopped. Only this flag sets it, never the name of the
-#   worktree or the run. On the remote runner the flag does not travel yet: the run queues there by its number.
+#   worktree or the run. It holds in the worker budget too (slots.zsh, slot_guard_plan "Priority"; p-runner-share): a
+#   run without the priority yields to it - it waits outside the slot or takes what the train leaves, a running one
+#   re-evaluates down to 1 - and the train counts it only by what it runs now, never sharing with it; the workers line
+#   of the log ends with "(--priority: ...)". With the remote runner the flag travels with the run
+#   (guards-remote.js --priority, job.priority): the runner's guards-all.sh runs with --priority, in its queue and its
+#   budget (its own slots.jobsAlone).
 # usage: guards-all.sh [--force] [--main-checkout] [--local] [--no-quarantine] [--quarantine-read-only] [--priority] [--select <base> | --guards <names file>] <worktree>   (a name under worktreeRoot, or a path) -> log in <sharedDir>/guards-<name>.txt (.select.txt)
 #   A worktree directly under worktreeRoot (by name or by path) logs as guards-<name>.txt; any other path as
 #   guards-<basename>-<cksum of its resolved path>.txt, so two worktrees with the same basename never share a log and
@@ -176,7 +181,7 @@ if [[ -n $SELECT && $CMD != *'{jobs}'* && $CMD != *'{limitFile}'* ]] && { (( ! L
 fi
 if [[ $ENVID == remote:* ]]; then
   treq=$(_slot_now)
-  node "$H/guards-remote.js" run "$WT" "$OUT" "$RNAME" "$QFILE" $SUBSET; rc=$?
+  node "$H/guards-remote.js" run "$WT" "$OUT" "$RNAME" "$QFILE" $SUBSET ${${PRIO:#0}:+--priority}; rc=$?
   # one line of class remote for the whole run (no slot here: acquire = request), in the worktree's name
   ( cd "$WT" 2>/dev/null; SLOT_LABEL="guards-all $NAME on $RHOST" _slot_journal $treq $treq $(_slot_now) remote - full $rc guards-all )
   exit $rc
@@ -186,11 +191,13 @@ trap 'rm -f $RCF ${SELTMP:+$SELFILE}' EXIT
 while true; do
   : > $RCF
   SLOT_KIND=$kind SLOT_RETRY_RC=75 SLOT_PRIORITY=$PRIO SLOT_LABEL="guards-all $NAME" slot_run heavy zsh -c '
-    source "$1"; WT="$2"; OUT="$3"; CMD="$4"; mode="$5"; RCF="$6"; GR="$7"; RERUN="$8"; BASELINE="$9"; QFILE="${10}"; QRO="${11}"; SELFILE="${12}"; LPAT="${13}"; TPL="${14}"; ONLY="${15}"
+    source "$1"; WT="$2"; OUT="$3"; CMD="$4"; mode="$5"; RCF="$6"; GR="$7"; RERUN="$8"; BASELINE="$9"; QFILE="${10}"; QRO="${11}"; SELFILE="${12}"; LPAT="${13}"; TPL="${14}"; ONLY="${15}"; PR="${16}"
+    # the train (--priority) in the worker budget: runs without it yield (slots.zsh, slot_guard_plan)
+    PRSAY=; [[ -n $PR ]] && PRSAY=" (--priority: the train; runs without it yield and take what it leaves)"
     cd "$WT" || exit 1
     t0=$EPOCHSECONDS said=0
     while true; do
-      p=( $(slot_guard_plan "$SLOT_PATH" $mode start) ); n=$p[1]
+      p=( $(slot_guard_plan "$SLOT_PATH" $mode start $PR) ); n=$p[1]
       (( n > 0 )) && break
       if [[ $mode == whole ]]; then
         print -r -- "waiting for workers outside the slot: $(slot_whole_why 0)"; exit 75
@@ -208,16 +215,16 @@ while true; do
     # the template is filled, {onlyArgs} last: a value (a guard name, the worktree path) is never filled in again
     sub() { local c=$1; c=${c//\{jobs\}/$2}; c=${c//\{limitFile\}/${(q)SLOT_PATH}.limit}; c=${c//\{wt\}/${(q)WT}}; c=${c//\{onlyArgs\}/$ONLY}; print -r -- $c }
     if [[ $mode == adaptive ]]; then
-      print -r -- "workers at start: $n (ceiling $GUARDS_JOBS_ALONE, re-evaluated every $SLOT_POLL s; $SLOT_PATH)"
-      { while sleep $SLOT_POLL; do slot_guard_plan "$SLOT_PATH" adaptive run > /dev/null; done } &
+      print -r -- "workers at start: $n (ceiling $GUARDS_JOBS_ALONE, re-evaluated every $SLOT_POLL s; $SLOT_PATH)$PRSAY"
+      { while sleep $SLOT_POLL; do slot_guard_plan "$SLOT_PATH" adaptive run $PR > /dev/null; done } &
       tk=$!
       zsh -c "$(sub "$TPL" $GUARDS_JOBS_ALONE)" > "$OUT" 2>&1; print -r -- $? > "$RCF"
       pkill -P $tk 2>/dev/null; kill $tk 2>/dev/null   # and its sleep - no orphans
     elif [[ $mode == whole ]]; then
-      print -r -- "workers: set by the runner itself (guardCommand has no {jobs}), counted as the whole budget $n ($SLOT_PATH)"
+      print -r -- "workers: set by the runner itself (guardCommand has no {jobs}), counted as the whole budget $n ($SLOT_PATH)$PRSAY"
       zsh -c "$(sub "$TPL" $n)" > "$OUT" 2>&1; print -r -- $? > "$RCF"
     else
-      print -r -- "workers: $n for the whole run (fixed runner; $SLOT_PATH)"
+      print -r -- "workers: $n for the whole run (fixed runner; $SLOT_PATH)$PRSAY"
       zsh -c "$(sub "$TPL" $n)" > "$OUT" 2>&1; print -r -- $? > "$RCF"
     fi
     rm -f "$SLOT_PATH.jobs" "$SLOT_PATH.limit" "$SLOT_PATH.limit.tmp" "$SLOT_PATH.limit.active" "$SLOT_PATH.whole"
@@ -226,7 +233,7 @@ while true; do
     COUNTED=1
     if [[ -n $SELFILE ]] && ! node "$GR" count "$OUT" "$RERUN" "$SELFILE" "$LPAT"; then print -r -- 69 > "$RCF"; COUNTED=; fi
     if [[ -n $RERUN && -n $COUNTED ]]; then node "$GR" rerun "$WT" "$OUT" "$(<$RCF)" "$RERUN" "$BASELINE" "$QFILE" "$QRO" ${SELFILE:+"$SELFILE"}; print -r -- $? > "$RCF"; fi
-    node "$GR" meta-end "$WT" "$OUT" "$(<$RCF)" "$QFILE"' guards-all "$H/slots.zsh" "$WT" "$OUT" "$CMD" "$mode" "$RCF" "$H/guards-result.js" "$RERUN" "$BASELINE" "$QFILE" "$QRO" "$SELFILE" "$LPAT" "${TPL:-$CMD}" "$ONLY"
+    node "$GR" meta-end "$WT" "$OUT" "$(<$RCF)" "$QFILE"' guards-all "$H/slots.zsh" "$WT" "$OUT" "$CMD" "$mode" "$RCF" "$H/guards-result.js" "$RERUN" "$BASELINE" "$QFILE" "$QRO" "$SELFILE" "$LPAT" "${TPL:-$CMD}" "$ONLY" "${${PRIO:#0}:+priority}"
   rc=$?
   [[ -s $RCF ]] && exit $(<$RCF)          # the runner ran: its code
   (( rc == 75 )) || exit $rc              # 75 without a run: no worker budget - queue again
