@@ -12,8 +12,8 @@
 // prints JSON {mergeOnly, reason, files[, error]}; exit 0 merge only, 1 not, 2 an error (bad arguments, git).
 //
 // The round is merge only when all hold:
-//   - the first-parent commits of before..head are exactly head (one commit, nothing after it);
-//   - head is a merge of two parents: the first is before, the second an ancestor of the arc;
+//   - head is a merge of two parents: the first is before (so the round is this one commit, nothing after it), the
+//     second an ancestor of the arc;
 //   - the files where head differs from the automatic merge of its parents (git merge-tree --write-tree: the
 //     conflicted files keep their markers there, so every hand resolution and every hand edit differs) all match the
 //     globs. Code the arc brought without a conflict equals the automatic merge and is not counted: it is the arc's.
@@ -54,10 +54,6 @@ function check(a) {
   const base = sha(a.base);
   const no = (reason, files = []) => ({ mergeOnly: false, reason, files });
   if (!a.files.length) return no('mergeOnlyFiles is not set: the selection is never skipped');
-  const firsts = git('rev-list', '--first-parent', `${before}..${head}`);
-  if (firsts.rc !== 0) throw new Error(`git rev-list: ${firsts.err}`);
-  const list = firsts.out ? firsts.out.split('\n') : [];
-  if (list.length !== 1) return no(`the round has ${list.length} commits on the branch, not one merge`);
   const parents = git('rev-list', '--parents', '-n', '1', head);
   if (parents.rc !== 0) throw new Error(`git rev-list --parents: ${parents.err}`);
   const ps = parents.out.split(/\s+/).slice(1);

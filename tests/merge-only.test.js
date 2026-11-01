@@ -107,7 +107,13 @@ const DOCS_CONFLICT = { taskFiles: { 'docs/a.md': 'one\nTASK\nthree\n', 'src/oth
   // ---- M4: without globs (no mergeOnlyFiles) -> not merge only, as before ----
   s = scene(DOCS_CONFLICT);
   x = run(s.r, [s.before, s.head, '--base', 'arc']);
-  ok('M4. no --files -> exit 1, mergeOnly false, the reason names mergeOnlyFiles', x.rc === 1 && x.j && x.j.mergeOnly === false && /mergeOnlyFiles/.test(x.j.reason || ''), x.out);
+  ok('M4. no --files -> exit 1, mergeOnly false, the reason names mergeOnlyFiles', x.rc === 1 && x.j && x.j.mergeOnly === false && /mergeOnlyFiles is not set/.test(x.j.reason || ''), x.out);
+  // a merge with nothing resolved by hand: without the key it is still no (the key is off, not "every file matches")
+  s = scene({ taskFiles: { 'src/other.js': 'task\n' } });
+  x = run(s.r, [s.before, s.head, '--base', 'arc']);
+  ok('M4. a clean merge (nothing by hand) without --files -> exit 1', x.rc === 1 && x.j && x.j.mergeOnly === false, x.out);
+  x = run(s.r, [s.before, s.head, '--base', 'arc', ...FILES]);
+  ok('M4. the same clean merge with --files -> exit 0, files []', x.rc === 0 && x.j && x.j.mergeOnly === true && (x.j.files || []).length === 0, x.out);
 
   // ---- M5: the round is not one merge ----
   s = scene(DOCS_CONFLICT);
