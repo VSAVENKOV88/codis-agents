@@ -14,6 +14,11 @@
 //   M4. the reviewer (prompt and agents/reviewer.md) writes one line: a simpler mechanism without timings, or "no";
 //   M6. (review 1) the pass is recorded in the run: every later programmer, programmer-checker and tester prompt names
 //       the section "Mechanism" of analyst.md and the round of the pass;
+//   M7. (analyst after review 2) the section's author is recorded in the run (st.mechSection): the pass or a later
+//       analyst (second rejection, second red tester round, second red train) that answered "mechanism"; every later
+//       round and the later analysts name it; the later analyst keeps the earlier sections of analyst.md on "cells" and
+//       names the replaced section on "mechanism"; the pass keeps the other sections; the route of status mechanism
+//       stays (st.mechanism counts the pass only);
 //   M5. the rule: a line marked role:mechanism in rules/multi-agent.md (the exception from layer 2 and its Why), a
 //       RULE_LIST entry carried by every role prompt, the coordinator skill's layer 2, README (section, Changes in 0.4.15).
 // usage: node tests/p-mechanism.test.js
@@ -190,6 +195,94 @@ const MOC = /^First answer "mechanism or cells\?"/;
   ok('M6. light mode: the programmer-checker round after a rejection names it', x.r.status === 'done' && mref(pOf(x, 'prog', 2)), x.trace + ' ' + pOf(x, 'prog', 2));
   x = await run({ pre: [PRE], prog: [PROG, P2], test: [RED('r1'), GREEN], review: [D] });
   ok('M6. without a pass no round names a section "Mechanism" of analyst.md', x.r.status === 'done' && !/section "Mechanism" of \/d\/analyst\.md/.test(pOf(x, 'prog', 1) + pOf(x, 'test') + pOf(x, 'test', 1)), pOf(x, 'prog', 1));
+
+  // ---- M7 (analyst after review 2, cells A1-D2): who wrote the section "Mechanism" last reaches every later role ----
+  const AM = Object.assign({}, AN, { mechanismOrCells: 'mechanism' }), AC = Object.assign({}, AN, { mechanismOrCells: 'cells' });
+  const P4 = Object.assign({}, PROG, { head: 'P4' }), P5 = Object.assign({}, PROG, { head: 'P5' });
+  const SEC = /section "Mechanism" of \/d\/analyst\.md/;
+  const byPass = (s, r) => new RegExp('section "Mechanism" of /d/analyst\\.md[^\\n]*written last by the analyst\'s pass after the status mechanism of round ' + r + ';').test(s);
+  const byLate = (s, who) => new RegExp('section "Mechanism" of /d/analyst\\.md[^\\n]*written last by the analyst of the second ' + who).test(s);
+  const KEEP = (s) => /[Kk]eep the earlier sections of \/d\/analyst\.md, every section "Mechanism" among them/.test(s) && /on "cells" add the matrix to them/.test(s)
+    && /on "mechanism" write a new section "Mechanism" that names the one it replaces/.test(s);
+  const PASS_KEEP = (s) => /[Kk]eep the other sections of \/d\/analyst\.md/.test(s);
+  const SEL_RED = { done: true, rc: 1, seconds: 1, log: '/d/wait.log', tail: '1 new red' }, SEL_GREEN = { done: true, rc: 0, seconds: 1, log: '/d/wait.log', tail: 'all green' };
+  // A: the later analyst knows of the pass
+  x = await run({ pre: [PRE], prog: [MECH, PROG, P2, P3], analyst: [AN, AN], test: [GREEN, GREEN, GREEN], review: [REJ, REJ, D] });
+  rs = reasonOf(pOf(x, 'analyst', 1));
+  ok('M7 A1. pass in round 1 -> second rejection: the analyst\'s reason first "mechanism or cells?", then names the section of the pass of round 1',
+    x.r.status === 'done' && MOC.test(rs) && byPass(rs, '1'), x.trace + ' ' + rs);
+  ok('M7 B1. the analyst of the second rejection: keep the earlier sections on cells, a new section naming the replaced one on mechanism', KEEP(rs), rs);
+  x = await run({ pre: [PRE], prog: [MECH, PROG, P2, P3], analyst: [AN, AN], test: [RED('r1'), RED('r2'), GREEN], review: [D] });
+  rs = reasonOf(pOf(x, 'analyst', 1));
+  ok('M7 A2. pass in round 1 -> second red tester round: the analyst names the section of the pass of round 1', x.r.status === 'done' && MOC.test(rs) && byPass(rs, '1'), x.trace + ' ' + rs);
+  ok('M7 B1. the analyst of the second red tester round: the keep rule', KEEP(rs), rs);
+  x = await run({ pre: [PRE], prog: [MECH, PROG, P2, P3], analyst: [AN, AN], test: [GREEN], review: [D, D, D], train: [ride(11), ride(11), ride(0)] }, TB, ONE);
+  rs = reasonOf(pOf(x, 'analyst', 1));
+  ok('M7 A3. pass in round 1 -> second red train: the analyst names the section of the pass of round 1', x.r.status === 'done' && MOC.test(rs) && byPass(rs, '1'), x.full + ' ' + rs);
+  ok('M7 B1. the analyst of the second red train: the keep rule', KEEP(rs), rs);
+  x = await run({ pre: [PRE], prog: [MECH, PROG, P2, P3], analyst: [AN, AN], review: [D, D, D], train: [ride(11), ride(11), ride(0)] }, Object.assign({}, TB, { mode: 'light' }), ONE);
+  rs = reasonOf(pOf(x, 'analyst', 1));
+  ok('M7 A4. light mode: pass -> second red train: the analyst names the section of the pass of round 1', x.r.status === 'done' && MOC.test(rs) && byPass(rs, '1'), x.full + ' ' + rs);
+  const noPass = [];
+  x = await run({ pre: [PRE], prog: [PROG, P2, P3], test: [GREEN, GREEN, GREEN], analyst: [AN], review: [REJ, REJ, D] }); noPass.push(reasonOf(pOf(x, 'analyst')));
+  x = await run({ pre: [PRE], prog: [PROG, P2, P3], test: [RED('r1'), RED('r2'), GREEN], analyst: [AN], review: [D] }); noPass.push(reasonOf(pOf(x, 'analyst')));
+  x = await run({ pre: [PRE], prog: [PROG, P2, P3], test: [GREEN], review: [D, D, D], analyst: [AN], train: [ride(11), ride(11), ride(0)] }, TB, ONE); noPass.push(reasonOf(pOf(x, 'analyst')));
+  ok('M7 A5. without a pass no later analyst names a section of a pass or its author',
+    noPass.every((s) => MOC.test(s) && !/status mechanism of round/.test(s) && !/written last by/.test(s)), noPass.join(' || '));
+  x = await run({ pre: [PRE], prog: [PROG, MECH, P2, P3], analyst: [AN, AN], test: [RED('r1'), RED('r2'), GREEN], review: [D] });
+  rs = reasonOf(pOf(x, 'analyst', 1));
+  ok('M7 A6. pass in round 2 -> second red tester round: round 2 is named, not round 1',
+    x.r.status === 'done' && x.trace === 'pre>prog>test>prog>analyst>prog>test>analyst>prog>test>review' && byPass(rs, '2') && !byPass(rs, '1'), x.trace + ' ' + rs);
+  // B: the pass keeps the other sections
+  x = await run({ pre: [PRE], analyst: [AN, AN], prog: [MECH, PROG], test: [GREEN], review: [D] }, Object.assign({}, T, { noAnalysis: undefined, analystFirst: true }));
+  rs = reasonOf(pOf(x, 'analyst', 1));
+  ok('M7 B2. analystFirst -> pass: the pass keeps the other sections of analyst.md and adds the section "Mechanism"',
+    x.r.status === 'done' && x.trace === 'pre>analyst>prog>analyst>prog>test>review' && PASS_KEEP(rs) && /section "Mechanism"/.test(rs), x.trace + ' ' + rs);
+  x = await run({ pre: [PRE], prog: [PROG, P2, MECH, P3], analyst: [AC, AN], test: [RED('r1'), RED('r2'), GREEN], review: [D] });
+  rs = reasonOf(pOf(x, 'analyst', 1));
+  ok('M7 B3. second red analyst "cells" -> status mechanism in round T1 -> the pass runs (not a stop) and keeps the other sections',
+    x.r.status === 'done' && x.trace === 'pre>prog>test>prog>test>analyst>prog>analyst>prog>test>review' && PASS_KEEP(rs) && /status mechanism in round T1/.test(rs), x.trace + ' ' + rs);
+  // C: a replacement by a later analyst reaches every later round
+  x = await run({ pre: [PRE], prog: [PROG, P2, P3], test: [GREEN, GREEN, GREEN], analyst: [AM], review: [REJ, REJ, D] });
+  ok('M7 C1. no pass, the second-rejection analyst answers "mechanism" -> the tester A1 names the section and its author',
+    x.r.status === 'done' && byLate(pOf(x, 'test', 2), 'review rejection'), x.trace + ' ' + pOf(x, 'test', 2).slice(0, 700));
+  x = await run({ pre: [PRE], prog: [PROG, P2, P3, P4], test: [GREEN, GREEN, RED('a1'), GREEN], analyst: [AM], review: [REJ, REJ, D] });
+  ok('M7 C2. ... -> tester A1 red -> the round A2 names the section and its author',
+    x.r.status === 'done' && byLate(pOf(x, 'prog', 3), 'review rejection'), x.trace + ' ' + pOf(x, 'prog', 3).slice(0, 700));
+  x = await run({ pre: [PRE], prog: [PROG, P2, P3, P4], test: [RED('r1'), RED('r2'), GREEN, GREEN], analyst: [AM], review: [REJ, D] });
+  ok('M7 C3. no pass, the second-red analyst answers "mechanism" -> tester T1 and the round Tr after a rejection name it',
+    x.r.status === 'done' && byLate(pOf(x, 'test', 2), 'red tester round') && byLate(pOf(x, 'prog', 3), 'red tester round'), x.trace + ' ' + pOf(x, 'prog', 3).slice(0, 700));
+  x = await run({ pre: [PRE], prog: [PROG, P2, P3, P4], test: [GREEN], review: [D, D, D, D], analyst: [AM], train: [ride(11), ride(11), ride(12), ride(0)] }, TB, ONE);
+  ok('M7 C4. no pass, the second-red-train analyst answers "mechanism" -> the round after a seam names it',
+    x.r.status === 'done' && byLate(pOf(x, 'prog', 3), 'red train'), x.full + ' ' + JSON.stringify(x.r) + ' ' + pOf(x, 'prog', 3).slice(0, 700));
+  x = await run({ pre: [PRE], prog: [PROG, P2, P3, P4], test: [GREEN, GREEN, GREEN], analyst: [AM], review: [REJ, REJ, D], train: [ride(0)],
+    sel: [SEL_GREEN, SEL_GREEN, SEL_RED] }, TB, ONE);
+  ok('M7 C5. no pass, the second-rejection analyst answers "mechanism" -> the round after a red selection names it',
+    x.r.status === 'done' && byLate(pOf(x, 'prog', 3), 'review rejection'), x.full + ' ' + JSON.stringify(x.r) + ' ' + pOf(x, 'prog', 3).slice(0, 700));
+  x = await run({ pre: [PRE], prog: [PROG, P2, P3], test: [GREEN, GREEN, GREEN], analyst: [AC], review: [REJ, REJ, D] });
+  ok('M7 C6. no pass, the analyst answers "cells" -> the tester A1 names no section "Mechanism" of analyst.md',
+    x.r.status === 'done' && !SEC.test(pOf(x, 'test', 2)) && !/written last by/.test(pOf(x, 'test', 2)), pOf(x, 'test', 2).slice(0, 700));
+  x = await run({ pre: [PRE], prog: [MECH, PROG, P2, P3], analyst: [AN, AM], test: [GREEN, GREEN, GREEN], review: [REJ, REJ, D] });
+  ok('M7 C7. pass in round 1 -> the second-rejection analyst answers "mechanism" -> the tester A1 names the replacement, not the pass',
+    x.r.status === 'done' && byLate(pOf(x, 'test', 2), 'review rejection') && !byPass(pOf(x, 'test', 2), '1'), pOf(x, 'test', 2).slice(0, 700));
+  x = await run({ pre: [PRE], prog: [MECH, PROG, P2, P3], analyst: [AN, AC], test: [GREEN, GREEN, GREEN], review: [REJ, REJ, D] });
+  ok('M7 C8. pass in round 1 -> the analyst answers "cells" -> the tester A1 still names the pass of round 1',
+    x.r.status === 'done' && byPass(pOf(x, 'test', 2), '1'), pOf(x, 'test', 2).slice(0, 700));
+  x = await run({ pre: [PRE], prog: [PROG, P2, MECH, P3], analyst: [AM, AN], test: [GREEN, GREEN, GREEN], review: [REJ, REJ, D] });
+  ok('M7 C9. no pass, the analyst replaced the mechanism -> status mechanism in round A1 still gets the pass (the route is unchanged)',
+    x.r.status === 'done' && x.trace === 'pre>prog>test>review>prog>test>review>analyst>prog>analyst>prog>test>review' && byPass(pOf(x, 'test', 2), 'A1'), x.trace + ' ' + JSON.stringify(x.r));
+  x = await run({ pre: [PRE], prog: [MECH, PROG, P2, MECH], analyst: [AN, AN], test: [GREEN, GREEN], review: [REJ, REJ] });
+  ok('M7 C10. pass in round 1 -> second-rejection analyst -> status mechanism in round A1 -> stopped for the coordinator',
+    x.r.status === 'stopped' && /status mechanism again/.test(x.r.why) && /coordinator/.test(x.r.why), x.trace + ' ' + JSON.stringify(x.r));
+  // D: the documents
+  const an = flat('agents/analyst.md');
+  ok('M7 D1. agents/analyst.md: on "cells" keep the earlier sections, every section "Mechanism" among them; on "mechanism" a new section names the one it replaces; the pass keeps the other sections',
+    /keep the earlier sections of `analyst\.md`, every section "Mechanism" among them/.test(an) && /names the one it replaces/.test(an) && /pass keeps the other sections/.test(an), an);
+  const mline = (read('rules/multi-agent.md').match(/[^\n]*<!-- role:mechanism -->/) || [''])[0];
+  const mrule = (rules.find((r) => r[0] === 'mechanism') || ['', ''])[1];
+  ok('M7 D2. the rule line and RULE_LIST: an answer "cells" keeps every section "Mechanism"',
+    /answer "cells" keeps every section "Mechanism"/.test(mline) && /answer "cells" keeps every section "Mechanism"/.test(mrule), mline + ' || ' + mrule);
+  ok('M7 D2. README Changes in 0.4.15: the author of the section and the keep rule', /## Changes in 0\.4\.15[^#]*written last[^#]*keeps every section "Mechanism"/.test(read('README.md').replace(/\s+/g, ' ')), '');
 
   // ---- M4: the reviewer's line ----
   x = await run({ pre: [PRE], prog: [PROG], test: [GREEN], review: [D] });
