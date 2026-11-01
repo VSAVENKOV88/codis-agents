@@ -12,7 +12,10 @@
 //   N1-N4  the train with a seed: the second red train counts the earlier runs; a seeded analyst stops or is not repeated;
 //   M1-M2  the pass "Mechanism" with a seed: a status mechanism after a pass of an earlier run goes to the coordinator;
 //   L1     the light mode counts a seeded red train;
-//   D1-D4  the rule, the skills, README and the version name the field.
+//   C1-C9  review 1: every result carries `counts` in the shape of prior (with the seed), and a result passed as the next
+//          run's prior gives the route of one run (red, rejection, red train, pass, environment not counted);
+//          review rejections of an earlier run (prior.rejections) count toward the second rejection;
+//   D1-D6  the rule, the skills, README and the version name the field, the result's counts and the limit per task.
 // usage: node tests/p-testerred-route.test.js
 const fs = require('fs');
 const path = require('path');
@@ -171,6 +174,69 @@ const refused = (x, re) => x.r.status === 'stopped' && x.r.why === 'precondition
   x = await run({ pre: [PRE], prog: [PROG, P2], review: [D, D], analyst: [AN], train: [ride(11), ride(0)] }, withP({ trainReds: 1 }, TB, { mode: 'light' }), ONE);
   ok('L1. light mode, seed trainReds 1, red train -> analyst', x.r.status === 'done' && x.trace === 'pre>prog>review>analyst>prog>review', J(x));
 
+  // ---- C. review 1: the result carries counts, and counts passed as the next prior give the route of one run ----
+  const ENV = { verdict: 'environment', environment: 'docker down', summary: '' };
+  const okPrior = (c, light) => !!c && typeof c === 'object' && Object.keys(c).every((k) => ['testerReds', 'trainReds', 'rejections', 'analyst', 'mechanism'].includes(k));
+  x = await run({ pre: [PRE], prog: [PROG], test: [GREEN], review: [D] });
+  ok('C1. a done run without prior carries counts {testerReds 0, trainReds 0, rejections 0}, no analyst, no mechanism',
+    JSON.stringify(x.r.counts) === JSON.stringify({ testerReds: 0, trainReds: 0, rejections: 0 }), J(x));
+  x = await run({ pre: [PRE], prog: [PROG, P2], test: [RED('r3'), GREEN], analyst: [AN], review: [D] }, withP({ testerReds: 1, trainReds: 1 }));
+  ok('C1. the counts include the seed: testerReds 2 (1 seeded + 1), trainReds 1, analyst tester-red',
+    x.r.counts && x.r.counts.testerReds === 2 && x.r.counts.trainReds === 1 && x.r.counts.analyst === 'tester-red' && okPrior(x.r.counts), J(x));
+  // C2. red, then environment: one red counted, the environment not; the next run with those counts -> analyst on its first red.
+  const r1 = await run({ pre: [PRE], prog: [PROG, P2], test: [RED('r1'), ENV] });
+  ok('C2. run 1: red, environment -> stopped for the environment, counts testerReds 1 (the environment round not counted)',
+    r1.r.status === 'stopped' && /environment/.test(r1.r.why) && r1.r.counts && r1.r.counts.testerReds === 1, J(r1));
+  x = await run({ pre: [PRE], prog: [PROG, P2], test: [RED('r2'), GREEN], analyst: [AN], review: [D] }, withP(r1.r.counts));
+  ok('C2. run 2 with prior = counts of run 1: the first red -> analyst (as two reds in one run)',
+    x.r.status === 'done' && x.trace === 'pre>prog>test>analyst>prog>test>review', J(x));
+  // C3. a seeded run that stops on the environment passes its seed on unchanged (not +1).
+  const r3 = await run({ pre: [PRE], prog: [PROG], test: [ENV] }, withP({ testerReds: 1 }));
+  ok('C3. seeded run stopped on the environment: counts testerReds stays 1', r3.r.counts && r3.r.counts.testerReds === 1, J(r3));
+  // C4. rejection 1, then environment after the review fix: counts rejections 1; the next run's first rejection is the second.
+  const r4 = await run({ pre: [PRE], prog: [PROG, P2], test: [GREEN, ENV], review: [REJ] });
+  ok('C4. run 1: rejection, environment after the fix -> counts rejections 1', r4.r.status === 'stopped' && r4.r.counts && r4.r.counts.rejections === 1, J(r4));
+  x = await run({ pre: [PRE], prog: [PROG, P2], test: [GREEN, GREEN], analyst: [AN], review: [REJ, D] }, withP(r4.r.counts));
+  ok('C4. run 2 with prior = counts of run 1: the first rejection for code is the second of the task -> analyst',
+    x.r.status === 'done' && x.trace === 'pre>prog>test>review>analyst>prog>test>review', J(x));
+  x = await run({ pre: [PRE], prog: [PROG, P2], test: [GREEN, GREEN], review: [REJ, D] });
+  ok('C4. without the seed the same run: rejection -> a fix round (as before)', x.r.status === 'done' && x.trace === 'pre>prog>test>review>prog>test>review', J(x));
+  x = await run({ pre: [PRE], prog: [PROG], test: [GREEN], review: [Object.assign({}, REJ, { docsOnly: true })] }, withP({ rejections: 1 }));
+  ok('C4. seed rejections 1, a docs-only rejection -> stopped as a second rejection for docs (no analyst)',
+    x.r.status === 'stopped' && /second review rejection/.test(x.r.why) && x.trace === 'pre>prog>test>review', J(x));
+  x = await run({ pre: [PRE], prog: [PROG], test: [GREEN], review: [REJ] }, withP({ rejections: 1, analyst: 'rejection' }));
+  ok('C4. seed rejections 1 after the analyst of an earlier run: a rejection -> stopped "after the analyst", no second analyst',
+    x.r.status === 'stopped' && /^after the analyst: second review rejection/.test(x.r.why) && x.trace === 'pre>prog>test>review', J(x));
+  // C5. the analyst of a rejection resets the count of rejections: one more fix round after it, as in one run.
+  x = await run({ pre: [PRE], prog: [PROG, P2, P3], test: [GREEN, GREEN, GREEN], analyst: [AN], review: [REJ, REJ, D] });
+  ok('C5. rejection, rejection -> analyst -> done: counts rejections 0, analyst rejection',
+    x.r.status === 'done' && x.r.counts && x.r.counts.rejections === 0 && x.r.counts.analyst === 'rejection', J(x));
+  // C6. the pass "Mechanism": run 1 makes it and stops on the environment; run 2 with its counts sends a status mechanism to the coordinator.
+  const r6 = await run({ pre: [PRE], prog: [MECH, PROG], analyst: [AN], test: [ENV] });
+  ok('C6. run 1: the pass, then environment -> counts mechanism true', r6.r.counts && r6.r.counts.mechanism === true, J(r6));
+  x = await run({ pre: [PRE], prog: [MECH] }, withP(r6.r.counts));
+  ok('C6. run 2 with prior = counts of run 1: status mechanism -> the coordinator', x.r.status === 'stopped' && /status mechanism again/.test(x.r.why) && x.trace === 'pre>prog', J(x));
+  // C7. a red train, then a rejected fix review: counts trainReds 1; the next run's first red train -> analyst.
+  const r7 = await run({ pre: [PRE], prog: [PROG, P2], test: [GREEN], review: [D, REJ], train: [ride(11)] }, TB, ONE);
+  ok('C7. run 1: red train, the fix review rejected -> counts trainReds 1', r7.r.status === 'stopped' && r7.r.counts && r7.r.counts.trainReds === 1, J(r7));
+  x = await run({ pre: [PRE], prog: [PROG, P2], test: [GREEN], review: [D, D], analyst: [AN], train: [ride(11), ride(0)] }, withP(r7.r.counts, TB), ONE);
+  ok('C7. run 2 with prior = counts of run 1: the first red train -> analyst', x.r.status === 'done' && x.trace === 'pre>prog>test>review>analyst>prog>review', J(x));
+  // C8. refusals: a refusal after a valid prior carries the seed; a refused prior carries no counts.
+  x = await run({}, withP({ testerReds: 1 }, T), ONE);
+  ok('C8. refused on the base (no base with the selection) -> counts = the seed', refused(x, /base/) && JSON.stringify(x.r.counts) === JSON.stringify({ testerReds: 1 }), J(x));
+  x = await run({}, withP({ testerReds: -1 }));
+  ok('C8. a refused prior -> no counts in the result', refused(x, /prior/) && x.r.counts === undefined, J(x));
+  x = await run({ pre: [{ ok: false, problems: ['p'], blockingQuestions: [] }] }, withP({ trainReds: 2 }));
+  ok('C8. stopped on the preconditions agent -> counts = the seed', x.r.status === 'stopped' && x.r.counts && x.r.counts.trainReds === 2, J(x));
+  // C9. prior.rejections is checked like the other counts, and the light mode counts it too.
+  for (const v of [-1, 1.5, '1', null]) {
+    x = await run({}, withP({ rejections: v }));
+    ok(`C9. prior.rejections ${JSON.stringify(v)} -> preconditions`, refused(x, /prior\.rejections/), J(x));
+  }
+  x = await run({ pre: [PRE], prog: [PROG], review: [REJ] }, withP({ rejections: 1 }, T, { mode: 'light' }));
+  ok('C9. light mode, seed rejections 1, review 1 rejected -> stopped as the second rejection in the light mode, no fix round',
+    x.r.status === 'stopped' && /second review rejection in the light mode/.test(x.r.why) && x.trace === 'pre>prog>review' && x.r.counts && x.r.counts.rejections === 2, J(x));
+
   // ---- D. the documents name the field ----
   const rule = (id) => (read('rules/multi-agent.md').match(new RegExp(`[^\\n]*<!-- role:${id} -->`)) || [''])[0];
   ok('D1. rule role:testerred: counted per task across runs, a relaunch passes the counts in prior', /prior/.test(rule('testerred')) && /testerReds/.test(rule('testerred')) && /earlier run/.test(rule('testerred')), rule('testerred'));
@@ -185,6 +251,11 @@ const refused = (x, re) => x.r.status === 'stopped' && x.r.why === 'precondition
   const rd = read('README.md');
   ok('D4. README: Changes in 0.4.17 names prior', /## Changes in 0\.4\.17[\s\S]*?`prior`[\s\S]*?## Changes in 0\.4\.16/.test(rd), '');
   ok('D4. version 0.4.17 in package.json and plugin.json', /"version": "0\.4\.17"/.test(read('package.json')) && /"version": "0\.4\.17"/.test(read('.claude-plugin/plugin.json')), '');
+  ok('D5. rule role:testerred and both skills: copy the counts of the run results (counts), the field rejections',
+    /`counts`/.test(rule('testerred')) && /rejections/.test(rule('testerred')) && /`counts`/.test(rc) && /rejections/.test(rc) && /`counts`/.test(co), rule('testerred'));
+  ok('D5. README Changes in 0.4.17 names counts and rejections', /## Changes in 0\.4\.17[\s\S]*?`counts`[\s\S]*?rejections[\s\S]*?## Changes in 0\.4\.16/.test(rd), '');
+  ok('D6. rule role:mechanism and RULE_LIST: the pass is per task, not "inside the run" / "in the run"',
+    !/inside the run|in the run\b/.test(rule('mechanism')) && !/pass inside the run|mechanism` in the run|in the run\b/.test((pOf(x, 'prog').match(/Mechanism: for a task[^\n]*/) || [''])[0]), rule('mechanism'));
   ok('D4. meta.whenToUse lists prior?', /prior\?/.test((SRC.match(/whenToUse: '([^\n]*)'/) || ['', ''])[1]), '');
   done();
 })();
