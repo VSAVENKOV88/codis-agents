@@ -20,6 +20,16 @@
 //        of the second rejection) name the section of a pass made in round 1;
 //   T12. light mode: a pass in round r (after a rejection) - the round rm names round r; round 1 did not;
 //   T13. the reviewer after a pass reads analyst.md, where the section lives (the consumer reached by its own reading).
+//   (round after the second-rejection analyst: st.mechSection, the author of the section)
+//   T14. a pass after a later analyst replaced the mechanism (second rejection, second red tester round): the pass prompt
+//        names the current author and says its section replaces it; the rounds after the pass name the pass;
+//   T15. the first programmer round after a later analyst that answered "mechanism" (A1, T1, the train round) names the
+//        section and its author in its prompt (mechLine), not only the rework;
+//   T16. a pass in round 1, then the second red tester round / second red train answers "mechanism": the later rounds
+//        name the replacement, not the pass (C7 for the other two sources);
+//   T17. light mode: the second red train answers "mechanism" -> the programmer-checker rounds after it (t-n and the
+//        round after a seam) name the section and the analyst of the second red train;
+//   T18. an answer "cells" after a pass keeps the pass as the author for the second red tester round and the train.
 // usage: node tests/p-mechanism-tester.test.js
 const fs = require('fs');
 const path = require('path');
@@ -176,5 +186,49 @@ const SEL_RED = { done: true, rc: 1, seconds: 1, log: '/d/wait.log', tail: '1 ne
   x = await run({ pre: [PRE], prog: [MECH, PROG], analyst: [AN], test: [GREEN], review: [D] });
   ok('T13. the reviewer after a pass reads analyst.md (the section "Mechanism" is in it)',
     x.r.status === 'done' && /Read BRIEF\.md, analyst\.md/.test(pOf(x, 'review')), pOf(x, 'review').slice(0, 300));
+  // ---- round after the second-rejection analyst: the author of the section (st.mechSection) ----
+  const AM = Object.assign({}, AN, { mechanismOrCells: 'mechanism' }), AC = Object.assign({}, AN, { mechanismOrCells: 'cells' });
+  const P4 = Object.assign({}, PROG, { head: 'P4' });
+  const byLate = (s, who) => new RegExp('section "Mechanism" of /d/analyst\\.md[^\\n]*written last by the analyst of the second ' + who).test(s);
+  const byPass = (s, r) => new RegExp('section "Mechanism" of /d/analyst\\.md[^\\n]*written last by the analyst\'s pass after the status mechanism of round ' + r + ';').test(s);
+  const labels = (x) => ofRole(x, 'prog').map((p) => p.label).join(',');
+  // T14
+  x = await run({ pre: [PRE], prog: [PROG, P2, MECH, P3], analyst: [AM, AN], test: [GREEN, GREEN, GREEN], review: [REJ, REJ, D] });
+  let ps = reasonOf(pOf(x, 'analyst', 1));
+  ok('T14. W3 "mechanism" -> pass in A1: the pass names the current author (second review rejection) and replaces it',
+    x.r.status === 'done' && /The mechanism now: section "Mechanism" of \/d\/analyst\.md \(written last by the analyst of the second review rejection/.test(ps) && /your section replaces it and names it/.test(ps), ps);
+  ok('T14. ... the tester after the pass names the pass of round A1, not the rejection analyst',
+    byPass(pOf(x, 'test', 2), 'A1') && !byLate(pOf(x, 'test', 2), 'review rejection'), pOf(x, 'test', 2).slice(0, 600));
+  x = await run({ pre: [PRE], prog: [PROG, P2, MECH, P3], analyst: [AM, AN], test: [RED('r1'), RED('r2'), GREEN], review: [D] });
+  ps = reasonOf(pOf(x, 'analyst', 1));
+  ok('T14. W4 "mechanism" -> pass in T1: the pass names the second-red analyst and replaces it; tester T1 names the pass of T1',
+    x.r.status === 'done' && x.trace === 'pre>prog>test>prog>test>analyst>prog>analyst>prog>test>review'
+      && /written last by the analyst of the second red tester round/.test(ps) && /your section replaces it and names it/.test(ps) && byPass(pOf(x, 'test', 2), 'T1'), x.trace + ' ' + ps);
+  x = await run({ pre: [PRE], prog: [MECH, PROG], analyst: [AN], test: [GREEN], review: [D] });
+  ok('T14. control: a pass with no earlier author does not say "replaces it"', !/replaces it/.test(reasonOf(pOf(x, 'analyst'))) && !/The mechanism now/.test(reasonOf(pOf(x, 'analyst'))), reasonOf(pOf(x, 'analyst')));
+  // T15
+  x = await run({ pre: [PRE], prog: [PROG, P2, P3], test: [GREEN, GREEN, GREEN], analyst: [AM], review: [REJ, REJ, D] });
+  ok('T15. round A1 after W3 "mechanism" names the section and the rejection analyst', /#A1$/.test(ofRole(x, 'prog')[2].label) && byLate(pOf(x, 'prog', 2), 'review rejection'), labels(x) + ' ' + pOf(x, 'prog', 2).slice(0, 600));
+  x = await run({ pre: [PRE], prog: [PROG, P2, P3], test: [RED('r1'), RED('r2'), GREEN], analyst: [AM], review: [D] });
+  ok('T15. round T1 after W4 "mechanism" names the section and the second-red analyst', /#T1$/.test(ofRole(x, 'prog')[2].label) && byLate(pOf(x, 'prog', 2), 'red tester round'), labels(x) + ' ' + pOf(x, 'prog', 2).slice(0, 600));
+  x = await run({ pre: [PRE], prog: [PROG, P2, P3], test: [GREEN], review: [D, D, D], analyst: [AM], train: [ride(11), ride(11), ride(0)] }, TB, ONE);
+  ok('T15. the train round after W5 "mechanism" names the section and the red-train analyst', x.r.status === 'done' && byLate(pOf(x, 'prog', 2), 'red train'), x.full + ' ' + pOf(x, 'prog', 2).slice(0, 600));
+  // T16
+  x = await run({ pre: [PRE], prog: [MECH, PROG, P2, P3, P4], analyst: [AN, AM], test: [RED('r1'), RED('r2'), GREEN, GREEN], review: [REJ, D] });
+  ok('T16. pass in 1 -> W4 "mechanism": tester T1 and round Tr name the replacement, not the pass',
+    x.r.status === 'done' && byLate(pOf(x, 'test', 2), 'red tester round') && !byPass(pOf(x, 'test', 2), '1') && byLate(pOf(x, 'prog', 4), 'red tester round') && !byPass(pOf(x, 'prog', 4), '1'), x.trace + ' ' + labels(x));
+  x = await run({ pre: [PRE], prog: [MECH, PROG, P2, P3, P4], analyst: [AN, AM], test: [GREEN], review: [D, D, D, D], train: [ride(11), ride(11), ride(12), ride(0)] }, TB, ONE);
+  ok('T16. pass in 1 -> W5 "mechanism": the round after the seam names the replacement, not the pass',
+    x.r.status === 'done' && byLate(pOf(x, 'prog', 4), 'red train') && !byPass(pOf(x, 'prog', 4), '1'), x.full + ' ' + labels(x));
+  // T17
+  const TL = Object.assign({}, TB, { mode: 'light' });
+  x = await run({ pre: [PRE], prog: [PROG, P2, P3, P4], review: [D, D, D, D], analyst: [AM], train: [ride(11), ride(11), ride(12), ride(0)] }, TL, ONE);
+  ok('T17. light mode: W5 "mechanism" -> the programmer-checker rounds after it (t-n, after a seam) name the red-train analyst',
+    x.r.status === 'done' && /PROGRAMMER-CHECKER/.test(pOf(x, 'prog', 2)) && byLate(pOf(x, 'prog', 2), 'red train') && byLate(pOf(x, 'prog', 3), 'red train') && !byLate(pOf(x, 'prog', 1), 'red train'), x.full + ' ' + labels(x));
+  // T18
+  x = await run({ pre: [PRE], prog: [MECH, PROG, P2, P3], analyst: [AN, AC], test: [RED('r1'), RED('r2'), GREEN], review: [D] });
+  ok('T18. pass in 1 -> W4 "cells": tester T1 still names the pass of round 1', x.r.status === 'done' && byPass(pOf(x, 'test', 2), '1') && !/written last by the analyst of the second/.test(pOf(x, 'test', 2)), pOf(x, 'test', 2).slice(0, 600));
+  x = await run({ pre: [PRE], prog: [MECH, PROG, P2, P3], analyst: [AN, AC], test: [GREEN], review: [D, D, D], train: [ride(11), ride(11), ride(0)] }, TB, ONE);
+  ok('T18. pass in 1 -> W5 "cells": the train round after it still names the pass of round 1', x.r.status === 'done' && byPass(pOf(x, 'prog', 3), '1') && !/written last by the analyst of the second/.test(pOf(x, 'prog', 3)), x.full + ' ' + labels(x));
   done();
 })();
