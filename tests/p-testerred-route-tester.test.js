@@ -3,6 +3,8 @@
 // Tester of p-testerred-route: cells of the seed (task field prior) that the programmer's test does not reach - a seeded
 // analyst of every kind against every consumer (short tester round after a train, second rejection, light-mode train),
 // a seeded pass "Mechanism" against a fix round of the programmer, a seeded red against the analyst's own round.
+// Round after review 1 (X11-X16): the result's counts as the next run's prior over a chain of runs - after the analyst of
+// a red, of a red train, after a second pass Mechanism, light -> full relaunch, useCasesFirst, a seeded green run.
 // The harness is the one of tests/p-testerred-route.test.js.
 // Task p-testerred-route (run wf_68338028-44b of cvm-wheel-c, 2026-11-01): the task was relaunched with `start` after a
 // red tester round of an earlier run; its first red tester round in the new run was the second red of the task, yet the
@@ -117,5 +119,50 @@ const refused = (x, re) => x.r.status === 'stopped' && x.r.why === 'precondition
   // X10. a wrong prior stops before the precondition agent even with a valid rest, and names the task's field
   x = await run({}, withP({ testerReds: 1, analyst: 'tester-red', mechanism: true, trainReds: 'x' }));
   ok('X10. one wrong key among valid ones -> preconditions before any agent', refused(x, /prior\.trainReds/), J(x));
+
+  // ---- round after review 1: the result's counts as the next run's prior (a chain of runs), cells the C-test does not reach ----
+  // idem: a result's counts passed as prior to a run stopped by the preconditions agent come back unchanged (the copy is
+  // accepted by priorOf and seeds every counter).
+  const idem = async (c, extra) => {
+    const y = await run({ pre: [{ ok: false, problems: ['p'], blockingQuestions: [] }] }, withP(c, T, extra));
+    return y.r.status === 'stopped' && y.trace === 'pre' && JSON.stringify(y.r.counts) === JSON.stringify(c);
+  };
+  // X11. run 1: red, red -> analyst -> red -> stop; run 2 with its counts: the first red stops (no second analyst)
+  const a11 = await run({ pre: [PRE], prog: [PROG, P2, P3], test: [RED('a'), RED('b'), RED('c')], analyst: [AN] });
+  ok('X11. run 1: red, red, analyst, red -> stopped, counts testerReds 3 and analyst tester-red',
+    a11.r.status === 'stopped' && a11.r.why === 'tester red after analyst' && a11.r.counts && a11.r.counts.testerReds === 3 && a11.r.counts.analyst === 'tester-red', J(a11));
+  x = await run({ pre: [PRE], prog: [PROG], test: [RED('d')] }, withP(a11.r.counts));
+  ok('X11. run 2 with its counts: the first red -> stopped "tester red after analyst", no analyst',
+    x.r.status === 'stopped' && x.r.why === 'tester red after analyst' && x.trace === 'pre>prog>test', J(x));
+  ok('X11. the counts of run 1 are a valid prior that comes back unchanged', await idem(a11.r.counts), JSON.stringify(a11.r.counts));
+  // X12. run 1 (train): seed trainReds 1, red train -> analyst -> red train -> stop; run 2 with its counts: the first red train stops
+  const a12 = await run({ pre: [PRE], prog: [PROG, P2], test: [GREEN], review: [D, D], analyst: [AN], train: [ride(11), ride(11)] }, withP({ trainReds: 1 }, TB), ONE);
+  ok('X12. run 1: red train -> analyst -> red train -> stopped, counts analyst train-red',
+    a12.r.status === 'stopped' && /^train red after analyst/.test(a12.r.why) && a12.r.counts && a12.r.counts.analyst === 'train-red', J(a12));
+  x = await run({ pre: [PRE], prog: [PROG], test: [GREEN], review: [D], train: [ride(11)] }, withP(a12.r.counts, TB), ONE);
+  ok('X12. run 2 with its counts: the first red train -> stopped "train red after analyst", no analyst',
+    x.r.status === 'stopped' && /^train red after analyst/.test(x.r.why) && x.trace === 'pre>prog>test>review', J(x));
+  // X13. run 1: status mechanism, pass, status mechanism again -> stop; its counts carry mechanism and come back unchanged
+  const a13 = await run({ pre: [PRE], prog: [MECH, MECH], analyst: [AN] });
+  ok('X13. run 1: mechanism, pass, mechanism again -> stopped, counts mechanism true',
+    a13.r.status === 'stopped' && /status mechanism again/.test(a13.r.why) && a13.r.counts && a13.r.counts.mechanism === true, J(a13));
+  ok('X13. its counts are a valid prior that comes back unchanged', await idem(a13.r.counts), JSON.stringify(a13.r.counts));
+  // X14. light: rejection, rejection -> "relaunch in the full mode"; the full relaunch with its counts: the first rejection -> analyst
+  const a14 = await run({ pre: [PRE], prog: [PROG, P2], review: [REJ, REJ] }, Object.assign({}, T, { mode: 'light' }));
+  ok('X14. light run 1: two rejections -> stopped for a full relaunch, counts rejections 2, testerReds 0',
+    a14.r.status === 'stopped' && /light mode/.test(a14.r.why) && a14.r.counts && a14.r.counts.rejections === 2 && a14.r.counts.testerReds === 0, J(a14));
+  x = await run({ pre: [PRE], prog: [PROG, P2], test: [GREEN, GREEN], analyst: [AN], review: [REJ, D] }, withP(a14.r.counts));
+  ok('X14. full relaunch with the light counts: the first rejection for code -> analyst',
+    x.r.status === 'done' && x.trace === 'pre>prog>test>review>analyst>prog>test>review', J(x));
+  ok('X14. the light counts come back unchanged in the light mode too', await idem(a14.r.counts, { mode: 'light' }), JSON.stringify(a14.r.counts));
+  // X15. useCasesFirst with a seed: the use-cases-review result carries the seed as counts
+  x = await run({ usecases: [{ ready: true, questions: [], summary: 'u' }], pre: [PRE] },
+    Object.assign({}, T, { kind: 'feature', noAnalysis: undefined, analystFirst: true, useCasesFirst: true, prior: { testerReds: 1, analyst: 'tester-red' } }));
+  ok('X15. useCasesFirst with prior -> use-cases-review, counts = the seed',
+    x.r.status === 'use-cases-review' && JSON.stringify(x.r.counts) === JSON.stringify({ testerReds: 1, trainReds: 0, rejections: 0, analyst: 'tester-red' }), J(x));
+  // X16. a done run with a seed carries the seed plus this run (green route, nothing new): counts = the seed
+  x = await run({ pre: [PRE], prog: [PROG], test: [GREEN], review: [D] }, withP({ testerReds: 1, trainReds: 1, rejections: 1, analyst: 'rejection', mechanism: true }));
+  ok('X16. seeded green run: counts = the whole seed', x.r.status === 'done' &&
+    JSON.stringify(x.r.counts) === JSON.stringify({ testerReds: 1, trainReds: 1, rejections: 1, analyst: 'rejection', mechanism: true }), J(x));
   done();
 })();
