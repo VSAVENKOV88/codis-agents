@@ -137,6 +137,10 @@ const MOC = /^First answer "mechanism or cells\?"/;
     sel: [{ done: true, rc: 1, seconds: 1, log: '/d/wait.log', tail: '1 new red' }] }, TB, ONE);
   ok('M2. mechanism in the round after a red selection -> analyst -> that round again -> the selection on its HEAD',
     x.r.status === 'done' && x.full.startsWith('pre>prog>run:x:select-1>prog>analyst>prog>run:x:select-1f>test'), x.full + ' ' + JSON.stringify(x.r));
+  x = await run({ pre: [PRE], prog: [MECH, PROG, MECH], analyst: [AN], test: [GREEN],
+    sel: [{ done: true, rc: 1, seconds: 1, log: '/d/wait.log', tail: '1 new red' }] }, TB, ONE);
+  ok('M2. a second mechanism in the round after a red selection -> stopped for the coordinator, no tester',
+    x.r.status === 'stopped' && x.trace === 'pre>prog>analyst>prog>prog' && /status mechanism again/.test(x.r.why) && /coordinator/.test(x.r.why), x.trace + ' ' + JSON.stringify(x.r));
   x = await run({ pre: [PRE], prog: [MECH, PROG], analyst: [AN], review: [D] }, Object.assign({}, T, { mode: 'light' }));
   ok('M2. light mode: mechanism -> analyst -> programmer-checker -> review', x.r.status === 'done' && x.trace === 'pre>prog>analyst>prog>review', x.trace + ' ' + JSON.stringify(x.r));
   ok('M2. light mode: the programmer-checker prompt names status=mechanism', /status=mechanism/.test(own(pOf(x, 'prog'))), own(pOf(x, 'prog')));
