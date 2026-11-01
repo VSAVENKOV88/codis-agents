@@ -129,7 +129,7 @@ const refused = (x, re) => x.r.status === 'stopped' && x.r.why === 'precondition
   ok('T7. no seed: red, red -> analyst on the second (R1 unchanged)', x.r.status === 'done' && x.trace === 'pre>prog>test>prog>test>analyst>prog>test>review', J(x));
   x = await run({ pre: [PRE], prog: [PROG], test: [RED('r5')] }, withP({ analyst: 'tester-red' }));
   ok('T8. seeded analyst tester-red, first red -> stopped "tester red after analyst", no analyst, no programmer',
-    x.r.status === 'stopped' && /^tester red after analyst/.test(x.r.why) && x.trace === 'pre>prog>test' && x.r.test === 'r5', J(x));
+    x.r.status === 'stopped' && x.r.why === 'tester red after analyst' && x.trace === 'pre>prog>test' && x.r.test === 'r5', J(x));
   x = await run({ pre: [PRE], prog: [PROG], test: [GREEN], review: [D] }, withP({ analyst: 'tester-red', testerReds: 3 }));
   ok('T9. seeded analyst and reds, green -> done', x.r.status === 'done' && x.trace === 'pre>prog>test>review', J(x));
   x = await run({ pre: [PRE], prog: [PROG, P2, P3], test: [RED(), RED(), GREEN], review: [D] }, withP({ analyst: 'rejection' }));
