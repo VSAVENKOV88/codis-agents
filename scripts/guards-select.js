@@ -2,7 +2,8 @@
 'use strict';
 // The guards of a task's diff, run instead of the full suite (rules/multi-agent.md, "No full guard run in the task"): with
 // guardSubsetCommand the workflow runs this selection (guards-all.sh --select, through --only-args) after every
-// programmer round with a new HEAD, and the tester after its own commits; the full run of a branch is not in the task.
+// programmer round with a new HEAD (--base: the task's base), and the tester after its own commits over its own diff
+// (--base: the programmer's HEAD of its round); the full run of a branch is not in the task.
 // A guard is selected when
 //   - it is itself changed (new, edited, untracked);
 //   - it imports a changed file (a relative require/import whose target, with or without an extension or /index, is a
