@@ -497,7 +497,8 @@ while it waits in the queue, its ticket is dropped and it rejoins the queue at t
   heavy job, re-evaluated during the run for runners that read `{limitFile}`;
 - the train goes first in that budget too (p-runner-share): a run with `--priority` never shares its workers with a
   full run without it. A selection that comes while the train runs waits outside the slot (first in the queue) or
-  takes what the train leaves of `slots.jobsAlone`; a selection already running re-evaluates down to 1 worker (its
+  takes what a train with a fixed worker count leaves of `slots.jobsAlone` (an adaptive train claims all of it, whatever
+  share it started at); a selection already running re-evaluates down to 1 worker (its
   running guards finish, nothing is stopped) and the train takes the rest, then all of it when the selection ends.
   Two trains, or two runs without the priority, share as before; a single `heavy.sh` job counts as before. The
   workers line of the log ends with `(--priority: the train; ...)`. On the runner the budget is the runner's own

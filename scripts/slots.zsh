@@ -558,9 +558,10 @@ slot_is_exclusive_guard() {
 # Priority (p-runner-share; guards-all.sh --priority - the full run of a train and its attribution, here and on the
 # remote runner): the train goes first in the worker budget too, not only in the queue. A full run with the priority
 # marks its share "fixed N priority" / "adaptive priority". Between a run with the priority and one without it:
-#   * the run without it yields: the priority neighbour's claim is subtracted from its budget whole - max(limit,
-#     running) of an adaptive one, ALONE while that one has no limit yet (it waits in its slot for its first workers),
-#     N of a fixed one - and the priority neighbour never counts as one it waits for in the slot (it does not shed);
+#   * the run without it yields: the priority neighbour's claim is subtracted from its budget whole - ALONE for an
+#     adaptive one, whatever its limit or running guards now (it grows to the whole budget at its next re-evaluation;
+#     subtracting only max(limit, running) froze a train that started next to a selection at that share), N of a
+#     fixed one - and the priority neighbour never counts as one it waits for in the slot (it does not shed);
 #     it neither halves its share. So a selection that comes while the train runs waits outside the slot, first in the
 #     queue, or takes what is left; a running one re-evaluates down to 1 (an adaptive runner reads 0 as no limit);
 #   * the run with the priority counts a neighbour without it only by what it cannot give back at once: its running
@@ -574,7 +575,7 @@ slot_is_exclusive_guard() {
 #   the first five count the neighbours I share with (as before); held - workers of neighbours of the other priority
 #   (see above), subtracted from my budget only
 _slot_heavy_scan() {
-  local me=$1 mp=${2:+1} i f others=0 full=0 fx=0 ad=0 adnow=0 held=0 j a l n np hl
+  local me=$1 mp=${2:+1} i f others=0 full=0 fx=0 ad=0 adnow=0 held=0 j a l n np
   for i in {1..$_SLOT_HEAVY_MAX}; do
     f=$SLOTS_DIR/heavy.$i.lock; [[ $f == $me ]] && continue
     _slot_busy $f || continue
@@ -584,14 +585,11 @@ _slot_heavy_scan() {
       if [[ $np != $mp ]]; then
         # a full run of the other priority: never shared with, only subtracted
         if [[ $j[1] == fixed ]]; then n=${j[2]}; [[ $n == <-> ]] || n=$GUARDS_JOBS_ALONE; (( held += n ))
-        else
-          a=0 hl=
+        elif [[ -n $mp ]]; then
+          a=0
           [[ -s $f.limit.active ]] && a=$(<$f.limit.active); [[ $a == <-> ]] || a=$GUARDS_JOBS_ALONE
-          if [[ -n $mp ]]; then (( held += a, ad++ ))          # it yields: what runs now; it sheds, I wait for it in the slot
-          else
-            [[ -s $f.limit ]] && hl=$(<$f.limit); [[ $hl == <-> ]] || hl=$GUARDS_JOBS_ALONE   # no limit yet: it claims the whole budget
-            (( held += (a > hl ? a : hl) ))
-          fi
+          (( held += a, ad++ ))                                  # it yields: what runs now; it sheds, I wait for it in the slot
+        else (( held += GUARDS_JOBS_ALONE ))                     # an adaptive train grows to the whole budget: I yield all of it
         fi
         continue
       fi
