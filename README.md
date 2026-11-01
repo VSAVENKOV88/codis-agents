@@ -382,9 +382,9 @@ review findings.
   rejection or a second red train first answers "mechanism or cells?" (`mechanismOrCells`) and may replace the
   mechanism (a new section that names the one it replaces); an answer "cells" keeps every section "Mechanism" and adds
   the matrix to the earlier sections, and the pass keeps the other sections. The run records who wrote the section
-  last (the pass of round N, or the analyst of the second rejection, red tester round or red train that answered
+  last (the analyst before the first programmer when it wrote one - `mechanismSection` in its answer -, the pass of round N, or the analyst of the second rejection, red tester round or red train that answered
   "mechanism"): every later programmer, programmer-checker, tester and analyst prompt names it. The limit of one pass is
-  per run: a relaunch with `start` begins a new count, and the coordinator says in `start` if a pass was made. The reviewer writes one line "Mechanism:" - a simpler mechanism
+  per run: a relaunch with `start` begins a new count, and the coordinator says in `start` if a pass was made (rules, coordinator and role-chain skills). The reviewer writes one line "Mechanism:" - a simpler mechanism
   without timings, or "no".
 - **Programmer** commits a red guard, then the code, then mutation-tests the guards after the commit and runs the full
   guard suite in a heavy slot - or, with `guardSubsetCommand` in the config, the programmer runs only its new guards and

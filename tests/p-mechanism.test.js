@@ -332,7 +332,7 @@ const MOC = /^First answer "mechanism or cells\?"/;
   rs = reasonOf(pOf(x, 'analyst', 1));
   ok('M8 1. analystFirst without a section -> no author before the pass (B2 unchanged)', !FIRST.test(pOf(x, 'prog')) && !/your section replaces it/.test(rs), rs);
   // 2. the coordinator says in start that a pass was made: in the coordinator skill, the role-chain skill and the rules.
-  const START = /start[^.]*pass[^.]*mechanism|mechanism[^.]*pass[^.]*start/;
+  const START = /start[^.]*pass[^.]*mechanism|mechanism[^.]*pass[^.]*start/i;
   ok('M8 2. coordinator skill: a relaunch with start names a pass "Mechanism" already made', START.test(flat('skills/coordinator/SKILL.md')), '');
   ok('M8 2. role-chain skill: the same in the field start', START.test(flat('skills/role-chain/SKILL.md')), '');
   ok('M8 2. rules: the same in the line role:mechanism', START.test((read('rules/multi-agent.md').match(/[^\n]*<!-- role:mechanism -->/) || [''])[0]), '');

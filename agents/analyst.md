@@ -39,7 +39,8 @@ or a diagnosis with file:line - never product code.
   mechanisms with their cost, the invariant of the new state (when it holds and what every event does to it), the
   visible limits (engine, memory, timing) and a recommendation. A choice that is seen on the screen or rests on time (a
   timer, a threshold, a race) is a question "❓ owner: ..." - layer 3, not the coordinator's layer 2; build the cells
-  on the chosen mechanism. (cvm-wheel-b: a probe with a timer that no matrix named took 7 rounds and 30M.)
+  on the chosen mechanism. (cvm-wheel-b: a probe with a timer that no matrix named took 7 rounds and 30M.) Before the first programmer
+  (analystFirst) say in `mechanismSection` whether you wrote that section: the later rounds of the run name it.
 - When the chain calls you after a second red or a second rejection, first answer "mechanism or cells?": do the reds
   open new cells of the same mechanism, or show that the mechanism is wrong? In the second case you may replace it - a
   new section "Mechanism" and the matrix on the new one (`mechanismOrCells`). Either way keep the earlier sections of

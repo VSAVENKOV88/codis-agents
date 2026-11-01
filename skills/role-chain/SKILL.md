@@ -28,7 +28,7 @@ Only tasks the owner asked for in this conversation. For each task:
 | `branch` | the task branch checked out in the worktree |
 | `accept` | the acceptance scenario in the real environment, copied from the brief |
 | `gdir` | optional: argument of `guards-all.sh` (default `wt`) |
-| `start` | optional: what is new for the first programmer (e.g. "continue from prog.md") |
+| `start` | optional: what is new for the first programmer (e.g. "continue from prog.md"); the coordinator says in `start` when an earlier run already made the analyst pass after a status `mechanism` (the limit of one pass is per run) |
 | `kind` | exactly one of `"feature"` (new behaviour: it needs `useCases` or `useCasesFirst`), `"defect"` (a bug), `"tail"` (a small leftover); without it or with another value the task stops before any agent |
 | `analystFirst` | `true`: the brief needs a matrix or a diagnosis before code (default for defects) - the analyst runs first |
 | `analysis` | absolute path of an existing analyst or diagnosis report of this task (an earlier analyst that proposed the split, a diagnoser run outside the chain - put its report into the task folder); it must lie in the task folder or in the folder of its `feature`, never be the arc specification; the preconditions check it exists, is non-empty and is a matrix or diagnosis of this task; the programmer gets it by name |

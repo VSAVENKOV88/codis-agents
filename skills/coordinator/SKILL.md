@@ -71,6 +71,8 @@ one. For whatever the owner judges by the screen, show a mockup of all states be
   with sizes and symbolic links that lead into it, from `scripts/wt-remove-check.js`. A clean `git status` does not show
   ignored files.
 - Do not resume a multi-task run with `resumeFromRunId`; relaunch each unfinished task alone with `start`.
+  The limit of one analyst pass after a status `mechanism` is per run: when an earlier run already made that pass,
+  say so in `start` (the section "Mechanism" of `analyst.md` and its round).
 - A change to process launch, permissions, Docker or the runtime version is accepted only after a smoke run in the real
   image.
 - An edit of the project config's guard commands (`guardSubsetCommand`, `guardRerun`, `remoteRun`) is committed or used

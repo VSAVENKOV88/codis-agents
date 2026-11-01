@@ -159,6 +159,7 @@ const ANALYST_SCHEMA = { type: 'object', properties: {
   cells: { type: 'number' }, subsystems: { type: 'number' },
   split: { type: 'array', items: { type: 'string' }, description: 'if the task must be split (rules: "Split the task") - the proposed subtasks' },
   questions: { type: 'array', items: { type: 'string' } },
+  mechanismSection: { type: 'boolean', description: 'only the analyst before the first programmer (analystFirst): true when you wrote a section "Mechanism" into analyst.md in this answer' },
   mechanismOrCells: { type: 'string', enum: ['mechanism', 'cells'], description: 'only when the prompt asks "mechanism or cells?" (a second red or a second rejection): mechanism - the reds show the mechanism is wrong and analyst.md replaces it (a new section "Mechanism"); cells - new cells of the same mechanism' },
   summary: { type: 'string' },
 }, required: ['ready', 'cells', 'subsystems', 'split', 'questions', 'summary'] }
@@ -756,8 +757,11 @@ async function work(t, st) {
       why: `use cases written: review the use cases with the owner (their open questions as one list), then relaunch the task with the useCases field set to this file and analystFirst - the matrix of cases is built on them` }
   }
   if (t.an.mode === 'run') {
-    const a = await analyst(t, 'the task needs a spec or a diagnosis before code (brief: analystFirst)')
+    const a = await analyst(t, 'the task needs a spec or a diagnosis before code (brief: analystFirst). Set mechanismSection=true in your answer when you wrote a section "Mechanism" into analyst.md (the later rounds of the run name it), false otherwise.')
     if (!a) return stop(t, 'the analyst returned no result')
+    // Its section "Mechanism" makes it the author (review 3 of p-mechanism, 0.4.16): the pass after a status mechanism then
+    // names the section it replaces, and every later round and analyst names this author.
+    if (a.mechanismSection === true) st.mechSection = 'the analyst before the first programmer (analystFirst)'
     if (!a.ready || a.split.length || a.questions.length) return stop(t, 'analyst: split the task or an answer is needed', { split: a.split, questions: a.questions, analyst: a.summary })
   } else log(t.an.mode === 'reused' ? `${t.title}: analyst reused - ${t.an.path}` : `${t.title}: no analyst - ${t.an.reason}`)
 
