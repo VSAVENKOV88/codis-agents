@@ -581,6 +581,23 @@ holds no memory slot: its memory is its own fixed ceiling.
 An invalid project config is a refusal for every slot and stand script (exit 78 with the errors), never a silent
 fallback to another slot directory: a second directory would be a second queue that the first one does not see.
 
+## Changes in 0.4.14
+
+- **The tester selects only its own diff** (p-tester-select). With `guardSubsetCommand` the tester, after its own
+  commits, runs `guards-all.sh --select <the programmer's HEAD of its round>`: its guards, the guards that import or
+  name a fixture it changed, and `guardAlways`; no commit of the tester - no selection of its own. The workflow's
+  selection from the task's `base` after every programmer round, the train and the light mode are unchanged
+  (measured 2026-11-01: the tester's repeat of the whole selection took a median of 17.9 min of a task's path).
+- **A docs-only merge after a train conflict skips the selection** (p-merge-docs). New project key `mergeOnlyFiles`
+  (globs of docs files, default `[]`: off) and `scripts/merge-only.js`: a fix round after a train `conflict` that is
+  one merge of the arc, with every conflicted or hand-edited file matching those globs, goes straight to the second
+  review and the train. A file that also matches `guardFiles` is a guard, not docs, and keeps the selection
+  (`merge-only.js --guards`, passed by the workflow; a tail of the review of p-merge-docs).
+- **The train goes first in the worker budget and on the remote runner** (p-runner-share). A run with `--priority`
+  never shares its workers with a full run without it: a selection that comes waits or takes what a fixed-worker train
+  leaves, a running selection drops to one worker while its guards finish; the flag travels with a remote run
+  (`guards-remote.js --priority`), so the runner's own run is first in the runner's queue and budget.
+
 ## Known gaps
 
 - The session hook reads the command line as written: wrappers and indirection (`bash -c 'git push ...'`,
