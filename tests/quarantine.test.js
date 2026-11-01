@@ -233,7 +233,8 @@ async function main() {
     /<sharedDir>\/guards-quarantine\.json|guards-quarantine\.json/.test(rules.split('\n').find((l) => /role:rerun/.test(l)) || '') && /quarantine-take/.test(rules));
   ok('F2 README: guardBaseline row names the quarantine', /\| `guardBaseline` \|[^\n]*quarantine/.test(readme));
   ok('F2 README: guards-all.sh row names --no-quarantine', /guards-all\.sh[^\n]*--no-quarantine/.test(readme));
-  ok('F2 RULE_LIST rerun names the quarantine', /\['rerun', [^\n]*quarantine/.test(wf));
+  // the rerun entry may span lines (a branch on innerSelect, p-train-only): match inside the entry, up to the next one
+  ok('F2 RULE_LIST rerun names the quarantine', /\['rerun',(?:(?!\n  \[')[\s\S])*quarantine/.test(wf));
   ok('F2 the head of guards-result.js describes the quarantine', /quarantine-take/.test(read('scripts/guards-result.js').split('\nconst ')[0]));
   ok('F2 the head of guards-all.sh describes the quarantine', /guards-quarantine\.json/.test(read('scripts/guards-all.sh').split('\nH=')[0]));
   ok('E2 the runner calls its guards-all.sh with --no-quarantine', /'--no-quarantine'/.test(read('scripts/guards-remote-host.js')));
