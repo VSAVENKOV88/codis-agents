@@ -12,6 +12,14 @@
 #   E1 end to end with guards-all.sh: a selection runs at its share 3 next to a single heavy job (heavy.sh), the train
 #      comes and starts with 3; the single job ends - the selection must drain to 1 and the train grow to 5 (budget 6);
 #      not stay 3/3 as without the priority (the measured defect: a train held at its share while a selection runs).
+# Round 2 (the fix: a run without the priority subtracts an adaptive train as the whole budget):
+#   T4 a fixed selection (runner without {limitFile}) comes while an adaptive train runs at 3 of 6: it waits outside the
+#      slot ("0 0"), not takes 3 for its whole run (a fixed run never gives back - the train could not grow);
+#   T5 two adaptive trains at 3 each and a running selection: the selection re-evaluates to 1 (the floor), no negative
+#      or empty limit from subtracting the budget twice;
+#   E2 end to end: a train runs, a selection already runs at 1 next to it, a second selection comes: the second never
+#      starts while the train runs, the train goes 5 -> 6 when the first selection ends, the sum never exceeds 6; the
+#      second starts after the train ends.
 H=${0:A:h:h}/scripts
 zmodload zsh/datetime
 T=$(mktemp -d "${${TMPDIR:-/tmp}%/}/slots-share-t.XXXXXX")
@@ -50,7 +58,7 @@ done
 print -r -- "end $tag $EPOCHREALTIME" >> '$T'/npm.log; print -r -- "$tag 0" >> '$T'/npm.ticks
 exit 0' > $T/bin/npm
 chmod +x $T/bin/*; export PATH=$T/bin:$PATH
-for d in tr se; do mkdir -p $T/wts/$d/srv; done
+for d in tr se s2; do mkdir -p $T/wts/$d/srv; done
 
 pass=0 fail=0
 ok() { if eval "$2"; then (( pass++ )); print -r -- "  ok   $1"; else (( fail++ )); print -r -- "  FAIL $1${3:+
@@ -64,7 +72,7 @@ started() { grep -q "^start $1 " $T/npm.log 2>/dev/null }
 
 [[ -f $H/slots.zsh ]] || { print -r -- "  FAIL no $H/slots.zsh"; exit 1; }
 typeset -A STUBS
-trap 'unhold tr se; rm -f $T/single.hold; for p in ${(k)STUBS}; do pkill -P $p 2>/dev/null; kill $p 2>/dev/null; done; wait 2>/dev/null; rm -rf $T' EXIT
+trap 'unhold tr se s2; rm -f $T/single.hold; for p in ${(k)STUBS}; do pkill -P $p 2>/dev/null; kill $p 2>/dev/null; done; wait 2>/dev/null; rm -rf $T' EXIT
 
 # ---- T: slot_guard_plan with a stub neighbour (budget 6, share 3) ----
 source $H/slots.zsh
@@ -86,6 +94,14 @@ ok 'T2 a train with limit 6, 2 running so far - the running selection re-evaluat
 nb 'fixed 4 priority'
 r=$(plan adaptive start)
 ok 'T3 a fixed train with 4 (it never grows) - a selection takes the rest, 2' '[[ "$r" == "2 0" ]]' "plan: $r"
+nb 'adaptive priority' 3 3
+r=$(plan fixed start)
+ok 'T4 an adaptive train at 3 of 6 - a fixed selection waits outside the slot ("0 0", "fixed 0"), not takes 3' '[[ "$r" == "0 0" && "$(<$H1.jobs)" == "fixed 0" ]]' "plan: $r; jobs $(<$H1.jobs 2>/dev/null)"
+H3=$SLOTS_DIR/heavy.3.lock; : > $H3; stub $H3; waitlong '[[ -e $H3.held ]]'
+print -r -- 'adaptive priority' > $H3.jobs; print -r -- 3 > $H3.limit; print -r -- 3 > $H3.limit.active
+r=$(plan adaptive run)
+ok 'T5 two adaptive trains at 3 each - a running selection re-evaluates to 1, limit 1' '[[ "$r" == "1 0" && "$(<$H1.limit)" == 1 ]]' "plan: $r; limit $(<$H1.limit 2>/dev/null)"
+rm -f $H3.jobs $H3.limit $H3.limit.active
 rm -f $H2.jobs $H2.limit $H2.limit.active
 for p in ${(k)STUBS}; do pkill -P $p 2>/dev/null; kill $p 2>/dev/null; done; wait 2>/dev/null; STUBS=()
 rm -f $SLOTS_DIR/heavy.*.lock.*(N)
@@ -112,6 +128,33 @@ unhold se tr; wait $E1S $E1T
 # the sum of the last limits of both at every tick never exceeds 6 (the single job is not a full run: it holds no workers)
 over=$(awk '{v[$1]=$2; s=0; for (k in v) s+=v[k]; if (s>6) print NR": "$0" sum "s}' $T/npm.ticks | head -3)
 ok 'E1 the selection and the train never ran more than 6 together' '[[ -z $over ]]' "$over"
+
+
+# ---- E2: a train runs, a selection runs at 1 next to it, a second selection comes ----
+waitlong allfree
+: > $T/npm.log; : > $T/npm.ticks; rm -f $T/npm.*.trace(N)
+hold se
+$H/guards-all.sh se > $T/e2s.out 2>&1 & E2S=$!
+waitlong '[[ $(last se) == 6 ]]'
+hold tr
+$H/guards-all.sh --priority tr > $T/e2t.out 2>&1 & E2T=$!
+waitlong '[[ $(last se) == 1 && $(last tr) == 5 ]]' 150
+ok 'E2 setup: the first selection drained to 1, the train at 5' '[[ $(last se) == 1 && $(last tr) == 5 ]]' "se: $(trace se) | tr: $(trace tr)"
+hold s2
+$H/guards-all.sh s2 > $T/e2b.out 2>&1 & E2B=$!
+sleep 3
+ok 'E2 the second selection does not start while the train runs (first selection at 1)' '! started s2' "$(cat $T/e2b.out) | s2: $(trace s2)"
+unhold se; wait $E2S
+waitlong '[[ $(last tr) == 6 ]]' 100
+ok 'E2 the first selection ended - the train grows to 6' '[[ $(last tr) == 6 ]]' "tr: $(trace tr)"
+sleep 2
+ok 'E2 ... and the second selection still does not start while the train runs' '! started s2' "$(cat $T/e2b.out) | s2: $(trace s2)"
+unhold tr; wait $E2T
+waitlong 'started s2' 300
+ok 'E2 the second selection starts after the train ends' 'started s2' "$(cat $T/e2b.out)"
+unhold s2; wait $E2B
+over=$(awk '{v[$1]=$2; s=0; for (k in v) s+=v[k]; if (s>6) print NR": "$0" sum "s}' $T/npm.ticks | head -3)
+ok 'E2 the three runs never ran more than 6 together' '[[ -z $over ]]' "$over"
 
 print -r -- "TOTAL: $pass ok, $fail fail"
 (( fail == 0 ))
