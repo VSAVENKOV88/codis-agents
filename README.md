@@ -245,6 +245,7 @@ smoke"); to try an edited copy first, point `CODIS_AGENTS_CONFIG` at it.
 | `guardFiles` | globs of the project's guard files for `scripts/guards-select.js` (default `*-run.js`, `*-run.mjs`, `*-run.cjs` at any depth) |
 | `guardAlways` | guards always in the selection: a guard whose path contains an entry (scanners of the diff such as secrets or semgrep) |
 | `guardSubsetCommand` | runs the selected guards (zsh; `{wt}`, `{onlyArgs}` = `--only <guard>` per guard, and `{jobs}` and `{limitFile}` as `guardCommand` has them). Contract: it narrows `guardCommand` to the selected guards of the same suite, so a full run includes every guard it selects. Without both `{jobs}` and `{limitFile}` the selection is a runner that sets its own workers: counted as the whole budget `slots.jobsAlone`, it waits for every other heavy job, so selections (and a selection next to the train's full run) go one at a time; `config.js check` and `guards-all.sh --select` print a note then. With `{jobs}` and `{limitFile}` two selections, or a selection and a full run, share the budget (`slots.jobsShared` each, together at most `slots.jobsAlone`). When set: no full guard run in the task - after every programmer round with a new HEAD the workflow runs the selection of the task's diff (`guards-all.sh --select <base>`, its own log, the quarantine read only), so the programmer runs only its new guards and mutations; the tester, after its own commits, runs the selection of its own diff from the programmer's HEAD (`guards-all.sh --select <the programmer's HEAD>`), none without a commit; every task needs `base`; a reviewed task rides the integration train (`scripts/train.js ride`), whose one full run replaces the one of the task. Without it the programmer runs the full run itself |
+| `innerSelect` | with `guardSubsetCommand`: `false` - no selection inside the task (p-train-only): no selection after any programmer round and none of the tester; the programmer and the tester run only their new or changed guards and mutations, and the integration train is the first run of all guards; a red train fixed in the product (a file outside docs and `testerWritable`) gets a short tester round - the acceptance of the cells the fix touches and the tester's guards over them - before the second review, a fix of guards or docs only goes straight to it. Default `true`: the selection after every programmer round, as above |
 | `mergeOnlyFiles` | globs of the project's docs files (a glob without `/` matches the file name at any depth; `*` and `?` stay within a segment, `**` crosses them), e.g. `["*.md", "docs/**"]`. With `guardSubsetCommand`: a fix round after a train `conflict` whose commit is only the merge of the arc, with every file resolved or edited by hand matching these globs (`scripts/merge-only.js`), skips the selection and goes to the second review and the train; a conflict in code or a guard keeps it (a file matching `guardFiles` too is a guard, not docs). Default `[]`: every round gets its selection |
 | `worktreeSetup` | `scan` directories whose ignored data is copied into a new worktree; `skip` and `link` globs (everything else is an APFS clone) |
 | `slots` | machine settings, read from the machine file (below); a project config may still carry `medium`, `heavy`, `total`, `lockDir`, `legacyLock`, `jobsAlone`, `jobsShared` until `config.js migrate` |
@@ -422,7 +423,8 @@ review findings.
   the earlier branch rides, the later one gets a round "seam with ..." after the partner's own result) and 13
   `conflict` (a round to merge the arc head) give a fix round on `<sharedDir>/train/result/<task>-<head>.json` - the
   programmer, the selection on the new HEAD (not after a conflict round that is only the merge of the arc with the
-  files of `mergeOnlyFiles` resolved, checked by `scripts/merge-only.js`), the second review of the diff, the train again; a round without a commit
+  files of `mergeOnlyFiles` resolved, checked by `scripts/merge-only.js`; never with `innerSelect: false`, where a fix
+  that touches the product gets a short tester round on the cells it touches instead), the second review of the diff, the train again; a round without a commit
   goes to the coordinator, the second red train sends the task to the analyst inside the run, a red after it stops
   the task; 14 `arc-red` and 15 `coordinator` stop the task for the coordinator, who fixes the arc or decides and runs
   `train.js resume`; 74 (queue unavailable), 75 (the queue halted by the environment of a train) and 124 (the step's
@@ -580,6 +582,22 @@ holds no memory slot: its memory is its own fixed ceiling.
 
 An invalid project config is a refusal for every slot and stand script (exit 78 with the errors), never a silent
 fallback to another slot directory: a second directory would be a second queue that the first one does not see.
+
+## Changes in 0.4.15
+
+- **Only the train: no selection inside the task** (p-train-only; owner 2026-11-01, translated: "1. Only the train, plus a short
+  tester round after a red train"). New project key `innerSelect` (default `true`: as before). With `false` the
+  workflow runs no selection after a programmer round and the tester none of its own; both run only their new or
+  changed guards and mutations, and the integration train is the first run of all guards. A red train fixed in the
+  product gets a short tester round (the acceptance of the cells the fix touches, the tester's guards over them) before
+  the second review; a fix of guards or docs only does not. The second red train still sends the task to the analyst,
+  counting only `red` (the task's own finding). Measured (diagnosis train-only, 80 tasks): a selection found a real
+  finding in 21 % of tasks while every task waited for it, a median of 32 min.
+- **The attribution of a red train runs a guard only where it exists** (p-train-only). A red guard that is a file of
+  the train's tree and is absent from the bare arc head (a new guard a passenger brought) is not run there and is not
+  the arc's red; it runs on "arc + X" only for the passengers whose tree holds it, so the passenger who brought it gets
+  `red`. Before, the bare arc head "accounted for 0 of N" (exit 69) and the queue halted as the environment (train
+  20261101-132215552-80147).
 
 ## Changes in 0.4.14
 

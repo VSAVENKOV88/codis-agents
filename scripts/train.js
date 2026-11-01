@@ -403,6 +403,9 @@ async function departure(P) {
 //      pair -> the seam of the three: the earliest rides, the other two get seam with it. More than three passengers,
 //      several red pairs, a guard of R flaky on a passenger or a pair (now red, now green), or one passenger green alone
 //      on the tree that was red in the train -> no automatic decision: the halt for the coordinator, nobody gets a verdict.
+// A guard of R that is a file of the train's tree runs only on the trees that hold it (p-train-only): a new guard a
+// passenger brought is absent on the bare arc head - not run there and not the arc's red -, and red on "arc + X" only
+// for the X that brought it; a tree that holds none of R gets no run (green there).
 // An attribution run that could not run R (the environment codes or a signal, a log without its tally, no repeated red
 // named for a red exit, the worktree or the commit not made) -> that passenger stays in the queue without a verdict and
 // the queue halts with the reason ("environment: ..."); the others keep the verdicts of their own results.
@@ -438,8 +441,12 @@ async function redTrain(P, t) {
       : !P.c.guardSubsetCommand ? `the attribution of ${R.join(', ')} needs guardSubsetCommand (its selection mode)` : '';
   if (why) return stop('coordinator', `red train ${id} (guards-all.sh exit ${rc}): ${why} - not attributed, the coordinator decides; ${where}`);
 
-  const names = path.join(P.TR, `${id}.guards.json`);
-  writeAtomic(names, R);
+  // A guard of R that is a file of the train's tree is run only on a tree that holds it (p-train-only; train
+  // 20261101-132215552-80147: a new guard of the passenger, absent on the bare arc head, accounted for 0 of 2 there and
+  // halted the queue as the environment). A guard absent from a tree is not red on it: absent on the bare arc head - not
+  // the arc's red; red on "arc + X" - X brought it, X's red. A name that is not a file of the train's tree is run as before.
+  const isFile = (commit, n) => git(P, P.c.repoDir, ['cat-file', '-e', `${commit}:${n}`]).rc === 0;
+  const files = new Set(R.filter((n) => isFile(base0.sha, n)));
   al.push(`attribution of train ${id}: the repeated new reds ${R.join(', ')}, each alone in the selection mode (guards-all.sh --guards)`, `arc ${base} ${arc}`);
   lines.push(`red train ${id}: the repeated new reds ${R.join(', ')}; attribution ${alog}`);
   const idEnv = identity(P);
@@ -455,6 +462,12 @@ async function redTrain(P, t) {
       if (cm.rc !== 0 || !SHA.test(cm.out)) return cannot(`git commit-tree for ${e.task}: exit ${cm.rc}: ${cm.err}`);
       cur = cm.out;
     }
+    const absent = R.filter((n) => files.has(n) && !isFile(cur, n));
+    const here = R.filter((n) => !absent.includes(n));
+    if (absent.length) { al.push(`==== ${desc}: not in its tree: ${absent.join(', ')} (not run there, not red there)`); writeA(); }
+    if (!here.length) return { state: 'ok', red: [], flaky: [], desc };
+    const names = path.join(P.TR, `${id}-${label}.guards.json`);
+    writeAtomic(names, here);
     const ref = `refs/runs/train/${id}-${label}`;
     if (ps.length && git(P, P.c.repoDir, ['update-ref', ref, cur]).rc !== 0) return cannot(`git update-ref ${ref}`);
     const name = `train-${id}-${label}`, wt = path.join(P.c.worktreeRoot, name);
@@ -462,17 +475,18 @@ async function redTrain(P, t) {
     const ws = spawnSync('zsh', [path.join(H, 'wt-setup.sh'), '--detach', name, cur], { cwd: P.c.repoDir, env: P.env, encoding: 'utf8' });
     const run = ws.status === 0 ? await runGuards(P, wt, ['--guards', names]) : null;
     const rm = removeTrainWt(P, wt);
+    fs.rmSync(names, { force: true });
     if (ps.length) git(P, P.c.repoDir, ['update-ref', '-d', ref]);
     if (!run) return cannot(`wt-setup.sh exit ${ws.status}: ${(ws.stderr || ws.stdout || '').trim()}`);
     const slog = read(path.join(P.c.sharedDir, `guards-${name}.select.txt`)) || '';
     al.push(`==== ${desc}: commit ${cur}: guards-all.sh --guards exit ${run.rc}${rm ? ` (worktree not removed: ${rm})` : ''}`, slog.trimEnd());
     writeA();
     if (bySignal(run.rc) || ENV_RC.has(run.rc)) return cannot(run.rc === null ? 'guards-all.sh exit by a signal' : `guards-all.sh exit ${run.rc}${bySignal(run.rc) ? ` by a signal (${SIGNAL_NAME[run.rc - 128]})` : ''}`);
-    const flaky = GR.flakyInLog(slog).filter((n) => R.includes(n));
+    const flaky = GR.flakyInLog(slog).filter((n) => here.includes(n));
     if (run.rc === 0) return { state: 'ok', red: [], flaky, desc };
     if (rr.tallyPattern && !GR.newReds(slog, rr).tally) return cannot(`guards-all.sh exit ${run.rc} without the tally of its log`);
-    const red = GR.repeatedInLog(slog).filter((n) => R.includes(n));
-    if (!red.length) return cannot(`guards-all.sh exit ${run.rc}, but none of ${R.join(', ')} is named red again alone`);
+    const red = GR.repeatedInLog(slog).filter((n) => here.includes(n));
+    if (!red.length) return cannot(`guards-all.sh exit ${run.rc}, but none of ${here.join(', ')} is named red again alone`);
     return { state: 'ok', red, flaky, desc };
   };
   const give = (e, res) => { al.push(`${e.task}: ${res.verdict}${res.partner ? ` with ${res.partner}` : ''} (${res.guards.join(', ')})`); writeA(); given.push(e); finish(P, e, Object.assign(res, base0, { attribution: alog })); };

@@ -39,6 +39,7 @@ const DOCS2 = Object.assign({}, PROG, { head: 'P2', changedFiles: ['README.md', 
 const MIX2 = Object.assign({}, PROG, { head: 'P2', changedFiles: ['g/x-run.js', 'src/b.js'] });
 const NONE2 = Object.assign({}, PROG, { head: 'P2', changedFiles: [] });
 const GREEN = { verdict: 'green', summary: '' };
+const GREEN2 = { verdict: 'green', summary: '', head: 'P2' }; // a short tester round with no commit of its own
 const RED = { verdict: 'red', summary: 'cell 3 red' };
 const ENVT = { verdict: 'environment', summary: 'e', environment: 'swap' };
 const D = { verdict: 'done', docsOnly: false, summary: 'fine' };
@@ -102,14 +103,14 @@ const G = (train, more = {}) => Object.assign({ pre: [PRE], prog: [PROG], test: 
     x.r.status === 'done' && x.full === 'pre>prog>review>diff:x:reviewer>run:x:train-1>left:x:end', x.full);
 
   // ---- O2: a red train fixed in the product -> a short tester round -> review -> train ----
-  x = await run(G([ride(11), ride(0)], { prog: [PROG, P2], test: [GREEN, GREEN], review: [D, D] }));
+  x = await run(G([ride(11), ride(0)], { prog: [PROG, P2], test: [GREEN, GREEN2], review: [D, D] }));
   ok('O2. red train, product fix -> programmer -> tester -> review of the diff -> the train again -> done',
     x.r.status === 'done' && x.full === `${HEAD}>run:x:train-1>prog>test>post:x:tester>review>diff:x:reviewer>run:x:train-2>left:x:end`, x.full);
   const st2 = pOf(x, 'test', 1);
   ok('O2. the short tester round: the acceptance of the cells the fix touches (its diff) and its own guards, the train result named',
     /train/.test(st2) && /\bT\.\.P2\b/.test(st2) && st2.includes('/s/train/result/x-T.json') && /cells/.test(st2), st2);
   ok('O2. the second review reads the diff of the fix (T..P2) after the tester', /T\.\.P2/.test(pOf(x, 'review', 1)), pOf(x, 'review', 1));
-  ok('O2. the next ride carries the head after the tester round', (x.prompts.filter((p) => /:train-2/.test(p.label))[0] || { prompt: '' }).prompt.includes('P2') || true);
+  ok('O2. the next ride carries the head after the tester round', (x.prompts.filter((p) => /:train-2/.test(p.label))[0] || { prompt: '' }).prompt.includes("--head '\\''P2'\\''"), (x.prompts.filter((p) => /:train-2/.test(p.label))[0] || { prompt: '' }).prompt);
   x = await run(G([ride(11), ride(0)], { prog: [PROG, MIX2], test: [GREEN, GREEN], review: [D, D] }));
   ok('O2. a fix touching a guard and a product file -> tester', /prog>test>post:x:tester>review/.test(x.full.split('train-1')[1] || ''), x.full);
   x = await run(G([ride(11), ride(0)], { prog: [PROG, NONE2], test: [GREEN, GREEN], review: [D, D] }));
@@ -157,11 +158,11 @@ const G = (train, more = {}) => Object.assign({ pre: [PRE], prog: [PROG], test: 
   const C = require(path.join(ROOT, 'scripts', 'config.js'));
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'train-only-'));
   const cfgOf = (extra) => { const f = path.join(tmp, `c${Math.random().toString(36).slice(2)}.json`); fs.writeFileSync(f, JSON.stringify(Object.assign({ repoDir: tmp, worktreeRoot: tmp, sharedDir: tmp, testerWritable: ['-run\\.js$'],
-    guardRerun: { command: 'x {name}', newRedPattern: '^FAILED (\\S+)', tallyPattern: '^=== (\\d+) total ===$' } }, extra))); return f; };
+    guardRerun: { command: 'cd {wt} && x {name}', newRedPattern: '^FAILED (\\S+)', tallyPattern: '^=== (\\d+) total ===$' } }, extra))); return f; };
   const chk = (f) => spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'config.js'), 'check', f], { encoding: 'utf8' });
-  let c = chk(cfgOf({ guardSubsetCommand: 'x {onlyArgs}', innerSelect: false }));
+  let c = chk(cfgOf({ guardSubsetCommand: 'cd {wt} && x {onlyArgs}', innerSelect: false }));
   ok('O7. config check: innerSelect false is accepted', c.status === 0, c.stdout + c.stderr);
-  c = chk(cfgOf({ guardSubsetCommand: 'x {onlyArgs}', innerSelect: 'no' }));
+  c = chk(cfgOf({ guardSubsetCommand: 'cd {wt} && x {onlyArgs}', innerSelect: 'no' }));
   ok('O7. config check: innerSelect not a boolean is an error', c.status !== 0 && /innerSelect/.test(c.stdout + c.stderr), c.stdout + c.stderr);
   ok('O7. the spec of the key: boolean, default true', C.SPEC ? JSON.stringify(C.SPEC.innerSelect) === '["boolean",true]' : /innerSelect: \['boolean', true\]/.test(read('scripts/config.js')));
   const schema = JSON.parse(read('schemas/codis-agents.schema.json'));

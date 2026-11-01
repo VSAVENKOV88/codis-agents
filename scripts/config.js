@@ -67,6 +67,10 @@ const SPEC = {
   // Globs of the docs files of the project (p-merge-docs): a train conflict round that only merges the arc and resolves
   // these files by hand skips the selection (scripts/merge-only.js). Empty - off, every round gets its selection.
   mergeOnlyFiles: ['string[]', []],
+  // With guardSubsetCommand: false - no selection inside the task (p-train-only, owner 2026-11-01): the programmer and the
+  // tester run only their own guards, the integration train is the first run of all guards, and a red train fixed in the
+  // product gets a short tester round (workflows/role-chain.js INNER). true - the selection after every programmer round.
+  innerSelect: ['boolean', true],
   worktreeSetup: ['object', null],
   slots: ['object', null],
   reportLanguage: ['string', 'English'],
