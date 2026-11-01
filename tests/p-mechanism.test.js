@@ -55,6 +55,7 @@ async function run(script, task = T, cfg = CFG) {
         if (!q.train || !q.train.length) throw new Error('extra train step after ' + full.join('>'));
         return q.train.shift();
       }
+      if (q.sel && q.sel.length) return q.sel.shift();
       return { done: true, rc: 0, seconds: 1, log: '/d/wait.log', tail: 'all green' };
     }
     trace.push(role);
@@ -132,6 +133,10 @@ const MOC = /^First answer "mechanism or cells\?"/;
   x = await run({ pre: [PRE], prog: [MECH, PROG], analyst: [AN], test: [GREEN], review: [D], train: [ride(0)] }, TB, ONE);
   ok('M2. with guardSubsetCommand no selection runs on the mechanism round, one after the programmer\'s commit',
     x.r.status === 'done' && x.full.startsWith('pre>prog>analyst>prog>run:x:select-') && (x.full.match(/run:x:select-/g) || []).length === 1, x.full);
+  x = await run({ pre: [PRE], prog: [PROG, MECH, P2], analyst: [AN], test: [GREEN], review: [D], train: [ride(0)],
+    sel: [{ done: true, rc: 1, seconds: 1, log: '/d/wait.log', tail: '1 new red' }] }, TB, ONE);
+  ok('M2. mechanism in the round after a red selection -> analyst -> that round again -> the selection on its HEAD',
+    x.r.status === 'done' && x.full.startsWith('pre>prog>run:x:select-1>prog>analyst>prog>run:x:select-1f>test'), x.full + ' ' + JSON.stringify(x.r));
   x = await run({ pre: [PRE], prog: [MECH, PROG], analyst: [AN], review: [D] }, Object.assign({}, T, { mode: 'light' }));
   ok('M2. light mode: mechanism -> analyst -> programmer-checker -> review', x.r.status === 'done' && x.trace === 'pre>prog>analyst>prog>review', x.trace + ' ' + JSON.stringify(x.r));
   ok('M2. light mode: the programmer-checker prompt names status=mechanism', /status=mechanism/.test(own(pOf(x, 'prog'))), own(pOf(x, 'prog')));
