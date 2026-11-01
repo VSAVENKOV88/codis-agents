@@ -45,7 +45,7 @@ export const meta = {
 // base (the branch the task started from: scripts/guards-select.js diffs against its merge-base; with
 // guardSubsetCommand it is required and is not a protected branch - the branch of the arc, coordinator's decision 6 of
 // p-train-ac, 2026-10-29),
-// mode ("full", the default, or "light": one programmer-checker, the selection step (ONE_RUN), one reviewer - see work()).
+// mode ("full", the default, or "light": one programmer-checker, the selection step (INNER), one reviewer - see work()).
 
 const ARGS = typeof args === 'string' ? JSON.parse(args) : (args || {})
 const OWNER = ARGS.owner || ''
@@ -122,9 +122,11 @@ const RULE_LIST = (t) => [
   ['pauses', `Pauses: never wait longer than 270 s at a time - run anything long through Bash run_in_background and wait with Monitor in slices; an agent with no output for 10 minutes is killed. While your own process waits in a slot queue or runs, keep waiting in slices while your process is alive: do not end your work to wait (the chain has no status for it; ${INNER ? 'the selection of the task\'s guards after a programmer round' : ONE_RUN ? 'the integration train' : 'the one full guard run'} is waited for by the workflow, not by you).`],
   ['context', 'Context: past ~200k finish the current stage, write the report with "Next step: ..." and stop - a fresh agent continues.'],
   ['slots', `Heavy work goes through memory slots: ${SCRIPTS}/heavy.sh <cmd>, ${SCRIPTS}/medium.sh <cmd>, ${INNER ? `a selection of guards ${SCRIPTS}/guards-all.sh --select <ref> ${sq(t.gdir)} (the selection of the task from its base is run by the workflow, never by a role; a role runs only a selection its own instructions name - the tester the one of its own diff)` : ONE_RUN ? 'no selection and no full run of guards in the task (innerSelect false: the train runs them); a guard of your own that needs a browser or a bundler goes through heavy.sh' : `full guard run ${SCRIPTS}/guards-all.sh ${t.gdir}`}; run heavy.sh and guards-all.sh only through Bash run_in_background and wait with Monitor in slices of at most 270 s, never as a blocking Bash call (the Bash timeout kills the waiter, its ticket is dropped and it rejoins the queue at the end).`],
-  ['rerun', `New reds of a ${ONE_RUN ? 'selection' : 'full run'}: ${SCRIPTS}/guards-all.sh reruns each one alone in the same slot. Red again alone - a new red (a regression); green alone - flaky: not a regression, name it in your report under "Flaky guards" for the coordinator, who puts it into the project backlog.${CFG.guardBaseline ? ` Known reds listed in ${CFG.guardBaseline} (config guardBaseline) are subtracted first and never rerun ("N known red"): not a regression; a fix that turns one green removes its entry in the same commit.${ONE_RUN ? ` On a selection the project's quarantine is read only (<sharedDir>/guards-quarantine.json, known reds it lists are subtracted): a flaky guard goes into your report, not into the quarantine; do not edit either file for it.` : ` A flaky guard is written into the project's quarantine (<sharedDir>/guards-quarantine.json, outside the worktree) and is known in later runs; only the coordinator moves it into ${CFG.guardBaseline}: do not edit either file for it.`}` : ''} A ${ONE_RUN ? 'selection' : 'full run'} on the same HEAD with a clean tracked tree that ended green is reused ("reused, HEAD <sha>"); --force runs again.`],
+  ['rerun', ONE_RUN && !INNER
+    ? `No role runs guards-all.sh in the task (innerSelect false): the integration train after the review reruns each new red of its full run alone; red again alone - the task's new red, which comes back to the programmer with the train's result; green alone - flaky, written into the project's quarantine by the train, not a regression.${CFG.guardBaseline ? ` Known reds listed in ${CFG.guardBaseline} (config guardBaseline) are subtracted first and never rerun: not a regression; a fix that turns one green removes its entry in the same commit; do not edit the quarantine.` : ''} Your own guards you run directly; a red one is yours to fix.`
+    : `New reds of a ${ONE_RUN ? 'selection' : 'full run'}: ${SCRIPTS}/guards-all.sh reruns each one alone in the same slot. Red again alone - a new red (a regression); green alone - flaky: not a regression, name it in your report under "Flaky guards" for the coordinator, who puts it into the project backlog.${CFG.guardBaseline ? ` Known reds listed in ${CFG.guardBaseline} (config guardBaseline) are subtracted first and never rerun ("N known red"): not a regression; a fix that turns one green removes its entry in the same commit.${ONE_RUN ? ` On a selection the project's quarantine is read only (<sharedDir>/guards-quarantine.json, known reds it lists are subtracted): a flaky guard goes into your report, not into the quarantine; do not edit either file for it.` : ` A flaky guard is written into the project's quarantine (<sharedDir>/guards-quarantine.json, outside the worktree) and is known in later runs; only the coordinator moves it into ${CFG.guardBaseline}: do not edit either file for it.`}` : ''} A ${ONE_RUN ? 'selection' : 'full run'} on the same HEAD with a clean tracked tree that ended green is reused ("reused, HEAD <sha>"); --force runs again.`],
   ['onerun', ONE_RUN && !INNER
-    ? `No selection and no full guard run in the task (innerSelect false): the integration train after the review is the first run of all guards. The programmer and the tester run only their new or changed guards and their mutations, never guards-all.sh. A red train comes back to the programmer with its result; a fix that touches the product (a file outside docs and the tester's guards and fixtures) gets a short tester round - the acceptance of the cells the fix touches and the tester's own guards over them - before the second review, a fix of guards or docs only goes straight to the second review; then the train again.`
+    ? `No selection and no full guard run in the task (innerSelect false): the integration train after the review is the first run of all guards. The programmer and the tester run only their new or changed guards and their mutations, never guards-all.sh. A red train comes back to the programmer with its result; a fix that touches the product (a file outside docs and the tester's guards and fixtures) gets a short tester round - the acceptance of the cells the fix touches and the tester's own guards over them - before the second review (in the light mode there is no tester: the programmer-checker runs that acceptance itself), a fix of guards or docs only goes straight to the second review; then the train again.`
     : ONE_RUN
     ? `No full guard run in the task: after every programmer round with a new HEAD the workflow runs the selection of the task's guards, ${selectRun(t)} (a wait step: changed guards, guards that import a changed file or name it, the project's guardAlways; new reds rerun alone, known reds subtracted, the quarantine read only), and hands its log to the next role; no role runs the full suite. The programmer runs only its new guards and mutations, no selection. The tester, after its own commits, runs the selection of its own diff from the programmer's HEAD of its round through Bash run_in_background: ${SCRIPTS}/guards-all.sh --select <the programmer's HEAD> ${sq(t.gdir)} (its guards, the guards that import or name a file it changed - a fixture -, the project's guardAlways; its log ${CFG.sharedDir}/guards-${gname(t)}.select.txt; "nothing selected" - run your new guards directly); no commit of the tester - no selection of its own, the workflow's log is the evidence. A flaky guard of a selection goes into your report, not into the quarantine.`
     : `One full guard run per task: the project config has no guardSubsetCommand, so the programmer runs the full run (${SCRIPTS}/guards-all.sh ${t.gdir}) and the tester reuses its log; ${SCRIPTS}/guards-select.js --wt ${sq(t.wt)} --base ${baseArg(t)} lists the guards a change touches.`],
@@ -735,18 +737,26 @@ async function work(t, st) {
 // (test.md) and their cause (prog.md), then one round programmer -> tester -> review on it; a red tester round after it
 // stops the task (why 'tester red after analyst'), and so does a second rejection after it.
 async function afterRedAnalyst(t, st, x) {
+  const a = await redAnalystRound(t, st, x)
+  return a.out || ride(t, st, a.ok)
+}
+// The analyst round itself: {ok: the review's summary} to ride, or {out: the task's result}. Inside a ride (a red short
+// tester round after a train, innerSelect false) the ride loop goes on with it, so the rides of a run are numbered once
+// (step ids, logs, labels) and MAX_RIDES counts all of them - no ride inside a ride.
+async function redAnalystRound(t, st, x) {
+  const out = (r) => ({ out: r })
   st.analyst = 'tester-red'
   const a = await analyst(t, `the second red tester round for the product in this task (rule "Red tester rounds are counted per task"). Inputs: the tester's findings in ${t.dir}/test.md (every round) and the programmer's rounds in ${t.dir}/prog.md. Write the matrix of cases those findings belong to - every dimension the reds opened, not only the failed cells - and the cause of the reds with file:line, so the next programmer round closes the whole matrix at once. Last red:\n${x.test || ''}`)
-  if (!a) return stop(t, 'the analyst returned no result')
-  if (!a.ready || a.split.length || a.questions.length) return stop(t, 'analyst after the second red tester round: split or an answer is needed', { split: a.split, questions: a.questions, analyst: a.summary })
+  if (!a) return out(stop(t, 'the analyst returned no result'))
+  if (!a.ready || a.split.length || a.questions.length) return out(stop(t, 'analyst after the second red tester round: split or an answer is needed', { split: a.split, questions: a.questions, analyst: a.summary }))
   const b = await buildAndTest(t, st, `After the second red tester round the analyst wrote ${t.dir}/analyst.md - a matrix of cases from the tester's findings: red guards for its cells, then the fix of every cell, according to it and to ${t.dir}/test.md.`, 'T', 1)
-  if (b.fail) return stop(t, b.stopWhy || `after the analyst: ${b.fail}`, b)
+  if (b.fail) return out(stop(t, b.stopWhy || `after the analyst: ${b.fail}`, b))
   const rv = await reviewLoop(t, st, 'T')
-  if (rv.ok) return ride(t, st, rv.ok.summary)
-  return stop(t, rv.stopWhy || `after the analyst: ${rv.fail}`, rv)
+  if (rv.ok) return { ok: rv.ok.summary }
+  return out(stop(t, rv.stopWhy || `after the analyst: ${rv.fail}`, rv))
 }
 
-// Light mode (owner 2026-10-20): programmer-checker -> the selection step (ONE_RUN) -> reviewer; no tester role, so no
+// Light mode (owner 2026-10-20): programmer-checker -> the selection step (INNER) -> reviewer; no tester role, so no
 // tester post-checks (the reviewer's git post-check and the leftovers check at the end run as usual). A rejection -> one
 // programmer round (and the selection on its new HEAD) -> the second review; a second rejection goes to the coordinator
 // with the proposal to relaunch in the full mode. Why: tasks of up to 100 lines of product took 2-2.6 h through the
@@ -819,9 +829,11 @@ async function mergeOnlyStep(t, n, before, head) {
 }
 const resultOf = (t, head) => `${CFG.sharedDir}/train/result/${t.key}-${head}.json`
 const rideCmd = (t, head) => `${CFG.configPath ? `CODIS_AGENTS_CONFIG=${sq(CFG.configPath)} ` : ''}node ${SCRIPTS}/train.js ride --task ${sq(t.key)} --branch ${sq(t.branch)} --head ${sq(head)} --base ${sq(String(t.base).trim())} --dir ${sq(t.dir)}`
-const FIX_TAIL = INNER
+const fixTail = (t) => (INNER
   ? 'Commit on the branch (a red guard first when none covers it, mutations after the commit); do not run the selection or a full run yourself: the workflow runs the selection on your new HEAD, then the second review of the diff, then the train again. If there is nothing to fix on the branch (a known or a stale guard), explain it in prog.md and commit nothing: the coordinator decides.'
-  : 'Commit on the branch (a red guard first when none covers it, mutations after the commit); run only the red guards of the result and your new or changed guards, no selection and no full run (innerSelect false): a fix that touches the product gets a short tester round, then the second review of the diff, then the train again. If there is nothing to fix on the branch (a known or a stale guard), explain it in prog.md and commit nothing: the coordinator decides.'
+  : t.light
+    ? 'Commit on the branch (a red guard first when none covers it, mutations after the commit); run only the red guards of the result and your new or changed guards, no selection and no full run (innerSelect false). There is no tester round in the light mode: run the acceptance of the cells the fix touches yourself in the real environment and add it to test.md (round of this fix) when the fix touches the product; then the second review of the diff, then the train again. If there is nothing to fix on the branch (a known or a stale guard), explain it in prog.md and commit nothing: the coordinator decides.'
+    : 'Commit on the branch (a red guard first when none covers it, mutations after the commit); run only the red guards of the result and your new or changed guards, no selection and no full run (innerSelect false): a fix that touches the product gets a short tester round, then the second review of the diff, then the train again. If there is nothing to fix on the branch (a known or a stale guard), explain it in prog.md and commit nothing: the coordinator decides.')
 // innerSelect false (p-train-only): does the fix round of a red train touch the product? Any file outside docs and the
 // tester's guards and fixtures (docsOrGuard: testerWritable), and a new commit that names no changed file (unknown is not
 // docs); a conflict round that is only the merge of the arc with docs resolved (merge-only) does not.
@@ -842,7 +854,7 @@ async function trainTester(t, st, n, v, res, before, extra) {
     if (tr.verdict === 'green') return null
     if (tr.verdict === 'environment') { const e = envStop(label, tr); return stop(t, e.fail, Object.assign({}, e, extra)) }
     const red = testerRed(t, st, label, tr)
-    if (red && red.redAnalyst) return afterRedAnalyst(t, st, red)
+    if (red && red.redAnalyst) { const a = await redAnalystRound(t, st, red); return a.out || { again: a.ok } }
     if (red) return stop(t, red.stopWhy || red.fail, Object.assign({}, extra, { test: tr.summary }))
     if (k === 2) return stop(t, `train ${n} (${v}): the short tester round is still red after a fix round - the coordinator decides`, Object.assign({}, extra, { test: tr.summary }))
     const s2 = await progStep(t, st, `Short tester round ${label} after the train's ${v} - red. Fix according to ${t.dir}/test.md:\n${tr.summary}`, `${label}f`, `${t.dir}/test.md`)
@@ -851,9 +863,9 @@ async function trainTester(t, st, n, v, res, before, extra) {
 }
 const trainTask = (t, v, res) => {
   const base = String(t.base).trim()
-  if (v === 'red') return `The integration train came back red for your branch (verdict red): read the result ${res} - its train log (log), the attribution log (attribution) and the guards red on the arc head ${base} + your branch alone (guards); copies of the logs are in ${t.dir}. Fix the red on the branch. ${FIX_TAIL}`
-  if (v === 'conflict') return `The integration train excluded your branch: merging it into the train conflicts (verdict conflict; the files are in ${res}, field files). Your fix: merge the head of the arc branch ${base} into your branch ${t.branch} and resolve the conflict, then check the guards of those files. ${FIX_TAIL}${MERGE_GLOBS.length ? ` When every file you resolve matches mergeOnlyFiles (${MERGE_GLOBS.join(', ')}), commit the merge alone - one merge commit, no other edits and no other commits: the workflow then skips the selection (scripts/merge-only.js) and goes to the second review and the train.` : ''}`
-  return `The integration train found a seam (verdict seam): your branch is green alone on the arc head but red together with its partner, named in ${res} (partner, partnerBranch; the guards in guards; partnerResult is the partner's own result - it arrived first and rode before you). Your fix: merge the head of the arc branch ${base} into your branch ${t.branch} (it holds the partner once partnerResult is green) and fix the seam with it on that head. ${FIX_TAIL}`
+  if (v === 'red') return `The integration train came back red for your branch (verdict red): read the result ${res} - its train log (log), the attribution log (attribution) and the guards red on the arc head ${base} + your branch alone (guards); copies of the logs are in ${t.dir}. Fix the red on the branch. ${fixTail(t)}`
+  if (v === 'conflict') return `The integration train excluded your branch: merging it into the train conflicts (verdict conflict; the files are in ${res}, field files). Your fix: merge the head of the arc branch ${base} into your branch ${t.branch} and resolve the conflict, then check the guards of those files. ${fixTail(t)}${MERGE_GLOBS.length ? ` When every file you resolve matches mergeOnlyFiles (${MERGE_GLOBS.join(', ')}), commit the merge alone - one merge commit, no other edits and no other commits: the workflow then skips the selection (scripts/merge-only.js) and goes to the second review and the train.` : ''}`
+  return `The integration train found a seam (verdict seam): your branch is green alone on the arc head but red together with its partner, named in ${res} (partner, partnerBranch; the guards in guards; partnerResult is the partner's own result - it arrived first and rode before you). Your fix: merge the head of the arc branch ${base} into your branch ${t.branch} (it holds the partner once partnerResult is green) and fix the seam with it on that head. ${fixTail(t)}`
 }
 async function ride(t, st, review) {
   if (!ONE_RUN) return { task: t.key, status: 'done', review }
@@ -891,7 +903,7 @@ async function ride(t, st, review) {
         const a = await analyst(t, `the second red train for this task (the integration train after the review; like the second red tester round). Inputs: the train results ${results.join(', ')} (each names its train log, its attribution log and the guards red on the arc head + this branch alone) and the programmer's rounds in ${t.dir}/prog.md. Write the matrix of cases those reds belong to and their cause with file:line, so the next programmer round closes the whole matrix at once.`)
         if (!a) return stop(t, 'the analyst returned no result', { review, train: info })
         if (!a.ready || a.split.length || a.questions.length) return stop(t, 'analyst after the second red train: split or an answer is needed', { split: a.split, questions: a.questions, analyst: a.summary, review, train: info })
-        task = `After the second red train the analyst wrote ${t.dir}/analyst.md - a matrix of cases from the train's reds (${results.join(', ')}): red guards for its cells, then the fix of every cell. ${FIX_TAIL}`
+        task = `After the second red train the analyst wrote ${t.dir}/analyst.md - a matrix of cases from the train's reds (${results.join(', ')}): red guards for its cells, then the fix of every cell. ${fixTail(t)}`
         fix = null
       }
     }
@@ -899,8 +911,9 @@ async function ride(t, st, review) {
     const s = await progStep(t, st, task || trainTask(t, v, res), `t${n}`, fix, true, v === 'conflict' && MERGE_GLOBS.length > 0)
     if (s.fail) return stop(t, s.fail, Object.assign({}, s, { review, train: info }))
     if (s.same) return stop(t, `train ${n} (${v}): the programmer committed nothing (the red explained, not fixed: ${s.p && s.p.summary || '?'}) - the coordinator decides; the branch is not queued again`, { review, train: info })
-    if (!INNER && touchesProduct(s)) {
+    if (!INNER && !t.light && touchesProduct(s)) {
       const out = await trainTester(t, st, n, v, res, before, { review, train: info })
+      if (out && out.again !== undefined) { review = out.again; continue }
       if (out) return out
     }
     const skipped = s.mergeOnly ? `; merge-only docs: selection skipped - the round is only the merge of the arc ${String(t.base).trim()} and every file resolved by hand matches mergeOnlyFiles (${(s.mergeOnly.files || []).join(', ') || 'none'}); check that the resolution keeps the content of both sides` : ''

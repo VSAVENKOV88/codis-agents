@@ -160,7 +160,7 @@ const G = (train, more = {}) => Object.assign({ pre: [PRE], prog: [PROG], test: 
     x.r.status === 'done' && x.full === 'pre>prog>review>diff:x:reviewer>run:x:train-1>prog>review>diff:x:reviewer>run:x:train-2>left:x:end', x.full);
   const lp = pOf(x, 'prog', 1);
   ok('O8. light: the fix prompt asks the programmer-checker for the acceptance of the cells the fix touches in test.md (no tester follows)',
-    /PROGRAMMER-CHECKER/.test(lp) && /there is no tester round in the light mode: run the acceptance of the cells the fix touches yourself/.test(lp) && !/a fix that touches the product gets a short tester round, then/.test(lp), lp.slice(-900));
+    /PROGRAMMER-CHECKER/.test(lp) && /there is no tester round in the light mode: run the acceptance of the cells the fix touches yourself/i.test(lp) && !/a fix that touches the product gets a short tester round, then/.test(lp), lp.slice(-900));
 
   // ---- O9: no ride inside a ride ----
   const RIDES = (x) => x.prompts.filter((p) => p.role === 'run' && /:train-/.test(p.label)).map((p) => p.label);

@@ -396,7 +396,8 @@ review findings.
   after an analyst, read and mutate as before.
 - **Light mode** (`mode: "light"`, chosen by the coordinator for up to ~100 lines of product in one subsystem, off the
   attack surface, without a Docker acceptance): one programmer-checker (red guard, code, mutations, its own acceptance
-  with evidence in `test.md`) -> the selection step -> one reviewer; no tester role. A second rejection stops the task for
+  with evidence in `test.md`) -> the selection step (none with `innerSelect: false`) -> one reviewer; no tester role, after
+  a red train too (with `innerSelect: false` the programmer-checker runs the acceptance of the cells its fix touches). A second rejection stops the task for
   the coordinator with the proposal to relaunch it in the full mode.
 - **Tester** builds its own inventory, adds and mutation-tests guards, runs the acceptance scenario for real. Red goes
   straight back to the programmer, without a review. Red tester rounds for the product are counted per task: the
@@ -590,14 +591,18 @@ fallback to another slot directory: a second directory would be a second queue t
   workflow runs no selection after a programmer round and the tester none of its own; both run only their new or
   changed guards and mutations, and the integration train is the first run of all guards. A red train fixed in the
   product gets a short tester round (the acceptance of the cells the fix touches, the tester's guards over them) before
-  the second review; a fix of guards or docs only does not. The second red train still sends the task to the analyst,
+  the second review; a fix of guards or docs only does not, and the light mode has no tester (its programmer-checker
+  runs that acceptance). A short tester round still red after one fix round stops the task for the coordinator; the
+  second red tester round of the task sends it to the analyst, whose round goes on in the same ride loop (the rides of
+  a run are numbered once, at most four). The second red train still sends the task to the analyst,
   counting only `red` (the task's own finding). Measured (diagnosis train-only, 80 tasks): a selection found a real
   finding in 21 % of tasks while every task waited for it, a median of 32 min.
 - **The attribution of a red train runs a guard only where it exists** (p-train-only). A red guard that is a file of
   the train's tree and is absent from the bare arc head (a new guard a passenger brought) is not run there and is not
   the arc's red; it runs on "arc + X" only for the passengers whose tree holds it, so the passenger who brought it gets
   `red`. Before, the bare arc head "accounted for 0 of N" (exit 69) and the queue halted as the environment (train
-  20261101-132215552-80147).
+  20261101-132215552-80147). The guard names must be paths from the repository root (as `git cat-file -e <tree>:<name>`
+  reads them); a name that is not such a file is run on every tree, as before.
 
 ## Changes in 0.4.14
 
