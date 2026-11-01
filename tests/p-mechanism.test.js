@@ -94,6 +94,8 @@ const MOC = /^First answer "mechanism or cells\?"/;
   ok('M1. the analyst prompt (its own part): a section "Mechanism" for a new channel, protocol, timing or state - 2-3 mechanisms with cost, invariant, visible limits, recommendation; screen or time -> "❓ owner", layer 3; judged by sense',
     mechSection(own(pOf(x, 'analyst'))), own(pOf(x, 'analyst')));
   ok('M1. agents/analyst.md: the same section "Mechanism"', mechSection(flat('agents/analyst.md')), flat('agents/analyst.md'));
+  ok('M3. agents/analyst.md: after a second red or rejection first "mechanism or cells?", may replace the mechanism; the pass after status mechanism',
+    /first answer "mechanism or cells\?"/.test(flat('agents/analyst.md')) && /may replace it/.test(flat('agents/analyst.md')) && /status `mechanism`/.test(flat('agents/analyst.md')), flat('agents/analyst.md'));
 
   // ---- M2: the programmer's status mechanism ----
   const PS = await schemaOf('PROG_SCHEMA');
