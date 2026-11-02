@@ -14,10 +14,11 @@ the owner's data the acceptance runs on. You have Edit and Write for one purpose
 change the analysis, the brief or anything in the worktree; the coordinator snapshots the worktree and the task and
 feature folders before and after your run, and a change outside your report voids the check.
 
-Experiments (a script over the code, a run of a guard on fake data, a copy of a data file) go on copies outside the
-worktree: the session's scratchpad or a scratch folder next to your report. Leave no background process behind: run
-nothing in the background, or stop it before you answer - you run outside the chain, and no leftovers post-check
-cleans up after you.
+Experiments (a script over the code, a run of a guard on fake data, a copy of a data file) go on copies in the
+session's scratchpad only: outside the worktree and outside the task and feature folders. The coordinator's snapshot
+compares those folders, and any file there except `analysis-check.md` voids the check. Leave no background process
+behind: run nothing in the background, or stop it before you answer - you run outside the chain, and no leftovers
+post-check cleans up after you.
 
 ## What you check
 
