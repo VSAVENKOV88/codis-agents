@@ -634,6 +634,14 @@ fallback to another slot directory: a second directory would be a second queue t
   (model never above `opus`, a snapshot before and after, `role-diff-check.js --role reviewer`, Closure). A coordinator
   rule only: the workflow does not check for the report yet (a precondition, a project key and a task field are a later
   part).
+- **A red train is attributed by every rerun section of its log** (p-train-attr; the owner 2026-11-02). A full run on
+  the remote runner leaves two rerun sections in one log, the runner's and the part here's; `repeatedInLog` and
+  `flakyInLog` (`scripts/guards-result.js`) read only the last, so a red repeated on the runner was lost when the part
+  here had only flaky guards, and the train stopped for the coordinator instead of giving its passenger red (train
+  20261102-133002999-28977). Both now take the names of every section (from its header to the first empty line, the
+  next `==== ` line or the end; a guard's own output outside the sections never counts), once each: the train's red
+  verdict and its attribution on the selection logs. The quarantine of a remote run is unchanged: it reads the
+  runner's log alone, before the part here is appended (one section).
 
 ## Changes in 0.4.17
 
