@@ -82,10 +82,11 @@ async function trainCase() {
   const sh = (f, body) => { put(f, body); fs.chmodSync(f, 0o755); };
   for (const d of [main, wts, shared, bin, FX]) fs.mkdirSync(d, { recursive: true });
   // the fake machine of the slots: a calm machine
-  sh(path.join(bin, 'sysctl'), '#!/bin/zsh\n[[ $1 == -n && $2 == vm.swapusage ]] || exec /usr/sbin/sysctl "$@"\nprint -r -- "total = 30000,00M  used = 1000,00M  free = 20000,00M  (encrypted)"\n');
-  sh(path.join(bin, 'memory_pressure'), '#!/bin/zsh\nprint -r -- "System-wide memory free percentage: 20%"\n');
-  sh(path.join(bin, 'vm_stat'), '#!/bin/zsh\nprint -r -- "Mach Virtual Memory Statistics: (page size of 16384 bytes)"\nprint -r -- "Swapouts:                                   0."\n');
-  sh(path.join(bin, 'df'), '#!/bin/zsh\nprint -r -- "Filesystem 1M-blocks Used Available Capacity Mounted"\nprint -r -- "/dev/disk3s6 100000 0 0 0% /System/Volumes/VM"\n');
+  const tool = (name, body) => sh(path.join(bin, name), body);
+  tool('sysctl', '#!/bin/zsh\n[[ $1 == -n && $2 == vm.swapusage ]] || exec /usr/sbin/sysctl "$@"\nprint -r -- "total = 30000,00M  used = 1000,00M  free = 20000,00M  (encrypted)"\n');
+  tool('memory_pressure', '#!/bin/zsh\nprint -r -- "System-wide memory free percentage: 20%"\n');
+  tool('vm_stat', '#!/bin/zsh\nprint -r -- "Mach Virtual Memory Statistics: (page size of 16384 bytes)"\nprint -r -- "Swapouts:                                   0."\n');
+  tool('df', '#!/bin/zsh\nprint -r -- "Filesystem 1M-blocks Used Available Capacity Mounted"\nprint -r -- "/dev/disk3s6 100000 0 0 0% /System/Volumes/VM"\n');
   // a copy of the plugin's scripts; its guards-all.sh writes the logs: the full run -> two sections (exit 1); a selection
   // (--guards) on a tree with red-x.txt -> two sections, g-x red again alone in the runner's (exit 1), else green
   fs.cpSync(path.join(ROOT, 'scripts'), path.join(plug, 'scripts'), { recursive: true });
@@ -116,8 +117,9 @@ exit 1
     slots: { lockDir: path.join(T, 'slots'), legacyLock: path.join(T, 'guards.lock') } }));
   const env = Object.assign({}, process.env, { CODIS_AGENTS_CONFIG: cfgFile, PATH: bin + path.delimiter + process.env.PATH, SLOT_OS: 'darwin',
     SLOT_POLL: '0.2', SLOT_SAY: '1', CODIS_TRAIN_POLL: '0.3' });
-  for (const k of Object.keys(env)) if (/^(SLOT_|SLOTS_|GUARDS_)/.test(k) && !['SLOT_OS', 'SLOT_POLL', 'SLOT_SAY'].includes(k)) delete env[k];
-  delete env.CLAUDE_PROJECT_DIR;
+  // the fake guards-all.sh takes no slot; the knobs of slots.zsh are neutralised all the same (tests/slots-hermetic.test.js)
+  for (const k of ['SLOTS_DIR', 'SLOT_LEGACY_LOCK', 'SLOT_JOURNAL', 'SLOT_LABEL', 'SLOT_KIND', 'SLOT_RETRY_RC', 'SLOT_PRIORITY', 'GUARDS_EXCLUSIVE_LOCK', 'SLOT_MEDIUM_N', 'SLOT_HEAVY_N', 'SLOT_TOTAL_MAX', 'GUARDS_JOBS_ALONE', 'GUARDS_JOBS_SHARED', 'SLOT_EXCL_TOOLS', 'GUARDS_EXCL_GLOB', 'GUARDS_EXCL_MARKER', 'SLOT_PATH',
+    'SLOT_SWAP_MIN_MB', 'SLOT_THIRD_FREE_PCT', 'SLOT_THIRD_SWAP_GROW_MB', 'SLOT_PROC', 'SLOT_THIRD_WINDOW', 'SLOT_HIST_GAP', 'CLAUDE_PROJECT_DIR']) delete env[k];
   const tr = (...a) => spawnSync(process.execPath, [path.join(plug, 'scripts', 'train.js'), ...a], { cwd: T, encoding: 'utf8', env, timeout: 300000 });
 
   git(main, 'init', '-q', '-b', 'main');
