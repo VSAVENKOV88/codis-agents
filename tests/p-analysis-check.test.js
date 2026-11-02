@@ -123,9 +123,9 @@ ok('C1. coordinator: the only difference of the folders is that report, its earl
 // different length, so the prefix is cut with head -c and compared from a pipe; the size before is counted in bytes
 // with wc -c (stat differs between BSD and GNU).
 ok('C1. coordinator: the earlier content is compared as head -c <size before> <report> | cmp -s - <copy before>',
-  /`head -c <size before> <report> \| cmp -s - <copy before>`/.test(coStep) && !/cmp -n/.test(coStep), coStep.slice(0, 900));
+  /`head -c <size before> <report> \| cmp -s - <copy before>`/.test(coStep) && !/`cmp -n </.test(coStep), coStep.slice(0, 900));
 ok('C1. coordinator step 1: the size before is counted in bytes with wc -c, not stat',
-  /`wc -c < <copy before>`/.test((coStep.match(/\*\*Snapshot before\.\*\*([^]*?)(?=\d\. \*\*Run)/) || ['', ''])[1]) && !/\bstat\b/.test(coStep), '');
+  /`wc -c < <copy before>`/.test((coStep.match(/\*\*Snapshot before\.\*\*([^]*?)(?=\d\. \*\*Run)/) || ['', ''])[1]) && !/`stat -/.test(coStep), '');
 ok('C1. coordinator: the fallback appends the returned run', /\*\*Fallback\.\*\*[^]*?append it to `<name of the analysis>\.check\.md`[^]*?Saved-by: coordinator/.test(coStep), '');
 ok('C1. coordinator: analysis-check.md is named only as the history of wave 2',
   coStep.split(/(?<=\.) /).filter((x) => OLD.test(x)).every((x) => /wave 2/.test(x) && /history/.test(x)), coStep.split(/(?<=\.) /).filter((x) => OLD.test(x)).join(' / '));

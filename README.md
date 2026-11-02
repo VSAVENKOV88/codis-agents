@@ -133,7 +133,9 @@ cell, guards that would be green without the fix, an acceptance that cannot run 
 the coordinator's decisions - and writes one report per analysis, `<name of the analysis>.check.md` next to it
 (`analyst.check.md`, `diagnosis.check.md`), or returns its text when the environment refuses the write (the coordinator
 saves it with `Saved-by: coordinator`). A repeated check of the same analysis (another part of a feature, a run again)
-appends a run with its own header and Closure; the earlier runs stay as they are. Every significant gap is
+appends a run with its own header and Closure; the earlier runs stay as they are (the coordinator checks that the
+earlier content is an exact prefix of the report after the run). A task counts as checked only by a run whose `Tasks`
+line names its key: a run for another part of the feature does not count. Every significant gap is
 closed in the brief or the analysis, or goes to the owner with the other questions of the preparation; the coordinator
 writes that into the report's section Closure. A task with `noAnalysis` gets no check. In wave 2 three such checks cost
 0.46M tokens and about 20 minutes and found 14 significant gaps; one return of a task cost about 0.7M and 35-60 minutes.

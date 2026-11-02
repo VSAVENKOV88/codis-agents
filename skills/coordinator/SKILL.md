@@ -70,7 +70,8 @@ Before a task of a wave starts (product or plugin), its analysis is read by the 
 
 1. **Snapshot before.** `git -C <worktree> rev-parse HEAD` and `git -C <worktree> status --porcelain`; `shasum -a 256`
    of every file in the task folder and in the feature folder (`find <dir> -type f -exec shasum -a 256 {} +`, sorted);
-   when the report `<name of the analysis>.check.md` exists, a copy of it and its size, outside those folders.
+   when the report `<name of the analysis>.check.md` exists, a copy of it and its size, outside those folders: the
+   size in bytes, `wc -c < <copy before>` (not `stat`: its options differ between BSD and GNU).
 2. **Run.** The agent `codis-agents:analysis-checker`, with the model of the project's `roleModel`, never above `opus`
    (a `fable` there runs the checker on `opus`: the owner's word, analysts not on Fable); the prompt names the analysis,
    the brief, the use cases and specification it cites, the worktree, the task keys and the report path
@@ -80,7 +81,8 @@ Before a task of a wave starts (product or plugin), its analysis is read by the 
 3. **Snapshot after.** `node "${CLAUDE_PLUGIN_ROOT}/scripts/role-diff-check.js" --wt <worktree> --since <HEAD before>
    --role reviewer` must answer ok (nothing in the worktree changed), the status is the same, and the only difference
    of the folders is `<name of the analysis>.check.md`, its earlier content unchanged: the file before is an exact
-   prefix of the file after (`cmp -n <size before> <copy before> <report>`, from a copy taken in step 1). Anything else voids the check: undo the change, say so in the brief, run again.
+   prefix of the file after (`head -c <size before> <report> | cmp -s - <copy before>` answers 0, from the copy and size of step 1;
+   not `cmp -n`: BSD `cmp` answers 1 for files of different length). Anything else voids the check: undo the change, say so in the brief, run again.
    An experiment that left a process behind (the agent may start none) is stopped: `ps` by the worktree path and by
    the scratchpad of the checker's session, where its experiments run.
 4. **Fallback.** When the environment refused the agent's write, it returns the full text of its run: append it to
