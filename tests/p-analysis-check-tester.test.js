@@ -109,4 +109,37 @@ ok('T7. coordinator step 1: a copy of the existing report and its size, outside 
 ok('T7. coordinator step 5: Closure of this run, the last one of the report', /Closure of this run \(the last one of the report\)/.test(coStep), '');
 ok('T7. Waves: the Closure line goes into the section Closure of that run', /section Closure of that run/.test(step), step);
 
+// ---- Round 4 (after 3e18864, analyst cells M1-M12): steps 1 and 3 composed as the coordinator runs them ----
+//   T8. The size command of step 1 is taken from the skill as written and its raw output (BSD wc pads it with spaces)
+//       goes into step 3 through $(...), quoted and unquoted; the size must be in bytes, so a multibyte earlier run
+//       that was appended passes and one changed in place fails. An empty earlier report is a prefix of anything.
+const szCmd = (s1.match(/`([^`]*<copy before>[^`]*)`/) || ['', ''])[1];
+ok('T8. coordinator step 1 names the size command of the copy', !!szCmd, s1);
+if (snip && szCmd) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'codis-prefix-t8-'));
+  const copy = path.join(tmp, 'copy-before.md');
+  const rep = path.join(tmp, 'analyst.check.md');
+  const runRaw = (before, after, quoted) => {
+    fs.writeFileSync(copy, before);
+    fs.writeFileSync(rep, after);
+    const size = szCmd.replace(/<copy before>/g, JSON.stringify(copy));
+    const sub = quoted ? '"$(' + size + ')"' : '$(' + size + ')';
+    const cmd = snip.replace(/<size before>/g, sub).replace(/<report>/g, JSON.stringify(rep)).replace(/<copy before>/g, JSON.stringify(copy));
+    const r = spawnSync('/bin/sh', ['-c', cmd], { encoding: 'utf8' });
+    return { status: r.status, out: cmd + ' -> ' + r.status + ' ' + (r.stderr || '').trim() };
+  };
+  const mb = '# Analysis check\nTasks: a\n\n## Closure\nG1: \u0437\u0430\u043a\u0440\u044b\u0442\u043e \u0432 \u0431\u0440\u0438\u0444\u0435\n';
+  const more = '# Analysis check\nTasks: b\n\n## Closure\n';
+  for (const q of [false, true]) {
+    const tag = q ? 'quoted' : 'unquoted';
+    const a = runRaw(mb, mb + more, q);
+    ok(`T8. raw size of step 1 (${tag}): a multibyte earlier run, appended, passes`, a.status === 0, a.out);
+    const b = runRaw(mb, mb.replace('\u0431\u0440\u0438\u0444\u0435', '\u0430\u043d\u0430\u043b\u0438\u0437\u0435') + more, q);
+    ok(`T8. raw size of step 1 (${tag}): a multibyte earlier run changed in place fails`, b.status !== 0, b.out);
+  }
+  const e = runRaw('', more, true);
+  ok('T8. an empty earlier report is a prefix of the report after (exit 0)', e.status === 0, e.out);
+  fs.rmSync(tmp, { recursive: true, force: true });
+}
+
 done();
