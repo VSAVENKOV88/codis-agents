@@ -66,6 +66,8 @@ ok('S2 flakyInLog names the flaky guards of both sections', F.includes('g-z') &&
 ok('S3 a guard\'s output before the first header and between the sections never counts',
   !G.repeatedInLog(L).some((n) => /before|between/.test(n)) && !F.some((n) => /before|between/.test(n)), JSON.stringify([G.repeatedInLog(L), F]));
 ok('S3 no header -> nothing', !G.repeatedInLog('new red, red again alone: g (exit 1)\n').length && !G.flakyInLog('flaky, red under load, green alone: g\n').length);
+ok('S3 a section ends at the next "==== " line even without an empty line before it',
+  JSON.stringify(G.repeatedInLog(`${HEAD}\nnew red, red again alone: a (exit 1)\n==== on this machine: b ====\nnew red, red again alone: b (exit 1)\n`)) === '["a"]');
 ok('S3 a one-section log as before', JSON.stringify(G.repeatedInLog(`x\n\n${HEAD}\nnew red, red again alone: a (exit 1)\nnew red, red again alone: b (exit 2)\nflaky, red under load, green alone: c\n`)) === '["a","b"]');
 
 // ---- S4: the train ----
