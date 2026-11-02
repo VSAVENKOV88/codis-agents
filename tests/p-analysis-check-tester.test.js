@@ -2,13 +2,13 @@
 'use strict';
 // p-analysis-check-a (0.4.18), tester: cells of the analysis checker that tests/p-analysis-check.test.js does not reach.
 //   T2. The agent and the coordinator's snapshot agree: the coordinator voids a check when the task or feature folder
-//       differs by anything but analysis-check.md (skills/coordinator, "Check the analysis" step 3; brief item 3,
+//       differs by anything but the report <name of the analysis>.check.md (skills/coordinator, "Check the analysis" step 3; brief item 3,
 //       Closure G3), so the agent must not put its experiments next to its report (the folder of the analysis is the
 //       task or the feature folder) - only outside the worktree and outside those folders (the session's scratchpad).
 //   T3. Rule Waves: a task without the check, or changes-needed without a Closure line per significant gap, does not go
 //       into the wave; RULE_LIST of the workflow gains no entry for the checker (no role marker).
 //   T4. Coordinator skill: a fable roleModel runs the checker on opus (not only the word "fable"); the only difference of
-//       the folders is analysis-check.md; Saved-by under the header; Analysis-sha256 filled by the coordinator.
+//       the folders is the report <name of the analysis>.check.md; Saved-by under the header; Analysis-sha256 filled by the coordinator.
 //   T5. Part b did not leak in: no scripts/analysis-check.js, no analysisCheck key or analysis-checker role in
 //       config.js, the schema, the workflow or the role-chain skill.
 //   (English of the agent: tests/hygiene.test.js, no Cyrillic in any file.)
@@ -25,7 +25,7 @@ const flat = (f) => raw(f).replace(/\s+/g, ' ');
 const agf = flat('agents/analysis-checker.md');
 const exp = (agf.match(/Experiments[^]*?(?=## What you check)/) || [''])[0];
 ok('T2. agent: experiments named, outside the worktree', /outside the worktree/.test(exp), exp);
-ok('T2. agent: experiments never in the folder of the analysis / next to the report (the coordinator voids a check whose task or feature folder differs by more than analysis-check.md)',
+ok('T2. agent: experiments never in the folder of the analysis / next to the report (the coordinator voids a check whose task or feature folder differs by more than its report)',
   !!exp && !/(scratch[^.]*next to (your|the) report|next to (your|the) report[^.]*scratch|folder of the analysis[^.]*experiment)/i.test(exp), exp);
 // Round 2 (after f3a83a4): the positive claim - the scratchpad is the only place, and the task and feature folders are
 // named as outside (the negative check above does not see "the scratchpad or the task folder").
@@ -35,7 +35,7 @@ ok('T2. agent: experiments outside the task and feature folders',
   /outside the task and feature folders/.test(exp), exp);
 const co = flat('skills/coordinator/SKILL.md');
 const coStep = (raw('skills/coordinator/SKILL.md').match(/## Check the analysis\n([\s\S]*?)\n## /) || ['', ''])[1].replace(/\s+/g, ' ');
-ok('T2. coordinator: the only difference of the folders is analysis-check.md', /only difference[^.]*`analysis-check\.md`/.test(coStep), coStep.slice(0, 300));
+ok('T2. coordinator: the only difference of the folders is the report <name of the analysis>.check.md', /only difference[^.]*`<name of the analysis>\.check\.md`/.test(coStep), coStep.slice(0, 300));
 
 // ---- T3: rule Waves ----
 const RULES = raw('rules/multi-agent.md');

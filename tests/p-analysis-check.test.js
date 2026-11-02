@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 'use strict';
 // p-analysis-check-a (0.4.18): the analysis checker - a read-only agent the coordinator runs on an analysis before a
-// wave starts; it writes only its own report analysis-check.md next to the analysis (or returns the full text when the
-// environment refuses the write, and the coordinator saves it with "Saved-by: coordinator").
+// wave starts; it writes only its own report <name of the analysis>.check.md next to the analysis (or returns the full
+// text when the environment refuses the write, and the coordinator saves it with "Saved-by: coordinator").
 //   A1. agents/analysis-checker.md: frontmatter like the reviewer's (name, description "not for direct use",
 //       disallowedTools: NotebookEdit; no effort, model or tools); what it checks (premises against code with file:line,
 //       missing sources and consumers, guards red without the fix, acceptance on the owner's real data, the basis of the
@@ -18,6 +18,13 @@
 //   B3. the check runs after the worktree exists (it reads its code and snapshots its HEAD and status): the Worktree
 //       step comes before the step that sends a task to "Check the analysis"; a leftover process is looked for by the
 //       worktree path and by the scratchpad of the checker's session (its experiments run there).
+//   C1. One report per analysis, named after it (review R2, the coordinator's answer 2026-11-02): analyst.md ->
+//       analyst.check.md, diagnosis.md -> diagnosis.check.md, so two analyses in one folder get two reports and no
+//       fixed name analysis-check.md is overwritten. A repeated check (another part of a feature whose analysis serves
+//       several parts, "run again") appends a new run with its own header and its own Closure; the earlier runs stay
+//       as they are, and the coordinator's snapshot allows only that file to differ, its earlier content unchanged.
+//       Agent, rule Waves, coordinator skill and README name the new report; the reports of wave 2 named
+//       analysis-check.md are history (named only as such, in the skill).
 //   The version 0.4.18 is pinned once, in p-testerred-route.test.js; this test does not pin it.
 const fs = require('fs');
 const path = require('path');
@@ -37,7 +44,7 @@ ok('A1. frontmatter: name analysis-checker', fm !== undefined && /^name: analysi
 ok('A1. frontmatter: description, not for direct use', fm !== undefined && /^description: .*not for direct use/m.test(fm), fm);
 ok('A1. frontmatter: disallowedTools NotebookEdit, like the reviewer', fm !== undefined && /^disallowedTools: NotebookEdit$/m.test(fm), fm);
 ok('A1. frontmatter: no effort, model or tools', fm !== undefined && !/^\s*(effort|model|tools)\s*:/m.test(fm), fm);
-ok('A1. writes only its own report analysis-check.md next to the analysis', /only[^.]*`analysis-check\.md`[^.]*next to the analysis/.test(agf), '');
+ok('A1. writes only its own report <name of the analysis>.check.md next to the analysis', /only[^.]*`<name of the analysis>\.check\.md`[^.]*next to the analysis/.test(agf), '');
 ok('A1. checks premises against the code with file:line', /premise[^.]*file:line/i.test(agf), '');
 ok('A1. checks missing sources and consumers', /sources and consumers/.test(agf), '');
 ok('A1. checks whether guards go red without the fix', /red without the fix/.test(agf), '');
@@ -64,7 +71,7 @@ ok('B1. the analysis is checked before the start', /[Tt]he analysis is checked b
 ok('B1. product and plugin tasks alike', /product/.test(stepf) && /plugin/.test(stepf), stepf);
 ok('B1. noAnalysis: no check', /`noAnalysis`[^.]*no check/.test(stepf), stepf);
 ok('B1. findings closed in the brief (Closure) or sent into the preparation questions', /Closure/.test(stepf) && /questions of the preparation/.test(stepf), stepf);
-ok('B1. the step names analysis-check.md and its verdicts', /analysis-check\.md/.test(stepf) && /changes-needed/.test(stepf), stepf);
+ok('B1. the step names the report <name of the analysis>.check.md and its verdicts', /`<name of the analysis>\.check\.md`/.test(stepf) && /changes-needed/.test(stepf), stepf);
 ok('B1. the step carries no role:* marker (the coordinator runs it, not the workflow)', !!step && !/<!-- role:/.test(step), step);
 ok('B1. Roles: the analysis checker is named among the roles', /\*\*Analysis checker\.\*\*/.test(RULES), '');
 
@@ -92,5 +99,31 @@ ok('B4. README What is inside: agents row names analysis-checker', /`analysis-ch
 ok('B4. README What is inside: the analysis checker is checked by the coordinator, not by the git post-check of the chain',
   /analysis-checker[^|]*coordinator/.test(inside), inside);
 ok('B4. README: the step "the analysis is checked before the start"', /analysis is checked before the start/.test(rdf), '');
+
+// ---- C1: one report per analysis, named after it; a repeated check appends a run ----
+const OLD = /analysis-check\.md/;
+ok('C1. agent: the report is named after the analysis (analyst.md -> analyst.check.md, diagnosis.md -> diagnosis.check.md)',
+  /`analyst\.check\.md`/.test(agf) && /`diagnosis\.check\.md`/.test(agf), '');
+ok('C1. agent: no fixed report name analysis-check.md', !OLD.test(ag), (agf.match(/.{80}analysis-check\.md.{40}/) || [''])[0]);
+ok('C1. agent: a repeated check of the same analysis appends a new run with its own header and Closure',
+  /repeated check[^.]*appends a new run[^.]*own header[^.]*own (section )?Closure/.test(agf), '');
+ok('C1. agent: the earlier runs of the report are never changed', /earlier runs[^.]*(never changed|unchanged|stay as they are)/.test(agf), '');
+ok('C1. agent: a run starts with its own "# Analysis check" heading', /every run starts with `# Analysis check`/i.test(agf), '');
+ok('C1. agent: the fallback returns the text of this run only, appended by the coordinator', /text of this run[^.]*append/.test(agf), '');
+ok('C1. Waves: a repeated check appends a run, the earlier runs stay', /repeated check[^.]*appends[^.]*earlier runs/.test(stepf), stepf);
+ok('C1. Waves: no fixed name analysis-check.md', !OLD.test(step), stepf);
+ok('C1. Roles: the checker writes <name of the analysis>.check.md, not analysis-check.md',
+  /`<name of the analysis>\.check\.md`/.test((RULES.match(/\*\*Analysis checker\.\*\*[\s\S]*?\n(?=- \*\*|\n)/) || [''])[0]) && !OLD.test((RULES.match(/\*\*Analysis checker\.\*\*[\s\S]*?\n(?=- \*\*|\n)/) || [''])[0]), '');
+const coStep = (coRaw.match(/## Check the analysis\n([\s\S]*?)\n## /) || ['', ''])[1].replace(/\s+/g, ' ');
+ok('C1. coordinator: the report path is <folder of the analysis>/<name of the analysis>.check.md',
+  /`<folder of the analysis>\/<name of the analysis>\.check\.md`/.test(coStep), coStep.slice(0, 400));
+ok('C1. coordinator: the only difference of the folders is that report, its earlier content unchanged (an exact prefix)',
+  /only difference[^.]*`<name of the analysis>\.check\.md`[^.]*earlier content[^.]*prefix/.test(coStep), coStep.slice(0, 600));
+ok('C1. coordinator: the earlier content is compared with cmp', /`cmp -n/.test(coStep), '');
+ok('C1. coordinator: the fallback appends the returned run', /fallback[^]*append[^.]*Saved-by: coordinator/i.test(coStep), '');
+ok('C1. coordinator: analysis-check.md is named only as the history of wave 2',
+  coStep.split(/(?<=\.) /).filter((x) => OLD.test(x)).every((x) => /wave 2/.test(x) && /history/.test(x)), coStep.split(/(?<=\.) /).filter((x) => OLD.test(x)).join(' / '));
+ok('C1. README: the report is <name of the analysis>.check.md, no fixed analysis-check.md', /`<name of the analysis>\.check\.md`/.test(rdf) && !OLD.test(rd), (rdf.match(/.{80}analysis-check\.md.{40}/) || [''])[0]);
+ok('C1. README: a repeated check appends a run', /repeated check[^.]*appends/.test(rdf), '');
 
 done();
