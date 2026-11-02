@@ -324,7 +324,7 @@ Larger changes run as a chain of agents, each in its own role:
 - Stage files by path; never `git add -A` or `git add .` (cloud-synced folders spawn conflict copies named "name 2.ext", and a blanket add sweeps in other agents' scratch files). <!-- role:gitadd -->
 - Never push, merge into a protected branch, or create or push tags (a release tag may deploy to production) on your own initiative. Pushing and merging are the owner's call; one explicit request authorizes exactly one push, merge or tag. <!-- role:push -->
 - A project may grant standing permission to push process-rule changes to the plugin repository (rules, skills,
-  workflows, agents, scripts, tests, README) without a separate "yes" for each. The coordinator still checks the diff
+  workflows, agents, scripts, tests, README, CHANGELOG) without a separate "yes" for each. The coordinator still checks the diff
   for secrets and personal paths before the push and commits as a noreply author. The permission does not extend to
   the product repository: its protected branches, merges into them and tags still need an explicit request.
   The hooks let it through only from the plugin repository's own committed `standingPush` (its HEAD, no force, tags never, its hygiene test green).

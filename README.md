@@ -22,8 +22,8 @@ confidently wrong often enough to cost you evenings. codis-agents splits the job
   real scenario.
 - **The reviewer** only reads, and its job is to find the hole.
 
-Each of them runs as a separate agent in its own copy of the repository, so nobody can quietly "fix" someone else's
-finding. When two of them disagree, or nobody knows the answer, the question comes to you - once, with a
+Each of them runs as a separate agent, and each task works in its own copy of the repository, so tasks do not step
+on each other and nobody can quietly "fix" someone else's finding. When two of them disagree, or nobody knows the answer, the question comes to you - once, with a
 recommendation.
 
 ## What a working day looks like
@@ -41,7 +41,8 @@ recommendation.
 5. **One digest.** When the wave is over you get one page: what was done, what to look at on the screen and how, the
    questions that waited for you, and the decisions the coordinator took on its own (which you can overturn).
 
-Nothing is pushed, merged into your main branch or released without your explicit "yes".
+Nothing is merged into your main branch, tagged or released without your explicit "yes". (A project may let the
+coordinator push working branches and process-rule changes on its own; see Technical reference, Git.)
 
 ## What you get as the owner
 
@@ -178,7 +179,7 @@ With `guardSubsetCommand` in the config the task has no full guard run of its ow
 its diff after every programmer round, and the full run belongs to the train. Without the key the reviewed branch is
 done after the review and the coordinator merges it, as before.
 
-Each role runs as its own agent in its own git worktree. A second rejection for code stops the fix rounds: the next round
+Each role runs as its own agent; each task has its own git worktree. A second rejection for code stops the fix rounds: the next round
 starts with the analyst. Work on access, keys or cookies gets a security reviewer as well. A role that hits an open
 question writes it into its report for the coordinator and never answers it itself.
 
