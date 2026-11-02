@@ -61,4 +61,52 @@ for (const f of ['scripts/config.js', 'workflows/role-chain.js', 'skills/role-ch
   ok(`T5. ${f}: no analysisCheck key and no analysis-checker role (part b)`, !/analysisCheck|analysis-checker/.test(raw(f)), f);
 }
 
+// ---- Round 3 (after de7eb0b, review R2): one report per analysis, a repeated check appends a run ----
+//   T6. The prefix check of step 3 is run as written, with its placeholders filled, on files of a temporary folder:
+//       an appended run must pass (exit 0), a changed or truncated earlier run must fail. On macOS /usr/bin/cmp -n
+//       answers 1 ("EOF on <shorter>") whenever the files differ in size, so `cmp -n <size> <copy> <report>` voids
+//       every legitimate repeated check on the coordinator's Mac.
+//   T7. Step 1 keeps the copy of the earlier report outside the snapshotted folders (a copy inside them is itself a
+//       difference) with its size; Closure is written into the run being closed (the last one), in the skill and Waves.
+const os = require('os');
+const { spawnSync } = require('child_process');
+const s3 = (coStep.match(/\*\*Snapshot after\.\*\*([^]*?)(?=\d\. \*\*Fallback)/) || ['', ''])[1];
+const snip = (s3.match(/`([^`]*<[^>]*report[^>]*>[^`]*)`/i) || ['', ''])[1];
+ok('T6. coordinator step 3 names a command for the prefix check of the earlier report', !!snip, s3.slice(0, 400));
+if (snip) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'codis-prefix-'));
+  const before = '# Analysis check\nTasks: a\n\n## Closure\nG1: closed in the brief (layer 2)\n\nNext step: start\n';
+  const run2 = '# Analysis check\nTasks: b\n\n## Closure\n<left empty by the checker>\n\nNext step: ...\n';
+  const copy = path.join(tmp, 'copy-before.md');
+  fs.writeFileSync(copy, before);
+  const runCase = (after) => {
+    const rep = path.join(tmp, 'analyst.check.md');
+    fs.writeFileSync(rep, after);
+    let unknown = null;
+    const cmd = snip.replace(/<([^>]+)>/g, (m, name) => {
+      if (/size/i.test(name)) return String(Buffer.byteLength(before));
+      if (/report/i.test(name)) return JSON.stringify(rep);
+      if (/copy|before/i.test(name)) return JSON.stringify(copy);
+      unknown = m; return m;
+    });
+    if (unknown) return { status: -1, out: 'unknown placeholder ' + unknown + ' in ' + snip };
+    const r = spawnSync('/bin/sh', ['-c', cmd], { encoding: 'utf8' });
+    return { status: r.status, out: cmd + ' -> ' + r.status + ' ' + (r.stderr || '').trim() };
+  };
+  const a = runCase(before + run2);
+  ok('T6. prefix check as written: an appended run passes (exit 0)', a.status === 0, a.out);
+  const b = runCase(before.replace('closed in the brief', 'open') + run2);
+  ok('T6. prefix check as written: a changed earlier run fails', b.status !== 0 && b.status !== -1, b.out);
+  const c = runCase('# Analysis check\n');
+  ok('T6. prefix check as written: a truncated report fails', c.status !== 0 && c.status !== -1, c.out);
+  const d = runCase(before);
+  ok('T6. prefix check as written: an unchanged report passes the prefix part (exit 0)', d.status === 0, d.out);
+  fs.rmSync(tmp, { recursive: true, force: true });
+}
+const s1 = (coStep.match(/\*\*Snapshot before\.\*\*([^]*?)(?=\d\. \*\*Run)/) || ['', ''])[1];
+ok('T7. coordinator step 1: a copy of the existing report and its size, outside the snapshotted folders',
+  /exists, a copy of it and its size, outside those folders/.test(s1), s1);
+ok('T7. coordinator step 5: Closure of this run, the last one of the report', /Closure of this run \(the last one of the report\)/.test(coStep), '');
+ok('T7. Waves: the Closure line goes into the section Closure of that run', /section Closure of that run/.test(step), step);
+
 done();
