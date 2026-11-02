@@ -98,7 +98,8 @@ const inside = (rd.match(/^\| `agents\/\*\.md` \|.*$/m) || [''])[0];
 ok('B4. README What is inside: agents row names analysis-checker', /`analysis-checker`/.test(inside), inside);
 ok('B4. README What is inside: the analysis checker is checked by the coordinator, not by the git post-check of the chain',
   /analysis-checker[^|]*coordinator/.test(inside), inside);
-ok('B4. README: the step "the analysis is checked before the start"', /analysis is checked before the start/.test(rdf), '');
+// 0.4.19 (p-readme): the version entry moved to CHANGELOG.md; README names the step in its own section.
+ok('B4. README: the step "the analysis is checked before the start"', /Before a wave starts, its analyses are checked/i.test(rdf), '');
 
 // ---- C1: one report per analysis, named after it; a repeated check appends a run ----
 const OLD = /analysis-check\.md/;

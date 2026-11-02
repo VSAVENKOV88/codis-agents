@@ -1,0 +1,124 @@
+# Changelog
+
+Every version of the codis-agents plugin, newest first. What the plugin does now is described in
+[README.md](README.md); its [Technical reference](README.md#technical-reference) is the current state of every rule,
+key and script, and this file says when and why each one changed. Versions before 0.4.14 are in the git history.
+
+## 0.4.19 - 2026-11-02
+
+- **README for a first-time reader; the history moves here** (p-readme; the owner 2026-11-02, translated: "make the
+  plugin's README readable and interesting for a simple user, and move the technical part for professionals into a
+  separate block"; on "the version history into CHANGELOG.md?": "yes, into CHANGELOG.md"). The top of README now
+  says in plain words what the plugin is, why a team of role agents instead of one, what a working day looks like
+  (waves, the digest, the train), a quick start, what the owner gets and a short example. Everything technical stays,
+  unchanged, in one block below the heading "Technical reference": every earlier section and every key of both
+  config files. The sections "Changes in 0.4.x" moved from README into this file, newest first. A change of the
+  plugin now updates the Technical reference (behaviour) and adds its entry here (the version); the tests that read
+  the version entries read this file.
+
+## 0.4.18 - 2026-11-02
+
+- **The analysis is checked before the start** (p-analysis-check-a; the owner 2026-11-02, translated: "our approach of
+  checking the analysis of cases beforehand seems to have paid off? let us formalize it in the plugin, so that wave 3
+  starts on the new plugin"). A new agent `analysis-checker` (frontmatter like the reviewer's) reads an analysis before
+  its task's chain starts and writes one report per analysis next to it, `<name of the analysis>.check.md` (a repeated
+  check appends a run): a header (`Analysis`, `Analysis-sha256`, `Tasks`, `Verdict: ready | changes-needed`,
+  `Significant gaps`), sections Premises, Missing sources and consumers, Guards: red without the fix?, Acceptance on the owner's real data, Coordinator's decisions, Gaps (G-n) and Closure,
+  written by the coordinator. A refused write returns the text, saved by the coordinator with `Saved-by: coordinator`.
+  The rule "Waves" gains the preparation step (product and plugin tasks; none for `noAnalysis`; every significant gap
+  closed in the brief or sent into the owner's questions of the preparation), the coordinator skill the step itself
+  (model never above `opus`, a snapshot before and after, `role-diff-check.js --role reviewer`, Closure). A coordinator
+  rule only: the workflow does not check for the report yet (a precondition, a project key and a task field are a later
+  part).
+- **A red train is attributed by every rerun section of its log** (p-train-attr; the owner 2026-11-02). A full run on
+  the remote runner leaves two rerun sections in one log, the runner's and the part here's; `repeatedInLog` and
+  `flakyInLog` (`scripts/guards-result.js`) read only the last, so a red repeated on the runner was lost when the part
+  here had only flaky guards, and the train stopped for the coordinator instead of giving its passenger red (train
+  20261102-133002999-28977). Both now take the names of every section (from its header to the first empty line, the
+  next `==== ` line or the end; a guard's own output outside the sections never counts), once each: the train's red
+  verdict and its attribution on the selection logs. The quarantine of a remote run is unchanged: it reads the
+  runner's log alone, before the part here is appended (one section).
+
+## 0.4.17 - 2026-11-01
+
+- **The counters of a task survive a relaunch: the task field `prior`** (p-testerred-route; the owner's request
+  2026-11-01: "fix the failure in the plugin"). The rules count red tester rounds, red trains, the one analyst of a
+  second red or rejection and the one pass "Mechanism" per task, but the workflow kept them for one run: a relaunch
+  with `start` began from zero. In cvm-wheel-c (run wf_68338028-44b) the first red tester round of the relaunch was the
+  second of the task and went to the programmer; the analyst came one red later. Now a relaunch passes
+  `prior: {testerReds?, trainReds?, rejections?, analyst?: "tester-red" | "rejection" | "train-red", mechanism?: true}`,
+  a copy of the field `counts` of its earlier run's result; the workflow checks it before any agent (a wrong value or key, or
+  `testerReds` above 0 in the light mode, stops the task on preconditions), starts its counters from it and logs it.
+  With a seeded `analyst` a red tester round (or, for `train-red`, a red train) stops the task as after the analyst of
+  the same run, and a second rejection for code stops it without a second analyst; with `mechanism: true` a status
+  `mechanism` goes to the coordinator. The analyst of the second red names the reds of earlier runs. `start` stays text
+  for the programmer; the line "say in `start` that a pass was made" of 0.4.16 is replaced by `prior.mechanism`.
+  Every task result carries `counts` in the shape of `prior`, the seed included (a refusal after a valid `prior` carries
+  the seed, a refused `prior` none): the coordinator copies it into the next `prior` and recounts nothing from `test.md`
+  (review 1: a hand count lost a red in cvm-wheel-c, and would count an environment round). `prior.rejections` carries
+  the review rejections since the last analyst of the task: after a run stopped past rejection 1, the relaunch's first
+  rejection is the second (analyst, or a stop after an analyst, or the coordinator in the light mode).
+- **Waves** (owner 2026-11-01): at most three product chains at once, prepared (brief, use cases and matrix,
+  "Mechanism", mockup, experiments) and answered by the owner before they start together; no question to the owner
+  while a wave runs - a layer 3 question stops only its task; one digest per wave (results, what to check on the
+  screen, questions with recommendations and the principle each may contradict, candidate decisions, tails) when every
+  task is done or waits. A coordinator rule only: the workflow does not count chains.
+
+## 0.4.16 - 2026-11-01
+
+- **A mechanism is challenged before cells** (p-mechanism; owner 2026-11-01: "yes to the step 'challenge the
+  mechanism'"; diagnosis mechanism-gap: four tasks of one window, about 75-85M above their price, no new role). The
+  analyst's section "Mechanism" for a task with a new channel, protocol, timing or state, with a choice seen on the
+  screen or resting on time as a question to the owner (an exception from layer 2); the programmer's status
+  `mechanism` -> one analyst pass inside the run -> the programmer again, a second one to the coordinator; "mechanism
+  or cells?" first for the analyst of a second red tester round, a second rejection or a second red train, with the
+  right to replace the mechanism (`mechanismOrCells` in its answer); one line "Mechanism:" in the reviewer's report.
+  The run records by whom the section "Mechanism" was written last (the pass or a later analyst that answered
+  "mechanism"), and every later programmer, programmer-checker, tester and analyst prompt names that author; an answer "cells" keeps
+  every section "Mechanism" (the matrix is added to the earlier sections), and the pass keeps the other sections. The
+  rule is marked `role:mechanism` and reaches every role prompt.
+- **The analyst before the first programmer can be the author of the mechanism** (review of p-mechanism). The
+  analystFirst analyst says in its answer whether it wrote a section "Mechanism" (`mechanismSection`); when it did, the
+  run records it as the section's author, so the pass after a later status `mechanism` names the section it replaces
+  and every later round and analyst names that author. Before, the pass added a second section without naming the first.
+- **A pass made in an earlier run is said in `start`** (review of p-mechanism). The limit of one pass is per run, so a
+  relaunch with `start` begins a new count; the coordinator names a pass already made in `start`. The line is now in
+  the rule `role:mechanism`, the coordinator skill and the role-chain skill (field `start`), not only in README.
+
+## 0.4.15 - 2026-11-01
+
+- **Only the train: no selection inside the task** (p-train-only; owner 2026-11-01, translated: "1. Only the train, plus a short
+  tester round after a red train"). New project key `innerSelect` (default `true`: as before). With `false` the
+  workflow runs no selection after a programmer round and the tester none of its own; both run only their new or
+  changed guards and mutations, and the integration train is the first run of all guards. A red train fixed in the
+  product gets a short tester round (the acceptance of the cells the fix touches, the tester's guards over them) before
+  the second review; a fix of guards or docs only does not, and the light mode has no tester (its programmer-checker
+  runs that acceptance). A short tester round still red after one fix round stops the task for the coordinator; the
+  second red tester round of the task sends it to the analyst, whose round goes on in the same ride loop (the rides of
+  a run are numbered once, at most four). The second red train still sends the task to the analyst,
+  counting only `red` (the task's own finding). Measured (diagnosis train-only, 80 tasks): a selection found a real
+  finding in 21 % of tasks while every task waited for it, a median of 32 min.
+- **The attribution of a red train runs a guard only where it exists** (p-train-only). A red guard that is a file of
+  the train's tree and is absent from the bare arc head (a new guard a passenger brought) is not run there and is not
+  the arc's red; it runs on "arc + X" only for the passengers whose tree holds it, so the passenger who brought it gets
+  `red`. Before, the bare arc head "accounted for 0 of N" (exit 69) and the queue halted as the environment (train
+  20261101-132215552-80147). The guard names must be paths from the repository root (as `git cat-file -e <tree>:<name>`
+  reads them); a name that is not such a file is run on every tree, as before.
+
+## 0.4.14 - 2026-11-01
+
+- **The tester selects only its own diff** (p-tester-select). With `guardSubsetCommand` the tester, after its own
+  commits, runs `guards-all.sh --select <the programmer's HEAD of its round>`: its guards, the guards that import or
+  name a fixture it changed, and `guardAlways`; no commit of the tester - no selection of its own. The workflow's
+  selection from the task's `base` after every programmer round, the train and the light mode are unchanged
+  (measured 2026-11-01: the tester's repeat of the whole selection took a median of 17.9 min of a task's path).
+- **A docs-only merge after a train conflict skips the selection** (p-merge-docs). New project key `mergeOnlyFiles`
+  (globs of docs files, default `[]`: off) and `scripts/merge-only.js`: a fix round after a train `conflict` that is
+  one merge of the arc, with every conflicted or hand-edited file matching those globs, goes straight to the second
+  review and the train. A file that also matches `guardFiles` is a guard, not docs, and keeps the selection
+  (`merge-only.js --guards`, passed by the workflow; a tail of the review of p-merge-docs).
+- **The train goes first in the worker budget and on the remote runner** (p-runner-share). A run with `--priority`
+  never shares its workers with a full run without it: a selection that comes waits or takes what a fixed-worker train
+  leaves, a running selection drops to one worker while its guards finish; the flag travels with a remote run
+  (`guards-remote.js --priority`), so the runner's own run is first in the runner's queue and budget.
+

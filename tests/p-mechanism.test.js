@@ -283,7 +283,7 @@ const MOC = /^First answer "mechanism or cells\?"/;
   const mrule = (rules.find((r) => r[0] === 'mechanism') || ['', ''])[1];
   ok('M7 D2. the rule line and RULE_LIST: an answer "cells" keeps every section "Mechanism"',
     /answer "cells" keeps every section "Mechanism"/.test(mline) && /answer "cells" keeps every section "Mechanism"/.test(mrule), mline + ' || ' + mrule);
-  ok('M7 D2. README Changes in 0.4.16: the author of the section and the keep rule', /## Changes in 0\.4\.16[^#]*written last[^#]*keeps every section "Mechanism"/.test(read('README.md').replace(/\s+/g, ' ')), '');
+  ok('M7 D2. CHANGELOG 0.4.16: the author of the section and the keep rule', /## 0\.4\.16\b[^#]*written last[^#]*keeps every section "Mechanism"/.test(read('CHANGELOG.md').replace(/\s+/g, ' ')), '');
 
   // ---- M4: the reviewer's line ----
   x = await run({ pre: [PRE], prog: [PROG], test: [GREEN], review: [D] });
@@ -307,7 +307,7 @@ const MOC = /^First answer "mechanism or cells\?"/;
   ok('M5. every role prompt carries the mechanism rule', mr && !lack.length, lack.join(','));
   ok('M5. coordinator skill: layer 2 names the exception', /not a storage format, an address, sharing, data deletion or security[^)]*mechanism/.test(flat('skills/coordinator/SKILL.md')), '');
   const rd = flat('README.md');
-  ok('M5. README: Changes in 0.4.16 names the mechanism step', /## Changes in 0\.4\.16[^#]*mechanism/.test(read('README.md')), '');
+  ok('M5. CHANGELOG: 0.4.16 names the mechanism step', /## 0\.4\.16\b[^#]*mechanism/.test(read('CHANGELOG.md')), '');
   ok('M5. README: how the chain decides - status mechanism and "mechanism or cells?"', /status `mechanism`/.test(rd) && /"mechanism or cells\?"/.test(rd), '');
   // ---- M8 (0.4.16, tails of the p-mechanism review) ----
   // 1. the section "Mechanism" of the analystFirst analyst makes it the author (st.mechSection), so the pass names the

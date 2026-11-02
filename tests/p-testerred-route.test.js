@@ -261,14 +261,14 @@ const refused = (x, re) => x.r.status === 'stopped' && x.r.why === 'precondition
   const rc = flat('skills/role-chain/SKILL.md'), co = flat('skills/coordinator/SKILL.md');
   ok('D3. role-chain skill: a row `prior` with its keys', /\| `prior` \|/.test(rc) && ['testerReds', 'trainReds', 'analyst', 'mechanism'].every((k) => rc.includes(k)) && !/says in `start` when an earlier run/.test(rc), '');
   ok('D3. coordinator skill: a relaunch passes prior from the reports of the earlier run', /`prior`/.test(co) && /testerReds/.test(co) && !/say so in `start`/.test(co), '');
-  const rd = read('README.md');
-  ok('D4. README: Changes in 0.4.17 names prior', /## Changes in 0\.4\.17[\s\S]*?`prior`[\s\S]*?## Changes in 0\.4\.16/.test(rd), '');
-  ok('D4. version 0.4.18 in package.json and plugin.json (the one pin of the version, moved at each bump)', /"version": "0\.4\.18"/.test(read('package.json')) && /"version": "0\.4\.18"/.test(read('.claude-plugin/plugin.json')), '');
+  const cl = read('CHANGELOG.md');
+  ok('D4. CHANGELOG: 0.4.17 names prior', /## 0\.4\.17\b[\s\S]*?`prior`[\s\S]*?## 0\.4\.16\b/.test(cl), '');
+  ok('D4. version 0.4.19 in package.json and plugin.json (the one pin of the version, moved at each bump)', /"version": "0\.4\.19"/.test(read('package.json')) && /"version": "0\.4\.19"/.test(read('.claude-plugin/plugin.json')), '');
   ok('D5. rule role:testerred and both skills: copy the counts of the run results (counts), the field rejections',
     /`counts`/.test(rule('testerred')) && /rejections/.test(rule('testerred')) && /`counts`/.test(co) && /`counts`/.test(rc), rule('testerred'));
   const prow = (read('skills/role-chain/SKILL.md').match(/^\| `prior` \|.*$/m) || [''])[0];
   ok('D5. role-chain skill: the row `prior` says copy counts of the last result, and names rejections', /`counts`/.test(prow) && /rejections/.test(prow) && /never recount/.test(prow), prow);
-  ok('D5. README Changes in 0.4.17 names counts and rejections', /## Changes in 0\.4\.17[\s\S]*?`counts`[\s\S]*?rejections[\s\S]*?## Changes in 0\.4\.16/.test(rd), '');
+  ok('D5. CHANGELOG 0.4.17 names counts and rejections', /## 0\.4\.17\b[\s\S]*?`counts`[\s\S]*?rejections[\s\S]*?## 0\.4\.16\b/.test(cl), '');
   ok('D6. rule role:mechanism and RULE_LIST: the pass is per task, not "inside the run" / "in the run"',
     !/inside the run|in the run\b/.test(rule('mechanism')) && !/pass inside the run|mechanism` in the run|in the run\b/.test((pOf(x, 'prog').match(/Mechanism: for a task[^\n]*/) || [''])[0]), rule('mechanism'));
   ok('D4. meta.whenToUse lists prior?', /prior\?/.test((SRC.match(/whenToUse: '([^\n]*)'/) || ['', ''])[1]), '');
