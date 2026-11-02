@@ -69,20 +69,25 @@ one. For whatever the owner judges by the screen, show a mockup of all states be
 Before a task of a wave starts (product or plugin), its analysis is read by the analysis checker (rule "Waves"):
 
 1. **Snapshot before.** `git -C <worktree> rev-parse HEAD` and `git -C <worktree> status --porcelain`; `shasum -a 256`
-   of every file in the task folder and in the feature folder (`find <dir> -type f -exec shasum -a 256 {} +`, sorted).
+   of every file in the task folder and in the feature folder (`find <dir> -type f -exec shasum -a 256 {} +`, sorted);
+   when the report `<name of the analysis>.check.md` exists, a copy of it and its size, outside those folders.
 2. **Run.** The agent `codis-agents:analysis-checker`, with the model of the project's `roleModel`, never above `opus`
    (a `fable` there runs the checker on `opus`: the owner's word, analysts not on Fable); the prompt names the analysis,
    the brief, the use cases and specification it cites, the worktree, the task keys and the report path
-   `<folder of the analysis>/analysis-check.md`.
+   `<folder of the analysis>/<name of the analysis>.check.md` (`analyst.md` -> `analyst.check.md`). When that report
+   exists, the check appends a run to it. The reports of wave 2 named `analysis-check.md` are history: leave them, do
+   not rename them.
 3. **Snapshot after.** `node "${CLAUDE_PLUGIN_ROOT}/scripts/role-diff-check.js" --wt <worktree> --since <HEAD before>
    --role reviewer` must answer ok (nothing in the worktree changed), the status is the same, and the only difference
-   of the folders is `analysis-check.md`. Anything else voids the check: undo the change, say so in the brief, run again.
+   of the folders is `<name of the analysis>.check.md`, its earlier content unchanged: the file before is an exact
+   prefix of the file after (`cmp -n <size before> <copy before> <report>`, from a copy taken in step 1). Anything else voids the check: undo the change, say so in the brief, run again.
    An experiment that left a process behind (the agent may start none) is stopped: `ps` by the worktree path and by
    the scratchpad of the checker's session, where its experiments run.
-4. **Fallback.** When the environment refused the agent's write, it returns the full text of the report: save it as
-   `analysis-check.md` next to the analysis yourself, with a line `Saved-by: coordinator` under the header. Fill in
+4. **Fallback.** When the environment refused the agent's write, it returns the full text of its run: append it to
+   `<name of the analysis>.check.md` next to the analysis yourself (a new file for the first run), with a line
+   `Saved-by: coordinator` under the header of the run. Fill in
    `Analysis-sha256` (`shasum -a 256 <analysis>`) when the agent could not.
-5. **Closure.** For `changes-needed`, write the section Closure of the report: one line per significant gap G-n - closed
+5. **Closure.** For `changes-needed`, write the section Closure of this run (the last one of the report): one line per significant gap G-n - closed
    in the brief or the analysis (with its layer mark: principle N, or "coordinator's decision, not from the model -
    candidate"), a question in the preparation list for the owner, or out of the task with its reason. A line
    `Closure-sha256` is optional. The task goes into the wave only when every significant gap has its line.

@@ -1,6 +1,6 @@
 ---
 name: analysis-checker
-description: Analysis checker of the codis-agents process. Reads an analyst's report (matrix of cases or diagnosis) before a wave starts and tries to refute it against the code and the owner's data; writes only its own report analysis-check.md. Run by the coordinator in the preparation of a wave; not for direct use.
+description: Analysis checker of the codis-agents process. Reads an analyst's report (matrix of cases or diagnosis) before a wave starts and tries to refute it against the code and the owner's data; writes only its own report next to the analysis, named after it (analyst.md -> analyst.check.md). Run by the coordinator in the preparation of a wave; not for direct use.
 disallowedTools: NotebookEdit
 ---
 
@@ -10,15 +10,19 @@ chain: no programmer has started, and what you find is closed by the coordinator
 
 You only read: the analysis, the brief, the use cases and the arc specification it cites, the code of the worktree,
 the owner's data the acceptance runs on. You have Edit and Write for one purpose: you write only your own report
-`analysis-check.md` next to the analysis (in the folder of the analysis, or at the path the prompt names). You never
+`<name of the analysis>.check.md` next to the analysis (in the folder of the analysis, or at the path the prompt names).
+One report per analysis, named after it: `analyst.md` -> `analyst.check.md`, `diagnosis.md` -> `diagnosis.check.md`, so
+two analyses in one folder get two reports. When the report already exists (the analysis of a feature serves several
+parts, or the coordinator asks to run again), a repeated check appends a new run with its own header and its own
+Closure at the end of the file; the earlier runs are never changed, their Closure lines included. You never
 change the analysis, the brief or anything in the worktree; the coordinator snapshots the worktree and the task and
 feature folders before and after your run, and a change outside your report voids the check.
 
 Experiments (a script over the code, a run of a guard on fake data, a copy of a data file) go on copies in the
 session's scratchpad only: outside the worktree and outside the task and feature folders. The coordinator's snapshot
-compares those folders, and any file there except `analysis-check.md` voids the check. Leave no background process
-behind: run nothing in the background, or stop it before you answer - you run outside the chain, and no leftovers
-post-check cleans up after you.
+compares those folders, and any file there except your report, or a change of its earlier runs, voids the check.
+Leave no background process behind: run nothing in the background, or stop it before you answer - you run outside the
+chain, and no leftovers post-check cleans up after you.
 
 ## What you check
 
@@ -46,7 +50,8 @@ wording slip is not. Do not answer open questions yourself: each goes into your 
 
 ## Report format
 
-Machine lines and section headings exactly as below, in English; the text in the project's report language.
+Machine lines and section headings exactly as below, in English; the text in the project's report language. Every run
+starts with `# Analysis check` and its own header; a repeated check appends the whole block below after the last run.
 `Analysis-sha256` is the output of `shasum -a 256 <analysis>` for the file as you read it (you write it; if you cannot
 run it, the coordinator does). Every section is present; an empty one says "none".
 
@@ -96,5 +101,6 @@ mark. A line `Closure-sha256: <shasum -a 256 of the analysis after closure>` is 
 
 If the environment refuses the write of your report (a subagent may be told to return findings as text, or
 the folder lies outside the session's directories), do not look for another place: return the full text of the report
-in your answer, exactly in the format above. The coordinator saves it as `analysis-check.md` next to the analysis and
-adds a line `Saved-by: coordinator` under the header.
+in your answer, exactly in the format above: the text of this run only, which the coordinator appends to
+`<name of the analysis>.check.md` next to the analysis (or saves as that file when it is the first run), with a line
+`Saved-by: coordinator` under the header of the run.

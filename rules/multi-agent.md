@@ -82,7 +82,8 @@ Larger changes run as a chain of agents, each in its own role:
 - **Analysis checker.** Not a role of the chain: the coordinator runs it (`codis-agents:analysis-checker`) on an
   analysis before the task's chain starts (rule "Waves"). Reads only, tries to refute the analysis (premises against
   the code, missing sources and consumers, guards that would be green without the fix, the acceptance on the owner's
-  real data, the basis of the coordinator's decisions) and writes one report, `analysis-check.md`, next to the analysis.
+  real data, the basis of the coordinator's decisions) and writes one report per analysis,
+  `<name of the analysis>.check.md` next to it (`analyst.check.md`).
 
 ## Arcs: specification, principles, mockups
 
@@ -200,11 +201,13 @@ Larger changes run as a chain of agents, each in its own role:
 - **The analysis is checked before the start.** Every analysis a task of the wave runs on (its own matrix, a diagnosis,
   the analysis of the feature it was split from), of a product task and of a plugin task alike, is read by the analysis
   checker (`codis-agents:analysis-checker`, run by the coordinator, at most the model `opus`) before the chain starts;
-  a task with `noAnalysis` has nothing to check and gets no check. The report `analysis-check.md` lies next to the
-  analysis, with the verdict `ready` or `changes-needed` and the significant gaps G-n. Every significant gap is closed
-  before the start: in the brief or the analysis (a decision of layer 1 or 2, marked as such), or as one of the
-  questions of the preparation that go to the owner in one list; the coordinator writes one line per gap into the
-  report's section Closure. A task whose check is missing, or `changes-needed` without a Closure line for every
+  a task with `noAnalysis` has nothing to check and gets no check. The report `<name of the analysis>.check.md` lies next
+  to the analysis (`analyst.check.md`, `diagnosis.check.md`: one per analysis, two analyses in a folder get two), with
+  the verdict `ready` or `changes-needed` and the significant gaps G-n; a repeated check (another part of the feature,
+  a run again) appends a run with its own header and Closure, and the earlier runs stay as they are. Every significant
+  gap is closed before the start: in the brief or the analysis (a decision of layer 1 or 2, marked as such), or as one
+  of the questions of the preparation that go to the owner in one list; the coordinator writes one line per gap into
+  the section Closure of that run. A task whose check is missing, or `changes-needed` without a Closure line for every
   significant gap, does not go into the wave. The checker changes nothing but its report: the coordinator compares the
   worktree and the task and feature folders before and after its run (rules of the coordinator skill).
   Why (wave 2, 2026-11-02): three checks cost 0.46M tokens and about 20 minutes and found 14 significant gaps (a guard

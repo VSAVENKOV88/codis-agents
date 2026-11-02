@@ -120,7 +120,7 @@ ok('C1. coordinator: the report path is <folder of the analysis>/<name of the an
 ok('C1. coordinator: the only difference of the folders is that report, its earlier content unchanged (an exact prefix)',
   /only difference[^.]*`<name of the analysis>\.check\.md`[^.]*earlier content[^.]*prefix/.test(coStep), coStep.slice(0, 600));
 ok('C1. coordinator: the earlier content is compared with cmp', /`cmp -n/.test(coStep), '');
-ok('C1. coordinator: the fallback appends the returned run', /fallback[^]*append[^.]*Saved-by: coordinator/i.test(coStep), '');
+ok('C1. coordinator: the fallback appends the returned run', /\*\*Fallback\.\*\*[^]*?append it to `<name of the analysis>\.check\.md`[^]*?Saved-by: coordinator/.test(coStep), '');
 ok('C1. coordinator: analysis-check.md is named only as the history of wave 2',
   coStep.split(/(?<=\.) /).filter((x) => OLD.test(x)).every((x) => /wave 2/.test(x) && /history/.test(x)), coStep.split(/(?<=\.) /).filter((x) => OLD.test(x)).join(' / '));
 ok('C1. README: the report is <name of the analysis>.check.md, no fixed analysis-check.md', /`<name of the analysis>\.check\.md`/.test(rdf) && !OLD.test(rd), (rdf.match(/.{80}analysis-check\.md.{40}/) || [''])[0]);
