@@ -79,6 +79,10 @@ Larger changes run as a chain of agents, each in its own role:
   lower the reviewer's effort: it pays for itself (security holes, a guard fed data the server never sends).
 - **Security reviewer.** Only when the brief marks the task as security work (accounts and login, connectors and OAuth,
   access passes, rollout to a host). Reads the diff with an attacker's view against the project's threat model.
+- **Analysis checker.** Not a role of the chain: the coordinator runs it (`codis-agents:analysis-checker`) on an
+  analysis before the task's chain starts (rule "Waves"). Reads only, tries to refute the analysis (premises against
+  the code, missing sources and consumers, guards that would be green without the fix, the acceptance on the owner's
+  real data, the basis of the coordinator's decisions) and writes one report, `analysis-check.md`, next to the analysis.
 
 ## Arcs: specification, principles, mockups
 
@@ -193,6 +197,19 @@ Larger changes run as a chain of agents, each in its own role:
   tasks of one wave touch different surfaces; a task that continues another one (its next part, a task that waits
   for its result) goes into the next wave. A chain of the process plugin is apart: at most one, its questions go into
   the same digest.
+- **The analysis is checked before the start.** Every analysis a task of the wave runs on (its own matrix, a diagnosis,
+  the analysis of the feature it was split from), of a product task and of a plugin task alike, is read by the analysis
+  checker (`codis-agents:analysis-checker`, run by the coordinator, at most the model `opus`) before the chain starts;
+  a task with `noAnalysis` has nothing to check and gets no check. The report `analysis-check.md` lies next to the
+  analysis, with the verdict `ready` or `changes-needed` and the significant gaps G-n. Every significant gap is closed
+  before the start: in the brief or the analysis (a decision of layer 1 or 2, marked as such), or as one of the
+  questions of the preparation that go to the owner in one list; the coordinator writes one line per gap into the
+  report's section Closure. A task whose check is missing, or `changes-needed` without a Closure line for every
+  significant gap, does not go into the wave. The checker changes nothing but its report: the coordinator compares the
+  worktree and the task and feature folders before and after its run (rules of the coordinator skill).
+  Why (wave 2, 2026-11-02): three checks cost 0.46M tokens and about 20 minutes and found 14 significant gaps (a guard
+  green without the fix, an acceptance bound to fail on the owner's data, a missed proxy path), against about 0.7M and
+  35-60 minutes for one return of a task in wave 1.
 - **No question to the owner while a wave runs.** Layers 1 and 2 are decided by the coordinator as before (written
   into the brief as candidates); a question of layer 3 stops only its own task, which waits for the digest, and the
   others go on. A relaunch inside the wave that needs no answer of the owner (after an analyst, an environment stop,

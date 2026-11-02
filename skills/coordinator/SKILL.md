@@ -30,7 +30,8 @@ one. For whatever the owner judges by the screen, show a mockup of all states be
    run it with `useCasesFirst: true` and `analystFirst`, take the `use-cases-review` result to the owner as one list of
    questions, write the answers into `use-cases.md`, then relaunch with `useCases: <path>` and `analystFirst`.
 3. **Brief.** One folder per task under `sharedDir` with `BRIEF.md` (skill `codis-agents:brief`); the owner's words
-   verbatim and dated; the acceptance as a scenario in the real environment.
+   verbatim and dated; the acceptance as a scenario in the real environment. Before the chain starts, the analysis of
+   the task is checked (below, "Check the analysis"); a task with `noAnalysis` has none to check.
 4. **Worktree.** `${CLAUDE_PLUGIN_ROOT}/scripts/wt-setup.sh <name> <branch> [base]`.
 5. **Run.** Skill `codis-agents:role-chain` with the tasks. Independent tasks run in parallel; heavy steps queue in
    the memory slots, so do not start more chains than the machine's slots can serve. At most two chains with
@@ -61,6 +62,28 @@ one. For whatever the owner judges by the screen, show a mockup of all states be
    never answer owner questions themselves; they write them into their reports.
 8. **Cost.** After each run, `node "${CLAUDE_PLUGIN_ROOT}/scripts/chain-cost.js" <transcripts>`; a task above twice the
    median means the next similar one is split earlier.
+
+## Check the analysis
+
+Before a task of a wave starts (product or plugin), its analysis is read by the analysis checker (rule "Waves"):
+
+1. **Snapshot before.** `git -C <worktree> rev-parse HEAD` and `git -C <worktree> status --porcelain`; `shasum -a 256`
+   of every file in the task folder and in the feature folder (`find <dir> -type f -exec shasum -a 256 {} +`, sorted).
+2. **Run.** The agent `codis-agents:analysis-checker`, with the model of the project's `roleModel`, never above `opus`
+   (a `fable` there runs the checker on `opus`: the owner's word, analysts not on Fable); the prompt names the analysis,
+   the brief, the use cases and specification it cites, the worktree, the task keys and the report path
+   `<folder of the analysis>/analysis-check.md`.
+3. **Snapshot after.** `node "${CLAUDE_PLUGIN_ROOT}/scripts/role-diff-check.js" --wt <worktree> --since <HEAD before>
+   --role reviewer` must answer ok (nothing in the worktree changed), the status is the same, and the only difference
+   of the folders is `analysis-check.md`. Anything else voids the check: undo the change, say so in the brief, run again.
+   An experiment that left a process behind is stopped (`ps` by the worktree path).
+4. **Fallback.** When the environment refused the agent's write, it returns the full text of the report: save it as
+   `analysis-check.md` next to the analysis yourself, with a line `Saved-by: coordinator` under the header. Fill in
+   `Analysis-sha256` (`shasum -a 256 <analysis>`) when the agent could not.
+5. **Closure.** For `changes-needed`, write the section Closure of the report: one line per significant gap G-n - closed
+   in the brief or the analysis (with its layer mark: principle N, or "coordinator's decision, not from the model -
+   candidate"), a question in the preparation list for the owner, or out of the task with its reason. A line
+   `Closure-sha256` is optional. The task goes into the wave only when every significant gap has its line.
 
 ## Limits
 

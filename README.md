@@ -126,12 +126,22 @@ read.
 So product chains go in waves: at most three, prepared and answered before the start, launched together; a question
 born inside a chain stops only its task until one digest per wave (rule "Waves" in `rules/multi-agent.md`).
 
+Before a wave starts, the analysis is checked before the start: the coordinator runs the analysis checker
+(`agents/analysis-checker.md`) on the analysis of every task of the wave that has one, product or plugin task alike. It
+reads only, tries to refute the analysis - premises against the code with file:line, sources and consumers without a
+cell, guards that would be green without the fix, an acceptance that cannot run on the owner's real data, the basis of
+the coordinator's decisions - and writes one report, `analysis-check.md`, next to the analysis (or returns its text when
+the environment refuses the write; the coordinator saves it with `Saved-by: coordinator`). Every significant gap is
+closed in the brief or the analysis, or goes to the owner with the other questions of the preparation; the coordinator
+writes that into the report's section Closure. A task with `noAnalysis` gets no check. In wave 2 three such checks cost
+0.46M tokens and about 20 minutes and found 14 significant gaps; one return of a task cost about 0.7M and 35-60 minutes.
+
 ## What is inside
 
 | path | what |
 |---|---|
 | `workflows/role-chain.js` | the chain: preconditions -> (analyst) -> programmer -> tester -> reviewer (+ security reviewer) -> (with `guardSubsetCommand`) the integration train; fix rounds; an analyst after the second rejection, the second red tester round or the second red train |
-| `agents/*.md` | role agents: `analyst`, `programmer`, `tester`, `reviewer`, `security-reviewer` (all may edit files - the tester its guards, the reviewers their reports; what they may change in the worktree is enforced by the git post-check, not by tool lists) |
+| `agents/*.md` | role agents: `analyst`, `programmer`, `tester`, `reviewer`, `security-reviewer` (all may edit files - the tester its guards, the reviewers their reports; what they may change in the worktree is enforced by the git post-check, not by tool lists); and `analysis-checker`, run by the coordinator outside the chain before a wave starts - it may write only its report `analysis-check.md`, and the coordinator checks that (a snapshot of the worktree and the task folders before and after, `role-diff-check.js --role reviewer`), since no post-check of the chain follows it |
 | `skills/role-chain` | reads the project config and starts the workflow |
 | `skills/brief` | how to write a task brief |
 | `skills/coordinator` | the coordinator's loop |
@@ -606,6 +616,21 @@ holds no memory slot: its memory is its own fixed ceiling.
 An invalid project config is a refusal for every slot and stand script (exit 78 with the errors), never a silent
 fallback to another slot directory: a second directory would be a second queue that the first one does not see.
 
+## Changes in 0.4.18
+
+- **The analysis is checked before the start** (p-analysis-check-a; the owner 2026-11-02, translated: "our approach of
+  checking the analysis of cases beforehand seems to have paid off? let us formalize it in the plugin, so that wave 3
+  starts on the new plugin"). A new agent `analysis-checker` (frontmatter like the reviewer's) reads an analysis before
+  its task's chain starts and writes one report `analysis-check.md` next to it: a header (`Analysis`, `Analysis-sha256`,
+  `Tasks`, `Verdict: ready | changes-needed`, `Significant gaps`), sections Premises, Missing sources and consumers,
+  Guards: red without the fix?, Acceptance on the owner's real data, Coordinator's decisions, Gaps (G-n) and Closure,
+  written by the coordinator. A refused write returns the text, saved by the coordinator with `Saved-by: coordinator`.
+  The rule "Waves" gains the preparation step (product and plugin tasks; none for `noAnalysis`; every significant gap
+  closed in the brief or sent into the owner's questions of the preparation), the coordinator skill the step itself
+  (model never above `opus`, a snapshot before and after, `role-diff-check.js --role reviewer`, Closure). A coordinator
+  rule only: the workflow does not check for the report yet (a precondition, a project key and a task field are a later
+  part).
+
 ## Changes in 0.4.17
 
 - **The counters of a task survive a relaunch: the task field `prior`** (p-testerred-route; the owner's request
@@ -692,6 +717,10 @@ fallback to another slot directory: a second directory would be a second queue t
 
 ## Known gaps
 
+- The check of the analysis before the start (0.4.18) is a coordinator rule: the chain's preconditions do not read
+  `analysis-check.md`, so a task launched without the check, or with gaps left open, still starts; a deterministic
+  check of the report (its header, its verdict, every significant gap closed, the analysis unchanged since) is a later
+  part. The checker's own post-check is the coordinator's snapshot, not a step of the workflow.
 - The session hook reads the command line as written: wrappers and indirection (`bash -c 'git push ...'`,
   `command -p git` (`-p` is an option the hook does not read; git still runs), `exec`, `eval`, `env` with options such as `env -i` / `env -u NAME`, `$G` or `G=git; $G`
   in the place of the command, an alias such as `git -c alias.p=push p` or `git -c alias.x=symbolic-ref x ...`, aliases
