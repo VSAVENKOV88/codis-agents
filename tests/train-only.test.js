@@ -197,7 +197,7 @@ const G = (train, more = {}) => Object.assign({ pre: [PRE], prog: [PROG], test: 
   const onerun = rules.split('\n').filter((l) => /<!-- role:onerun -->/.test(l)).join('\n');
   ok('O7. rules: the onerun line names innerSelect and replaces the selection inside the task (Replaces:)',
     /innerSelect/.test(onerun) && /Replaces:/.test(onerun) && /short tester round/.test(onerun), onerun.slice(0, 300));
-  ok('O7. README: the key innerSelect in the config table and Changes in 0.4.15', /\| `innerSelect` \|/.test(read('README.md')) && /Changes in 0\.4\.15/.test(read('README.md')));
+  ok('O7. README: the key innerSelect in the config table; CHANGELOG 0.4.15 names it', /\| `innerSelect` \|/.test(read('README.md')) && /## 0\.4\.15\b[^#]*innerSelect/.test(read('CHANGELOG.md')));
   fs.rmSync(tmp, { recursive: true, force: true });
   done();
 })();
