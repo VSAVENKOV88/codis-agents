@@ -15,7 +15,10 @@
 //       before and after (git HEAD and status of the worktree, shasum of the task and feature folders,
 //       role-diff-check.js --role reviewer), the fallback "Saved-by: coordinator", Closure.
 //   B4. README: the agent in "What is inside" (its post-check is the coordinator's, not the chain's) and the step.
-//   B5. version 0.4.18 (pinned once, in p-testerred-route.test.js).
+//   B3. the check runs after the worktree exists (it reads its code and snapshots its HEAD and status): the Worktree
+//       step comes before the step that sends a task to "Check the analysis"; a leftover process is looked for by the
+//       worktree path and by the scratchpad of the checker's session (its experiments run there).
+//   The version 0.4.18 is pinned once, in p-testerred-route.test.js; this test does not pin it.
 const fs = require('fs');
 const path = require('path');
 const { ok, done } = require('./lib');
@@ -74,6 +77,13 @@ ok('B3. coordinator: snapshot before and after - HEAD and status of the worktree
 ok('B3. coordinator: role-diff-check.js --role reviewer after the checker', /role-diff-check\.js[^.]*--role reviewer/.test(co), '');
 ok('B3. coordinator: fallback "Saved-by: coordinator"', /Saved-by: coordinator/.test(co), '');
 ok('B3. coordinator: writes Closure', /Closure/.test(co), '');
+const coRaw = raw('skills/coordinator/SKILL.md');
+const stepOf = (re) => { const m = coRaw.match(re); return m ? m.index : -1; };
+const wtStep = stepOf(/^\d+\. \*\*Worktree\.\*\*/m);
+const checkRef = stepOf(/^\d+\. \*\*[^*]+\*\*[^\n]*(?:\n {3}[^\n]*)*?"Check the analysis"/m);
+ok('B3. coordinator: the analysis is checked after the Worktree step (the checker reads its code and snapshots it)',
+  wtStep >= 0 && checkRef > wtStep, `worktree step at ${wtStep}, reference at ${checkRef}`);
+ok('B3. coordinator: a leftover process is looked for by the worktree path and by the scratchpad', /`ps`[^.]*worktree[^.]*scratchpad/.test(co), '');
 
 // ---- B4: README ----
 const rd = raw('README.md'), rdf = flat('README.md');
@@ -83,8 +93,4 @@ ok('B4. README What is inside: the analysis checker is checked by the coordinato
   /analysis-checker[^|]*coordinator/.test(inside), inside);
 ok('B4. README: the step "the analysis is checked before the start"', /analysis is checked before the start/.test(rdf), '');
 
-// ---- B5: version ----
-const pinned = raw('tests/p-testerred-route.test.js');
-ok('B5. version 0.4.18 in package.json and plugin.json', /"version": "0\.4\.18"/.test(raw('package.json')) && /"version": "0\.4\.18"/.test(raw('.claude-plugin/plugin.json')), '');
-ok('B5. one pin of the version, moved to 0.4.18', /"version": "0\\\.4\\\.18"/.test(pinned) && !/"version": "0\\\.4\\\.17"/.test(pinned), '');
 done();
