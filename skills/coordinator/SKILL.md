@@ -30,9 +30,10 @@ one. For whatever the owner judges by the screen, show a mockup of all states be
    run it with `useCasesFirst: true` and `analystFirst`, take the `use-cases-review` result to the owner as one list of
    questions, write the answers into `use-cases.md`, then relaunch with `useCases: <path>` and `analystFirst`.
 3. **Brief.** One folder per task under `sharedDir` with `BRIEF.md` (skill `codis-agents:brief`); the owner's words
-   verbatim and dated; the acceptance as a scenario in the real environment. Before the chain starts, the analysis of
-   the task is checked (below, "Check the analysis"); a task with `noAnalysis` has none to check.
-4. **Worktree.** `${CLAUDE_PLUGIN_ROOT}/scripts/wt-setup.sh <name> <branch> [base]`.
+   verbatim and dated; the acceptance as a scenario in the real environment.
+4. **Worktree.** `${CLAUDE_PLUGIN_ROOT}/scripts/wt-setup.sh <name> <branch> [base]`. Then, before the chain starts,
+   the analysis of the task is checked (below, "Check the analysis"): the checker reads the code of this worktree and
+   the check snapshots its HEAD and status; a task with `noAnalysis` has none to check.
 5. **Run.** Skill `codis-agents:role-chain` with the tasks. Independent tasks run in parallel; heavy steps queue in
    the memory slots, so do not start more chains than the machine's slots can serve. At most two chains with
    acceptance in Docker at once. Product chains go in waves (rule "Waves"): at most three, prepared and answered by the
@@ -76,7 +77,8 @@ Before a task of a wave starts (product or plugin), its analysis is read by the 
 3. **Snapshot after.** `node "${CLAUDE_PLUGIN_ROOT}/scripts/role-diff-check.js" --wt <worktree> --since <HEAD before>
    --role reviewer` must answer ok (nothing in the worktree changed), the status is the same, and the only difference
    of the folders is `analysis-check.md`. Anything else voids the check: undo the change, say so in the brief, run again.
-   An experiment that left a process behind is stopped (`ps` by the worktree path).
+   An experiment that left a process behind (the agent may start none) is stopped: `ps` by the worktree path and by
+   the scratchpad of the checker's session, where its experiments run.
 4. **Fallback.** When the environment refused the agent's write, it returns the full text of the report: save it as
    `analysis-check.md` next to the analysis yourself, with a line `Saved-by: coordinator` under the header. Fill in
    `Analysis-sha256` (`shasum -a 256 <analysis>`) when the agent could not.

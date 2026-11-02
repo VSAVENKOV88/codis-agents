@@ -82,7 +82,7 @@ const stepOf = (re) => { const m = coRaw.match(re); return m ? m.index : -1; };
 const wtStep = stepOf(/^\d+\. \*\*Worktree\.\*\*/m);
 const checkRef = stepOf(/^\d+\. \*\*[^*]+\*\*[^\n]*(?:\n {3}[^\n]*)*?"Check the analysis"/m);
 ok('B3. coordinator: the analysis is checked after the Worktree step (the checker reads its code and snapshots it)',
-  wtStep >= 0 && checkRef > wtStep, `worktree step at ${wtStep}, reference at ${checkRef}`);
+  wtStep >= 0 && checkRef >= wtStep, `worktree step at ${wtStep}, reference at ${checkRef}`);
 ok('B3. coordinator: a leftover process is looked for by the worktree path and by the scratchpad', /`ps`[^.]*worktree[^.]*scratchpad/.test(co), '');
 
 // ---- B4: README ----
