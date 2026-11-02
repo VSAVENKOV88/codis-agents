@@ -119,11 +119,56 @@ ok('C1. coordinator: the report path is <folder of the analysis>/<name of the an
   /`<folder of the analysis>\/<name of the analysis>\.check\.md`/.test(coStep), coStep.slice(0, 400));
 ok('C1. coordinator: the only difference of the folders is that report, its earlier content unchanged (an exact prefix)',
   /only difference[^.]*`<name of the analysis>\.check\.md`[^.]*earlier content[^.]*prefix/.test(coStep), coStep.slice(0, 600));
-ok('C1. coordinator: the earlier content is compared with cmp', /`cmp -n/.test(coStep), '');
+// Round 5 (after the analyst of the second red tester round, cells M1-M12): BSD cmp -n answers 1 for files of
+// different length, so the prefix is cut with head -c and compared from a pipe; the size before is counted in bytes
+// with wc -c (stat differs between BSD and GNU).
+ok('C1. coordinator: the earlier content is compared as head -c <size before> <report> | cmp -s - <copy before>',
+  /`head -c <size before> <report> \| cmp -s - <copy before>`/.test(coStep) && !/cmp -n/.test(coStep), coStep.slice(0, 900));
+ok('C1. coordinator step 1: the size before is counted in bytes with wc -c, not stat',
+  /`wc -c < <copy before>`/.test((coStep.match(/\*\*Snapshot before\.\*\*([^]*?)(?=\d\. \*\*Run)/) || ['', ''])[1]) && !/\bstat\b/.test(coStep), '');
 ok('C1. coordinator: the fallback appends the returned run', /\*\*Fallback\.\*\*[^]*?append it to `<name of the analysis>\.check\.md`[^]*?Saved-by: coordinator/.test(coStep), '');
 ok('C1. coordinator: analysis-check.md is named only as the history of wave 2',
   coStep.split(/(?<=\.) /).filter((x) => OLD.test(x)).every((x) => /wave 2/.test(x) && /history/.test(x)), coStep.split(/(?<=\.) /).filter((x) => OLD.test(x)).join(' / '));
 ok('C1. README: the report is <name of the analysis>.check.md, no fixed analysis-check.md', /`<name of the analysis>\.check\.md`/.test(rdf) && !OLD.test(rd), (rdf.match(/.{80}analysis-check\.md.{40}/) || [''])[0]);
 ok('C1. README: a repeated check appends a run', /repeated check[^.]*appends/.test(rdf), '');
+
+// ---- D1 (round 5): the check of a task is a run whose Tasks line names its key ----
+// A shared analysis of a feature: the run for part a does not count for part b (cells of the analyst, question of
+// test.md round 3, coordinator's answer 2026-11-02).
+ok('D1. Waves: the check of a task is a run whose Tasks line names the key of that task',
+  /check of a task is a run whose `Tasks` line names (its|the) key/.test(stepf), stepf);
+ok('D1. Waves: a run for another part of the feature does not count for this task',
+  /run for another part[^.]*does not count/.test(stepf), stepf);
+ok('D1. agent: the Tasks line lists the keys of the tasks checked in this run', /`Tasks` names the task keys the verdict holds for/.test(agf), '');
+
+// ---- D2 (round 5): the prefix check of step 3, run as written, on the cells the tester's T6 does not reach ----
+{
+  const os2 = require('os');
+  const { spawnSync: sp } = require('child_process');
+  const s3b = (coStep.match(/\*\*Snapshot after\.\*\*([^]*?)(?=\d\. \*\*Fallback)/) || ['', ''])[1];
+  const cmdT = (s3b.match(/`([^`]*<report>[^`]*)`/) || ['', ''])[1];
+  ok('D2. step 3 names the prefix command', !!cmdT, s3b.slice(0, 300));
+  if (cmdT) {
+    const tmp = fs.mkdtempSync(path.join(os2.tmpdir(), 'codis-prefix-d2-'));
+    const copy = path.join(tmp, 'copy-before.md');
+    const rep = path.join(tmp, 'analyst.check.md');
+    const sizeBy = (f) => sp('/bin/sh', ['-c', 'wc -c < ' + JSON.stringify(f)], { encoding: 'utf8' }).stdout.trim();
+    const run = (before, after) => {
+      fs.writeFileSync(copy, before);
+      if (after === null) { try { fs.unlinkSync(rep); } catch (e) { /* absent */ } } else fs.writeFileSync(rep, after);
+      const cmd = cmdT.replace('<size before>', sizeBy(copy)).replace('<report>', JSON.stringify(rep)).replace('<copy before>', JSON.stringify(copy));
+      const r = sp('/bin/sh', ['-c', cmd], { encoding: 'utf8' });
+      return { status: r.status, out: cmd + ' -> ' + r.status };
+    };
+    const mb = '# Analysis check\nTasks: a\n\n## Closure\nG1: \u0437\u0430\u043a\u0440\u044b\u0442\u043e \u2014 \u00e9\n';
+    const r1 = run(mb, mb + '# Analysis check\nTasks: b\n');
+    ok('D2. M7: multibyte earlier run, size by wc -c, an appended run passes', r1.status === 0, r1.out);
+    const r2 = run(mb, mb.replace('\u00e9', 'e\u0301'));
+    ok('D2. M7: multibyte earlier run changed in place fails', r2.status !== 0, r2.out);
+    const r3 = run(mb, null);
+    ok('D2. M6: the report deleted by the agent fails', r3.status !== 0, r3.out);
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
 
 done();
