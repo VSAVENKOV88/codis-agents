@@ -328,22 +328,27 @@ function writeFlaky({ wt, log, names, quarantine, baseline, readHash }) {
       text: `quarantined: ${names.join(', ')} (${quarantine}) — the coordinator commits them into ${baseline} (guards-result.js quarantine-take)\n` };
   } catch (e) { return { quarantined: [], text: `quarantine not written: ${e.message}\n` }; }
 }
-// The guards a rerun found red again alone ("new red, red again alone: G (exit N)"), from the last rerun section of a log.
-function repeatedInLog(text) {
-  const head = '==== rerun of new reds one by one (guardRerun) ====\n', i = String(text).lastIndexOf(head);
-  if (i < 0) return [];
+// The rerun sections of a log: each starts at its own header line and ends at the first empty line, the next "==== "
+// line or the end of the log. A run on the remote runner leaves two in one log (scripts/guards-remote.js): the runner's
+// and, after "==== on this machine: ...", the one of the part here (p-train-attr, train 20261102-133002999-28977: only
+// the last was read, the runner's repeated red was lost and the train stopped for the coordinator). A guard's own
+// output outside the sections (before the first header, or the part here's guards between the two) never counts.
+const RERUN_HEAD = '==== rerun of new reds one by one (guardRerun) ====';
+function namesInRerun(text, re) {
   const names = [];
-  for (const m of String(text).slice(i + head.length).matchAll(/^new red, red again alone: (.+) \(exit [^)]*\)$/gm)) if (!names.includes(m[1])) names.push(m[1]);
+  let inside = false;
+  for (const l of String(text).split('\n')) {
+    if (l === RERUN_HEAD) { inside = true; continue; }
+    if (inside && (l === '' || l.startsWith('==== '))) inside = false;
+    const m = inside && re.exec(l);
+    if (m && !names.includes(m[1])) names.push(m[1]);
+  }
   return names;
 }
-// The guards a rerun found flaky, from the last rerun section of a log (a guard's own output before it never counts).
-function flakyInLog(text) {
-  const head = '==== rerun of new reds one by one (guardRerun) ====\n', i = String(text).lastIndexOf(head);
-  if (i < 0) return [];
-  const names = [];
-  for (const m of String(text).slice(i + head.length).matchAll(/^flaky, red under load, green alone: (.+)$/gm)) if (!names.includes(m[1])) names.push(m[1]);
-  return names;
-}
+// The guards a rerun found red again alone ("new red, red again alone: G (exit N)"), from every rerun section of a log.
+const repeatedInLog = (text) => namesInRerun(text, /^new red, red again alone: (.+) \(exit [^)]*\)$/);
+// The guards a rerun found flaky ("flaky, red under load, green alone: G"), from every rerun section of a log.
+const flakyInLog = (text) => namesInRerun(text, /^flaky, red under load, green alone: (.+)$/);
 
 const metaFile = (log) => `${log}.meta.json`;
 function gitState(wt) {
