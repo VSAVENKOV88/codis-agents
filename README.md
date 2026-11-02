@@ -126,7 +126,7 @@ read.
 So product chains go in waves: at most three, prepared and answered before the start, launched together; a question
 born inside a chain stops only its task until one digest per wave (rule "Waves" in `rules/multi-agent.md`).
 
-Before a wave starts, the analysis is checked before the start: the coordinator runs the analysis checker
+Before a wave starts, its analyses are checked: the coordinator runs the analysis checker
 (`agents/analysis-checker.md`) on the analysis of every task of the wave that has one, product or plugin task alike. It
 reads only, tries to refute the analysis - premises against the code with file:line, sources and consumers without a
 cell, guards that would be green without the fix, an acceptance that cannot run on the owner's real data, the basis of
