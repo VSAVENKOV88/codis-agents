@@ -140,6 +140,7 @@ ok('D1. Waves: the check of a task is a run whose Tasks line names the key of th
 ok('D1. Waves: a run for another part of the feature does not count for this task',
   /run for another part[^.]*does not count/.test(stepf), stepf);
 ok('D1. agent: the Tasks line lists the keys of the tasks checked in this run', /`Tasks` names the task keys the verdict holds for/.test(agf), '');
+ok('D1. README: a task counts as checked only by a run whose Tasks line names its key', /checked only by a run whose `Tasks` line names its key/.test(rdf), '');
 
 // ---- D2 (round 5): the prefix check of step 3, run as written, on the cells the tester's T6 does not reach ----
 {
