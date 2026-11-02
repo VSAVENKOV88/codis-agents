@@ -2,13 +2,14 @@
 'use strict';
 // The reviewer and the security reviewer run at the effort of the session: neither their agent definitions
 // (agents/*.md frontmatter) nor the workflow's agent options set "effort". The reviewer is the one role that looks for
-// what is false; a lowered effort there turns into empty verdicts (rules/multi-agent.md, "Reviewer").
+// what is false; a lowered effort there turns into empty verdicts (rules/multi-agent.md, "Reviewer"). The analysis
+// checker (0.4.18) refutes an analysis the same way and is held to the same frontmatter.
 const fs = require('fs');
 const path = require('path');
 const { ok, done } = require('./lib');
 
 const ROOT = path.join(__dirname, '..');
-const ROLES = ['reviewer', 'security-reviewer'];
+const ROLES = ['reviewer', 'security-reviewer', 'analysis-checker'];
 for (const r of ROLES) {
   const md = fs.readFileSync(path.join(ROOT, 'agents', r + '.md'), 'utf8');
   const fm = (md.match(/^---\n([\s\S]*?)\n---/) || [])[1];
