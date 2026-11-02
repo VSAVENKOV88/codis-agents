@@ -11,7 +11,7 @@
 //       the folders is analysis-check.md; Saved-by under the header; Analysis-sha256 filled by the coordinator.
 //   T5. Part b did not leak in: no scripts/analysis-check.js, no analysisCheck key or analysis-checker role in
 //       config.js, the schema, the workflow or the role-chain skill.
-//   T1. The agent definition is in English (no Cyrillic).
+//   (English of the agent: tests/hygiene.test.js, no Cyrillic in any file.)
 const fs = require('fs');
 const path = require('path');
 const { ok, done } = require('./lib');
@@ -55,6 +55,4 @@ for (const f of ['scripts/config.js', 'workflows/role-chain.js', 'skills/role-ch
   ok(`T5. ${f}: no analysisCheck key and no analysis-checker role (part b)`, !/analysisCheck|analysis-checker/.test(raw(f)), f);
 }
 
-// ---- T1: language ----
-ok('T1. agents/analysis-checker.md is English (no Cyrillic)', !/[Ѐ-ӿ]/.test(raw('agents/analysis-checker.md')), (raw('agents/analysis-checker.md').match(/.*[Ѐ-ӿ].*/) || [''])[0]);
 done();
