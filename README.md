@@ -24,7 +24,7 @@ brief -> analyst -> analysis check -> programmer -> tester -> reviewer -> train 
 
 > **Agents are not what makes this work. What is written down around them is.**
 
-It grew out of a real product built with Claude Code on a single 16 GB laptop, several tasks a day, for months. Every
+It grew out of a real product built with Claude Code, several tasks a day, for months. Every
 rule in it exists because something broke without it.
 
 > [!NOTE]
