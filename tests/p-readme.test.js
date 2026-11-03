@@ -58,7 +58,8 @@ ok('C5. CHANGELOG has an entry for the version of package.json', entry(pkg).leng
 
 // ---- D ----
 // "Start here" is plain already and may stand in the plain part; every other heading stays in the block.
-ok('D1. README keeps the heading "Start here - no plugin needed"', /^## Start here - no plugin needed\s*$/m.test(readme));
+// 0.4.20 (p-readme-2): "Start here" may be a heading or a GitHub callout ("> **Start here - no plugin needed.**").
+ok('D1. README keeps "Start here - no plugin needed" (a heading or a callout)', /^## Start here - no plugin needed\s*$/m.test(readme) || /^> \*\*Start here - no plugin needed\.?\*\*/m.test(readme));
 const BEFORE = ['Terms', 'The role chain', 'Decisions live in three layers', 'What counts as evidence',
   'Rules that grew out of failures', "The bottleneck is the owner's attention", 'What is inside', 'Install', 'Configure a project',
   'The machine file', 'Run a chain', 'How the chain decides', 'Memory slots', 'Shared stand', 'Known gaps', 'Tests'];
