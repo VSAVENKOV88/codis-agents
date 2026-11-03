@@ -27,7 +27,7 @@ ok('A1. README has exactly one "## Technical reference" heading', techIdx > 0 &&
 const top = techIdx > 0 ? lines.slice(0, techIdx) : lines;
 const tech = techIdx > 0 ? lines.slice(techIdx).join('\n') : '';
 ok('A2. the plain part has no config key table rows (| `key` |)', !top.some((l) => /^\| `/.test(l)), top.filter((l) => /^\| `/.test(l)).slice(0, 3).join(' / '));
-ok('A3. the plain part is short (under 200 lines)', top.length < 200, String(top.length));
+ok('A3. the plain part is short (under 300 lines)', top.length < 300, String(top.length));
 ok('A4. the plain part has a quick start', top.some((l) => /^## .*Quick start/i.test(l)));
 ok('A5. the plain part links to CHANGELOG.md', /\]\(CHANGELOG\.md\)/.test(top.join('\n')));
 ok('A6. the plain part says what the owner gets and shows an example', top.some((l) => /^## .*owner/i.test(l)) && top.some((l) => /^## .*example/i.test(l)));

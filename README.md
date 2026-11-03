@@ -7,7 +7,7 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT"></a>
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-0.4.20-informational" alt="Version 0.4.20"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-0.4.21-informational" alt="Version 0.4.21"></a>
   <a href="https://claude.com/claude-code"><img src="https://img.shields.io/badge/Claude%20Code-plugin-D97757" alt="Claude Code plugin"></a>
 </p>
 
@@ -24,69 +24,195 @@ brief -> analyst -> analysis check -> programmer -> tester -> reviewer -> train 
 
 > **Agents are not what makes this work. What is written down around them is.**
 
-It grew out of a real product built with Claude Code on a single 16 GB laptop, several tasks a day, for months. Every
-rule in it exists because something broke without it.
+It grew out of a product project that I built in Claude Code. Every rule in it exists because something broke without it. New to the words? See the
+[Glossary](#glossary).
 
 > [!NOTE]
 > Nothing is merged into your main branch, tagged or released without your explicit "yes". A project may let the
 > coordinator push working branches and process-rule changes on its own; see [Technical reference](#technical-reference), Git.
 
+## Do the roles pay off?
+
+Measured on a product project, 2026-10-24..11-03: 249 chain runs, 115 accepted tasks; all core roles ran on the same
+model.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/roles-catch-hooks-dark.svg">
+    <img src="assets/roles-catch-hooks-light.svg" alt="What the chain catches: about 108 defects caught in the chain, 4 reached the owner after acceptance (about 4 %); tester product-red in 40 % of tasks (36 of 89) after the programmer said done; reviewer rejected 48 % of tasks (43 of 89) after a green tester, a code defect in 29; analysis check found 66 significant gaps before any code, in 14 checks" width="100%">
+  </picture>
+</p>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/roles-findings-dark.svg">
+    <img src="assets/roles-findings-light.svg" alt="Funnel: about 108 defects caught in the chain, 4 reached the owner. Width is defect-rounds not yet caught: 112 enter the tester, 41 pass on (71 red rounds; product-red in 36 of 89 tasks); 10 pass the reviewer (31 rejected rounds for a code defect; rejected 43 of 89 tasks); 5 pass the security reviewer (5 security rejections; findings in 5 of 8 security tasks); 4 pass the train (0-1 product defect, counted as 1); 4 defects reached the owner after acceptance, about 4 %. The analysis check sits above, outside the widths: 66 significant gaps in 14 checks" width="100%">
+  </picture>
+</p>
+
+- **Tester:** product-red in 36 of 89 tasks (40 %) that the programmer had handed over as done; 71 red rounds; about
+  36-44 % of a full-mode task's tokens. Most of its finds need real execution (two browser engines, fractional pixels,
+  the live stand), which the reading roles cannot do.
+- **Reviewer:** rejected 43 of 89 tasks after a green tester (48 %), with a code or security defect in 29 (33 %); about
+  7 % of a task's tokens and a median of 4 minutes.
+- **Security reviewer:** findings in 5 of 8 security tasks, 4 of them seen by no other role.
+- **Analysis check** before the code: 66 significant gaps in 14 checks; no measurable effect on later defects yet (9
+  tasks).
+- **Owner after acceptance:** 4 defects that every role missed (about 4 % of roughly 108 caught in the chain), all of
+  one class: an event source missing from the shared matrix, or synthetic input instead of real input. The roles'
+  blind spots are correlated through their shared inputs, not only through the shared model.
+- **Cost:** a median of 6.8M IE and 138 agent-minutes per full-mode task against 1.6M and 49 minutes in light mode
+  (light tasks are smaller by selection).
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/roles-hooks-dark.svg">
+    <img src="assets/roles-hooks-light.svg" alt="What it costs: reviewer 7 % of a full-mode task's tokens, 0.67 code defects per 1M IE; tester 36-44 % of a full-mode task's tokens, the costliest role; light mode 4.2 times cheaper, 1.6M vs 6.8M IE per task (49 vs 138 min), its tasks are smaller; 0 owner questions during waves 2 and 3, against 2 and 1 in waves 0 and 1" width="100%">
+  </picture>
+</p>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/roles-cost-dark.svg">
+    <img src="assets/roles-cost-light.svg" alt="Cost against findings per role: tester 36 % of a full-mode task's tokens and 0.27 red rounds per 1M IE; reviewer 7 % and 0.67 code defects per 1M; security reviewer 1 % and about 1.4 per 1M; analysis check 4.8 gaps per 1M; train about 0.1 product defects per 1M" width="100%">
+  </picture>
+</p>
+
+The measurement cannot say what would have passed without a role (no counterfactual), and a red round is not exactly
+one defect. Methodology, sources and limits are kept in the measured project's task folder, not in this plugin.
+
+## The process
+
+This is the part every project gets, whatever machine it runs on. All of it is text and checks; the rules are in
+`rules/multi-agent.md`.
+
+- **Roles.** The analyst thinks before anyone codes (cases, what could go wrong, whether to split the task). The
+  programmer first commits a check that fails on today's code, then the fix. The tester makes its own list of what to
+  try before it reads the programmer's, and runs the real scenario. The reviewer only reads, and its job is to find
+  the hole. Each runs as a separate agent, and each task works in its own copy of the repository.
+- **The brief.** One file per task: your words quoted exactly and dated, the scope, and what "done" means as a scenario
+  you could try yourself ("press Add -> the item builds even with the tab closed").
+- **Principles.** One numbered list per area of work (an arc): every decision you made, with its date, and a
+  "Replaces: N" line when it overturns an older one, so no decision exists in two versions.
+- **Three layers of decisions.** A question a principle answers, the coordinator answers. A reversible, local one it
+  answers too, marks as a candidate and lists for you to overturn. Everything you judge by the screen, anything new or
+  irreversible, comes to you.
+- **Post-checks.** After the tester and the reviewer a script compares the repository with the previous role's
+  commit: the tester may change only checks, the reviewer nothing. A role cannot quietly "fix" what it was meant to
+  judge.
+- **Waves and one digest.** At most three product tasks run at once, prepared and answered before they start; a
+  question born inside a task stops only that task, and all of them reach you on one page when the wave ends.
+
+## An example: a task, end to end
+
+An example, shortened and made up from the reports of real tasks of a web product. You write: *"Exported reports lose
+rows when the filter changes during the export."*
+
+**1. The brief** (`<task>/BRIEF.md`, by the coordinator):
+
+```text
+## Owner's words (2026-11-01)
+"Exported reports lose rows when the filter changes during the export."
+## Acceptance
+Start an export of 5 000 rows, change the filter while it runs -> the file holds all 5 000 rows of the filter
+at the start; log and the file attached.
+kind: defect
+```
+
+**2. The analysis and its check.** The analyst writes the cause and the cases (`analyst.md`): *"Cause: the export
+re-reads the filter on every page (export.js:88). Cases: C1 filter changed mid-export, C2 tab closed mid-export, C3 a
+second export started..."*. The analysis checker tries to refute it (`analyst.check.md`): *"Verdict: changes-needed.
+G-1: the guard of C1 uses a 10-row fixture and stays green without the fix: one page only."* The coordinator closes
+G-1 in the brief before the start.
+
+**3. The programmer** (`prog.md`): *"Red guard export-filter-run.js committed (red: 4 000 of 5 000 rows). Fix: the
+filter is read once at the start. Mutation after the commit: restored the per-page read, guard red; checkout, green."*
+
+**4. The tester** (`test.md`), round 1: *"Red. C2: after closing the tab the export resumes with the current filter.
+Expected 5 000 rows, actual 3 120."* Back to the programmer, without a review. Round 2: *"Green. Acceptance in the
+real app: 5 000 rows, log and file attached."*
+
+**5. The reviewer** (`review.md`): *"Rejected. export.js:131: a retry after a network error re-reads the filter - the
+same defect on another path, not in the matrix."* One fix round, a second review: *"Done."*
+
+**6. The train.** The branch rides with two other ready branches; all guards run once over the three together. Green:
+the arc branch moves forward; nothing is pushed.
+
+**7. The digest** at the end of the wave: *"Export keeps its filter - done. Check: start a large export, change the
+filter, open the file."*
+
+## Local runtime - optional
+
+These parts serve the machine the chain runs on. They change nothing in the process above; adopt them when your
+machine needs them.
+
+- **Memory slots.** Heavy jobs (browsers, builds, full test runs) queue for a limited number of slots, so several
+  agents at once do not freeze a memory-limited machine. The plugin's guard-run scripts always go through them; the
+  thresholds live in a machine file you can change ([Memory slots](#memory-slots)).
+- **A shared stand.** One test deployment that testers take in turn by ticket, instead of a stack per task. Off until
+  the project config has a `stand` section ([Shared stand](#shared-stand)).
+- **A remote runner.** Full guard runs on another machine over ssh, so they do not take your memory. Off until the
+  machine file names a `remote` ([The machine file](#the-machine-file)).
+- **Worktree copies.** Each task gets its own git worktree, and the project's untracked data is cloned into it, never
+  linked, so a check in one task cannot wipe data of another (`scripts/wt-setup.sh`).
+
 ## Why codis-agents?
 
 Every rule below came with a measurement on the project the plugin grew out of. The left column is what was measured
-without the rule, the right one what the rule does and, where it was measured, what it gave.
+without the rule, the right one what the rule does and, where it was measured, what it gave. Token figures in
+input-equivalent tokens (IE, see the [Glossary](#glossary)) are marked as such.
 
 | Without the rule | With codis-agents |
 |---|---|
 | Idle waits over five minutes re-wrote the agents' prompt caches: **21 %** of all token spend[^idle] | Every role waits in slices of at most 270 s: **7.4 %**[^idle] |
 | Features with only the arc specification: **44 %** red tester rounds, **2.4** programmer rounds per task[^own] | A feature gets its own matrix of cases: **24 %** and **1.65**[^own] |
-| An analysis found wrong mid-task cost about **0.7M** tokens and **35-60 min** per return[^check] | The analysis checker reads it before the start: three checks cost **0.46M** and about **20 min** and found **14** significant gaps[^check] |
+| A gap in the analysis found mid-task costs a fix round: a programmer and a tester agent are a median of **0.89M + 1.12M IE**[^check] | The analysis checker reads it before the start: three checks cost **1.9M IE** and about **20 min** and found **14** significant gaps; over ten days **14** checks cost **13.6M IE** and found **66**[^check] |
 | **3.9** full guard runs per task, about **81 min**: **37 %** of a task's calendar[^runs] | One integration train runs the full suite over the arc head and every ready branch together, and merges only the tree that ran[^train] |
 | **6 of 17** full runs ended red only from guards unstable under load, each costing a programmer round or a stopped task[^rerun] | A new red is first rerun alone; green alone goes into quarantine, not back to the programmer[^rerun] |
 | Programmer rounds "without changes" after reds of the environment: about **3.3M** tokens in one window[^env] | A red of the environment (disk, swap, slot queue, Docker) gets its own verdict and goes to the coordinator[^env] |
-| Tasks of up to 100 lines of product took **2-2.6 h** through the full chain, against about **0.6 h** in one session[^light] | Light mode: one programmer-checker and one reviewer, the same train[^light] |
+| Tasks of up to 100 lines of product took **2-2.6 h** through the full chain, against about **0.6 h** in one session[^light] | Light mode: one programmer-checker and one reviewer, the same train: a median of **1.6M IE** and **49 min** of agent time per task, against **6.8M IE** and **138 min** in full mode[^light] |
 | A specification that covered only the architecture: about **ten** owner questions per task[^arc] | The arc is specified with the owner up front; questions come as one list per wave, each with a recommendation[^arc] |
 
 [^idle]: `rules/multi-agent.md`, "Waiting, context and cost", rule "Never sit idle longer than 270 s at a time".
 [^own]: `rules/multi-agent.md`, "Roles", rule "A feature gets its own analysis; the arc specification does not replace it".
-[^check]: `rules/multi-agent.md`, "Waves", rule "The analysis is checked before the start" (wave 2, 2026-11-02); also Technical reference, "The bottleneck is the owner's attention".
+[^check]: Role measurement 2026-10-24..11-03 (see [Do the roles pay off?](#do-the-roles-pay-off)): median IE per agent, analysis checks. The rule "The analysis is checked before the start" in `rules/multi-agent.md` quotes the same three checks as 0.46M: that is raw tokens, not IE.
 [^runs]: `rules/multi-agent.md`, "Order and shortcuts", rule "Only the train" (the "Why" of its `innerSelect: true` part: measurement 2026-10-10..20, 73 tasks).
 [^train]: `rules/multi-agent.md`, "Order and shortcuts", rule "The train is the seam check" (p-train, 2026-10-27..29). No before/after figure for the train itself is in the rules.
 [^rerun]: `rules/multi-agent.md`, "Order and shortcuts", rule "A new red is first rerun alone".
-[^env]: `rules/multi-agent.md`, "Order and shortcuts", rule "A red from the environment goes to the coordinator, not to the programmer".
-[^light]: `rules/multi-agent.md`, "Order and shortcuts", rule "Light mode for small tasks". The 0.6 h is a single session without the chain, not a measurement of light mode.
+[^env]: `rules/multi-agent.md`, "Order and shortcuts", rule "A red from the environment goes to the coordinator, not to the programmer". The source does not say whether the 3.3M is raw or IE.
+[^light]: `rules/multi-agent.md`, "Order and shortcuts", rule "Light mode for small tasks". The 0.6 h is a single session without the chain. The light and full medians are from the role measurement; light tasks are smaller by selection, so it is not the same work compared.
 [^arc]: `rules/multi-agent.md`, "Arcs: specification, principles, mockups", rule "An arc starts with a specification agreed with the owner before its first task"; one digest per wave: "Waves".
 
-## Why a team instead of one agent
+## Glossary
 
-One agent that writes the code, tests it and says "done" is grading its own homework. It is fast, and it is
-confidently wrong often enough to cost you evenings. codis-agents splits the job the way a good team does:
-
-- **The analyst** thinks before anyone codes: which cases exist, what could go wrong, whether the task is too big and
-  should be split.
-- **The programmer** first writes a check that fails on today's code, and only then the fix that makes it pass.
-- **The tester** makes its own list of what to try before it reads the programmer's, compares the two, and runs the
-  real scenario.
-- **The reviewer** only reads, and its job is to find the hole.
-
-Each of them runs as a separate agent, and each task works in its own copy of the repository, so tasks do not step
-on each other and nobody can quietly "fix" someone else's finding. When two of them disagree, or nobody knows the
-answer, the question comes to you - once, with a recommendation.
-
-## What a working day looks like
-
-1. **You talk to the coordinator** (your normal Claude Code session) about what you want. It writes a short brief for
-   each task: your words quoted exactly, and what "done" means as a scenario you could try yourself ("press Add -> the
-   item builds even with the tab closed").
-2. **Questions come first, together.** Before any code, the analysis of each task is read by a separate checker that
-   tries to refute it. Everything still open comes to you as one list, each item with a recommended answer.
-3. **A wave starts.** Up to three tasks run at once, each through its chain of roles. While they run, nobody
-   interrupts you: a question that only you can answer pauses just its own task.
-4. **The train.** A finished task does not go straight into the shared branch. It boards an integration train with
-   the other finished tasks, and the whole suite of checks runs over all of them together - so two changes that each
-   work alone but break each other are caught before they land.
-5. **One digest.** When the wave is over you get one page: what was done, what to look at on the screen and how, the
-   questions that waited for you, and the decisions the coordinator took on its own (which you can overturn).
+| term | in plain words |
+|---|---|
+| owner | you: the person who decides what is built and accepts it |
+| coordinator | your main Claude Code session: writes briefs, starts chains, routes results, asks you what only you can answer |
+| role | one agent with one job in the chain: analyst, programmer, tester, reviewer, security reviewer |
+| arc | a group of related tasks over one area, specified with you before the first task |
+| brief | `BRIEF.md`, one per task: your words verbatim and dated, the scope, the acceptance scenario |
+| acceptance scenario | what "done" means, written as steps you could try in the real app |
+| use cases | for a new feature: who does what, what can go differently, what can go wrong; written before the matrix |
+| matrix of cases | the analyst's table of every case the task must handle; each later finding is a cell of it |
+| analysis check | a reading agent that tries to refute the analysis before any code; its gaps are closed before the start |
+| guard | an executable check, judged only by its exit code |
+| red guard first | the programmer commits a guard that fails on today's code before writing the fix |
+| mutation | after the commit, break the fix on purpose and see the guard turn red; a guard that stays green proves nothing |
+| post-check | a script after a role that refuses changes the role was not allowed to make |
+| worktree | a separate working copy of the repository for one task |
+| known red, quarantine | guards already known to fail, each with its reason; only a new red counts as a regression |
+| train | after the review, ready branches ride together with the arc head through one run of all guards; only the tree that ran is merged |
+| seam | two changes that pass alone and fail together; the train finds it |
+| wave | up to three product tasks prepared together and started together |
+| digest | one page per wave: results, what to check on the screen, your questions, the coordinator's candidates |
+| layer 1 / 2 / 3 | who decides a question: 1 a principle answers it; 2 the coordinator, when it is reversible and local; 3 you |
+| candidate | a layer-2 decision of the coordinator, listed for you to keep or overturn |
+| full mode, light mode | full: analyst (when needed), programmer, tester, reviewer; light: one programmer-checker and one reviewer, for small tasks |
+| environment red | a failure of the machine (disk, memory, queue, a service down), sent to the coordinator, not to the programmer |
+| slot | a place in the memory queue for a heavy or medium job |
+| stand, ticket | a shared test deployment, and the lock a tester holds while it uses it |
+| IE | input-equivalent tokens: input + 1.25 x cache writes + 0.1 x cache reads + 5 x output; how the plugin compares cost |
 
 ## Quick start
 
@@ -129,11 +255,9 @@ Every file, script and config key is described in the [Technical reference](#tec
 - **Evidence, not "it works".** Every fix comes with a check that was red before it and green after, and the check is
   itself tested: the fix is broken on purpose to see the check catch it.
 - **The real environment.** Acceptance happens where you would see it - the real app, the real browser, the real
-  container stack - with logs and screenshots in the task's folder.
+  services - with logs and screenshots in the task's folder.
 - **A memory that does not drift.** Your decisions are written down verbatim with their date, in one numbered list
   per area, so the same question is not asked, or answered differently, twice.
-- **A machine that keeps running.** Heavy jobs (browsers, builds, full test runs) queue for memory slots, so several
-  agents at once do not freeze a 16 GB laptop.
 
 > [!TIP]
 > **Start here - no plugin needed.** Three habits carry most of the value, and they work for one person with one agent:
@@ -146,22 +270,6 @@ Every file, script and config key is described in the [Technical reference](#tec
 >
 > Everything else in this plugin is how those habits scale to a chain of roles and a dozen tasks a day.
 
-## A short example
-
-You write: *"Uploads that fail on a bad connection are lost. They should retry."*
-
-- The coordinator writes `BRIEF.md` with your sentence, dated, and the acceptance: "turn the network off, upload, turn
-  it on -> the file arrives, with no second click".
-- The analyst lists the cases (one file, several files, the tab closed meanwhile, a file that fails for good) and asks
-  one question: how many retries before giving up? You answer "five" in the morning list.
-- The programmer commits a check that fails today, then the retry, then breaks the retry on purpose to see the check
-  go red.
-- The tester tries the cases on its own list in the real app and finds that a closed tab loses the queue. Back to the
-  programmer; the second round passes.
-- The reviewer reads the change looking for a hole and finds none. The task boards the train with two others, all
-  checks run together, and the shared branch moves forward.
-- In the evening digest you see one line: "Upload retries - done. Check: turn Wi-Fi off, upload, turn it on."
-
 ## Is it for you?
 
 > [!WARNING]
@@ -169,6 +277,13 @@ You write: *"Uploads that fail on a bad connection are lost. They should retry."
 
 It fits when you build a real product with Claude Code, several changes a day, and you would rather answer ten good
 questions once than discover twenty small surprises later.
+
+> [!TIP]
+> **Which mode, from the measurement** (advice, not a rule of the plugin): light mode for diagnosed defects and tails of
+> up to about 100 lines in one subsystem, with no new channel, state, timer or attack surface, and an acceptance that
+> does not rest on a gesture in two browser engines or a multi-service stand; full mode for features and for anything
+> that brings a new channel or state. Keep the reviewer in both: in light mode it found a code defect in 4 of 34 tasks
+> and twice moved a task to full mode.
 
 ## Version history
 
@@ -183,13 +298,20 @@ and how the chain decides, every config key, every script, the memory slots, the
 plugin's own tests. A change of the plugin's behaviour updates this block; the version entry goes into
 [CHANGELOG.md](CHANGELOG.md).
 
-Contents: [Terms](#terms) - [The role chain](#the-role-chain) -
-[Decisions live in three layers](#decisions-live-in-three-layers) - [What counts as evidence](#what-counts-as-evidence) -
-[Rules that grew out of failures](#rules-that-grew-out-of-failures) -
-[The bottleneck is the owner's attention](#the-bottleneck-is-the-owners-attention) - [What is inside](#what-is-inside) -
-[Install](#install) - [Configure a project](#configure-a-project) - [The machine file](#the-machine-file) -
-[Run a chain](#run-a-chain) - [How the chain decides](#how-the-chain-decides) - [Memory slots](#memory-slots) -
-[Shared stand](#shared-stand) - [Known gaps](#known-gaps) - [Tests](#tests) - [License](#license)
+Contents, in the two parts of the plugin described above:
+
+- **The process:** [Terms](#terms) - [The role chain](#the-role-chain) -
+  [Decisions live in three layers](#decisions-live-in-three-layers) - [What counts as evidence](#what-counts-as-evidence) -
+  [Rules that grew out of failures](#rules-that-grew-out-of-failures) -
+  [The bottleneck is the owner's attention](#the-bottleneck-is-the-owners-attention) - [Run a chain](#run-a-chain) -
+  [How the chain decides](#how-the-chain-decides)
+- **Local runtime (optional):** [The machine file](#the-machine-file) - [Memory slots](#memory-slots) -
+  [Shared stand](#shared-stand); the remote runner and worktree copies are rows of [What is inside](#what-is-inside) and
+  [Configure a project](#configure-a-project)
+- **Both:** [What is inside](#what-is-inside) - [Install](#install) - [Configure a project](#configure-a-project) -
+  [Known gaps](#known-gaps) - [Tests](#tests) - [License](#license)
+
+The terms below are the technical ones; the plain [Glossary](#glossary) is above.
 
 ## Terms
 
@@ -257,12 +379,12 @@ A role never answers an owner question itself: it writes the question into its r
 ## What counts as evidence
 
 - **Guards**, red first, and **mutation-tested after the commit**.
-- **Two browsers** for anything visual: WebKit drops things Chromium draws.
+- **Every browser engine your users run** for anything visual: on the measured project WebKit dropped things Chromium drew.
 - **The real environment**: a change that touches two services is accepted in a two-service container stack driven
-  through the real client, not in one process on the laptop, where guards stay green while the image fails.
+  through the real client, not in one process on a developer machine, where guards stay green while the image fails.
 - **A full guard run** before a branch reaches the arc: "N green - N new red - N known red"; only new red is a regression (known reds: config `guardBaseline`). With `guardSubsetCommand` it is the train's one run over the arc head and the ready branches together, and only that tree is merged.
 
-Its limit, honestly: no headless browser reproduced a blurry label in real Safari. A person looking at the screen found
+Its limit, honestly: no headless browser reproduced a blurry label in a real desktop browser. A person looking at the screen found
 it. Agents do not replace that.
 
 ## Rules that grew out of failures
@@ -284,7 +406,7 @@ it. Agents do not replace that.
 | a resumed run of parallel tasks replayed one task's cached results into another, and both chains stopped | never `resumeFromRunId` for a multi-task run; relaunch each unfinished task alone with `start` |
 | two parallel branches, each green alone, gave six red guards after the second merge | after merging the second of parallel branches over the same files: the guards of both tasks, then the full guard run; with `guardSubsetCommand` replaced by the integration train (p-train): one full run over the arc head and the ready branches together, a seam is attributed to the later branch |
 | one full guard run per task still held a heavy slot for most of a task's calendar, and the seam stayed unchecked until the merge | no full guard run in the task: the selection of its diff after every programmer round; the full run moves to the train (replaces "one full guard run per task", p-train 2026-10-27) |
-| several container stacks at once pushed a 16 GB machine into swap | at most two chains with acceptance in Docker at once |
+| several container stacks at once pushed a memory-limited machine into swap | at most two chains with acceptance in Docker at once |
 | a merged worktree removed after a clean `git status` held the only copy of a measurement corpus in ignored files; an old copy of the repository removed the same way broke 1809 symlinks elsewhere | before removing a worktree or a data directory, the owner says "yes" to the output of `scripts/wt-remove-check.js` (ignored data with sizes, the path in code, symbolic links that lead into it) |
 | images of old test stacks (481 of them, ~130 GB) filled the disk and stopped the chains | a tester removes its own stack with `docker compose -p <stack> down -v --rmi all`; the owner's stack is never touched, other images and the build cache are not cleaned by roles |
 
@@ -377,7 +499,7 @@ and `getconf PAGESIZE` on Linux (`SLOT_OS` and `SLOT_PROC` override the source; 
 fake machine and in a container, not on Linux hardware). A Linux machine without swap needs `SLOT_SWAP_MIN_MB=0`, and one
 with less swap than 4000 MB a lower `SLOT_SWAP_MIN_MB` (a 4 GiB swap file, 4095 MB, fits the default): with the default
 threshold the slot scripts refuse at once (exit 78) and say so.
-The workflow, agents, hooks and post-checks work anywhere. `wt-setup.sh` clones ignored data with an APFS clone (`cp -c`) and, where that is refused,
+The workflow, agents, hooks and post-checks work anywhere. `wt-setup.sh` clones ignored data with a copy-on-write clone (`cp -c` on macOS) and, where that is refused,
 with `cp -r --reflink=auto` (GNU), then a plain copy. On a machine without zsh (Linux, CI) `npm test` stays green and
 the zsh tests are skipped with "skipped: zsh not found" in their line and in the final tally.
 
@@ -439,7 +561,7 @@ smoke"); to try an edited copy first, point `CODIS_AGENTS_CONFIG` at it.
 | `guardSubsetCommand` | runs the selected guards (zsh; `{wt}`, `{onlyArgs}` = `--only <guard>` per guard, and `{jobs}` and `{limitFile}` as `guardCommand` has them). Contract: it narrows `guardCommand` to the selected guards of the same suite, so a full run includes every guard it selects. Without both `{jobs}` and `{limitFile}` the selection is a runner that sets its own workers: counted as the whole budget `slots.jobsAlone`, it waits for every other heavy job, so selections (and a selection next to the train's full run) go one at a time; `config.js check` and `guards-all.sh --select` print a note then. With `{jobs}` and `{limitFile}` two selections, or a selection and a full run, share the budget (`slots.jobsShared` each, together at most `slots.jobsAlone`). When set: no full guard run in the task - after every programmer round with a new HEAD the workflow runs the selection of the task's diff (`guards-all.sh --select <base>`, its own log, the quarantine read only), so the programmer runs only its new guards and mutations; the tester, after its own commits, runs the selection of its own diff from the programmer's HEAD (`guards-all.sh --select <the programmer's HEAD>`), none without a commit; every task needs `base`; a reviewed task rides the integration train (`scripts/train.js ride`), whose one full run replaces the one of the task. Without it the programmer runs the full run itself |
 | `innerSelect` | with `guardSubsetCommand`: `false` - no selection inside the task (p-train-only): no selection after any programmer round and none of the tester; the programmer and the tester run only their new or changed guards and mutations, and the integration train is the first run of all guards; a red train fixed in the product (a file outside docs and `testerWritable`) gets a short tester round - the acceptance of the cells the fix touches and the tester's guards over them - before the second review, a fix of guards or docs only goes straight to it. Default `true`: the selection after every programmer round, as above |
 | `mergeOnlyFiles` | globs of the project's docs files (a glob without `/` matches the file name at any depth; `*` and `?` stay within a segment, `**` crosses them), e.g. `["*.md", "docs/**"]`. With `guardSubsetCommand`: a fix round after a train `conflict` whose commit is only the merge of the arc, with every file resolved or edited by hand matching these globs (`scripts/merge-only.js`), skips the selection and goes to the second review and the train; a conflict in code or a guard keeps it (a file matching `guardFiles` too is a guard, not docs). Default `[]`: every round gets its selection |
-| `worktreeSetup` | `scan` directories whose ignored data is copied into a new worktree; `skip` and `link` globs (everything else is an APFS clone) |
+| `worktreeSetup` | `scan` directories whose ignored data is copied into a new worktree; `skip` and `link` globs (everything else is a copy-on-write clone) |
 | `slots` | machine settings, read from the machine file (below); a project config may still carry `medium`, `heavy`, `total`, `lockDir`, `legacyLock`, `jobsAlone`, `jobsShared` until `config.js migrate` |
 | `reportLanguage` | language of role reports (prompts stay in English) |
 | `defaultBranch` | base of new worktrees (`wt-setup.sh` without a third argument); left out, it is taken from git: where `refs/remotes/origin/HEAD` points (`git clone` sets it, `git remote set-head origin --auto` sets it again - on the owner's word: the session hook refuses `set-head` in every form writes of `symbolic-ref refs/remotes/<remote>/HEAD` and `update-ref` on it without `ALLOW_PROTECTED_PUSH=1`; only the remote `origin` is read). Not derivable: `config.js check` still passes with a note, `wt-setup.sh` without a base exits 78. `pre-push` never reads the local `origin/HEAD` (a wrapper the session hook does not see can move it): without this key and `protectedBranches` it asks the remote it pushes to, `git ls-remote --symref -- <url> HEAD` (refused when the git config rewrites that URL for a fetch to another address, `url.<base>.insteadOf`, or when the URL is also the name of a configured remote, whose settings `ls-remote` would take) |
@@ -453,7 +575,7 @@ smoke"); to try an edited copy first, point `CODIS_AGENTS_CONFIG` at it.
 | `roleModels` | the same alias per role, over `roleModel`: `analyst`, `programmer`, `tester`, `reviewer`, `security-reviewer`, `preconditions`, and `wait` (the repeat of a post-check or wait step) |
 | `threatModel` | path (in the worktree) of the threat model the security reviewer reads |
 | `standingPush` | only for the repository of process rules: `branches` its HEAD may be pushed to without `ALLOW_PROTECTED_PUSH=1`, and a `check` that must pass first; the hooks honour only the committed `standingPush` of the repository that pushes, never forced, never tags |
-| `gitHooks` | `blockICloudCopies` and `preCommit` (extra shell commands) for `scripts/git-hooks/pre-commit` |
+| `gitHooks` | `blockICloudCopies` (refuse conflict copies `<name> 2.<ext>` of cloud-synced folders) and `preCommit` (extra shell commands) for `scripts/git-hooks/pre-commit` |
 | `remoteRun` | the full guard run on the remote runner of the machine file (`scripts/guards-remote.js`); left out, runs stay on this machine. `command` / `commandLegacy` - the guard command on the runner (default `guardCommand` / `guardCommandLegacy`, e.g. with a flag that skips guards the runner cannot run); `deps` - `[{files, install, link}]`: `files` (relative to the worktree) are copied into `<root>/deps/<hash>` (hash of their base names and contents, `install`, the node major version, platform, arch), `install` runs there once per hash in a medium slot of the runner, after which the directory is read-only and checked by its manifest on every reuse (a manual clone on the runner never links its `node_modules` into it), `link` maps worktree paths to paths in that directory (`""` = itself), each a link straight to its real path; `prepare` - commands run in the runner's worktree before the run (medium slot); `localPattern` - a regexp over the runner's log lines whose group 1 lists (`, `) guards the runner did not run: they run here after it in a heavy slot by `localCommand` (`{wt}`, `{onlyArgs}`; default `guardSubsetCommand`), as a section of the same log, and the worse exit code is the run's; `subsetCommand` - the selection of a task's guards on the runner (`guards-all.sh --select`; `{wt}`, `{onlyArgs}`, needs `guardSubsetCommand`; `{jobs}` and `{limitFile}` as `command` has them; without both the selection takes the runner's whole budget and selections there go one at a time): without it the selection runs in a heavy slot here |
 | `stand` | the project's shared stand (`scripts/stand.sh`): `project` (its compose project, never `ownerStackReadOnly`), `ports`, command templates `up`, `deploy` (must contain `{wt}`), `reset`, `status` (exit 0 only while up), `down` - placeholders `{project}`, `{port}`, `{ports}`, `{repo}`, `{wt}`, values shell-quoted, run with zsh in `cwd` (an absolute or `~` path of an existing directory; without it `repoDir`); `imageFiles` (globs of the files that define the stand's image) and `memLimitMB` (for reference). The plugin only calls the commands; what they do is the project's |
 | `preconditions` | machine settings, read from the machine file (`minFreeDiskGB`, `swapMinMB`); a project config may still carry `minFreeDiskGB` (GB) and `minSwapGB` (GB, compared as x 1024 with `swapMinMB`) until `config.js migrate` |
@@ -476,7 +598,7 @@ exit 78, `check` exit 1). Example: `examples/machine.example.json`, schema `sche
 | `coordinatorContextK` | the coordinator's context signpost in thousands of tokens (700) |
 | `remote` | the remote runner: `{host, user, key, knownHosts, root}`, all required, and `plugin` (this plugin's directory on the runner, of the same version; default `~/.claude/plugins/marketplaces/codis-agents`). `host` is a name or an IPv4 address without `:` (git and rsync split `user@host:path` at the first colon). ssh goes as `user@host` with only `key` and only the `knownHosts` file (both on this machine, absolute or `~`), `StrictHostKeyChecking=yes`, no ssh config file; a changed host key is never accepted. `root` is on the runner (absolute or `~/...`, letters, digits and `. _ - /`, never the home or `/` itself): the donor `corpus/` with `corpus.state`, `corpus.manifest.json` and `corpus.lock`, the run copies and worktrees `wt/<name>`, the bare repository of the runs `repo.git`, the dependency cache `deps/` and the runs `runs/<name>`. Left out: no script contacts a runner (`corpus-sync.js` exits 78, `guards-all.sh` runs here) |
 
-No machine file: the built-in defaults (measured on a 16 GB Mac), and `config.js check` and `env-check.js` say so in a
+No machine file: the built-in defaults (measured on one memory-limited laptop), and `config.js check` and `env-check.js` say so in a
 note. `config.js json` gives the merged values under `slots`, `preconditions` (`minFreeDiskGB`, `swapMinMB`),
 `maxDockerChains`, `coordinatorContextK`, plus `machine` (`path`, `exists`, `source`); `config.js shell` with no
 project config prints the machine's slot lines alone. An older machine key in a project config (`slots.*`,
@@ -722,7 +844,7 @@ while it waits in the queue, its ticket is dropped and it rejoins the queue at t
   `slots.jobsAlone` (measured 2026-11-01: a train alone 14-16 min, with the selections of neighbouring tasks
   20-26 min, when it shed to its share).
 
-The thresholds are measurements from a 16 GB machine; every one can be overridden from the environment (see the top of
+The thresholds are measurements from one memory-limited machine; every one can be overridden from the environment (see the top of
 `scripts/slots.zsh`).
 
 | quantity | macOS | Linux (proc(5)) |

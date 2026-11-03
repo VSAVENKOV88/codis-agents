@@ -4,6 +4,17 @@ Every version of the codis-agents plugin, newest first. What the plugin does now
 [README.md](README.md); its [Technical reference](README.md#technical-reference) is the current state of every rule,
 key and script, and this file says when and why each one changed. Versions before 0.4.14 are in the git history.
 
+## 0.4.21 - 2026-11-03
+
+- **README for the next user** (p-readme-3; the owner 2026-11-03, translated: "take 1, measuring the benefit of the
+  roles, and 3, separating the process from the runtime. Everything is done for the convenience of the next user.
+  And let us throw everything about our Mac and stack out of the README. The structure and logic itself we do not
+  touch - it works. Also 5, the entry threshold by terms"; on the approved page: "yes, move it into the plugin 0.4.21,
+  now it looks great!"). "Do the roles pay off?" with a funnel and a cost chart from a measurement of 249 runs
+  (2026-10-24..11-03); the process apart from the optional local runtime; glossary; an end-to-end example; no owner's
+  machine or stack; the analysis-check row corrected to IE (1.9M, was raw tokens 0.46M). The charts come in a light
+  and a dark variant (`assets/roles-*-light.svg`, `assets/roles-*-dark.svg`). No behaviour change.
+
 ## 0.4.20 - 2026-11-03
 
 - **README: banner, badges, role cycle line, "Why codis-agents?" table with measured before/after and sources, Quick
