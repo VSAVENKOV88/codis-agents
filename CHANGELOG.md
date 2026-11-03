@@ -4,6 +4,14 @@ Every version of the codis-agents plugin, newest first. What the plugin does now
 [README.md](README.md); its [Technical reference](README.md#technical-reference) is the current state of every rule,
 key and script, and this file says when and why each one changed. Versions before 0.4.14 are in the git history.
 
+## 0.4.20 - 2026-11-03
+
+- **README: banner, badges, role cycle line, "Why codis-agents?" table with measured before/after and sources, Quick
+  start table, What's inside tree, GitHub callouts** (p-readme-2; the owner 2026-11-03, translated: "yes, let's try it
+  loud. it matters that others notice it, and that it helps them"). The banner comes in a light and a dark variant
+  (`assets/banner-light.svg`, `assets/banner-dark.svg`); "Start here - no plugin needed" is now a tip callout in the
+  plain part. No behaviour change.
+
 ## 0.4.19 - 2026-11-02
 
 - **README for a first-time reader; the history moves here** (p-readme; the owner 2026-11-02, translated: "make the

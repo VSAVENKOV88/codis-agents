@@ -1,14 +1,61 @@
-# codis-agents
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/banner-dark.svg">
+    <img src="assets/banner-light.svg" alt="codis-agents: brief, analyst, analysis check, programmer, tester, reviewer, train, owner digest" width="100%">
+  </picture>
+</p>
 
-**Agents are not what makes this work. What is written down around them is.**
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-0.4.20-informational" alt="Version 0.4.20"></a>
+  <a href="https://claude.com/claude-code"><img src="https://img.shields.io/badge/Claude%20Code-plugin-D97757" alt="Claude Code plugin"></a>
+</p>
+
+# codis-agents
 
 codis-agents turns [Claude Code](https://claude.com/claude-code) from one assistant into a small delivery team. You
 say what you want; your main Claude session becomes the coordinator, writes it down as a task, and hands it to a chain
 of role agents - an analyst, a programmer, a tester and a reviewer - each of whom tries to prove the one before wrong.
 You are asked only what really needs you, and you get evidence instead of promises.
 
+```text
+brief -> analyst -> analysis check -> programmer -> tester -> reviewer -> train -> owner digest
+```
+
+> **Agents are not what makes this work. What is written down around them is.**
+
 It grew out of a real product built with Claude Code on a single 16 GB laptop, several tasks a day, for months. Every
 rule in it exists because something broke without it.
+
+> [!NOTE]
+> Nothing is merged into your main branch, tagged or released without your explicit "yes". A project may let the
+> coordinator push working branches and process-rule changes on its own; see [Technical reference](#technical-reference), Git.
+
+## Why codis-agents?
+
+Every rule below came with a measurement on the project the plugin grew out of. The left column is what was measured
+without the rule, the right one what the rule does and, where it was measured, what it gave.
+
+| Without the rule | With codis-agents |
+|---|---|
+| Idle waits over five minutes re-wrote the agents' prompt caches: **21 %** of all token spend[^idle] | Every role waits in slices of at most 270 s: **7.4 %**[^idle] |
+| Features with only the arc specification: **44 %** red tester rounds, **2.4** programmer rounds per task[^own] | A feature gets its own matrix of cases: **24 %** and **1.65**[^own] |
+| An analysis found wrong mid-task cost about **0.7M** tokens and **35-60 min** per return[^check] | The analysis checker reads it before the start: three checks cost **0.46M** and about **20 min** and found **14** significant gaps[^check] |
+| **3.9** full guard runs per task, about **81 min**: **37 %** of a task's calendar[^runs] | One integration train runs the full suite over the arc head and every ready branch together, and merges only the tree that ran[^train] |
+| **6 of 17** full runs ended red only from guards unstable under load, each costing a programmer round or a stopped task[^rerun] | A new red is first rerun alone; green alone goes into quarantine, not back to the programmer[^rerun] |
+| Programmer rounds "without changes" after reds of the environment: about **3.3M** tokens in one window[^env] | A red of the environment (disk, swap, slot queue, Docker) gets its own verdict and goes to the coordinator[^env] |
+| Tasks of up to 100 lines of product took **2-2.6 h** through the full chain, against about **0.6 h** in one session[^light] | Light mode: one programmer-checker and one reviewer, the same train[^light] |
+| A specification that covered only the architecture: about **ten** owner questions per task[^arc] | The arc is specified with the owner up front; questions come as one list per wave, each with a recommendation[^arc] |
+
+[^idle]: `rules/multi-agent.md`, "Waiting, context and cost", rule "Never sit idle longer than 270 s at a time".
+[^own]: `rules/multi-agent.md`, "Roles", rule "A feature gets its own analysis; the arc specification does not replace it".
+[^check]: `rules/multi-agent.md`, "Waves", rule "The analysis is checked before the start" (wave 2, 2026-11-02); also Technical reference, "The bottleneck is the owner's attention".
+[^runs]: `rules/multi-agent.md`, "Order and shortcuts", rule "Only the train" (the "Why" of its `innerSelect: true` part: measurement 2026-10-10..20, 73 tasks).
+[^train]: `rules/multi-agent.md`, "Order and shortcuts", rule "The train is the seam check" (p-train, 2026-10-27..29). No before/after figure for the train itself is in the rules.
+[^rerun]: `rules/multi-agent.md`, "Order and shortcuts", rule "A new red is first rerun alone".
+[^env]: `rules/multi-agent.md`, "Order and shortcuts", rule "A red from the environment goes to the coordinator, not to the programmer".
+[^light]: `rules/multi-agent.md`, "Order and shortcuts", rule "Light mode for small tasks". The 0.6 h is a single session without the chain, not a measurement of light mode.
+[^arc]: `rules/multi-agent.md`, "Arcs: specification, principles, mockups", rule "An arc starts with a specification agreed with the owner before its first task"; one digest per wave: "Waves".
 
 ## Why a team instead of one agent
 
@@ -23,8 +70,8 @@ confidently wrong often enough to cost you evenings. codis-agents splits the job
 - **The reviewer** only reads, and its job is to find the hole.
 
 Each of them runs as a separate agent, and each task works in its own copy of the repository, so tasks do not step
-on each other and nobody can quietly "fix" someone else's finding. When two of them disagree, or nobody knows the answer, the question comes to you - once, with a
-recommendation.
+on each other and nobody can quietly "fix" someone else's finding. When two of them disagree, or nobody knows the
+answer, the question comes to you - once, with a recommendation.
 
 ## What a working day looks like
 
@@ -41,8 +88,39 @@ recommendation.
 5. **One digest.** When the wave is over you get one page: what was done, what to look at on the screen and how, the
    questions that waited for you, and the decisions the coordinator took on its own (which you can overturn).
 
-Nothing is merged into your main branch, tagged or released without your explicit "yes". (A project may let the
-coordinator push working branches and process-rule changes on its own; see Technical reference, Git.)
+## Quick start
+
+| Step | Command |
+|---|---|
+| 1. Add the marketplace (a local clone) | `claude plugin marketplace add /path/to/codis-agents` |
+| 2. Install the plugin, then restart the session | `claude plugin install codis-agents@codis-agents` |
+| 3. Turn it on for a project | copy `examples/codis-agents.example.json` to `<project>/.claude/codis-agents.json`; set where worktrees and task folders live and how your tests run |
+| 4. Check the project config | `node /path/to/codis-agents/scripts/config.js check` |
+| 5. Give the coordinator the rules | add `@/path/to/codis-agents/rules/multi-agent.md` to the project's `CLAUDE.md` |
+| 6. Ask for a task in plain words | "write a brief for retrying failed uploads and run the role chain on it" |
+
+> [!IMPORTANT]
+> You need Node.js 18+, git and zsh (macOS has it; on Linux install it). A plugin installed in the middle of a session
+> gives its skills, workflows and agents only after a session restart.
+
+Details of each step: [Install](#install), [Configure a project](#configure-a-project), [Run a chain](#run-a-chain).
+
+## What's inside
+
+```text
+codis-agents/
+├── agents/       6 role agents: analyst, programmer, tester, reviewer, security-reviewer, analysis-checker
+├── skills/       3 skills: role-chain (starts a chain), coordinator (its loop), brief (how to write one)
+├── workflows/    role-chain.js - the chain itself, fix rounds, the analyst after a second red, the train
+├── rules/        multi-agent.md - the process rules; 19 marked lines go into every role prompt
+├── hooks/        hooks.json - refuses git add -A, pushes to protected branches and tags
+├── scripts/      29 scripts: memory slots, guard runs and selection, the train, post-checks, remote runner, cost
+├── examples/     example project and machine configs
+├── schemas/      their JSON schemas
+└── tests/        119 test files of the plugin itself (npm test)
+```
+
+Every file, script and config key is described in the [Technical reference](#technical-reference).
 
 ## What you get as the owner
 
@@ -57,46 +135,16 @@ coordinator push working branches and process-rule changes on its own; see Techn
 - **A machine that keeps running.** Heavy jobs (browsers, builds, full test runs) queue for memory slots, so several
   agents at once do not freeze a 16 GB laptop.
 
-## Start here - no plugin needed
-
-Three habits carry most of the value, and they work for one person with one agent:
-
-1. **A brief before work.** A file with the requester's words quoted verbatim and dated, and the acceptance written as a
-   scenario in the real environment ("Add -> the item builds with no tab open"), not as a feature name.
-2. **A red guard before code.** The agent first commits an executable check that fails on the current code, then the fix.
-3. **Mutation after the commit.** Break the fix, see the guard go red, restore it, see it green. A check that does not
-   turn red on a broken fix proves nothing.
-
-Everything else in this plugin is how those habits scale to a chain of roles and a dozen tasks a day.
-
-## Quick start
-
-You need Node.js 18+, git and zsh (macOS has it; on Linux install it). Then:
-
-1. **Install the plugin** from a local clone and restart your Claude Code session:
-
-   ```sh
-   claude plugin marketplace add /path/to/codis-agents
-   claude plugin install codis-agents@codis-agents
-   ```
-
-2. **Turn it on for a project:** copy `examples/codis-agents.example.json` to `<project>/.claude/codis-agents.json`,
-   set where worktrees and task folders live and how your tests run, then check it:
-
-   ```sh
-   node /path/to/codis-agents/scripts/config.js check
-   ```
-
-3. **Give the coordinator the rules:** add one line to your project's `CLAUDE.md`:
-
-   ```markdown
-   @/path/to/codis-agents/rules/multi-agent.md
-   ```
-
-4. **Ask for a task in plain words**, for example: "write a brief for retrying failed uploads and run the role chain
-   on it". The coordinator writes the brief, creates the worktree and starts the chain.
-
-Details of each step: [Install](#install), [Configure a project](#configure-a-project), [Run a chain](#run-a-chain).
+> [!TIP]
+> **Start here - no plugin needed.** Three habits carry most of the value, and they work for one person with one agent:
+>
+> 1. **A brief before work.** The requester's words quoted verbatim and dated, and the acceptance written as a
+>    scenario in the real environment ("Add -> the item builds with no tab open"), not as a feature name.
+> 2. **A red guard before code.** The agent first commits an executable check that fails on the current code, then the fix.
+> 3. **Mutation after the commit.** Break the fix, see the guard go red, restore it, see it green. A check that does not
+>    turn red on a broken fix proves nothing.
+>
+> Everything else in this plugin is how those habits scale to a chain of roles and a dozen tasks a day.
 
 ## A short example
 
@@ -116,9 +164,11 @@ You write: *"Uploads that fail on a bad connection are lost. They should retry."
 
 ## Is it for you?
 
+> [!WARNING]
+> It is more than you need for a one-off script or a single quick fix: there, the three habits above are enough.
+
 It fits when you build a real product with Claude Code, several changes a day, and you would rather answer ten good
-questions once than discover twenty small surprises later. It is more than you need for a one-off script or a single
-quick fix: there, the three habits above are enough.
+questions once than discover twenty small surprises later.
 
 ## Version history
 
