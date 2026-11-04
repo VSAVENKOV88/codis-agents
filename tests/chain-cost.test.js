@@ -258,4 +258,35 @@ try {
   ].join('\n');
   ok('W6.2. a notification repeated in one line closes one job, not three: a live Monitor and job at the text end is a drop', waitDropsOfAgent(hiddenGreen) === 1, String(waitDropsOfAgent(hiddenGreen)));
 }
+
+// W7 (p-tester-drop, programmer round 2): live jobs are tracked by id, not by a balance of counts.
+// W7.1: a foreground command that overran its timeout ("moved to the background") is no start, but its completion
+// notice must not cancel a different live job: a Monitor armed after it is still alive at the text end -> one drop.
+// W7.2: a tool_result that merely quotes the echo text (a file read) is no start: only a result that begins with the
+// echo is one.
+{
+  const { waitDropsOfAgent } = require('../scripts/chain-cost');
+  const asst = (stop, text) => JSON.stringify({ message: { role: 'assistant', stop_reason: stop, content: text ? [{ type: 'text', text }] : [] } });
+  const asstTool = (name, input) => JSON.stringify({ message: { role: 'assistant', stop_reason: 'tool_use', content: [{ type: 'tool_use', name, input }] } });
+  const result = (text) => JSON.stringify({ message: { role: 'user', content: [{ type: 'tool_result', content: text }] } });
+  const enforce = () => JSON.stringify({ type: 'user', isMeta: true, message: { role: 'user', content: '[structured-output-enforce] You MUST call the StructuredOutput tool to complete this request.' } });
+  const notif = (id) => JSON.stringify({ type: 'attachment', attachment: { type: 'queued_command', prompt: `<task-notification>\n<task-id>${id}</task-id>\n<status>completed</status>\n</task-notification>` } });
+  const moved = [
+    asstTool('Bash', { command: 'until grep -q done x.log; do sleep 3; done', timeout: 270000 }),
+    result('Command was manually backgrounded by user... moved to the background (ID: bmv). Output is being written to: bmv.output'),
+    notif('bmv'),
+    asstTool('Monitor', { command: 'until grep -q rc= run.out; do sleep 5; done', timeout_ms: 270000 }),
+    result('Monitor started (task bmo, expires in 4m 30s unless the source ends first).'),
+    asst('end_turn', 'Waiting on monitor bmo.'),
+    enforce(),
+  ].join('\n');
+  ok('W7.1. a completion of a job that was never counted does not hide a live Monitor: one drop', waitDropsOfAgent(moved) === 1, String(waitDropsOfAgent(moved)));
+  const quoted = [
+    asstTool('Read', { file_path: 'notes.md' }),
+    result('line one\nCommand running in background with ID: bq1. Output is being written to: bq1.output\nMonitor started (task bq2, expires)'),
+    asst('end_turn', 'Done.'),
+    enforce(),
+  ].join('\n');
+  ok('W7.2. a tool_result that quotes the echo text past its start is no background start: not a drop', waitDropsOfAgent(quoted) === 0, String(waitDropsOfAgent(quoted)));
+}
 done();
