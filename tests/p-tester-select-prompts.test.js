@@ -65,7 +65,7 @@ const strayBase = (ps) => {
   }
   return bad;
 };
-const slotsLine = (p) => (p.match(/Heavy work goes through memory slots:[^\n]*?rejoins the queue at the end\)\./) || [''])[0];
+const slotsLine = (p) => (p.match(/Heavy work goes through memory slots:[^\n]*/) || [''])[0];
 const cleanSlots = (p) => { const s = slotsLine(p); return s !== '' && !s.includes('--select \'arc\'') && !/--select '[0-9a-f]{40}'/.test(s); };
 const ROLES = ['analyst', 'prog', 'test', 'review', 'sec'];
 

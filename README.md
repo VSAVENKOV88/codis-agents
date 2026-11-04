@@ -7,7 +7,7 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT"></a>
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-0.4.22-informational" alt="Version 0.4.22"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-0.4.23-informational" alt="Version 0.4.23"></a>
   <a href="https://claude.com/claude-code"><img src="https://img.shields.io/badge/Claude%20Code-plugin-D97757" alt="Claude Code plugin"></a>
 </p>
 
@@ -807,15 +807,19 @@ review findings.
   second answer decides: the cheap agent that runs it sometimes answers without running the script, and the scripts
   are deterministic, so a real violation or real leftovers still stop the task.
 - Every role prompt carries the marked rules of `rules/multi-agent.md`: wait at most 270 s at a time and keep waiting
-  in slices while its own process is alive (a role does not end its work to wait), run `heavy.sh` and `guards-all.sh`
+  in a blocking Bash loop while its own process is alive (a turn without a tool call ends the role - Monitor does not
+  wake a workflow agent - so a role does not end its work to wait), run `heavy.sh` and `guards-all.sh`
   only through Bash `run_in_background`, hand over past ~200k of context, open questions go to the coordinator, living specs change with the behaviour, stage by path,
   never push.
 
 ## Memory slots
 
 Heavy work runs through `scripts/heavy.sh <cmd>` and `scripts/medium.sh <cmd>` (or `guards-all.sh <worktree>`). A role
-runs `heavy.sh` and `guards-all.sh` only through Bash `run_in_background`: a blocking call is killed by the Bash timeout
-while it waits in the queue, its ticket is dropped and it rejoins the queue at the end.
+runs `heavy.sh` and `guards-all.sh` only through Bash `run_in_background`: a blocking call to the heavy command itself
+is killed by the Bash timeout while it waits in the queue, its ticket is dropped and it rejoins the queue at the end.
+The wait for it is a separate blocking Bash loop of at most 270 s (`until <its log's final line, or the process has
+died>; do sleep 3; done`, timeout 270000), not Monitor: a turn without a tool call ends the role, and Monitor does not
+wake a workflow agent. The role agents also carry `disallowedTools: Monitor` in their frontmatter.
 
 - **medium** (tsc, one bundler build without a browser): `slots.medium` slots (2);
 - **heavy** (browsers, full guard runs, image builds): `slots.heavy` slots (2), one more only while the minimum free

@@ -4,6 +4,32 @@ Every version of the codis-agents plugin, newest first. What the plugin does now
 [README.md](README.md); its [Technical reference](README.md#technical-reference) is the current state of every rule,
 key and script, and this file says when and why each one changed. Versions before 0.4.14 are in the git history.
 
+## 0.4.23 - 2026-11-04
+
+- **A role does not end its turn to wait** (p-tester-drop; diagnosis of two cut-off testers in wave 5, owner
+  2026-11-04 "everything as recommended"). In a workflow agent a turn without a tool call is the end of the role: the
+  harness then forces the final output (`[structured-output-enforce]`), the verdict is given with the role's own work
+  (a held stand ticket, an acceptance, a full run) killed, and Monitor never wakes it - its events arrive only as an
+  attachment to a next request, and a turn of text makes none. The seven waiting places now say how to wait: start the
+  heavy command with Bash `run_in_background`, then wait for it with a *separate* blocking Bash loop
+  (`until <its final log line, or the process has died>; do sleep 3; done`, timeout 270000) repeated while the process
+  is alive, not with Monitor. Rules `pauses` and `slots` of `role-chain.js` and `rules/multi-agent.md`, the
+  `standSteps` and the tester's environment line, `agents/tester.md` and `agents/programmer.md`, and the README carry
+  the new wording; the H1 guard no longer keeps "never a blocking Bash call" next to "wait with a blocking loop" (G3),
+  so the rule stops contradicting itself (the heavy command itself is never a blocking call; its wait is one).
+- **`wait-step.js watch`**: a deterministic wait for a command a role started with `run_in_background` whose pid it does
+  not own (a stand `take` that holds the ticket and never ends). `watch --log <file> --until <regex> [--pid-file <file>]
+  [--max <s>]` prints `{matched, alive, max, log, tail}` and returns on the matched line, not on the process's end; with
+  `--pid-file` a process that dies before the line ends the wait with `matched:false, alive:false`. `--max` is clipped
+  to 270; no `--deadline` and no kill (a stand queue in the hour is normal).
+- **Role agents disallow Monitor** (`disallowedTools: ... Monitor` in the frontmatter of `tester`, `programmer`,
+  `reviewer`, `security-reviewer`, `analyst`): the harness suggests Monitor at every blocked `sleep`, and one rule
+  text alone could not always win against it. The coordinator's own session keeps Monitor (it has a user turn).
+- **`chain-cost.js` counts "waiting drops"**: an `end_turn` followed by `[structured-output-enforce]` while a
+  background job the agent started is still alive (no `<status>completed|failed|killed` for one since). Deterministic,
+  no threshold; printed next to the IE with a WARNING, so the green/ready verdicts whose own checks were cut off
+  mid-wait (which leave no other signal) are seen by the coordinator.
+
 ## 0.4.22 - 2026-11-04
 
 - **A train verdict for a stopped chain is not lost** (p-verdict-orphan-a; the owner 2026-11-03, translated: "take the

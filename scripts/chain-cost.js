@@ -44,6 +44,28 @@ const ieOfAgent = (jsonl) => {
   return { ie, maxCtx };
 };
 
+// A "waiting drop" (p-tester-drop, 2026-11-04): the agent ended a turn with text ("end_turn") instead of a tool call
+// and the harness then forced the final output ("[structured-output-enforce]") while a background job it had started
+// was still alive - no <status>completed|failed|killed for one since. Deterministic, no threshold: it marks the green,
+// ready or environment verdicts whose own checks (a stand ticket, an acceptance, a full run) were cut off mid-wait and
+// that otherwise leave no signal for the coordinator.
+function waitDropsOfAgent(jsonl) {
+  let drops = 0, bgStarts = 0, bgDone = 0, prevEndTurn = false;
+  for (const line of jsonl.split('\n')) {
+    if (!line.trim()) continue;
+    let o; try { o = JSON.parse(line); } catch { continue; }
+    if (prevEndTurn && /structured-output-enforce/.test(line) && bgStarts > bgDone) drops++;
+    const m = o.message;
+    prevEndTurn = !!(m && m.role === 'assistant' && m.stop_reason === 'end_turn');
+    if (m && m.role === 'assistant' && Array.isArray(m.content)) {
+      for (const c of m.content) if (c && c.type === 'tool_use' && c.input && c.input.run_in_background === true) bgStarts++;
+    }
+    if (/running in background with ID|moved to the background|Monitor[^\n]*started/i.test(line)) bgStarts++;
+    for (const _ of line.matchAll(/<status>\s*(?:completed|failed|killed)\s*<\/status>/gi)) { void _; bgDone++; }
+  }
+  return drops;
+}
+
 // Why a path cannot be counted ('' when it can): the one line the CLI prints before exit 66.
 function badDir(dir) {
   let st;
@@ -68,9 +90,11 @@ function cost(dir, notes = []) {
     const role = label.split(':')[0];
     const jf = path.join(dir, f.replace(/\.meta\.json$/, '.jsonl'));
     if (!fs.existsSync(jf)) continue;
-    const a = ieOfAgent(fs.readFileSync(jf, 'utf8'));
-    const t = tasks[key] || (tasks[key] = { ie: 0, agents: 0, maxCtx: 0, byRole: {} });
+    const raw = fs.readFileSync(jf, 'utf8');
+    const a = ieOfAgent(raw);
+    const t = tasks[key] || (tasks[key] = { ie: 0, agents: 0, maxCtx: 0, waitDrops: 0, byRole: {} });
     t.ie += a.ie; t.agents++; t.maxCtx = Math.max(t.maxCtx, a.maxCtx);
+    t.waitDrops += waitDropsOfAgent(raw);
     t.byRole[role] = (t.byRole[role] || 0) + a.ie;
   }
   return tasks;
@@ -98,8 +122,8 @@ function costAll(dirs) {
   const tasks = {}, features = {}, notes = [];
   for (const dir of dirs) {
     for (const [k, t] of Object.entries(cost(dir, notes))) {
-      const s = tasks[k] || (tasks[k] = { ie: 0, agents: 0, maxCtx: 0, byRole: {} });
-      s.ie += t.ie; s.agents += t.agents; s.maxCtx = Math.max(s.maxCtx, t.maxCtx);
+      const s = tasks[k] || (tasks[k] = { ie: 0, agents: 0, maxCtx: 0, waitDrops: 0, byRole: {} });
+      s.ie += t.ie; s.agents += t.agents; s.maxCtx = Math.max(s.maxCtx, t.maxCtx); s.waitDrops += t.waitDrops || 0;
       for (const [r, v] of Object.entries(t.byRole)) s.byRole[r] = (s.byRole[r] || 0) + v;
     }
     const f = featuresOf(dir);
@@ -127,7 +151,9 @@ function report(tasks, median, opts = {}) {
   const lines = Object.entries(tasks).sort().map(([k, t]) => {
     const roles = Object.entries(t.byRole).map(([r, v]) => `${r} ${M(v)}`).join(', ');
     const flag = t.ie > 2 * median ? `  WARNING: above 2 x median (${M(2 * median)}) - split the next similar task` : '';
-    return `${k}: ${M(t.ie)} IE, ${t.agents} agents, max context ${Math.round(t.maxCtx / 1000)}k (${roles})${flag}`;
+    const drops = t.waitDrops ? `, ${t.waitDrops} waiting drop${t.waitDrops > 1 ? 's' : ''}` : '';
+    const dropFlag = t.waitDrops ? `  WARNING: a verdict with a cut-off wait (a role ended a turn while a background job was alive) - check its own checks ran before the verdict` : '';
+    return `${k}: ${M(t.ie)} IE, ${t.agents} agents, max context ${Math.round(t.maxCtx / 1000)}k${drops} (${roles})${flag}${dropFlag}`;
   });
   const limit = Number.isFinite(opts.featureLimit) && opts.featureLimit > 0 ? opts.featureLimit : 3 * median;
   for (const [f, s] of Object.entries(byFeature(tasks, opts.features || {})).sort()) {
@@ -137,7 +163,7 @@ function report(tasks, median, opts = {}) {
   return lines;
 }
 
-module.exports = { badDir, cost, costAll, featuresOf, byFeature, ieOfAgent, report, runRecordOf };
+module.exports = { badDir, cost, costAll, featuresOf, byFeature, ieOfAgent, waitDropsOfAgent, report, runRecordOf };
 
 if (require.main === module) {
   const a = process.argv.slice(2);

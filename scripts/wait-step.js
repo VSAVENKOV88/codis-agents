@@ -18,6 +18,12 @@
 //     nothing new for an hour; a cheap waiter once took an unchanged tail for a stall and gave up). A run older than --deadline seconds (default
 //     14400) is killed with its process group and ends with rc 124 and an error. A run that vanished without an exit
 //     code ends with rc null and an error. Exit code 0 always when JSON was printed (the JSON carries the verdict).
+//   wait-step.js watch --log <file> --until <regex> [--pid-file <file>] [--max <s>]
+//     For a command a role started itself with Bash run_in_background, whose pid it does not own (a stand `take` that
+//     holds the ticket and never ends). Blocks until the log matches --until or --max seconds pass (<= 270), and prints
+//     JSON {matched, alive, max, log, tail}: matched=true the moment the line is in the log (not when the process ends),
+//     so the role stops waiting on the ticket, not on the end of `take`. With --pid-file (the command writes its pid
+//     there) a process that dies before the line ends the wait with matched:false, alive:false. No --deadline, no kill.
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
@@ -33,7 +39,9 @@ const out = (o) => { process.stdout.write(JSON.stringify(o) + '\n'); };
 const fail = (m) => { process.stderr.write(`wait-step: ${m}\n`); process.exit(64); };
 
 const id = opt('--id');
-if (!['start', 'wait'].includes(mode) || !id) fail('usage: wait-step.js start --id <prefix> [--cwd <dir>] [--reuse] -- <cmd> | wait --id <prefix> [--max <s>] [--deadline <s>]');
+const USAGE = 'usage: wait-step.js start --id <prefix> [--cwd <dir>] [--reuse] -- <cmd> | wait --id <prefix> [--max <s>] [--deadline <s>] | watch --log <file> --until <regex> [--pid-file <file>] [--max <s>]';
+if (!['start', 'wait', 'watch'].includes(mode)) fail(USAGE);
+if (mode !== 'watch' && !id) fail(USAGE);
 const F = { log: `${id}.log`, rc: `${id}.rc`, meta: `${id}.json` };
 const read = (f) => { try { return fs.readFileSync(f, 'utf8'); } catch { return null; } };
 const meta = () => { try { return JSON.parse(read(F.meta)); } catch { return null; } };
@@ -63,32 +71,65 @@ if (mode === 'start') {
 
 function q(s) { return `'${String(s).replace(/'/g, `'\\''`)}'`; }
 
+// watch: follow the log of a command a role started itself with Bash run_in_background (a stand `take` that holds the
+// ticket and never ends, a tally line of a full run). The role does not own that process's pid, so watch returns on the
+// matched line, not on the process's end: the wait is "the line is here" (`ticket taken by`), not "the process died".
+// With --pid-file (the command writes its pid there - `echo $$ > <file>; exec stand.sh take ...`) a process that dies
+// before the line ends the wait with matched:false, alive:false, so the role does not loop forever on a dead job.
+// No --deadline and no kill: the stand's queue in the hour is normal; --max is clipped to 270 like `wait`.
+if (mode === 'watch') {
+  const logFile = opt('--log');
+  const until = opt('--until');
+  if (!logFile || !until) fail(USAGE);
+  let re; try { re = new RegExp(until); } catch (e) { fail(`watch: --until is not a valid regex: ${e.message}`); }
+  const pidFile = opt('--pid-file');
+  const wmax = Math.min(270, Math.max(0, Number(opt('--max', 270)) || 0));
+  const pidAlive = () => {
+    if (!pidFile) return true;                     // no pid to watch: only the line (and --max) end the wait
+    const s = read(pidFile);
+    if (s === null || !s.trim()) return true;      // not written yet - treat as still coming up
+    const p = parseInt(s.trim(), 10);
+    return Number.isFinite(p) ? alive(p) : true;
+  };
+  const tail3 = () => (read(logFile) || '').split('\n').filter((l, i, a) => i < a.length - 1 || l).slice(-3).join('\n');
+  const t0 = Date.now();
+  (function tick() {
+    const body = read(logFile) || '';
+    if (re.test(body)) { out({ matched: true, alive: pidAlive(), max: wmax, log: logFile, tail: tail3() }); return process.exit(0); }
+    if (!pidAlive()) { out({ matched: false, alive: false, max: wmax, log: logFile, tail: tail3() }); return process.exit(0); }
+    if (Date.now() - t0 >= wmax * 1000) { out({ matched: false, alive: true, max: wmax, log: logFile, tail: tail3() }); return process.exit(0); }
+    setTimeout(tick, Math.min(2000, Math.max(50, wmax * 1000 - (Date.now() - t0))));
+  })();
+}
+
 // wait
-const max = Math.min(270, Math.max(0, Number(opt('--max', 270)) || 0));
-const deadline = Number(opt('--deadline', 14400)) || 14400;
-const m = meta();
-if (!m) { out({ done: true, rc: null, seconds: 0, log: F.log, tail: '', error: `no run with id ${id} (start was not run)` }); process.exit(0); }
-const t0 = Date.now();
-const finish = (rc, error) => {
-  const o = { done: true, rc, seconds: now() - m.started, log: F.log, tail: tail(25), alive: false, pid: m.pid };
-  if (error) o.error = error;
-  out(o); process.exit(0);
-};
-(function tick() {
-  const rc = rcOf();
-  if (rc !== undefined) return finish(rc, rc === null ? 'the exit code file is unreadable' : '');
-  if (!alive(m.pid)) {
-    const again = rcOf();          // it may have just finished between the two reads
-    return again !== undefined ? finish(again) : finish(null, 'the process ended without an exit code (killed?)');
-  }
-  if (now() - m.started > deadline) {
-    try { process.kill(-m.pid, 'SIGTERM'); } catch { /* already gone */ }
-    fs.writeFileSync(F.rc, '124\n');
-    return finish(124, `deadline of ${deadline} s passed - the run was killed with its process group`);
-  }
-  if (Date.now() - t0 >= max * 1000) {
-    out({ done: false, rc: null, seconds: now() - m.started, log: F.log, tail: tail(3), alive: true, pid: m.pid });
-    process.exit(0);
-  }
-  setTimeout(tick, Math.min(2000, Math.max(50, max * 1000 - (Date.now() - t0))));
-})();
+if (mode === 'wait') {
+  const max = Math.min(270, Math.max(0, Number(opt('--max', 270)) || 0));
+  const deadline = Number(opt('--deadline', 14400)) || 14400;
+  const m = meta();
+  if (!m) { out({ done: true, rc: null, seconds: 0, log: F.log, tail: '', error: `no run with id ${id} (start was not run)` }); process.exit(0); }
+  const t0 = Date.now();
+  const finish = (rc, error) => {
+    const o = { done: true, rc, seconds: now() - m.started, log: F.log, tail: tail(25), alive: false, pid: m.pid };
+    if (error) o.error = error;
+    out(o); process.exit(0);
+  };
+  (function tick() {
+    const rc = rcOf();
+    if (rc !== undefined) return finish(rc, rc === null ? 'the exit code file is unreadable' : '');
+    if (!alive(m.pid)) {
+      const again = rcOf();          // it may have just finished between the two reads
+      return again !== undefined ? finish(again) : finish(null, 'the process ended without an exit code (killed?)');
+    }
+    if (now() - m.started > deadline) {
+      try { process.kill(-m.pid, 'SIGTERM'); } catch { /* already gone */ }
+      fs.writeFileSync(F.rc, '124\n');
+      return finish(124, `deadline of ${deadline} s passed - the run was killed with its process group`);
+    }
+    if (Date.now() - t0 >= max * 1000) {
+      out({ done: false, rc: null, seconds: now() - m.started, log: F.log, tail: tail(3), alive: true, pid: m.pid });
+      process.exit(0);
+    }
+    setTimeout(tick, Math.min(2000, Math.max(50, max * 1000 - (Date.now() - t0))));
+  })();
+}

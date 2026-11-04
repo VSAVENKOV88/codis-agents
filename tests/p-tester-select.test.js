@@ -128,7 +128,7 @@ async function partA() {
   const roles = new Set(x.prompts.map((q) => q.role));
   ok('A10. whole prompts of programmer, tester and reviewer: the base selection appears only as the workflow\'s run',
     roles.has('prog') && roles.has('test') && roles.has('review') && bad.length === 0, bad.join('\n') || x.trace);
-  const slotsLine = (p) => (p.match(/Heavy work goes through memory slots:[^\n]*?rejoins the queue at the end\)\./) || [''])[0];
+  const slotsLine = (p) => (p.match(/Heavy work goes through memory slots:[^\n]*/) || [''])[0];
   const tsl = slotsLine(prompts(x, 'test')[0] || '');
   ok('A10. the slots rule in the tester prompt names no selection from the base and no other selection than step 4',
     tsl !== '' && !tsl.includes("--select 'arc'") && !/--select '[0-9a-f]{40}'/.test(tsl), tsl);
