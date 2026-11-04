@@ -196,17 +196,22 @@ try {
   ].join('\n');
   ok('F1.a. a background job completed with its notification then a text verdict is not a drop', waitDropsOfAgent(doneThenText) === 0, String(waitDropsOfAgent(doneThenText)));
 
-  // F1.b: a run: step (wait-step.js wait) whose foreground blocking loop was "moved to the background" on each 270 s
-  // timeout and then ran to the end, finishing with a text summary. No background job was left alive -> not a drop.
+  // F1.b, replaced by K3 (analyst of the second rejection, 2026-11-05): a blocking loop that overran its 270 s timeout
+  // was "moved to the background (ID: X)" - the harness says in that echo that the command keeps running, is notified
+  // by its own id and is killed at the final response - so it is a start; here the moved copy is notified completed
+  // before the text verdict, so nothing is alive. (The old fixture had no "(ID: X)" and no notification - a shape the
+  // session never had - and pinned the opposite: a moved loop alive at the enforce counted as no drop.)
+  const movedEcho = (id) => `Command did not complete within its 270s timeout and was moved to the background (ID: ${id}). Output is being written to: /private/tmp/claude-0/proj/sess/tasks/${id}.output. If it exits while you are still working you will be notified, but it is terminated when you give your final response and no notification can follow that - so do not end your turn to wait for it. It is running now: do not start a second copy while it runs. If it is no longer needed, stop it with TaskStop.`;
   const runStep = [
     asstTool('Bash', { command: 'until grep -q DONE sel.log; do sleep 3; done', timeout: 270000 }),
-    result('Command did not complete within its 270s timeout and was moved to the background'),
+    result(movedEcho('bk3')),
     asstTool('Bash', { command: 'until grep -q DONE sel.log; do sleep 3; done', timeout: 270000 }),
     result('DONE selection 10/0'),
+    notif('completed', 'Background command "until grep" completed (exit code 0)', 'bk3'),
     asst('end_turn', 'Selection green, 10/0.'),
     enforce(),
   ].join('\n');
-  ok('F1.b. a finished run: step (blocking loop, no live background job) is not a drop', waitDropsOfAgent(runStep) === 0, String(waitDropsOfAgent(runStep)));
+  ok('K3 (was F1.b). a moved blocking loop notified completed before the text verdict is not a drop', waitDropsOfAgent(runStep) === 0, String(waitDropsOfAgent(runStep)));
 }
 
 // W6 (p-tester-drop, tester round 2): the G4 counter on the shape of real transcripts, which the synthetic G4/W5/F1
@@ -263,8 +268,9 @@ try {
 }
 
 // W7 (p-tester-drop, programmer round 2): live jobs are tracked by id, not by a balance of counts.
-// W7.1: a foreground command that overran its timeout ("moved to the background") is no start, but its completion
-// notice must not cancel a different live job: a Monitor armed after it is still alive at the text end -> one drop.
+// W7.1: a foreground command that overran its timeout ("moved to the background (ID: X)", a start since K1) is
+// notified completed; that notice must not cancel a different live job: the Monitor armed before it is still alive at
+// the text end -> one drop.
 // W7.2: a tool_result that merely quotes the echo text (a file read) is no start: only a result that begins with the
 // echo is one.
 {
@@ -278,7 +284,7 @@ try {
     asstTool('Monitor', { command: 'until grep -q rc= run.out; do sleep 5; done', timeout_ms: 270000 }),
     result('Monitor started (task bmo, expires in 4m 30s unless the source ends first).'),
     asstTool('Bash', { command: 'until grep -q done x.log; do sleep 3; done', timeout: 270000 }),
-    result('Command was manually backgrounded by user... moved to the background (ID: bmv). Output is being written to: bmv.output'),
+    result('Command did not complete within its 270s timeout and was moved to the background (ID: bmv). Output is being written to: /private/tmp/claude-0/proj/sess/tasks/bmv.output. If it exits while you are still working you will be notified, but it is terminated when you give your final response and no notification can follow that.'),
     notif('bmv'),
     asst('end_turn', 'Waiting on monitor bmo.'),
     enforce(),
@@ -315,7 +321,8 @@ try {
 // W8.1: one attachment line carries a Monitor event notification of a live Monitor (no <status>: 5896 such blocks in
 // the session, 180 lines mix one with a completion of another id) and then the completion of another job. The event
 // must not borrow the status of the next notification: the Monitor stays alive -> one drop. The completed job is a
-// blocking wait moved to the background (no start), so only the Monitor can make the drop.
+// blocking wait moved to the background (a start since K1) whose completion is in the same line, so only the Monitor
+// can make the drop.
 // W8.2: an end_turn with empty text followed by the harness's "cut off mid-stream" message (4 role agents of the
 // session, two of them with live jobs) is no drop: the agent goes on working; only an end_turn followed by the enforce is.
 {
@@ -328,7 +335,7 @@ try {
     asstTool('Monitor', { command: 'tail -f run.log | grep --line-buffered tally', timeout_ms: 270000 }),
     result('Monitor started (task bm8, expires in 4m 30s unless the source ends first; you get one notice at expiry).'),
     asstTool('Bash', { command: 'until grep -q tally run.log; do sleep 3; done', timeout: 270000 }),
-    result('Command was manually backgrounded by user... moved to the background (ID: bj1). Output is being written to: bj1.output'),
+    result('Command did not complete within its 270s timeout and was moved to the background (ID: bj1). Output is being written to: /private/tmp/claude-0/proj/sess/tasks/bj1.output. If it exits while you are still working you will be notified, but it is terminated when you give your final response and no notification can follow that.'),
     JSON.stringify({ type: 'attachment', attachment: { type: 'queued_command', prompt:
       '<task-notification>\n<task-id>bm8</task-id>\n<summary>Monitor event: "guard run line"</summary>\n<event>pass a.test.js</event>\n</task-notification>\n' +
       '<task-notification>\n<task-id>bj1</task-id>\n<status>completed</status>\n<summary>Background command completed (exit code 0)</summary>\n</task-notification>' } }),
@@ -346,5 +353,51 @@ try {
     asstTool('StructuredOutput', { verdict: 'green' }),
   ].join('\n');
   ok('W8.2. an end_turn followed by the cut-off message, not the enforce, is no drop even with a live job', waitDropsOfAgent(cutOff) === 0, String(waitDropsOfAgent(cutOff)));
+}
+// K (p-tester-drop, analyst of the second rejection, analyst.md section 4): the sources of the "live jobs" state and of
+// the turn boundary that the earlier cells left without a cell. Lines carry their real "type" field, and the echoes are
+// verbatim in the shape of session 39161f33: the "moved" echo (360 of them, 322 notified by their own id) is a start
+// when it is the last paragraph of the result (16 had partial stdout before it); TaskStop ends a job (150 stops, none
+// followed by a notification); an attachment line (prompt_snapshot) is no turn boundary; an api-request-blob line is a
+// copy of the request, not an event.
+{
+  const { waitDropsOfAgent } = require('../scripts/chain-cost');
+  const asst = (stop, text) => JSON.stringify({ type: 'assistant', message: { role: 'assistant', stop_reason: stop, content: text ? [{ type: 'text', text }] : [] } });
+  const asstTool = (name, input) => JSON.stringify({ type: 'assistant', message: { role: 'assistant', stop_reason: 'tool_use', content: [{ type: 'tool_use', name, input }] } });
+  const result = (text) => JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', content: text }] } });
+  const enforce = () => JSON.stringify({ type: 'user', isMeta: true, message: { role: 'user', content: '[structured-output-enforce] You MUST call the StructuredOutput tool to complete this request.' } });
+  const notif = (id) => JSON.stringify({ type: 'attachment', attachment: { type: 'queued_command', prompt: `<task-notification>\n<task-id>${id}</task-id>\n<status>completed</status>\n<summary>Background command completed (exit code 0)</summary>\n</task-notification>` } });
+  const snapshot = () => JSON.stringify({ type: 'attachment', attachment: { type: 'prompt_snapshot', systemPrompt: ['You are an agent for Claude Code.'] } });
+  const blob = (content) => JSON.stringify({ type: 'api-request-blob', hash: 'h', message: { role: 'user', content } });
+  const moved = (id) => `Command did not complete within its 270s timeout and was moved to the background (ID: ${id}). Output is being written to: /private/tmp/claude-0/proj/sess/tasks/${id}.output. If it exits while you are still working you will be notified, but it is terminated when you give your final response and no notification can follow that - so do not end your turn to wait for it. It is running now: do not start a second copy while it runs. If it is no longer needed, stop it with TaskStop.`;
+  const loop = () => asstTool('Bash', { command: 'until grep -q rc= run.out; do sleep 3; done', timeout: 270000 });
+  const bg = (id) => [asstTool('Bash', { command: 'heavy.sh accept.sh', run_in_background: true }),
+    result(`Command running in background with ID: ${id}. Output is being written to: /private/tmp/claude-0/proj/sess/tasks/${id}.output`)];
+  const stopOk = (id) => result(`{"message":"Successfully stopped task: ${id} (heavy.sh accept.sh)","task_id":"${id}","task_type":"local_bash","command":"heavy.sh accept.sh"}`);
+  const n = (rows) => waitDropsOfAgent(rows.join('\n'));
+  const cell = (name, rows, want) => { const got = n(rows); ok(`${name} -> ${want}`, got === want, String(got)); };
+
+  cell('K1. the blocking loop moved to the background (echo first) is alive at end_turn+enforce: a drop',
+    [loop(), result(moved('bm1')), asst('end_turn', 'Waiting.'), enforce()], 1);
+  cell('K2. the moved echo after partial stdout (its last paragraph) is a start: a drop',
+    [loop(), result('line1\nafter checkout: 39 passed, 0 failed\n' + moved('bm2') + '\nSession cwd remains /tmp/wt; directory changes made by the backgrounded command do not apply to subsequent commands.'), asst('end_turn', 'Waiting.'), enforce()], 1);
+  cell('K3. the moved loop notified completed by its own id before the text end: no drop',
+    [loop(), result(moved('bm3')), notif('bm3'), asst('end_turn', 'Done.'), enforce()], 0);
+  cell('K4. a quote of the moved echo in the middle of a result (cat of a report) is no start: no drop',
+    [asstTool('Bash', { command: 'cat review.md' }), result('# review\nthe role saw ' + moved('bq1') + '\nand then the role ended its turn.\n## verdict'), asst('end_turn', 'Done.'), enforce()], 0);
+  cell('K5. a job stopped by TaskStop (Successfully stopped task) is not alive: no drop',
+    [...bg('bs1'), asstTool('TaskStop', { task_id: 'bs1' }), stopOk('bs1'), asst('end_turn', 'Done.'), enforce()], 0);
+  cell('K6. TaskStop answered "Task X is not running" ends that job: no drop',
+    [...bg('bs2'), asstTool('TaskStop', { task_id: 'bs2' }), result('<tool_use_error>Task bs2 is not running (status: completed)</tool_use_error>'), asst('end_turn', 'Done.'), enforce()], 0);
+  cell('K7. TaskStop of another id does not end a live job: a drop',
+    [...bg('bsa'), asstTool('TaskStop', { task_id: 'bsb' }), stopOk('bsb'), asst('end_turn', 'Waiting.'), enforce()], 1);
+  cell('K8. an attachment line (prompt_snapshot) between end_turn and the enforce is no turn boundary: a drop',
+    [...bg('bp1'), asst('end_turn', 'Waiting.'), snapshot(), enforce()], 1);
+  cell('K9. the completion notice of the job between end_turn and the enforce ends it: no drop',
+    [...bg('bp2'), asst('end_turn', 'Waiting.'), notif('bp2'), enforce()], 0);
+  cell('K10. an api-request-blob copy of a start echo after the job completed revives nothing: no drop',
+    [...bg('bb1'), notif('bb1'), blob([{ type: 'tool_result', tool_use_id: 't1', content: 'Command running in background with ID: bb1. Output is being written to: /private/tmp/claude-0/proj/sess/tasks/bb1.output' }]), asst('end_turn', 'Done.'), enforce()], 0);
+  cell('K11. an api-request-blob line between end_turn and the enforce is no turn boundary: a drop',
+    [...bg('bb2'), asst('end_turn', 'Waiting.'), blob([{ type: 'text', text: 'request copy' }]), enforce()], 1);
 }
 done();
