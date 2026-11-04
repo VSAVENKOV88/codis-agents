@@ -19,7 +19,10 @@ key and script, and this file says when and why each one changed. Versions befor
   by hand; new `train.js watch` is the coordinator's background wait - it dispatches like any waiter and exits on a new
   verdict without an addressee, or on a new halt that leaves an entry whose waiters are gone without reporting it.
   Results and entries of older versions have no waiter files and are never orphans. The stops 75, 14, 15 and 124 of
-  the chain name `train.js status`, `train.js watch` and `train.js ack` instead of "a relaunch attaches"; the train
+  the chain name `train.js status`, `train.js watch` and `train.js ack` instead of "a relaunch attaches", and so does a train step that could not run (the ride killed from outside, the Mac
+  asleep or rebooted) when `train.js status` lists its entry; 78 (no project config) says, like 74, that nothing was
+  queued. `status` prints the lock of `watch` as `by watch pid N` (owner file field `by`), the line of a ride or a run
+  as before; the train
   rule, the coordinator skill (6. Route: `watch` in the background; the session is not ended while a live lock of
   `watch` shows; the version moves between waves with the plugin of the remote runner), the role-chain skill and README
   say the same. Exit codes do not change. Why: cvy-text-reader-1 2026-11-03 - its ride left with 75 under a halt 8 s

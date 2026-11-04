@@ -2,8 +2,8 @@
 // The lock of the train dispatcher as its readers see it: scripts/train.js (the dispatcher) and the session hook
 // scripts/hooks/guard-bash.js (a commit or a reset of the arc branch under a live train is refused). One module, so
 // both use one rule of "alive" (train.js cannot be required: it runs its main() on load).
-//   <sharedDir>/train/lock/owner.json   {pid, child, pgid, train, base, wt, since}: base is the arc branch the train
-//   moves; the dispatcher writes it as soon as it has chosen the arc, before it reads the arc head.
+//   <sharedDir>/train/lock/owner.json   {pid, child, pgid, train, base, wt, since, by?}: base is the arc branch the train
+//   moves (by: 'watch' when the coordinator's train.js watch took the lock); the dispatcher writes it as soon as it has chosen the arc, before it reads the arc head.
 // A holder whose pid, child and process group (any process of it, unless it is the reader's own group) are all gone is
 // dead. The guard run of a dispatcher is not detached, so it stays in the dispatcher's group: when the dispatcher and
 // its zsh are killed, an orphaned guard worker still holds the lock. A group that is the reader's own is no evidence: a

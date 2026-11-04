@@ -917,7 +917,7 @@ const TRAIN_ENV = {
   74: 'the train queue is unavailable (no queue directory, not writable)',
   75: 'the train queue is halted for the coordinator: the environment of a train (a run cut off before its tally, the runner, the worktree, a git error, an attribution that could not run)',
   124: 'the deadline of the wait step passed (the train did not come back in time)',
-  78: 'the dispatcher found no project config',
+  78: 'the dispatcher found no project config (nothing was queued)',
 }
 const MAX_RIDES = 4
 // A conflict round that is only the merge of the arc, with every file resolved by hand in the project's docs
@@ -991,7 +991,9 @@ async function ride(t, st, review) {
     const head = st.head, step = `train-${n}`, res = resultOf(t, head)
     const r = await runStep(t, step, rideCmd(t, head), 'Train')
     const f = runFail(step, r)
-    if (f) return stop(t, `${f}; branch ${t.branch} head ${head} - the review accepted it, the coordinator queues it (train.js enqueue) or relaunches the task alone`, { review })
+    // the ride may have queued its entry before it died (killed from outside, the Mac asleep or rebooted): then the entry
+    // stays with a dead waiter and its verdict comes without an addressee (source S8 of p-verdict-orphan)
+    if (f) return stop(t, `${f}; branch ${t.branch} head ${head} - the review accepted it; the ride may have queued it before it stopped: when train.js status lists the entry, its verdict comes later without an addressee - train.js watch (the coordinator's background wait) ends on it, then relaunch the task alone (its ride takes the ready verdict) or take it by hand with train.js ack --task ${t.key} --head ${head}; when it is not listed, the coordinator queues it (train.js enqueue) or relaunches the task alone`, { review })
     const v = TRAIN_RC[r.rc]
     const info = { rc: r.rc, verdict: v || 'environment', result: res, log: r.log, tail: r.tail || '' }
     log(`${t.title}: train ${n} - exit ${r.rc}${v ? ` (${v})` : ''}`)
@@ -1003,7 +1005,7 @@ async function ride(t, st, review) {
     if (!v) {
       if (r.rc === 65) return stop(t, `train ${n}: refused before the queue (exit 65: the base ${String(t.base).trim()} is a protected branch or not a branch of the repository); log ${r.log}`, { review, train: info })
       if (TRAIN_ENV[r.rc]) {
-        const why = `exit ${r.rc}: ${TRAIN_ENV[r.rc]}; ${r.rc === 74 ? `branch ${t.branch} head ${head} is not queued - the review accepted it, the coordinator queues it (train.js enqueue) or relaunches the task alone` : keep}; log ${r.log}`
+        const why = `exit ${r.rc}: ${TRAIN_ENV[r.rc]}; ${r.rc === 74 || r.rc === 78 ? `branch ${t.branch} head ${head} is not queued - the review accepted it, the coordinator queues it (train.js enqueue) or relaunches the task alone` : keep}; log ${r.log}`
         return stop(t, `train ${n}: red from the environment, not the product - ${why}`, { environment: why, review, train: info })
       }
       return stop(t, `train ${n}: train.js ride exit ${r.rc} (log ${r.log}) - the coordinator decides; ${keep}`, { review, train: info })

@@ -104,10 +104,11 @@ role agents are unavailable).
   12 `seam`, 13 `conflict` -> a fix round on `<sharedDir>/train/result/<task>-<head>.json`, the selection (with
   `innerSelect: false` none: a short tester round when the fix touches the product), the second review of the diff,
   the train again (the second red train -> the analyst inside the run; at most four rides); 14
-  `arc-red`, 15 `coordinator` -> stopped for you: fix the arc or decide, then `train.js resume`; 74, 75, 124 ->
-  `environment`, the queue entry stays and its verdict comes later without an addressee (`train.js status` names it,
+  `arc-red`, 15 `coordinator` -> stopped for you: fix the arc or decide, then `train.js resume`; 74 and 78 ->
+  `environment`, nothing was queued (`train.js enqueue` or a relaunch); 75, 124 -> `environment`, the queue entry stays and its verdict comes later without an addressee (`train.js status` names it,
   `train.js watch` ends on it; a relaunch of the task alone takes it, `train.js ack` takes it by hand); the stops 14 and 15
-  name the same; 65 -> refused (a protected base
+  name the same, and so does a train step that could not run (the ride killed, the Mac asleep) when `train.js status`
+  lists its entry; 65 -> refused (a protected base
   or not a branch). The base must be a branch of the repository, not a commit.
 - Cost: `node "${CLAUDE_PLUGIN_ROOT}/scripts/chain-cost.js" <directory with the run's agent transcripts>...` prints the
   input-equivalent cost per task and flags tasks above twice `medianTaskIE`; give it the transcript directories of all

@@ -13,7 +13,7 @@
 //                            green-unmerged | conflict | red | seam (the attribution of a red train, below). A result is
 //                            written before its queue entry is removed.
 //   lock/                    the dispatcher's lock: mkdir is atomic (macOS has no flock(1)); lock/owner.json names the
-//                            holder {pid, child, pgid, train, base, wt, since}; base = the arc branch the train moves,
+//                            holder {pid, child, pgid, train, base, wt, since, by?}; by: 'watch' when train.js watch took it; base = the arc branch the train moves,
 //                            written as soon as the train has chosen it, before the arc head is read (the session hook
 //                            refuses a commit or a reset of that branch while the holder lives: scripts/hooks/guard-bash.js;
 //                            the reading of the lock is scripts/train-lock.js). A holder whose pid, child and process group (any
@@ -283,6 +283,8 @@ function entries(P) {
 
 // ---- the lock ----
 const ownerFile = (P) => TL.ownerFile(P.LOCK);
+// the command of this process: a lock taken by watch says so (by: 'watch'), since a train it drives dies with it
+let CMD = '';
 function setOwner(P, extra) {
   const o = Object.assign(readJ(ownerFile(P)) || Object.assign({ pid: process.pid, host: os.hostname(), since: new Date().toISOString() }, OWN_PGID ? { pgid: OWN_PGID } : {}), extra);
   writeAtomic(ownerFile(P), o);
@@ -291,7 +293,7 @@ function lockTake(P) {
   fs.mkdirSync(P.D, { recursive: true });
   const brk = `${P.LOCK}.break`, brkOwner = path.join(brk, 'owner.json');
   for (let i = 0; i < 3; i++) {
-    try { fs.mkdirSync(P.LOCK); setOwner(P, {}); return { ok: true }; } catch (e) { if (e.code !== 'EEXIST') throw e; }
+    try { fs.mkdirSync(P.LOCK); setOwner(P, CMD === 'watch' ? { by: 'watch' } : {}); return { ok: true }; } catch (e) { if (e.code !== 'EEXIST') throw e; }
     const o = readJ(ownerFile(P));
     if (holderAlive(o)) return { busy: o };
     if (!o && ageMs(P.LOCK) < STALE_MS) return { busy: { pid: null, note: 'a lock without its owner file yet' } };
@@ -757,6 +759,7 @@ async function awaitEntry(P, task, head, poll) {
 
 async function main() {
   const [cmd, ...rest] = process.argv.slice(2);
+  CMD = cmd;
   const USAGE = 'usage: train.js enqueue --task <t> --branch <b> --head <sha> --base <arc> [--dir <folder>] | ride (the same) | run | await --task <t> --head <sha> [--poll <s>] | status | resume | ack --task <t> --head <sha> | watch [--poll <s>]';
   if (!['enqueue', 'ride', 'run', 'await', 'status', 'resume', 'ack', 'watch'].includes(cmd)) die(64, USAGE);
   const a = args(rest);
@@ -800,7 +803,7 @@ async function main() {
   if (cmd === 'status') {
     const h = readJ(P.HALT), o = readJ(ownerFile(P));
     console.log(h ? `halt: ${h.reason} (since ${h.at}); the coordinator lifts it with train.js resume` : 'halt: none');
-    console.log(o ? `lock: train ${o.train || '-'}${o.base ? ` for arc ${o.base}` : ''} by pid ${o.pid} (${holderAlive(o) ? 'alive' : 'dead'}) since ${o.since}` : 'lock: free');
+    console.log(o ? `lock: train ${o.train || '-'}${o.base ? ` for arc ${o.base}` : ''} by ${o.by === 'watch' ? 'watch ' : ''}pid ${o.pid} (${holderAlive(o) ? 'alive' : 'dead'}) since ${o.since}` : 'lock: free');
     const q = entries(P), all = waiters(P);
     console.log(`queue: ${q.length}`);
     for (const e of q) {
