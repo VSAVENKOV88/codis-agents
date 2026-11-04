@@ -382,7 +382,7 @@ try {
   cell('K3. the moved loop notified completed by its own id before the text end: no drop',
     [loop(), result(moved('bm3')), notif('bm3'), asst('end_turn', 'Done.'), enforce()], 0);
   cell('K4. a quote of the moved echo in the middle of a result (cat of a report) is no start: no drop',
-    [asstTool('Bash', { command: 'cat review.md' }), result('# review\nthe role saw ' + moved('bq1') + '\nand then the role ended its turn.\n## verdict'), asst('end_turn', 'Done.'), enforce()], 0);
+    [asstTool('Bash', { command: 'cat review.md' }), result('# review\nthe role saw:\n' + moved('bq1') + '\nand then the role ended its turn.\n## verdict'), asst('end_turn', 'Done.'), enforce()], 0);
   cell('K5. a job stopped by TaskStop (Successfully stopped task) is not alive: no drop',
     [...bg('bs1'), asstTool('TaskStop', { task_id: 'bs1' }), stopOk('bs1'), asst('end_turn', 'Done.'), enforce()], 0);
   cell('K6. TaskStop answered "Task X is not running" ends that job: no drop',
