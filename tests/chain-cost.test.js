@@ -275,11 +275,11 @@ try {
   const enforce = () => JSON.stringify({ type: 'user', isMeta: true, message: { role: 'user', content: '[structured-output-enforce] You MUST call the StructuredOutput tool to complete this request.' } });
   const notif = (id) => JSON.stringify({ type: 'attachment', attachment: { type: 'queued_command', prompt: `<task-notification>\n<task-id>${id}</task-id>\n<status>completed</status>\n</task-notification>` } });
   const moved = [
+    asstTool('Monitor', { command: 'until grep -q rc= run.out; do sleep 5; done', timeout_ms: 270000 }),
+    result('Monitor started (task bmo, expires in 4m 30s unless the source ends first).'),
     asstTool('Bash', { command: 'until grep -q done x.log; do sleep 3; done', timeout: 270000 }),
     result('Command was manually backgrounded by user... moved to the background (ID: bmv). Output is being written to: bmv.output'),
     notif('bmv'),
-    asstTool('Monitor', { command: 'until grep -q rc= run.out; do sleep 5; done', timeout_ms: 270000 }),
-    result('Monitor started (task bmo, expires in 4m 30s unless the source ends first).'),
     asst('end_turn', 'Waiting on monitor bmo.'),
     enforce(),
   ].join('\n');
@@ -291,5 +291,13 @@ try {
     enforce(),
   ].join('\n');
   ok('W7.2. a tool_result that quotes the echo text past its start is no background start: not a drop', waitDropsOfAgent(quoted) === 0, String(waitDropsOfAgent(quoted)));
+  // W7.3: the assistant's own text that quotes a notification of a live job does not end that job.
+  const selfQuote = [
+    asstTool('Monitor', { command: 'until grep -q rc= run.out; do sleep 5; done', timeout_ms: 270000 }),
+    result('Monitor started (task bm3, expires in 4m 30s unless the source ends first).'),
+    asst('end_turn', 'Waiting for <task-id>bm3</task-id> <status>completed</status>.'),
+    enforce(),
+  ].join('\n');
+  ok('W7.3. the assistant quoting a notification does not end a live job: one drop', waitDropsOfAgent(selfQuote) === 1, String(waitDropsOfAgent(selfQuote)));
 }
 done();
