@@ -400,4 +400,28 @@ try {
   cell('K11. an api-request-blob line between end_turn and the enforce is no turn boundary: a drop',
     [...bg('bb2'), asst('end_turn', 'Waiting.'), blob([{ type: 'text', text: 'request copy' }]), enforce()], 1);
 }
+// T4 (p-tester-drop, tester round 4): a TaskStop answer is an end only when the result BEGINS with it. Session
+// 39161f33 has 10 tool results that quote "Successfully stopped task: X" and 8 that quote "Task X is not running"
+// in the middle (a node probe printing stop results, a cat of a report, a diff of this test). Such a quote must not
+// end a live job: that would hide a drop (the dangerous side).
+{
+  const { waitDropsOfAgent } = require('../scripts/chain-cost');
+  const asst = (stop, text) => JSON.stringify({ type: 'assistant', message: { role: 'assistant', stop_reason: stop, content: text ? [{ type: 'text', text }] : [] } });
+  const asstTool = (name, input) => JSON.stringify({ type: 'assistant', message: { role: 'assistant', stop_reason: 'tool_use', content: [{ type: 'tool_use', name, input }] } });
+  const result = (text) => JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', content: text }] } });
+  const enforce = () => JSON.stringify({ type: 'user', isMeta: true, message: { role: 'user', content: '[structured-output-enforce] You MUST call the StructuredOutput tool to complete this request.' } });
+  const bg = (id) => [asstTool('Bash', { command: 'heavy.sh accept.sh', run_in_background: true }),
+    result(`Command running in background with ID: ${id}. Output is being written to: /private/tmp/claude-0/proj/sess/tasks/${id}.output`)];
+  const n = (rows) => waitDropsOfAgent(rows.join('\n'));
+  const cell = (name, rows, want) => { const got = n(rows); ok(`${name} -> ${want}`, got === want, String(got)); };
+
+  cell('T4.1. a probe output quoting a "Successfully stopped task: X" answer mid-result does not end live X: a drop',
+    [...bg('bt1'), asstTool('Bash', { command: 'node probe.js' }),
+      result('stopped: 1\n{"task_id":"bt1"} => {"message":"Successfully stopped task: bt1 (heavy.sh accept.sh)","task_id":"bt1"}'),
+      asst('end_turn', 'Waiting.'), enforce()], 1);
+  cell('T4.2. a report quoting "<tool_use_error>Task X is not running" mid-result does not end live X: a drop',
+    [...bg('bt2'), asstTool('Bash', { command: 'cat test.md' }),
+      result('# test\nthe stop answered:\n<tool_use_error>Task bt2 is not running (status: completed)</tool_use_error>\nend'),
+      asst('end_turn', 'Waiting.'), enforce()], 1);
+}
 done();
