@@ -260,14 +260,14 @@ async function run(script, task, resolve) {
     /under a (live )?train/i.test(readme) && /wait for the train/i.test(readme) && /train\.js status/.test(readme));
   ok('D1. README: a service change rides as a passenger: a service branch from the arc head, train.js ride ... --base <arc>',
     /service branch/i.test(readme) && /train\.js ride --task <svc> --branch <svc> --head <full sha> --base <arc>/.test(readme));
-  ok('D1. README: owner.json names base, and status prints the arc', /\{pid, child, pgid, train, base, wt, since\}/.test(readme + src('scripts/train.js')) && /for arc <base>/.test(readme));
+  ok('D1. README: owner.json names base, and status prints the arc', /\{pid, child, pgid, train, base, wt, since(, by\?)?\}/.test(readme + src('scripts/train.js')) && /for arc <base>/.test(readme));
   ok('D3. rules/multi-agent.md: the coordinator\'s line - a service change into the arc under a train rides as a passenger or waits for "lock: free"; Why ab9ae807',
     /ab9ae807/.test(rules) && /passenger/.test(rules) && /lock: free/.test(rules));
   ok('D3. the rule line has no role marker', rules.split('\n').filter((l) => /ab9ae807/.test(l)).every((l) => !/<!-- role:/.test(l)));
   ok('D3. skills/coordinator: a service change into the arc under a train - passenger or after "lock: free"', /passenger/.test(skill) && /lock: free/.test(skill));
   ok('D4. hooks.json description names the refusal under a train', /train/.test(hj.description || ''), hj.description);
   ok('D4. guard-bash.js header names the refusal under a train', /train/.test(head) && /owner\.json/.test(head));
-  ok('A10/D. train.js header: owner.json names base', /\{pid, child, pgid, train, base, wt, since\}/.test(src('scripts/train.js')));
+  ok('A10/D. train.js header: owner.json names base', /\{pid, child, pgid, train, base, wt, since(, by\?)?\}/.test(src('scripts/train.js')));
 
   fs.rmSync(T, { recursive: true, force: true });
   done();
