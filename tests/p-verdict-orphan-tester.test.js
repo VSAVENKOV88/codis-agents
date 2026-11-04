@@ -122,17 +122,23 @@ async function main() {
 
   // ---- O8: etime in every form of ps (a fake ps in PATH; the waiter is a live sleep) ----
   const sl = spawn('sleep', ['120'], { stdio: 'ignore' });
-  const forms = [['mm:ss', '07:09', 7 * 60 + 9], ['hh:mm:ss', '02:03:04', 2 * 3600 + 3 * 60 + 4], ['dd-hh:mm:ss', '1-02:03:04', 86400 + 2 * 3600 + 3 * 60 + 4]];
-  for (const [name, et, sec] of forms) {
+  // the fake ps prints the time since a fixed start (whole seconds) in one form, so the clock moving between the write
+  // of the waiter file and status does not matter
+  const forms = [['mm:ss', 7 * 60 + 9, 'printf "   %02d:%02d\\n" $((e/60)) $((e%60))'],
+    ['hh:mm:ss', 2 * 3600 + 3 * 60 + 4, 'printf "   %02d:%02d:%02d\\n" $((e/3600)) $((e%3600/60)) $((e%60))'],
+    ['dd-hh:mm:ss', 86400 + 2 * 3600 + 3 * 60 + 4, 'printf "   %d-%02d:%02d:%02d\\n" $((e/86400)) $((e%86400/3600)) $((e%3600/60)) $((e%60))']];
+  for (const [name, sec, fmt] of forms) {
     const i = forms.findIndex((f) => f[0] === name), task = `e${i}`;
+    const start = Math.floor(Date.now() / 1000) - sec;
     const fbin = path.join(T, `bin-ps${i}`); // no ":" of the form in the folder: it would split PATH
-    put(path.join(fbin, 'ps'), `#!/bin/sh\necho "   ${et}"\n`); fs.chmodSync(path.join(fbin, 'ps'), 0o755);
+    put(path.join(fbin, 'ps'), `#!/bin/sh\ne=$(( $(date +%s) - ${start} ))\n${fmt}\n`); fs.chmodSync(path.join(fbin, 'ps'), 0o755);
     const pe = { PATH: fbin + path.delimiter + process.env.PATH };
+    const et = spawnSync(path.join(fbin, 'ps'), { encoding: 'utf8' }).stdout.trim();
     setResult(task, H('9'));
-    putWaiter(task, H('9'), sl.pid, { state: 'waiting', procStart: Date.now() - sec * 1000 });
+    putWaiter(task, H('9'), sl.pid, { state: 'waiting', procStart: start * 1000 });
     let s = stat(pe);
     ok(`O8 etime ${name} (${et}): a live waiter whose start matches is alive - not named`, unnamed(s, task, H('9')), s);
-    putWaiter(task, H('9'), sl.pid, { state: 'waiting', procStart: Date.now() - sec * 1000 - 3600 * 1000 });
+    putWaiter(task, H('9'), sl.pid, { state: 'waiting', procStart: (start - 3600) * 1000 });
     s = stat(pe);
     ok(`O8 etime ${name}: the same pid with a start an hour earlier (a reused pid) - named`, named(s, task, H('9')), s);
     fs.rmSync(path.join(WD, `${task}-${H('9')}-${sl.pid}.json`), { force: true });
