@@ -166,4 +166,43 @@ try {
   ].join('\n');
   ok('W5.3. two end_turn+enforce turns with live background jobs count as two drops', waitDropsOfAgent(twice) === 2, String(waitDropsOfAgent(twice)));
 }
+
+// F1 (p-tester-drop, round r, review.md): the two cells the G4/W5 blocks leave uncovered - the false positives of the
+// counter on real data. A background start must be counted once (from the assistant tool_use run_in_background, or a
+// Monitor armed), never from the "running in background with ID" echo (that double-counts) nor the wait-loop "moved to
+// the background" notice (the correct 270 s wait, which is the mechanism this task introduces). Without that, a task
+// that started AND completed a background job with its notification, and a run: step whose blocking loop ran to the end,
+// both get a false drop and light the per-task WARNING on nearly every task.
+{
+  const { waitDropsOfAgent } = require('../scripts/chain-cost');
+  const asst = (stop, text) => JSON.stringify({ message: { role: 'assistant', stop_reason: stop, content: text ? [{ type: 'text', text }] : [] } });
+  const asstTool = (name, input) => JSON.stringify({ message: { role: 'assistant', stop_reason: 'tool_use', content: [{ type: 'tool_use', name, input }] } });
+  const result = (text) => JSON.stringify({ message: { role: 'user', content: [{ type: 'tool_result', content: text }] } });
+  const enforce = () => JSON.stringify({ type: 'user', isMeta: true, message: { role: 'user', content: '[structured-output-enforce] You MUST call the StructuredOutput tool to complete this request.' } });
+  const notif = (status, summary) => JSON.stringify({ type: 'attachment', attachment: { type: 'queued_command', prompt: `<task-notification>\n<status>${status}</status>\n<summary>${summary}</summary>\n</task-notification>` } });
+
+  // F1.a: a background job started AND completed with its notification, THEN the role ends the turn with text and the
+  // harness forces the output. The completion was notified, so by G4 ("no <status>completed since") this is NOT a drop.
+  // (The G4 r6 fixture ends with a tool call, not end_turn+enforce, so this path is not exercised there.)
+  const doneThenText = [
+    asstTool('Bash', { command: 'heavy.sh guards-all.sh wt', run_in_background: true }),
+    result('Command running in background with ID: bddd'),
+    notif('completed', 'Background command "guards-all" completed (exit code 0)'),
+    asst('end_turn', 'Full run green, 137/138.'),
+    enforce(),
+  ].join('\n');
+  ok('F1.a. a background job completed with its notification then a text verdict is not a drop', waitDropsOfAgent(doneThenText) === 0, String(waitDropsOfAgent(doneThenText)));
+
+  // F1.b: a run: step (wait-step.js wait) whose foreground blocking loop was "moved to the background" on each 270 s
+  // timeout and then ran to the end, finishing with a text summary. No background job was left alive -> not a drop.
+  const runStep = [
+    asstTool('Bash', { command: 'until grep -q DONE sel.log; do sleep 3; done', timeout: 270000 }),
+    result('Command did not complete within its 270s timeout and was moved to the background'),
+    asstTool('Bash', { command: 'until grep -q DONE sel.log; do sleep 3; done', timeout: 270000 }),
+    result('DONE selection 10/0'),
+    asst('end_turn', 'Selection green, 10/0.'),
+    enforce(),
+  ].join('\n');
+  ok('F1.b. a finished run: step (blocking loop, no live background job) is not a drop', waitDropsOfAgent(runStep) === 0, String(waitDropsOfAgent(runStep)));
+}
 done();
