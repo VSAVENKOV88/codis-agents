@@ -49,25 +49,39 @@ const ieOfAgent = (jsonl) => {
 // was still alive - no <status>completed|failed|killed for one since. Deterministic, no threshold: it marks the green,
 // ready or environment verdicts whose own checks (a stand ticket, an acceptance, a full run) were cut off mid-wait and
 // that otherwise leave no signal for the coordinator.
-// A start is counted ONCE: the assistant tool_use with run_in_background===true, or a Monitor armed (the A1b
-// mechanism, which has no such tool_use). The "running in background with ID" line is the tool_result echo of that same
-// run_in_background tool_use - counting it too double-counts the start. The "moved to the background" line is a
-// foreground command that overran its 270 s timeout: that is the correct blocking-loop wait this task introduces, not a
-// background job left alive, so it is not a start. Without this (round r, review.md F1) a job that started AND completed
-// with its notification still showed bgStarts > bgDone, and every finished run: step read as a drop.
+// Live jobs are tracked BY ID, never by a balance of counts (round 2, test.md R2-1/R2-2): a transcript line is one
+// JSON object, so a pattern on the raw line matches the harness and project instructions of every agent's first lines
+// (a deferred tool list "...Monitor\nNotebookEdit...", rule text "A-Monitor (copy) ... a full run started"), and one
+// task notification is stored several times in one line (attachment prompt/text/display, the api-request blob).
+// - A start is read only from a tool_result whose text BEGINS with the harness echo: "Command running in background
+//   with ID: X" (a run_in_background Bash) or "Monitor started (task X" (the A1b mechanism). A result that quotes
+//   these words further in (a file read) is no start. "moved to the background (ID: X)" is a foreground command that
+//   overran its 270 s timeout - the correct blocking-loop wait this task introduces - and is not a start.
+// - A job ends with a notification "<task-id>X</task-id> ... <status>completed|failed|killed</status>" on any line
+//   that is not the assistant's own; repeats remove the same id, and an id never started removes nothing.
+// - A drop: an assistant turn ended with text ("end_turn"), the next line is the enforce, and a started job is alive.
+const textOf = (c) => (typeof c === 'string' ? c : Array.isArray(c) ? c.map((x) => (x && typeof x.text === 'string' ? x.text : '')).join('\n') : '');
 function waitDropsOfAgent(jsonl) {
-  let drops = 0, bgStarts = 0, bgDone = 0, prevEndTurn = false;
+  let drops = 0, prevEndTurn = false;
+  const live = new Set();
   for (const line of jsonl.split('\n')) {
     if (!line.trim()) continue;
     let o; try { o = JSON.parse(line); } catch { continue; }
-    if (prevEndTurn && /structured-output-enforce/.test(line) && bgStarts > bgDone) drops++;
+    if (prevEndTurn && /structured-output-enforce/.test(line) && live.size > 0) drops++;
     const m = o.message;
     prevEndTurn = !!(m && m.role === 'assistant' && m.stop_reason === 'end_turn');
-    if (m && m.role === 'assistant' && Array.isArray(m.content)) {
-      for (const c of m.content) if (c && c.type === 'tool_use' && c.input && c.input.run_in_background === true) bgStarts++;
+    if (m && m.role === 'assistant') continue;
+    if (m && m.role === 'user' && Array.isArray(m.content)) {
+      for (const c of m.content) {
+        if (!c || c.type !== 'tool_result') continue;
+        const t = textOf(c.content).trimStart();
+        const s = /^Command running in background with ID: ([\w-]+)/.exec(t) || /^Monitor started \(task ([\w-]+)/.exec(t);
+        if (s) live.add(s[1]);
+      }
     }
-    if (/Monitor[^\n]*started/i.test(line)) bgStarts++;
-    for (const _ of line.matchAll(/<status>\s*(?:completed|failed|killed)\s*<\/status>/gi)) { void _; bgDone++; }
+    if (live.size) {
+      for (const n of line.matchAll(/<task-id>([\w-]+)<\/task-id>((?:(?!<\/task-notification>)[\s\S])*?)<status>\s*(?:completed|failed|killed)\s*<\/status>/gi)) live.delete(n[1]);
+    }
   }
   return drops;
 }

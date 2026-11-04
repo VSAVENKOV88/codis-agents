@@ -86,7 +86,7 @@ try {
   const asstTool = (name, input) => JSON.stringify({ message: { role: 'assistant', stop_reason: 'tool_use', content: [{ type: 'tool_use', name, input }] } });
   const result = (text) => JSON.stringify({ message: { role: 'user', content: [{ type: 'tool_result', content: text }] } });
   const enforce = () => JSON.stringify({ type: 'user', isMeta: true, message: { role: 'user', content: '[structured-output-enforce] You MUST call the StructuredOutput tool to complete this request. Call this tool now.' } });
-  const notif = (status, summary) => JSON.stringify({ type: 'attachment', attachment: { type: 'queued_command', prompt: `<task-notification>\n<status>${status}</status>\n<summary>${summary}</summary>\n</task-notification>` } });
+  const notif = (status, summary, id) => JSON.stringify({ type: 'attachment', attachment: { type: 'queued_command', prompt: `<task-notification>\n<task-id>${id}</task-id>\n<status>${status}</status>\n<summary>${summary}</summary>\n</task-notification>` } });
 
   // A1b-like: a stand take in the background that never finishes, then "Waiting." (end_turn) and the enforce -> one drop.
   const a1b = [asstTool('Bash', { command: 'stand.sh take --wt /wt', run_in_background: true }),
@@ -95,7 +95,7 @@ try {
   // round-6-like: the background job completes, then the role calls StructuredOutput (tool_use, no end_turn) -> no drop.
   const r6 = [asstTool('Bash', { command: 'heavy.sh accept.sh', run_in_background: true }),
     result('Command running in background with ID: byyy'),
-    notif('completed', 'Background command "accept" completed (exit code 0)'),
+    notif('completed', 'Background command "accept" completed (exit code 0)', 'byyy'),
     asstTool('StructuredOutput', { status: 'green' })];
   // a plain end-of-role by text with no live background job -> not a drop.
   const plain = [asst('end_turn', 'Done.'), enforce()];
@@ -117,6 +117,9 @@ try {
   fs.rmSync(g4, { recursive: true, force: true });
 }
 
+// Fixture shapes (round 2): every real task notification carries <task-id> and every Monitor result begins
+// "Monitor started (task X" (session 39161f33: 19193 notifications, 2447 Monitor results, none otherwise), so the
+// fixtures use the same shapes - the counter tracks live jobs by that id.
 // W5 (p-tester-drop, tester): cells of the G4 counter the programmer's G4 block does not cover.
 // W5.1 is the fix's own point - the correct waiting pattern (round 6: a blocking Bash loop over a live background job,
 // the harness "moved to the background" notice, never an end_turn) must NOT be counted, or the counter would warn on
@@ -147,7 +150,7 @@ try {
   // with "Waiting." and the harness forces the output. One drop.
   const monDrop = [
     asstTool('Monitor', { command: 'until-loop' }),
-    result('Monitor m1 started. Keep working - do not poll or sleep. You will be notified on each event.'),
+    result('Monitor started (task m1, expires in 4m 30s unless the source ends first). Keep working - do not poll or sleep.'),
     asst('end_turn', 'Waiting.'),
     enforce(),
   ].join('\n');
@@ -179,7 +182,7 @@ try {
   const asstTool = (name, input) => JSON.stringify({ message: { role: 'assistant', stop_reason: 'tool_use', content: [{ type: 'tool_use', name, input }] } });
   const result = (text) => JSON.stringify({ message: { role: 'user', content: [{ type: 'tool_result', content: text }] } });
   const enforce = () => JSON.stringify({ type: 'user', isMeta: true, message: { role: 'user', content: '[structured-output-enforce] You MUST call the StructuredOutput tool to complete this request.' } });
-  const notif = (status, summary) => JSON.stringify({ type: 'attachment', attachment: { type: 'queued_command', prompt: `<task-notification>\n<status>${status}</status>\n<summary>${summary}</summary>\n</task-notification>` } });
+  const notif = (status, summary, id) => JSON.stringify({ type: 'attachment', attachment: { type: 'queued_command', prompt: `<task-notification>\n<task-id>${id}</task-id>\n<status>${status}</status>\n<summary>${summary}</summary>\n</task-notification>` } });
 
   // F1.a: a background job started AND completed with its notification, THEN the role ends the turn with text and the
   // harness forces the output. The completion was notified, so by G4 ("no <status>completed since") this is NOT a drop.
@@ -187,7 +190,7 @@ try {
   const doneThenText = [
     asstTool('Bash', { command: 'heavy.sh guards-all.sh wt', run_in_background: true }),
     result('Command running in background with ID: bddd'),
-    notif('completed', 'Background command "guards-all" completed (exit code 0)'),
+    notif('completed', 'Background command "guards-all" completed (exit code 0)', 'bddd'),
     asst('end_turn', 'Full run green, 137/138.'),
     enforce(),
   ].join('\n');

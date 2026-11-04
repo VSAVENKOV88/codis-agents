@@ -26,14 +26,15 @@ key and script, and this file says when and why each one changed. Versions befor
   `reviewer`, `security-reviewer`, `analyst`): the harness suggests Monitor at every blocked `sleep`, and one rule
   text alone could not always win against it. The coordinator's own session keeps Monitor (it has a user turn).
 - **`chain-cost.js` counts "waiting drops"**: an `end_turn` followed by `[structured-output-enforce]` while a
-  background job the agent started is still alive (no `<status>completed|failed|killed` for one since). A start is
-  counted once - the assistant tool_use with `run_in_background===true`, or a Monitor armed (the A1b mechanism, which
-  has no such tool_use); the `running in background with ID` line is that tool_use's own result echo, and the
-  `moved to the background` timeout line is the correct blocking-loop wait this version introduces, so neither is a
-  start (review F1: without this a job that started and completed with its notification, and every finished `run:` step,
-  showed a false drop and lit the per-task WARNING on nearly every task). Deterministic, no threshold; printed next to
-  the IE with a WARNING, so the green/ready verdicts whose own checks were cut off mid-wait (which leave no other
-  signal) are seen by the coordinator.
+  background job the agent started is still alive. Live jobs are tracked by id: a start is a tool_result that begins
+  with the harness echo `Command running in background with ID: X` or `Monitor started (task X`; the job ends with a
+  notification `<task-id>X</task-id> ... <status>completed|failed|killed</status>` (repeats of one notification remove
+  the same id). Patterns on the raw transcript line are not used: they matched the instruction text in every agent's
+  first lines and counted one notification several times (tester round 2: 44 of 56 drops of a real session were false
+  `run:` steps, and a hidden green was lost). The `moved to the background` timeout line is the correct blocking-loop
+  wait this version introduces, so it is not a start. Deterministic, no threshold; printed next to the IE with a
+  WARNING, so the green/ready verdicts whose own checks were cut off mid-wait (which leave no other signal) are seen by
+  the coordinator.
 
 ## 0.4.22 - 2026-11-04
 
