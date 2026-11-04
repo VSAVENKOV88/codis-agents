@@ -49,6 +49,12 @@ const ieOfAgent = (jsonl) => {
 // was still alive - no <status>completed|failed|killed for one since. Deterministic, no threshold: it marks the green,
 // ready or environment verdicts whose own checks (a stand ticket, an acceptance, a full run) were cut off mid-wait and
 // that otherwise leave no signal for the coordinator.
+// A start is counted ONCE: the assistant tool_use with run_in_background===true, or a Monitor armed (the A1b
+// mechanism, which has no such tool_use). The "running in background with ID" line is the tool_result echo of that same
+// run_in_background tool_use - counting it too double-counts the start. The "moved to the background" line is a
+// foreground command that overran its 270 s timeout: that is the correct blocking-loop wait this task introduces, not a
+// background job left alive, so it is not a start. Without this (round r, review.md F1) a job that started AND completed
+// with its notification still showed bgStarts > bgDone, and every finished run: step read as a drop.
 function waitDropsOfAgent(jsonl) {
   let drops = 0, bgStarts = 0, bgDone = 0, prevEndTurn = false;
   for (const line of jsonl.split('\n')) {
@@ -60,7 +66,7 @@ function waitDropsOfAgent(jsonl) {
     if (m && m.role === 'assistant' && Array.isArray(m.content)) {
       for (const c of m.content) if (c && c.type === 'tool_use' && c.input && c.input.run_in_background === true) bgStarts++;
     }
-    if (/running in background with ID|moved to the background|Monitor[^\n]*started/i.test(line)) bgStarts++;
+    if (/Monitor[^\n]*started/i.test(line)) bgStarts++;
     for (const _ of line.matchAll(/<status>\s*(?:completed|failed|killed)\s*<\/status>/gi)) { void _; bgDone++; }
   }
   return drops;

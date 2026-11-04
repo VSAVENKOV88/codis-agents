@@ -26,9 +26,14 @@ key and script, and this file says when and why each one changed. Versions befor
   `reviewer`, `security-reviewer`, `analyst`): the harness suggests Monitor at every blocked `sleep`, and one rule
   text alone could not always win against it. The coordinator's own session keeps Monitor (it has a user turn).
 - **`chain-cost.js` counts "waiting drops"**: an `end_turn` followed by `[structured-output-enforce]` while a
-  background job the agent started is still alive (no `<status>completed|failed|killed` for one since). Deterministic,
-  no threshold; printed next to the IE with a WARNING, so the green/ready verdicts whose own checks were cut off
-  mid-wait (which leave no other signal) are seen by the coordinator.
+  background job the agent started is still alive (no `<status>completed|failed|killed` for one since). A start is
+  counted once - the assistant tool_use with `run_in_background===true`, or a Monitor armed (the A1b mechanism, which
+  has no such tool_use); the `running in background with ID` line is that tool_use's own result echo, and the
+  `moved to the background` timeout line is the correct blocking-loop wait this version introduces, so neither is a
+  start (review F1: without this a job that started and completed with its notification, and every finished `run:` step,
+  showed a false drop and lit the per-task WARNING on nearly every task). Deterministic, no threshold; printed next to
+  the IE with a WARNING, so the green/ready verdicts whose own checks were cut off mid-wait (which leave no other
+  signal) are seen by the coordinator.
 
 ## 0.4.22 - 2026-11-04
 
