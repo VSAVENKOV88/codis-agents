@@ -28,6 +28,12 @@ ok('T17 the train rule and the coordinator skill: the session is not ended while
   [train, route].every((t) => /not end (its|the) session while `?train\.js status`? shows a live lock of `?watch/.test(t)), route.slice(0, 400));
 ok('T17 the train rule and the coordinator skill: the move to the new version goes with the plugin of the remote runner',
   [train, route].every((t) => /runner/.test(t) && /version/.test(t) && /waiter/.test(t)), '');
+// review 1, finding 1: a train step that could not run (the ride killed, the Mac asleep) leaves its entry too
+ok('T17 the train rule and the coordinator skill: a train step that could not run leaves a verdict without an addressee (watch)',
+  [train, route].every((t) => /could not run/.test(t)), route.slice(0, 400));
+// review 1, finding 2: the live lock of watch is what status prints for it
+ok('T17 the train rule, the coordinator skill and the README row: status prints the lock of watch as "by watch pid"',
+  [train, route, row].every((t) => /by watch pid/.test(t)), '');
 ok('T17 the train rule: why (cvy-text-reader-1, red 15:17, relaunch 15:41)', /cvy-text-reader-1/.test(train) && /15:17/.test(train) && /15:41/.test(train), '');
 ok('T17 the role-chain skill: the stops 74/75/124 name where the verdict goes (status, watch), not "attaches" alone',
   /without an addressee/.test(chainSkill) && /train\.js watch/.test(chainSkill), '');

@@ -157,6 +157,18 @@ const G = (train, more = {}) => Object.assign({ pre: [PRE], prog: [PROG], test: 
       /without an addressee/.test(why) && /train\.js watch/.test(why) && /train\.js status/.test(why) && /train\.js ack/.test(why)
         && !/a relaunch of the task alone attaches to it/.test(why) && !/ride: ?\{/.test(why), why);
   }
+  // T16 (review 1, finding 1): the train step could not run (the ride killed from outside, the Mac asleep or rebooted:
+  // no exit code) or returned no result - the entry may stay with a dead waiter, so the stop names where its verdict goes
+  for (const [name, steps] of [['could not run', [{ done: false, rc: null, log: '/d/wait-train-1.log', error: 'no JSON' }, { done: false, rc: null, log: '/d/wait-train-1.log', error: 'no JSON' }]], ['returned no result', [null, null]]]) {
+    x = await run(G(steps));
+    const why = x.r.why || '';
+    ok(`T16. the train step ${name}: the stop names train.js status, the verdict without an addressee, train.js watch and train.js ack, and enqueue when nothing is queued`,
+      x.r.status === 'stopped' && /without an addressee/.test(why) && /train\.js watch/.test(why) && /train\.js status/.test(why) && /train\.js ack/.test(why) && /train\.js enqueue/.test(why), why);
+  }
+  // T16 (review 1, finding 3): 78 - no project config, nothing was queued: no verdict will come, the text is that of 74
+  x = await run(G([ride(78)]));
+  ok('T16. train exit 78: nothing queued - the stop does not promise a verdict without an addressee or a watch, it names enqueue',
+    x.r.status === 'stopped' && !/without an addressee/.test(x.r.why || '') && !/train\.js watch/.test(x.r.why || '') && !/entry stays/.test(x.r.why || '') && /not queued/.test(x.r.why || '') && /train\.js enqueue/.test(x.r.why || ''), x.r.why);
   x = await run(G([ride(74)]));
   ok('W2. the queue unavailable -> the stop names the branch and the head the review accepted', /branch b\b/.test(x.r.why || '') && /head T\b/.test(x.r.why || '') && /queue/.test(x.r.why || ''), x.r.why);
   x = await run(G([ride(65)]));

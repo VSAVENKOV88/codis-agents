@@ -30,6 +30,7 @@
 //   T21 a new halt: an entry without a live waiter -> watch ends {halt, entriesWithoutWaiter};
 //       every entry with a live waiter -> watch does not end, the rides leave with 75          (cells 25, 26)
 //   T22 an orphan that was there before watch started does not end it; a new one does          (cell 27)
+//   T23 status names the holder of the lock: "by watch pid N" for watch, the line of 0.4.21 for a ride (review 1)
 // tests:quiet - processes, a lock and polling under a timer: red under load
 // usage: node tests/p-verdict-orphan.test.js
 const fs = require('fs');
@@ -446,6 +447,27 @@ async function main_() {
     rc24b.code === 0 && !(j13 && j13.orphans || []).some((o) => o.task === 'c24') && typeof (result('c24', c24) || {}).claimedAt === 'string', `${rc24b.code} ${w13.out}`);
   ok('T13 control: b13 without an attached ride is the one verdict without an addressee', w13.code === 0 && j13 && j13.orphans && j13.orphans.map((o) => o.task).join() === 'b13', `${w13.code} ${w13.out}`);
   await stop(w13);
+
+  // ---- T23 (review 1, finding 2): status shows who holds the lock - "by watch pid N" for watch, the line of 0.4.21 else ----
+  rules({ 'g-slow': 'sleep 3; false' });
+  const w23 = branch('w23', ['f-w23.txt']);
+  strand('w23', w23);
+  const ww = bg(['watch']);
+  await waitFor(() => /^lock: train /m.test(status()), 15000);
+  const st23 = status();
+  ok('T23 a train driven by watch: status prints "by watch pid N (alive)"',
+    new RegExp(`^lock: train \\S+( for arc \\S+)? by watch pid ${ww.p.pid} \\(alive\\)`, 'm').test(st23), st23);
+  await waitFor(() => ww.code !== undefined, 30000);
+  await stop(ww);
+  tr('ack', '--task', 'w23', '--head', w23);
+  const x23 = branch('x23', ['f-x23.txt']);
+  const rx = bg(['ride', ...args('x23', x23)]);
+  await waitFor(() => /^lock: train /m.test(status()), 15000);
+  const sx23 = status();
+  ok('T23 a train driven by a ride: the lock line of 0.4.21, no watch',
+    new RegExp(`^lock: train \\S+( for arc \\S+)? by pid ${rx.p.pid} \\(alive\\)`, 'm').test(sx23) && !/watch/.test(sx23.split('\n').find((l) => l.startsWith('lock:')) || ''), sx23);
+  await rx.closed;
+  rules({});
 }
 
 main_().catch((e) => ok('no exception', false, e && e.stack)).finally(() => {
