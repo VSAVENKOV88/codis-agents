@@ -32,6 +32,21 @@
 //                            attribution cannot decide (verdict coordinator: several red pairs, a guard now red now green,
 //                            more than three passengers, one passenger green alone, no repeated red named). The passengers without a result stay in the queue.
 //   trains/<id>.json, logs/<id>.txt   the record and the log of every train.
+//   waiters/<task>-<head>-<pid>.json  {pid, procStart, state: waiting | claimed | left, at} (p-verdict-orphan-a): written
+//                            by a `ride` or an `await` of its own entry when it starts to wait; on its exit marked, never
+//                            removed: claimed when it took its own result, else left. A killed waiter leaves it waiting.
+//                            procStart is the start of the process as now - etime of `LC_ALL=C ps -o etime=` (no locale:
+//                            `lstart` is localized under ru_RU.UTF-8 and Date cannot read it); a waiter is alive when it is
+//                            waiting, its pid is alive and its start now is within 2 s of procStart (a reused pid is not).
+//                            Removed by whoever takes the result (after claimedAt is written) and, for the other heads
+//                            of the task, by the enqueue of a new head.
+//   A result is a verdict without an addressee when it is not taken (no claimedAt: neither a ride or an await printed it
+//   as its own, nor `ack`), there is at least one waiter file of its task and head (an entry of an older ride has none:
+//   never an orphan), none of them is a live waiting process, and it is not superseded (another head of the task, queued
+//   or decided, with a later enqueuedAt - finish copies the entry's enqueuedAt into the result). `status` names such
+//   verdicts, `watch` (the coordinator's background wait) ends on a new one. Why: cvy-text-reader-1 2026-11-03 - its ride
+//   left with 75 under a halt, its entry rode the next train, the verdict red came at 15:17 and nobody waited for it; the
+//   coordinator found it and relaunched at 15:41.
 // There is no daemon: the dispatcher is whoever takes the lock - the waiting step of a chain (`await`) or a `run`; after
 // its train it releases the lock and the next waiter takes it.
 //
@@ -73,9 +88,17 @@
 //        train.js await --task <t> --head <sha> [--poll <s>]
 //          -> waits for the result of this entry, dispatching trains while it waits; prints the result JSON, or
 //             {verdict: environment, halted: true, reason} while the queue is halted (the entry stays); exit 0;
-//             no entry and no result -> exit 66
-//        train.js status                      -> the halt, the lock (its train and arc) and the queue
-//        train.js resume                      -> the coordinator: removes the halt
+//             no entry and no result -> exit 66. A ride and an await write their waiter file and take (claimedAt) the
+//             result they print as their own; a ride takes it only when its exit code is that result's verdict.
+//        train.js status                      -> the halt, the lock (its train and arc) and the queue (each entry with
+//             "waiter pid N alive" or "no live waiter" when it has waiter files), then "verdicts without an addressee"
+//        train.js resume                      -> the coordinator: removes the halt; names the entries without a live waiter
+//        train.js ack --task <t> --head <sha> -> the coordinator takes a verdict by hand (claimedAt); no result -> exit 66
+//        train.js watch [--poll <s>]          -> the coordinator's background wait: dispatches trains like any waiter (it
+//             is no waiter itself and takes nothing) and exits 0 with {orphans: [...]} on a verdict without an addressee
+//             that was not there when it started, or with {halt, entriesWithoutWaiter} on a halt that was not there
+//             when it started and leaves an entry whose waiters are all gone without reporting it (none alive, none
+//             left with 75/14/15 after the halt came); both are events, polled at the poll of await
 // The project config is found as config.js finds it (CODIS_AGENTS_CONFIG first); no config -> exit 78.
 const fs = require('fs');
 const os = require('os');
@@ -120,7 +143,7 @@ function project() {
   if (!r.config || r.errors.length) die(78, `project config ${file}: ${r.errors.join('; ')}`);
   const c = r.config, D = path.join(c.sharedDir, 'train');
   return { c, D, Q: path.join(D, 'queue'), RES: path.join(D, 'result'), LOGS: path.join(D, 'logs'), TR: path.join(D, 'trains'),
-    LOCK: path.join(D, 'lock'), HALT: path.join(D, 'halt'), env: Object.assign({}, process.env, { CODIS_AGENTS_CONFIG: c.configPath }) };
+    LOCK: path.join(D, 'lock'), HALT: path.join(D, 'halt'), W: path.join(D, 'waiters'), env: Object.assign({}, process.env, { CODIS_AGENTS_CONFIG: c.configPath }) };
 }
 
 const git = (P, cwd, args, opts = {}) => {
@@ -135,6 +158,117 @@ const TASK = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const SHA = /^([0-9a-f]{40}|[0-9a-f]{64})$/;
 const branchOk = (b) => typeof b === 'string' && !b.startsWith('-') && spawnSync('git', ['check-ref-format', `refs/heads/${b}`]).status === 0;
 const resultFile = (P, task, head) => path.join(P.RES, `${task}-${head}.json`);
+
+// ---- the waiters (p-verdict-orphan-a) ----
+const WAITER = /^(.+)-([0-9a-f]{40}|[0-9a-f]{64})-(\d+)\.json$/;
+const RESULT = /^(.+)-([0-9a-f]{40}|[0-9a-f]{64})\.json$/;
+// The start of a process (ms), as now - etime: etime is [[dd-]hh:]mm:ss whatever the locale; null when ps cannot say.
+function procStart(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return null;
+  const r = spawnSync('ps', ['-o', 'etime=', '-p', String(pid)], { encoding: 'utf8', env: Object.assign({}, process.env, { LC_ALL: 'C' }) });
+  const m = /^\s*(?:(?:(\d+)-)?(\d+):)?(\d+):(\d+)\s*$/.exec(r.stdout || '');
+  if (r.status !== 0 || !m) return null;
+  const sec = ((+(m[1] || 0) * 24 + +(m[2] || 0)) * 60 + +m[3]) * 60 + +m[4];
+  return Date.now() - sec * 1000;
+}
+const START_SLACK_MS = 2000;
+function waiterLive(w) {
+  if (!w || w.state !== 'waiting' || !alive(w.pid)) return false;
+  if (typeof w.procStart !== 'number') return true;
+  const now = procStart(w.pid);
+  return now === null || Math.abs(now - w.procStart) <= START_SLACK_MS;
+}
+// every waiter file: [{file, task, head, pid, procStart, state, at}]
+function waiters(P) {
+  let names = [];
+  try { names = fs.readdirSync(P.W).filter((n) => WAITER.test(n)); } catch { /* none yet */ }
+  const list = [];
+  for (const n of names) {
+    const m = WAITER.exec(n), w = readJ(path.join(P.W, n));
+    if (w) list.push(Object.assign(w, { file: path.join(P.W, n), task: m[1], head: m[2] }));
+  }
+  return list;
+}
+const waitersOf = (all, task, head) => all.filter((w) => w.task === task && w.head === head);
+// The waiter file of this process for its own entry; '' when it cannot be written (then it is an older ride's entry:
+// nobody calls its verdict an orphan).
+function registerWaiter(P, task, head) {
+  const f = path.join(P.W, `${task}-${head}-${process.pid}.json`);
+  try { writeAtomic(f, { pid: process.pid, procStart: procStart(process.pid), state: 'waiting', at: new Date().toISOString() }); return f; } catch { return ''; }
+}
+function markWaiter(f, state) {
+  const w = f && readJ(f);
+  if (!w) return;
+  try { writeAtomic(f, Object.assign(w, { state, at: new Date().toISOString() })); } catch { /* the file stays waiting with our dead pid */ }
+}
+function dropWaiters(P, keep) {
+  for (const w of waiters(P)) if (keep(w)) fs.rmSync(w.file, { force: true });
+}
+// Takes the result of (task, head): claimedAt first, then the mark of the own waiter file, then the removal of the
+// waiter files of (task, head) - in this order there is no moment when the result is not taken and has no live waiter.
+// CODIS_TRAIN_CLAIM_PAUSE (seconds, tests only) holds the moment between the first two steps.
+function claim(P, task, head, own, extra = {}) {
+  const f = resultFile(P, task, head), r = readJ(f);
+  if (r && !r.claimedAt) writeAtomic(f, Object.assign(r, { claimedAt: new Date().toISOString() }, extra));
+  const pause = Number(process.env.CODIS_TRAIN_CLAIM_PAUSE);
+  if (pause > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, pause * 1000);
+  if (own) markWaiter(own, 'claimed');
+  dropWaiters(P, (w) => w.task === task && w.head === head);
+  return r;
+}
+const leave = (own) => markWaiter(own, 'left');
+// R superseded: another head of the task, queued or decided, with a later enqueuedAt.
+function superseded(P, task, head, r) {
+  const t = Date.parse(r && r.enqueuedAt);
+  if (isNaN(t)) return false;
+  const later = (o) => o && o.head !== head && Date.parse(o.enqueuedAt) > t;
+  if (entries(P).some((e) => e.task === task && later(e))) return true;
+  let names = [];
+  try { names = fs.readdirSync(P.RES); } catch { /* none */ }
+  return names.some((n) => { const m = RESULT.exec(n); return m && m[1] === task && m[2] !== head && later(readJ(path.join(P.RES, n))); });
+}
+// The verdicts without an addressee: [{task, head, result, r}].
+function orphans(P) {
+  const all = waiters(P), seen = new Set(), list = [];
+  for (const w of all) {
+    const k = `${w.task} ${w.head}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    const f = resultFile(P, w.task, w.head), r = readJ(f);
+    if (!r || r.claimedAt) continue;
+    if (waitersOf(all, w.task, w.head).some(waiterLive)) continue;
+    if (superseded(P, w.task, w.head, r)) continue;
+    list.push({ task: w.task, head: w.head, result: f, r });
+  }
+  return list;
+}
+// What status says of an orphan, after "<task> <head> <verdict> train <id>".
+function orphanDetail(o) {
+  const r = o.r;
+  if (r.verdict === 'green' && r.merged) return `merged ${r.merged} into ${r.base}`;
+  if (r.verdict === 'green-unmerged') return `merge ${r.ref} into ${r.base} (${r.reason || 'not merged'})`;
+  if (r.verdict === 'conflict') return `files ${(r.files || []).join(', ')}`;
+  if (r.verdict === 'seam') return `partner ${r.partner}${r.partnerBranch ? ` (${r.partnerBranch})` : ''}`;
+  if (r.verdict === 'red' && Array.isArray(r.guards)) return `guards ${r.guards.join(', ')}`;
+  return '';
+}
+const orphanView = (o) => Object.assign({ task: o.task, head: o.head, verdict: o.r.verdict, train: o.r.train, result: o.result },
+  ...['branch', 'base', 'merged', 'ref', 'files', 'partner', 'partnerBranch', 'guards', 'reason'].filter((k) => o.r[k] !== undefined).map((k) => ({ [k]: o.r[k] })));
+// The state of the waiters of a queue entry: {live: [pid], files: n, left: [at]}.
+function entryWaiters(all, e) {
+  const ws = waitersOf(all, e.task, e.head);
+  return { files: ws.length, live: ws.filter(waiterLive).map((w) => w.pid), left: ws.filter((w) => w.state === 'left').map((w) => w.at) };
+}
+// The entries that have waiter files and no live waiter. With `since` (the at of a halt): only those whose waiters did
+// not leave at or after it - a ride that left with 75/14/15 on that halt has told its chain.
+function entriesWithoutWaiter(P, since) {
+  const all = waiters(P), t = since ? Date.parse(since) : NaN;
+  return entries(P).filter((e) => {
+    const s = entryWaiters(all, e);
+    if (!s.files || s.live.length) return false;
+    return isNaN(t) || !s.left.some((a) => Date.parse(a) >= t);
+  }).map((e) => ({ task: e.task, branch: e.branch, head: e.head, base: e.base, enqueuedAt: e.enqueuedAt }));
+}
 
 function entries(P) {
   let names = [];
@@ -226,7 +360,7 @@ function halt(P, reason, extra = {}) {
   writeAtomic(P.HALT, Object.assign({ reason, at: new Date().toISOString() }, extra));
 }
 function finish(P, e, res) {
-  writeAtomic(resultFile(P, e.task, e.head), Object.assign({ task: e.task, branch: e.branch, head: e.head, base: e.base }, res));
+  writeAtomic(resultFile(P, e.task, e.head), Object.assign({ task: e.task, branch: e.branch, head: e.head, base: e.base }, e.enqueuedAt ? { enqueuedAt: e.enqueuedAt } : {}, res));
   fs.rmSync(e.file, { force: true });
 }
 
@@ -596,6 +730,7 @@ function enqueue(P, a, USAGE) {
       fs.rmSync(e.file, { force: true });
     }
     const f = path.join(P.Q, `${String(Date.now()).padStart(13, '0')}-${a.task}.json`);
+    try { dropWaiters(P, (w) => w.task === a.task && w.head !== a.head); } catch { /* no waiters yet */ }
     writeAtomic(f, { task: a.task, branch: a.branch, head: a.head, base: a.base, dir: a.dir ? path.resolve(a.dir) : '', enqueuedAt: new Date().toISOString() });
     return { queued: f };
   } catch (e) {
@@ -622,8 +757,8 @@ async function awaitEntry(P, task, head, poll) {
 
 async function main() {
   const [cmd, ...rest] = process.argv.slice(2);
-  const USAGE = 'usage: train.js enqueue --task <t> --branch <b> --head <sha> --base <arc> [--dir <folder>] | ride (the same) | run | await --task <t> --head <sha> [--poll <s>] | status | resume';
-  if (!['enqueue', 'ride', 'run', 'await', 'status', 'resume'].includes(cmd)) die(64, USAGE);
+  const USAGE = 'usage: train.js enqueue --task <t> --branch <b> --head <sha> --base <arc> [--dir <folder>] | ride (the same) | run | await --task <t> --head <sha> [--poll <s>] | status | resume | ack --task <t> --head <sha> | watch [--poll <s>]';
+  if (!['enqueue', 'ride', 'run', 'await', 'status', 'resume', 'ack', 'watch'].includes(cmd)) die(64, USAGE);
   const a = args(rest);
   const P = project();
   const poll = 1000 * (Number(a.poll || process.env.CODIS_TRAIN_POLL) || 10);
@@ -632,41 +767,93 @@ async function main() {
     // the chain after the review (p-train-c3): enqueue, then await; the exit code is the verdict (RIDE_RC)
     const q = enqueue(P, a, USAGE);
     out(q);
+    // the waiter file of this ride for its own entry (p-verdict-orphan-a): never for the partner of a seam below
+    const own = registerWaiter(P, a.task, a.head);
     let r = q.decided ? q.result : await awaitEntry(P, a.task, a.head, poll);
-    if (!r) die(66, `no queue entry and no result for ${a.task} ${a.head}`);
+    if (!r) { leave(own); die(66, `no queue entry and no result for ${a.task} ${a.head}`); }
     // a seam is fixed on the arc head that holds the earlier branch: wait for the partner's result first (it rides the
     // next train), so the fix round starts after it
     if (!r.halted && r.verdict === 'seam' && r.partner && TASK.test(r.partner) && SHA.test(r.partnerHead || '')) {
       const pr = await awaitEntry(P, r.partner, r.partnerHead, poll);
-      // the partner's train halted: its verdict is ours (arc-red 14, coordinator 15, otherwise environment 75)
-      if (pr && pr.halted) { out(Object.assign({}, r, { partnerResult: pr })); return rideRc(pr); }
+      // the partner's train halted: its verdict is ours (arc-red 14, coordinator 15, otherwise environment 75); our own
+      // seam is not taken - its verdict goes to the coordinator without an addressee
+      if (pr && pr.halted) { out(Object.assign({}, r, { partnerResult: pr })); leave(own); return rideRc(pr); }
       r = Object.assign({}, r, { partnerResult: pr || { verdict: 'none', reason: `no queue entry and no result for ${r.partner} ${r.partnerHead}` } });
     }
     out(r);
-    return rideRc(r);
+    const rc = rideRc(r);
+    // printed first, then taken: only when the exit code is this result's own verdict
+    if (!r.halted && rc === RIDE_RC[r.verdict]) claim(P, a.task, a.head, own); else leave(own);
+    return rc;
   }
   if (cmd === 'run') { out(await dispatch(P)); return 0; }
   if (cmd === 'await') {
     headOk(a.head);
     if (!TASK.test(a.task || '')) die(64, USAGE);
+    const own = registerWaiter(P, a.task, a.head);
     const r = await awaitEntry(P, a.task, a.head, poll);
-    if (!r) die(66, `no queue entry and no result for ${a.task} ${a.head}`);
-    out(r); return 0;
+    if (!r) { if (own) fs.rmSync(own, { force: true }); die(66, `no queue entry and no result for ${a.task} ${a.head}`); }
+    out(r);
+    if (!r.halted) claim(P, a.task, a.head, own); else leave(own);
+    return 0;
   }
   if (cmd === 'status') {
     const h = readJ(P.HALT), o = readJ(ownerFile(P));
     console.log(h ? `halt: ${h.reason} (since ${h.at}); the coordinator lifts it with train.js resume` : 'halt: none');
     console.log(o ? `lock: train ${o.train || '-'}${o.base ? ` for arc ${o.base}` : ''} by pid ${o.pid} (${holderAlive(o) ? 'alive' : 'dead'}) since ${o.since}` : 'lock: free');
-    const q = entries(P);
+    const q = entries(P), all = waiters(P);
     console.log(`queue: ${q.length}`);
-    for (const e of q) console.log(`  ${e.task} ${e.branch} ${e.head} -> ${e.base} (since ${e.enqueuedAt})`);
+    for (const e of q) {
+      // an entry without waiter files (a ride of an older version) keeps the line of 0.4.21
+      const s = entryWaiters(all, e);
+      const note = !s.files ? '' : s.live.length ? ` - waiter pid ${s.live.join(', ')} alive` : ' - no live waiter: its verdict comes without an addressee';
+      console.log(`  ${e.task} ${e.branch} ${e.head} -> ${e.base} (since ${e.enqueuedAt})${note}`);
+    }
+    const os_ = orphans(P);
+    if (os_.length) {
+      console.log(`verdicts without an addressee: ${os_.length} (no live ride took them: relaunch the task alone - its ride takes the ready verdict - or take it by hand with train.js ack --task <t> --head <sha>)`);
+      for (const o of os_) { const d = orphanDetail(o); console.log(`  ${o.task} ${o.head} ${o.r.verdict} train ${o.r.train || '-'}${d ? ` ${d}` : ''} result ${o.result}`); }
+    }
     return 0;
   }
   if (cmd === 'resume') {
     const h = readJ(P.HALT);
     fs.rmSync(P.HALT, { force: true });
     console.log(h ? `halt removed (it was: ${h.reason})` : 'no halt');
+    const lost = entriesWithoutWaiter(P);
+    if (lost.length) {
+      console.log(`entries without a live waiter: ${lost.length} - their verdict comes without an addressee: train.js status names it, train.js watch (in the background) ends on it`);
+      for (const e of lost) console.log(`  ${e.task} ${e.head} (${e.branch} -> ${e.base})`);
+    }
     return 0;
+  }
+  if (cmd === 'ack') {
+    headOk(a.head);
+    if (!TASK.test(a.task || '')) die(64, USAGE);
+    const r = readJ(resultFile(P, a.task, a.head));
+    if (!r) die(66, `no result for ${a.task} ${a.head}: nothing to take`);
+    const was = r.claimedAt;
+    claim(P, a.task, a.head, '', { ackedAt: new Date().toISOString() });
+    console.log(was ? `already taken at ${was}: ${a.task} ${a.head} ${r.verdict}` : `taken: ${a.task} ${a.head} ${r.verdict}`);
+    return 0;
+  }
+  if (cmd === 'watch') {
+    // the coordinator's background wait: no waiter file, takes nothing; ends on a new orphan or on a new halt that
+    // leaves an entry without a live waiter
+    const key = (o) => `${o.task} ${o.head}`;
+    const before = new Set(orphans(P).map(key));
+    const h0 = readJ(P.HALT), at0 = h0 ? h0.at : null;
+    for (;;) {
+      const fresh = orphans(P).filter((o) => !before.has(key(o)));
+      if (fresh.length) { out({ orphans: fresh.map(orphanView) }); return 0; }
+      const h = readJ(P.HALT);
+      if (h && h.at !== at0) {
+        const lost = entriesWithoutWaiter(P, h.at);
+        if (lost.length) { out({ halt: h, entriesWithoutWaiter: lost }); return 0; }
+      }
+      const d = await dispatch(P);
+      if (!d.departed) await sleep(poll);
+    }
   }
   return 64;
 }

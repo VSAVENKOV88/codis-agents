@@ -14,7 +14,7 @@ const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
 const rules = read('rules/multi-agent.md');
 const train = rules.split('\n').find((l) => /^- \*\*The train is the seam check/.test(l)) || '';
 const coord = read('skills/coordinator/SKILL.md');
-const route = (coord.split('\n').join(' ').match(/6\. \*\*Route\.\*\*.*?(?=7\. \*\*Questions)/) || [''])[0];
+const route = (coord.replace(/\s+/g, ' ').match(/6\. \*\*Route\.\*\*.*?(?=7\. \*\*Questions)/) || [''])[0];
 const readme = read('README.md');
 const row = readme.split('\n').find((l) => l.startsWith('| `scripts/train.js` |')) || '';
 const chainSkill = read('skills/role-chain/SKILL.md').replace(/\s+/g, ' ');
@@ -25,7 +25,7 @@ for (const [name, text] of [['rules/multi-agent.md, the train rule', train], ['s
   ok(`T17 ${name}: no task field ride (part b)`, !/`ride: ?\{/.test(text) && !/field `ride`/.test(text), '');
 }
 ok('T17 the train rule and the coordinator skill: the session is not ended while train.js status shows a live lock of watch',
-  [train, route].every((t) => /not end[^.]*session[^.]*live lock[^.]*watch|session[^.]*not[^.]*ended[^.]*live lock[^.]*watch/.test(t)), route.slice(0, 400));
+  [train, route].every((t) => /not end (its|the) session while `?train\.js status`? shows a live lock of `?watch/.test(t)), route.slice(0, 400));
 ok('T17 the train rule and the coordinator skill: the move to the new version goes with the plugin of the remote runner',
   [train, route].every((t) => /runner/.test(t) && /version/.test(t) && /waiter/.test(t)), '');
 ok('T17 the train rule: why (cvy-text-reader-1, red 15:17, relaunch 15:41)', /cvy-text-reader-1/.test(train) && /15:17/.test(train) && /15:41/.test(train), '');

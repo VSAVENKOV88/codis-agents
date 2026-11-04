@@ -44,7 +44,15 @@ one. For whatever the owner judges by the screen, show a mockup of all states be
    `train.result`) into the arc's worktree yourself; a stop `arc-red` or `coordinator` halts the queue - fix the arc or
    decide, then `node "${CLAUDE_PLUGIN_ROOT}/scripts/train.js" resume` (`train.js status` shows the halt, the lock and the
    queue); a stop `environment` of the train keeps its entry: free the machine, `train.js resume` if halted, relaunch the
-   task alone. A service change of yours into the arc (a config, a backlog line) while a train runs rides as a
+   task alone. A stop on the train whose entry stays (75, 14, 15, 124; not 74) leaves a verdict that comes later
+   without an addressee: run `train.js watch` in the background (`node "${CLAUDE_PLUGIN_ROOT}/scripts/train.js" watch`,
+   Bash `run_in_background`; it dispatches trains like any waiter and exits on a new verdict without an addressee, or on a new halt that leaves an entry without a
+   live waiter); on its exit read `train.js status` ("verdicts without an addressee": task, head, verdict, train, the
+   merged sha, the ref to merge or the files, the result file) and relaunch the task alone (its ride takes the ready
+   verdict; `prior` = the counts of the stopped run) or take the verdict by hand with `train.js ack --task <t> --head
+   <sha>`; `resume` names the entries without a live waiter. Do not end the session while `train.js status` shows a live
+   lock of `watch`: a train it drives dies with it. The move to a plugin version with waiter files goes between waves, in
+   the same step as the plugin of the remote runner. A service change of yours into the arc (a config, a backlog line) while a train runs rides as a
    passenger - a service branch from the arc head, its commit, `train.js ride --task <svc> --branch <svc> --head <full
    sha> --base <arc>` in the background - or waits until `train.js status` says `lock: free`: the session hook refuses
    a commit or a reset of the arc under a live train. Without the key: `done` -> merge the branch into the integration branch yourself and resolve conflicts. After merging

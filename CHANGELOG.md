@@ -4,6 +4,27 @@ Every version of the codis-agents plugin, newest first. What the plugin does now
 [README.md](README.md); its [Technical reference](README.md#technical-reference) is the current state of every rule,
 key and script, and this file says when and why each one changed. Versions before 0.4.14 are in the git history.
 
+## 0.4.22 - 2026-11-04
+
+- **A train verdict for a stopped chain is not lost** (p-verdict-orphan-a; the owner 2026-11-03, translated: "take the
+  verdict without an addressee into wave 5"; "1-13 as recommended": the waiter registry - yes, a ride that does not
+  leave under a halt - no, the dispatcher that drives a foreign train - a separate task). A `ride` or an `await` of its
+  own entry writes `<sharedDir>/train/waiters/<task>-<head>-<pid>.json` `{pid, procStart, state, at}` and marks it
+  `claimed` or `left` on its exit (procStart from `LC_ALL=C ps -o etime=`, so neither a reused pid nor the locale fools
+  it); the result it returns as its own is taken (`claimedAt`, written before the mark); `finish` copies the entry's
+  `enqueuedAt` into the result. A result not taken, with waiter files and no live waiting process among them, not
+  superseded by a later head of the task, is a verdict without an addressee: `train.js status` names it after its
+  unchanged `halt:`/`lock:`/`queue:` lines and marks the queue entries `waiter pid N alive` or `no live waiter`;
+  `train.js resume` names the entries without a live waiter; new `train.js ack --task <t> --head <sha>` takes a verdict
+  by hand; new `train.js watch` is the coordinator's background wait - it dispatches like any waiter and exits on a new
+  verdict without an addressee, or on a new halt that leaves an entry whose waiters are gone without reporting it.
+  Results and entries of older versions have no waiter files and are never orphans. The stops 75, 14, 15 and 124 of
+  the chain name `train.js status`, `train.js watch` and `train.js ack` instead of "a relaunch attaches"; the train
+  rule, the coordinator skill (6. Route: `watch` in the background; the session is not ended while a live lock of
+  `watch` shows; the version moves between waves with the plugin of the remote runner), the role-chain skill and README
+  say the same. Exit codes do not change. Why: cvy-text-reader-1 2026-11-03 - its ride left with 75 under a halt 8 s
+  before `resume`, the verdict red came at 15:17 with nobody waiting, the relaunch came at 15:41.
+
 ## 0.4.21 - 2026-11-03
 
 - **README for the next user** (p-readme-3; the owner 2026-11-03, translated: "take 1, measuring the benefit of the

@@ -906,9 +906,11 @@ const LIGHT_SECOND = 'second review rejection in the light mode: the coordinator
 //   (like the second red tester round; only one analyst per run), then one round, and a red after it stops the task.
 //   14 arc-red, 15 coordinator -> stopped for the coordinator (not the environment). 74 the queue unavailable, 75 the
 //   queue halted (the environment of a train), 124 the deadline of the step (4 h, coordinator's decision 5) -> stopped
-//   with environment; the entry stays and a relaunch of the task alone attaches to it (ride is idempotent: the same task
-//   and head queued is kept, a result already there is returned). 65: refused before the queue (the base is protected or
-//   not a branch). At most MAX_RIDES rides per run.
+//   with environment; the entry stays and its verdict comes later without an addressee (p-verdict-orphan-a): train.js
+//   status names it, train.js watch (the coordinator's background wait) ends on it, a relaunch of the task alone takes it
+//   (ride is idempotent: the same task and head queued is kept, a result already there is returned and taken) or the
+//   coordinator takes it with train.js ack. 65: refused before the queue (the base is protected or not a branch). At most
+//   MAX_RIDES rides per run.
 // Without guardSubsetCommand there is no train: done after the review, as before (W13).
 const TRAIN_RC = { 0: 'green', 10: 'green-unmerged', 11: 'red', 12: 'seam', 13: 'conflict', 14: 'arc-red', 15: 'coordinator' }
 const TRAIN_ENV = {
@@ -993,7 +995,7 @@ async function ride(t, st, review) {
     const v = TRAIN_RC[r.rc]
     const info = { rc: r.rc, verdict: v || 'environment', result: res, log: r.log, tail: r.tail || '' }
     log(`${t.title}: train ${n} - exit ${r.rc}${v ? ` (${v})` : ''}`)
-    const keep = `the queue entry stays (branch ${t.branch} head ${head}): a relaunch of the task alone attaches to it (train.js ride is idempotent)`
+    const keep = `the queue entry stays (branch ${t.branch} head ${head}) and its verdict comes later without an addressee: train.js status names it under "verdicts without an addressee", train.js watch (the coordinator's background wait) ends on it; then relaunch the task alone (its ride takes the ready verdict) or take it by hand with train.js ack --task ${t.key} --head ${head}`
     if (v === 'green') return { task: t.key, status: 'done', review, train: info }
     if (v === 'green-unmerged') return { task: t.key, status: 'done', review, train: Object.assign(info, { note: `green, the merge waits for the coordinator: it merges the train commit named in ${res} (refs/runs/train/<id>)` }) }
     if (v === 'arc-red') return stop(t, `train ${n}: arc-red - the arc branch ${String(t.base).trim()} itself is red without the passengers (the train's halt and ${res} name the guards); the coordinator fixes it and runs train.js resume; ${keep}`, { review, train: info })
