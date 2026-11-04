@@ -149,6 +149,14 @@ const G = (train, more = {}) => Object.assign({ pre: [PRE], prog: [PROG], test: 
       x.r.status === 'stopped' && re.test(x.r.why || '') && !!x.r.environment === env && trainSteps(x).length === 1 && x.r.train && x.r.train.rc === rc
         && x.r.train.verdict === ({ 14: 'arc-red', 15: 'coordinator' }[rc] || 'environment'), JSON.stringify(x.r));
   }
+  // ---- T16 (p-verdict-orphan-a, cell 28): the stops whose entry stays name where its verdict goes ----
+  for (const rc of [75, 14, 15, 124]) {
+    x = await run(G([ride(rc)]));
+    const why = x.r.why || '';
+    ok(`T16. train exit ${rc}: the stop names train.js watch, train.js status and train.js ack for the verdict without an addressee, no "ride" field`,
+      /without an addressee/.test(why) && /train\.js watch/.test(why) && /train\.js status/.test(why) && /train\.js ack/.test(why)
+        && !/a relaunch of the task alone attaches to it/.test(why) && !/ride: ?\{/.test(why), why);
+  }
   x = await run(G([ride(74)]));
   ok('W2. the queue unavailable -> the stop names the branch and the head the review accepted', /branch b\b/.test(x.r.why || '') && /head T\b/.test(x.r.why || '') && /queue/.test(x.r.why || ''), x.r.why);
   x = await run(G([ride(65)]));
