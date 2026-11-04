@@ -3,7 +3,7 @@
 // p-verdict-orphan-a, the tester's cells (not in the programmer's table): synthetic train folders, status and ack only,
 // no train runs.
 //   O1 status only reads: the train folder (files, contents, mtimes) is the same after it, and a folder without
-//      waiters/ gets none (the acceptance runs status on the real ~/figma-wt/_shared/train)
+//      waiters/ gets none (the acceptance runs status on a real shared train folder)
 //   O2 a broken waiter file or a broken result next to a real orphan: status exits 0 and still names the orphan
 //   O3 a task whose name is a prefix of another (a, a-b): waiter files and results are not mixed up; the later head of
 //      a-b does not supersede a
