@@ -299,5 +299,16 @@ try {
     enforce(),
   ].join('\n');
   ok('W7.3. the assistant quoting a notification does not end a live job: one drop', waitDropsOfAgent(selfQuote) === 1, String(waitDropsOfAgent(selfQuote)));
+  // W7.4: a job that ended "failed" or "killed" is no longer alive: a text verdict after it is not a drop.
+  for (const st of ['failed', 'killed']) {
+    const ended = [
+      asstTool('Bash', { command: 'heavy.sh accept.sh', run_in_background: true }),
+      result('Command running in background with ID: bf4. Output is being written to: bf4.output'),
+      JSON.stringify({ type: 'attachment', attachment: { type: 'queued_command', prompt: `<task-notification>\n<task-id>bf4</task-id>\n<status>${st}</status>\n</task-notification>` } }),
+      asst('end_turn', 'Acceptance red.'),
+      enforce(),
+    ].join('\n');
+    ok(`W7.4. a job that ended ${st} is not alive: a text verdict after it is not a drop`, waitDropsOfAgent(ended) === 0, String(waitDropsOfAgent(ended)));
+  }
 }
 done();
