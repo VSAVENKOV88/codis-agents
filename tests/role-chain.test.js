@@ -558,13 +558,37 @@ async function run(script, task = T, extra = {}) {
   const orphan = ids.filter((i) => !i.startsWith('local-') && !marked.includes(i));
   ok('every rule (except local-*) has a marker in rules/multi-agent.md', !orphan.length, orphan.join(','));
   const ruleOf = (id) => (ruleList.find((r) => r[0] === id) || ['', ''])[1];
-  // H1 (p-wait D2): heavy.sh and guards-all.sh only through Bash run_in_background - the Bash timeout kills a blocking
-  // waiter, its ticket is dropped by the trap and it rejoins the queue at the end (24 heavy single jobs with rc 143).
-  ok('H1. rule slots: heavy.sh and guards-all.sh only through Bash run_in_background, Monitor slices, never a blocking Bash call',
-    /run_in_background/.test(ruleOf('slots')) && /never (as )?a blocking Bash call/.test(ruleOf('slots')) && /270 s/.test(ruleOf('slots')), ruleOf('slots'));
+  // H1 (p-wait D2, reworded by p-tester-drop G3): the heavy command itself (heavy.sh, guards-all.sh) only through Bash
+  // run_in_background, so the slot holder does not live in a blocking call that the Bash timeout kills and whose ticket
+  // the trap drops; the wait for it is a SEPARATE blocking Bash loop (not Monitor), so the old "never a blocking Bash
+  // call" no longer contradicts "wait with a blocking loop".
+  ok('H1. rule slots: the heavy command only through run_in_background, the wait is a separate blocking Bash loop, no "wait with Monitor"',
+    /run_in_background/.test(ruleOf('slots')) && /separate blocking Bash loop/.test(ruleOf('slots')) && /270 s/.test(ruleOf('slots')) && !/wait with Monitor/.test(ruleOf('slots')), ruleOf('slots'));
   // P3 (p-wait D3): the pause rule says what the chain accepts: a role does not end its work to wait.
   ok('P3. rule pauses: no "finish" for a long wait; a role keeps waiting while its process is alive and does not end its work to wait',
     !/finish/.test(ruleOf('pauses')) && /while your (own )?process is alive/.test(ruleOf('pauses')) && /do not end your work to wait/.test(ruleOf('pauses')) && /270 s/.test(ruleOf('pauses')), ruleOf('pauses'));
+  // W1-W4, M4 (p-tester-drop, 2026-11-04): a role must not end a turn with text while a background job is alive; the
+  // text of every waiting place says how to wait (a blocking Bash loop, not Monitor), and the role agents disallow Monitor.
+  // W1. rule pauses: no "wait with Monitor"; a blocking Bash loop; a turn without a tool call ends the role.
+  ok('W1. rule pauses: no "wait with Monitor", a blocking Bash loop, a turn without a tool call ends the role',
+    !/wait (for it )?with Monitor/.test(ruleOf('pauses')) && /blocking Bash/.test(ruleOf('pauses')) && /270/.test(ruleOf('pauses'))
+      && /(turn|reply) without a tool call[^.]*ends (the|your) role/.test(ruleOf('pauses')), ruleOf('pauses'));
+  // W2. rule slots: no Monitor at all; standSteps of a stand task names "ticket taken by" and a wait method (until/watch), no Monitor.
+  const standSrc = SRC.slice(SRC.indexOf('const standSteps'), SRC.indexOf('const test ='));
+  ok('W2. rule slots: no Monitor', !/Monitor/.test(ruleOf('slots')), ruleOf('slots'));
+  ok('W2. standSteps: no Monitor, waits for "ticket taken by" with a blocking loop or watch',
+    !/Monitor/.test(standSrc) && /ticket taken by/.test(standSrc) && /(until |watch)/.test(standSrc), standSrc);
+  // W3. agents tester/programmer and the marked lines of rules/multi-agent.md: no "wait(ed) with Monitor" and no "(Monitor, slices".
+  const monRe = /(wait|waited for) with Monitor|\(Monitor, slices/;
+  const agentWaitFiles = ['tester', 'programmer'].map((a) => fs.readFileSync(path.join(ROOT, 'agents', a + '.md'), 'utf8'));
+  const markedLines = rules.split('\n').filter((l) => /<!-- role:[\w-]+ -->/.test(l));
+  ok('W3. no "wait with Monitor" in agents tester/programmer and the marked rule lines',
+    !agentWaitFiles.some((f) => monRe.test(f)) && !markedLines.some((l) => monRe.test(l)),
+    [...agentWaitFiles.filter((f) => monRe.test(f)), ...markedLines.filter((l) => monRe.test(l))].join(' | '));
+  // M4 (G5): the role agents disallow Monitor in their frontmatter (disallowedTools already carries NotebookEdit for them).
+  const roleAgents = ['tester', 'programmer', 'reviewer', 'security-reviewer', 'analyst'];
+  const disallowOf = (a) => { const fm = fs.readFileSync(path.join(ROOT, 'agents', a + '.md'), 'utf8').split('---')[1] || ''; const m = fm.match(/disallowedTools:\s*(.*)/); return m ? m[1] : ''; };
+  ok('M4. the role agents disallow Monitor in their frontmatter', roleAgents.every((a) => /\bMonitor\b/.test(disallowOf(a))), roleAgents.map((a) => a + ':' + disallowOf(a)).join(' | '));
   const ruleListOne = await new AsyncFunction('args', SRC.slice(0, SRC.indexOf('const PRE_SCHEMA')) + '\nreturn RULE_LIST(TASKS[0])')({ owner: 'o', config: ONE, tasks: [T] });
   const onerunOne = (ruleListOne.find((r) => r[0] === 'onerun') || ['', ''])[1];
   ok('C5. rule onerun (one run): the programmer runs no selection, the tester runs it after its own commits',

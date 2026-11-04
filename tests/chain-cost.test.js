@@ -74,4 +74,46 @@ try {
 } finally {
   fs.rmSync(ses, { recursive: true, force: true });
 }
+
+// G4 (p-tester-drop): a "waiting drop" - the agent ended a turn with text ("end_turn") instead of a tool call and the
+// harness forced the final output ("[structured-output-enforce]") while a background job it had started was still alive
+// (no <status>completed|failed|killed since). Deterministic, no threshold; it marks the green/ready/environment
+// verdicts whose own checks (a stand ticket, an acceptance, a full run) were cut off mid-wait.
+const g4 = fs.mkdtempSync(path.join(os.tmpdir(), 'chain-cost-g4-'));
+try {
+  const { waitDropsOfAgent, cost: costG4, report: repG4 } = require('../scripts/chain-cost');
+  const asst = (stop, text) => JSON.stringify({ message: { role: 'assistant', stop_reason: stop, content: text ? [{ type: 'text', text }] : [] } });
+  const asstTool = (name, input) => JSON.stringify({ message: { role: 'assistant', stop_reason: 'tool_use', content: [{ type: 'tool_use', name, input }] } });
+  const result = (text) => JSON.stringify({ message: { role: 'user', content: [{ type: 'tool_result', content: text }] } });
+  const enforce = () => JSON.stringify({ type: 'user', isMeta: true, message: { role: 'user', content: '[structured-output-enforce] You MUST call the StructuredOutput tool to complete this request. Call this tool now.' } });
+  const notif = (status, summary) => JSON.stringify({ type: 'attachment', attachment: { type: 'queued_command', prompt: `<task-notification>\n<status>${status}</status>\n<summary>${summary}</summary>\n</task-notification>` } });
+
+  // A1b-like: a stand take in the background that never finishes, then "Waiting." (end_turn) and the enforce -> one drop.
+  const a1b = [asstTool('Bash', { command: 'stand.sh take --wt /wt', run_in_background: true }),
+    result('Command running in background with ID: bxxx'),
+    asst('end_turn', 'Waiting.'), enforce()];
+  // round-6-like: the background job completes, then the role calls StructuredOutput (tool_use, no end_turn) -> no drop.
+  const r6 = [asstTool('Bash', { command: 'heavy.sh accept.sh', run_in_background: true }),
+    result('Command running in background with ID: byyy'),
+    notif('completed', 'Background command "accept" completed (exit code 0)'),
+    asstTool('StructuredOutput', { status: 'green' })];
+  // a plain end-of-role by text with no live background job -> not a drop.
+  const plain = [asst('end_turn', 'Done.'), enforce()];
+  fs.writeFileSync(path.join(g4, 't1.meta.json'), JSON.stringify({ description: 'test:drop#1' }));
+  fs.writeFileSync(path.join(g4, 't1.jsonl'), a1b.join('\n'));
+  fs.writeFileSync(path.join(g4, 't2.meta.json'), JSON.stringify({ description: 'test:nodrop#5' }));
+  fs.writeFileSync(path.join(g4, 't2.jsonl'), r6.join('\n'));
+  fs.writeFileSync(path.join(g4, 't3.meta.json'), JSON.stringify({ description: 'prog:plain#1' }));
+  fs.writeFileSync(path.join(g4, 't3.jsonl'), plain.join('\n'));
+
+  ok('G4. waitDropsOfAgent: an end_turn+enforce with a live background job is a drop', waitDropsOfAgent(a1b.join('\n')) === 1, String(waitDropsOfAgent(a1b.join('\n'))));
+  ok('G4. waitDropsOfAgent: a completed background job before a tool-call verdict is no drop', waitDropsOfAgent(r6.join('\n')) === 0, String(waitDropsOfAgent(r6.join('\n'))));
+  ok('G4. waitDropsOfAgent: a plain text end with no background job is no drop', waitDropsOfAgent(plain.join('\n')) === 0, String(waitDropsOfAgent(plain.join('\n'))));
+  const tg = costG4(g4);
+  ok('G4. cost sums waiting drops per task', tg.drop.waitDrops === 1 && tg.nodrop.waitDrops === 0 && tg.plain.waitDrops === 0, JSON.stringify({ drop: tg.drop.waitDrops, nodrop: tg.nodrop.waitDrops, plain: tg.plain.waitDrops }));
+  const lg = repG4(tg, 1e6);
+  ok('G4. report flags a task with waiting drops', /^drop: .*1 waiting drop.*WARNING: a verdict with a cut-off wait/.test(lg.find((l) => l.startsWith('drop:'))) && !/waiting drop/.test(lg.find((l) => l.startsWith('plain:'))), lg.join(' | '));
+} finally {
+  fs.rmSync(g4, { recursive: true, force: true });
+}
 done();

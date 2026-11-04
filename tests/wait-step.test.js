@@ -66,5 +66,26 @@ try {
 
   r = ws('start', '--id', id('x'));
   ok('start without a command: usage error', r._code === 64);
+
+  // W4 (p-tester-drop): `watch` follows the log of a command the role launched with run_in_background (a stand `take`
+  // that never ends, a tally line). It returns on the line without waiting for the process to end; reports the process
+  // gone when a --pid-file dies before the line; clips --max to 270.
+  const logf = id('wlog');
+  const pidf = id('wpid');
+  // 1/4. the line is already in the log -> matched true, no wait (this is also the `take` case: a process that never ends).
+  fs.writeFileSync(logf, 'position 1\nticket taken by /wt\n');
+  r = ws('watch', '--log', logf, '--until', 'ticket taken by', '--max', '1');
+  ok('W4. watch: the line is in the log -> matched true (take returns on the line, not on the end)', r.matched === true && r.alive === true, JSON.stringify(r));
+  // 2. the process died before the line -> matched false, alive false.
+  const dead = spawnSync(process.execPath, ['-e', 'process.exit(0)']);
+  fs.writeFileSync(pidf, String(dead.pid));
+  fs.writeFileSync(logf, 'position 1\n');
+  r = ws('watch', '--log', logf, '--until', 'ticket taken by', '--pid-file', pidf, '--max', '5');
+  ok('W4. watch: the process died without the line -> matched false, alive false', r.matched === false && r.alive === false, JSON.stringify(r));
+  // 3. --max above 270 is clipped to 270 (reported in the JSON).
+  r = ws('watch', '--log', logf, '--until', 'ticket taken by', '--pid-file', pidf, '--max', '9999');
+  ok('W4. watch: --max above 270 is clipped to 270', r.max === 270, JSON.stringify(r));
+  r = ws('watch', '--log', logf);
+  ok('W4. watch without --until: usage error', r._code === 64, JSON.stringify(r));
 } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
 done();
