@@ -116,4 +116,54 @@ try {
 } finally {
   fs.rmSync(g4, { recursive: true, force: true });
 }
+
+// W5 (p-tester-drop, tester): cells of the G4 counter the programmer's G4 block does not cover.
+// W5.1 is the fix's own point - the correct waiting pattern (round 6: a blocking Bash loop over a live background job,
+// the harness "moved to the background" notice, never an end_turn) must NOT be counted, or the counter would warn on
+// every task. W5.2 covers the real mcp5p-A1b mechanism (a Monitor armed, then "Waiting." text), which the G4 fixtures
+// (run_in_background Bash) do not exercise. W5.3 covers more than one drop in one agent.
+{
+  const { waitDropsOfAgent } = require('../scripts/chain-cost');
+  const asst = (stop, text) => JSON.stringify({ message: { role: 'assistant', stop_reason: stop, content: text ? [{ type: 'text', text }] : [] } });
+  const asstTool = (name, input) => JSON.stringify({ message: { role: 'assistant', stop_reason: 'tool_use', content: [{ type: 'tool_use', name, input }] } });
+  const result = (text) => JSON.stringify({ message: { role: 'user', content: [{ type: 'tool_result', content: text }] } });
+  const enforce = () => JSON.stringify({ type: 'user', isMeta: true, message: { role: 'user', content: '[structured-output-enforce] You MUST call the StructuredOutput tool to complete this request.' } });
+
+  // W5.1: a role starts a heavy job in the background and then waits with a blocking Bash loop - the loop's command is
+  // "moved to the background" on each 270 s timeout, but the role always answers with a tool call (never end_turn), so
+  // no turn of text alone is forced and the counter must report zero.
+  const good = [
+    asstTool('Bash', { command: 'heavy.sh guards-all.sh wt', run_in_background: true }),
+    result('Command running in background with ID: bzzz'),
+    asstTool('Bash', { command: 'until grep -q DONE log; do sleep 3; done', timeout: 270000 }),
+    result('Command did not complete within its 270s timeout and was moved to the background'),
+    asstTool('Bash', { command: 'until grep -q DONE log; do sleep 3; done', timeout: 270000 }),
+    result('DONE rc 0'),
+    asstTool('StructuredOutput', { verdict: 'green' }),
+  ].join('\n');
+  ok('W5.1. the correct blocking-loop wait (no end_turn) over a live background job is not a drop', waitDropsOfAgent(good) === 0, String(waitDropsOfAgent(good)));
+
+  // W5.2: the real A1b mechanism - a Monitor is armed (its result line reports it started), then the role ends the turn
+  // with "Waiting." and the harness forces the output. One drop.
+  const monDrop = [
+    asstTool('Monitor', { command: 'until-loop' }),
+    result('Monitor m1 started. Keep working - do not poll or sleep. You will be notified on each event.'),
+    asst('end_turn', 'Waiting.'),
+    enforce(),
+  ].join('\n');
+  ok('W5.2. a Monitor armed then an end_turn+enforce is a drop (the A1b mechanism)', waitDropsOfAgent(monDrop) === 1, String(waitDropsOfAgent(monDrop)));
+
+  // W5.3: two separate end_turn+enforce turns over live background jobs in one agent -> two drops.
+  const twice = [
+    asstTool('Bash', { command: 'stand.sh take', run_in_background: true }),
+    result('Command running in background with ID: b1'),
+    asst('end_turn', 'Waiting for the ticket.'),
+    enforce(),
+    asstTool('Bash', { command: 'heavy.sh accept', run_in_background: true }),
+    result('Command running in background with ID: b2'),
+    asst('end_turn', 'Waiting for the acceptance.'),
+    enforce(),
+  ].join('\n');
+  ok('W5.3. two end_turn+enforce turns with live background jobs count as two drops', waitDropsOfAgent(twice) === 2, String(waitDropsOfAgent(twice)));
+}
 done();
