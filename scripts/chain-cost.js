@@ -53,30 +53,45 @@ const ieOfAgent = (jsonl) => {
 // JSON object, so a pattern on the raw line matches the harness and project instructions of every agent's first lines
 // (a deferred tool list "...Monitor\nNotebookEdit...", rule text "A-Monitor (copy) ... a full run started"), and one
 // task notification is stored several times in one line (attachment prompt/text/display, the api-request blob).
-// - A start is read only from a tool_result whose text BEGINS with the harness echo: "Command running in background
-//   with ID: X" (a run_in_background Bash) or "Monitor started (task X" (the A1b mechanism). A result that quotes
-//   these words further in (a file read) is no start. "moved to the background (ID: X)" is a foreground command that
-//   overran its 270 s timeout - the correct blocking-loop wait this task introduces - and is not a start.
+// - A start is read from a tool_result whose text BEGINS with the harness echo "Command running in background with ID:
+//   X" (a run_in_background Bash) or "Monitor started (task X" (the A1b mechanism), or whose LAST paragraph is the echo
+//   "Command did not complete within its Ns timeout and was moved to the background (ID: X). Output is being written
+//   to: .../tasks/X.output. ..." (optionally followed by one "Session cwd remains ..." line): a foreground command - the
+//   blocking-loop wait itself - that overran its timeout keeps running, is notified by its own id and is killed at the
+//   final response, as the echo says (session 39161f33: 360 such echoes, 322 notified by their id, 16 after partial
+//   stdout). A result that quotes these words anywhere else (a file read, a cat of a report) is no start.
 // - A job ends with a notification "<task-id>X</task-id> ... <status>completed|failed|killed</status>" on any line
-//   that is not the assistant's own; repeats remove the same id, and an id never started removes nothing.
-// - A drop: an assistant turn ended with text ("end_turn"), the next line is the enforce, and a started job is alive.
+//   that is not the assistant's own (repeats remove the same id, an id never started removes nothing), or with a
+//   TaskStop result that begins '{"message":"Successfully stopped task: X' or '<tool_use_error>Task X is not running'
+//   (150 stops in the session, none followed by a notification).
+// - A drop: an assistant turn ended with text ("end_turn"), the next line with a message is the enforce, and a started
+//   job is alive. Only lines with a message mark or clear the turn boundary: an attachment line (a prompt_snapshot, a
+//   notification) between the end_turn and the enforce does not hide the drop, while a notification there still ends
+//   its job. Lines of type "api-request-blob" are a copy of the request the harness sent (old tool results, a user
+//   message), not events: they are not read at all.
 const textOf = (c) => (typeof c === 'string' ? c : Array.isArray(c) ? c.map((x) => (x && typeof x.text === 'string' ? x.text : '')).join('\n') : '');
+const MOVED = /(?:^|\n)Command did not complete within its \d+s timeout and was moved to the background \(ID: ([\w-]+)\)\. Output is being written to: [^\n]*\/tasks\/\1\.output\.[^\n]*(?:\nSession cwd remains [^\n]*)?\s*$/;
 function waitDropsOfAgent(jsonl) {
   let drops = 0, prevEndTurn = false;
   const live = new Set();
   for (const line of jsonl.split('\n')) {
     if (!line.trim()) continue;
     let o; try { o = JSON.parse(line); } catch { continue; }
-    if (prevEndTurn && /structured-output-enforce/.test(line) && live.size > 0) drops++;
+    if (o && o.type === 'api-request-blob') continue;
     const m = o.message;
-    prevEndTurn = !!(m && m.role === 'assistant' && m.stop_reason === 'end_turn');
-    if (m && m.role === 'assistant') continue;
+    if (m) {
+      if (prevEndTurn && /structured-output-enforce/.test(line) && live.size > 0) drops++;
+      prevEndTurn = m.role === 'assistant' && m.stop_reason === 'end_turn';
+      if (m.role === 'assistant') continue;
+    }
     if (m && m.role === 'user' && Array.isArray(m.content)) {
       for (const c of m.content) {
         if (!c || c.type !== 'tool_result') continue;
         const t = textOf(c.content).trimStart();
-        const s = /^Command running in background with ID: ([\w-]+)/.exec(t) || /^Monitor started \(task ([\w-]+)/.exec(t);
+        const s = /^Command running in background with ID: ([\w-]+)/.exec(t) || /^Monitor started \(task ([\w-]+)/.exec(t) || MOVED.exec(t);
         if (s) live.add(s[1]);
+        const e = /^\{"message":"Successfully stopped task: ([\w-]+)/.exec(t) || /^<tool_use_error>Task ([\w-]+) is not running/.exec(t);
+        if (e) live.delete(e[1]);
       }
     }
     if (live.size) {
@@ -86,7 +101,6 @@ function waitDropsOfAgent(jsonl) {
   return drops;
 }
 
-// Why a path cannot be counted ('' when it can): the one line the CLI prints before exit 66.
 function badDir(dir) {
   let st;
   try { st = fs.statSync(dir); } catch (e) { return e.code === 'ENOENT' ? `chain-cost: no directory ${dir}` : `chain-cost: ${dir}: ${e.message}`; }

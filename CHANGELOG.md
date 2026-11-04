@@ -27,14 +27,22 @@ key and script, and this file says when and why each one changed. Versions befor
   text alone could not always win against it. The coordinator's own session keeps Monitor (it has a user turn).
 - **`chain-cost.js` counts "waiting drops"**: an `end_turn` followed by `[structured-output-enforce]` while a
   background job the agent started is still alive. Live jobs are tracked by id: a start is a tool_result that begins
-  with the harness echo `Command running in background with ID: X` or `Monitor started (task X`; the job ends with a
-  notification `<task-id>X</task-id> ... <status>completed|failed|killed</status>` (repeats of one notification remove
-  the same id). Patterns on the raw transcript line are not used: they matched the instruction text in every agent's
-  first lines and counted one notification several times (tester round 2: 44 of 56 drops of a real session were false
-  `run:` steps, and a hidden green was lost). The `moved to the background` timeout line is the correct blocking-loop
-  wait this version introduces, so it is not a start. Deterministic, no threshold; printed next to the IE with a
-  WARNING, so the green/ready verdicts whose own checks were cut off mid-wait (which leave no other signal) are seen by
-  the coordinator.
+  with the harness echo `Command running in background with ID: X` or `Monitor started (task X`, or whose last
+  paragraph is the echo `Command did not complete within its Ns timeout and was moved to the background (ID: X).
+  Output is being written to: .../tasks/X.output. ...` - a blocking-loop wait that overran its timeout keeps running,
+  is notified by its own id and is killed at the final response, as the echo itself says (analyst of the second
+  rejection: 360 such echoes in a real session, 322 notified by their id, 16 after partial stdout; the earlier reading
+  "the timeout line is the correct wait, no start" missed the main remaining drop under the new rule - a moved loop,
+  then "Waiting."). The job ends with a notification `<task-id>X</task-id> ... <status>completed|failed|killed</status>`
+  (repeats of one notification remove the same id) or with a TaskStop result `Successfully stopped task: X` /
+  `Task X is not running` (150 stops, none followed by a notification). Only lines with a message mark or clear the
+  turn boundary, so an attachment line between the `end_turn` and the enforce hides no drop; `api-request-blob` lines
+  are a copy of the request, not events, and are not read. Patterns on the raw transcript line are not used: they
+  matched the instruction text in every agent's first lines and counted one notification several times (tester round
+  2: 44 of 56 drops of a real session were false `run:` steps, and a hidden green was lost). Deterministic, no
+  threshold; printed next to the IE with a WARNING, so the green/ready verdicts whose own checks were cut off mid-wait
+  (which leave no other signal) are seen by the coordinator. On that session it gives 13 drops (the diagnosis's 17
+  are these 13 plus 4 turns cut off mid-stream with no enforce, which are not drops).
 
 ## 0.4.22 - 2026-11-04
 

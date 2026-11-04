@@ -170,12 +170,10 @@ try {
   ok('W5.3. two end_turn+enforce turns with live background jobs count as two drops', waitDropsOfAgent(twice) === 2, String(waitDropsOfAgent(twice)));
 }
 
-// F1 (p-tester-drop, round r, review.md): the two cells the G4/W5 blocks leave uncovered - the false positives of the
-// counter on real data. A background start must be counted once (from the assistant tool_use run_in_background, or a
-// Monitor armed), never from the "running in background with ID" echo (that double-counts) nor the wait-loop "moved to
-// the background" notice (the correct 270 s wait, which is the mechanism this task introduces). Without that, a task
-// that started AND completed a background job with its notification, and a run: step whose blocking loop ran to the end,
-// both get a false drop and light the per-task WARNING on nearly every task.
+// F1 (p-tester-drop, round r, review.md): the false positives of the counter on real data. A background job counted
+// once and ended by its notification is not alive at a text verdict (F1.a). F1.b was replaced by K3 (analyst of the
+// second rejection): a blocking loop "moved to the background (ID: X)" IS a start - it keeps running until its own
+// notification - so it is no drop only once that notification came.
 {
   const { waitDropsOfAgent } = require('../scripts/chain-cost');
   const asst = (stop, text) => JSON.stringify({ message: { role: 'assistant', stop_reason: stop, content: text ? [{ type: 'text', text }] : [] } });
