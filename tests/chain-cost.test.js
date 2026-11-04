@@ -383,6 +383,8 @@ try {
     [loop(), result(moved('bm3')), notif('bm3'), asst('end_turn', 'Done.'), enforce()], 0);
   cell('K4. a quote of the moved echo in the middle of a result (cat of a report) is no start: no drop',
     [asstTool('Bash', { command: 'cat review.md' }), result('# review\nthe role saw:\n' + moved('bq1') + '\nand then the role ended its turn.\n## verdict'), asst('end_turn', 'Done.'), enforce()], 0);
+  cell('K4b. a grep line that quotes the moved echo as the last line of a result (prefix "file:n:") is no start: no drop',
+    [asstTool('Bash', { command: 'grep -n moved notes.md' }), result('notes.md:3: ' + moved('bq2')), asst('end_turn', 'Done.'), enforce()], 0);
   cell('K5. a job stopped by TaskStop (Successfully stopped task) is not alive: no drop',
     [...bg('bs1'), asstTool('TaskStop', { task_id: 'bs1' }), stopOk('bs1'), asst('end_turn', 'Done.'), enforce()], 0);
   cell('K6. TaskStop answered "Task X is not running" ends that job: no drop',
