@@ -311,4 +311,39 @@ try {
     ok(`W7.4. a job that ended ${st} is not alive: a text verdict after it is not a drop`, waitDropsOfAgent(ended) === 0, String(waitDropsOfAgent(ended)));
   }
 }
+// W8 (p-tester-drop, tester round 3): two real shapes of session 39161f33 that no earlier cell holds.
+// W8.1: one attachment line carries a Monitor event notification of a live Monitor (no <status>: 5896 such blocks in
+// the session, 180 lines mix one with a completion of another id) and then the completion of another job. The event
+// must not borrow the status of the next notification: the Monitor stays alive -> one drop.
+// W8.2: an end_turn with empty text followed by the harness's "cut off mid-stream" message (4 role agents of the
+// session, two of them with live jobs) is no drop: the agent goes on working; only an end_turn followed by the enforce is.
+{
+  const { waitDropsOfAgent } = require('../scripts/chain-cost');
+  const asst = (stop, text) => JSON.stringify({ message: { role: 'assistant', stop_reason: stop, content: text ? [{ type: 'text', text }] : [] } });
+  const asstTool = (name, input) => JSON.stringify({ message: { role: 'assistant', stop_reason: 'tool_use', content: [{ type: 'tool_use', name, input }] } });
+  const result = (text) => JSON.stringify({ message: { role: 'user', content: [{ type: 'tool_result', content: text }] } });
+  const enforce = () => JSON.stringify({ type: 'user', isMeta: true, message: { role: 'user', content: '[structured-output-enforce] You MUST call the StructuredOutput tool to complete this request.' } });
+  const mixed = [
+    asstTool('Bash', { command: 'guards-all.sh wt', run_in_background: true }),
+    result('Command running in background with ID: bj1. Output is being written to: bj1.output'),
+    asstTool('Monitor', { command: 'tail -f run.log | grep --line-buffered tally', timeout_ms: 270000 }),
+    result('Monitor started (task bm8, expires in 4m 30s unless the source ends first; you get one notice at expiry).'),
+    JSON.stringify({ type: 'attachment', attachment: { type: 'queued_command', prompt:
+      '<task-notification>\n<task-id>bm8</task-id>\n<summary>Monitor event: "guard run line"</summary>\n<event>pass a.test.js</event>\n</task-notification>\n' +
+      '<task-notification>\n<task-id>bj1</task-id>\n<status>completed</status>\n<summary>Background command completed (exit code 0)</summary>\n</task-notification>' } }),
+    asst('end_turn', 'Waiting for the monitor events.'),
+    enforce(),
+  ].join('\n');
+  ok('W8.1. a Monitor event notification (no status) does not take the status of the next notification in the line: one drop', waitDropsOfAgent(mixed) === 1, String(waitDropsOfAgent(mixed)));
+  const cutOff = [
+    asstTool('Bash', { command: 'heavy.sh accept.sh', run_in_background: true }),
+    result('Command running in background with ID: bc2. Output is being written to: bc2.output'),
+    asst('end_turn', ''),
+    JSON.stringify({ type: 'user', message: { role: 'user', content: 'Your response above was cut off mid-stream and only your next message is delivered. Write the complete response again from the start - no apology, no mention of the cut-off.' } }),
+    asstTool('Bash', { command: 'until grep -q rc= bc2.output; do sleep 3; done', timeout: 270000 }),
+    result('rc=0'),
+    asstTool('StructuredOutput', { verdict: 'green' }),
+  ].join('\n');
+  ok('W8.2. an end_turn followed by the cut-off message, not the enforce, is no drop even with a live job', waitDropsOfAgent(cutOff) === 0, String(waitDropsOfAgent(cutOff)));
+}
 done();
