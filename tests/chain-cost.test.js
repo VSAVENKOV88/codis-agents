@@ -205,4 +205,57 @@ try {
   ].join('\n');
   ok('F1.b. a finished run: step (blocking loop, no live background job) is not a drop', waitDropsOfAgent(runStep) === 0, String(waitDropsOfAgent(runStep)));
 }
+
+// W6 (p-tester-drop, tester round 2): the G4 counter on the shape of real transcripts, which the synthetic G4/W5/F1
+// fixtures do not have. A transcript line is one JSON object, so the newlines of a long text are the two characters
+// "\n" and a pattern like /Monitor[^\n]*started/ runs over the whole line. The first lines of every agent carry the
+// harness and project instructions (a deferred tool list "...Monitor\nNotebookEdit...", rule text "...A-Monitor (copy)
+// ... a full run started"), and one task notification is queued with its text repeated in one attachment line.
+// W6.1 (run:addr-K1a:full-2, session 39161f33): a run: step that only called wait-step.js wait in the foreground,
+// got done:true and ended with a text summary -> no background job at all, not a drop.
+// W6.2 (test:addr-A1a-2#1, the hidden green of diagnosis section 3): a job started and completed (its notification
+// repeated three times in one line), then a second job and a Monitor armed, then "Waiting on monitor ..." text and the
+// enforce -> one drop: the Monitor and the second job are alive.
+{
+  const { waitDropsOfAgent } = require('../scripts/chain-cost');
+  const asst = (stop, text) => JSON.stringify({ message: { role: 'assistant', stop_reason: stop, content: text ? [{ type: 'text', text }] : [] } });
+  const asstTool = (name, input) => JSON.stringify({ message: { role: 'assistant', stop_reason: 'tool_use', content: [{ type: 'tool_use', name, input }] } });
+  const result = (text) => JSON.stringify({ message: { role: 'user', content: [{ type: 'tool_result', content: text }] } });
+  const enforce = () => JSON.stringify({ type: 'user', isMeta: true, message: { role: 'user', content: '[structured-output-enforce] You MUST call the StructuredOutput tool to complete this request.' } });
+  const harness = [
+    JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: '<system-reminder>\n- The DS corpus A-Monitor (copy) is read-only.\n- No full guard run in the main working copy.\n  Why: a full run started with the main working copy wiped the corpus.\n</system-reminder>' }] } }),
+    JSON.stringify({ type: 'system', message: { role: 'system', content: [{ type: 'text', text: 'The following deferred tools are now available:\nCronCreate\nMonitor\nNotebookEdit\nTaskStop\n- role-chain: Started by the role-chain skill' }] } }),
+  ];
+  const notif3 = (id) => {
+    const one = `<task-notification>\n<task-id>${id}</task-id>\n<status>completed</status>\n<summary>Background command completed (exit code 0)</summary>\n</task-notification>`;
+    return JSON.stringify({ type: 'attachment', attachment: { type: 'queued_command', prompt: one, text: `note\n\n${one}`, display: `note\n\n${one}` } });
+  };
+
+  const runStep = [
+    ...harness,
+    asstTool('Bash', { command: 'node wait-step.js start --id full-2' }),
+    result('{"started":true,"pid":9407}'),
+    asstTool('Bash', { command: 'node wait-step.js wait --id full-2 --max 270' }),
+    result('{"done":false,"rc":null,"seconds":273}'),
+    asstTool('Bash', { command: 'node wait-step.js wait --id full-2 --max 270' }),
+    result('{"done":true,"rc":1,"seconds":905}'),
+    asst('end_turn', 'The full guard run is finished: done, with rc 1.'),
+    enforce(),
+  ].join('\n');
+  ok('W6.1. instruction text in the first lines (Monitor ... started) is no background start: a finished run: step is not a drop', waitDropsOfAgent(runStep) === 0, String(waitDropsOfAgent(runStep)));
+
+  // No harness lines here: their phantom starts (W6.1) would hide the over-counted completions this cell isolates.
+  const hiddenGreen = [
+    asstTool('Bash', { command: 'heavy.sh guards-all.sh --select base', run_in_background: true }),
+    result('Command running in background with ID: b6q. Output is being written to: b6q.output.'),
+    notif3('b6q'),
+    asstTool('Bash', { command: 'heavy.sh dom-forms', run_in_background: true }),
+    result('Command running in background with ID: bpz. Output is being written to: bpz.output.'),
+    asstTool('Monitor', { command: 'until grep -q ^rc= sel.out; do sleep 5; done', timeout_ms: 270000 }),
+    result('Monitor started (task bdo, expires in 4m 30s unless the source ends first). Keep working - do not poll or sleep.'),
+    asst('end_turn', 'Waiting on monitor bdo for the selection to finish.'),
+    enforce(),
+  ].join('\n');
+  ok('W6.2. a notification repeated in one line closes one job, not three: a live Monitor and job at the text end is a drop', waitDropsOfAgent(hiddenGreen) === 1, String(waitDropsOfAgent(hiddenGreen)));
+}
 done();
