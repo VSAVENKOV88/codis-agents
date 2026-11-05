@@ -190,6 +190,10 @@ r = run(['--codex-home', path.join(TMP, 'link-to-codex')], { env: { HOME: FHOME 
 ok('T6 a link to the personal ~/.codex -> exit 2 before any start', r.status === 2 && !r.log.length, show(r));
 r = run(['--codex-home', path.join(FHOME, '.codex')], { env: { HOME: FHOME, CODEX_HOME: path.join(FHOME, '.codex') } });
 ok('T6 the parent\'s CODEX_HOME does not make ~/.codex allowed', r.status === 2 && !r.log.length, show(r));
+const NOHOME = path.join(TMP, 'fakehome-nocodex');
+fs.mkdirSync(NOHOME, { recursive: true });
+r = run(['--codex-home', path.join(NOHOME, '.codex')], { env: { HOME: NOHOME } });
+ok('T6 the personal ~/.codex that does not exist yet -> exit 2 before any start', r.status === 2 && !r.log.length, show(r));
 
 // ---- T6b
 const OTHER = mkHome('t6b-other', { hooks: [hook('trusted')] });
