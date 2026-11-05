@@ -52,7 +52,7 @@ process.stdin.on('data', (d) => {
   while ((i = buf.indexOf('\\n')) >= 0) {
     const l = buf.slice(0, i); buf = buf.slice(i + 1);
     let m; try { m = JSON.parse(l); } catch { continue; }
-    if (m.method === 'initialize') answer(m.id, sc.init || 'ok', { userAgent: 'fake/0.166.0', codexHome: home });
+    if (m.method === 'initialize') answer(m.id, sc.init || 'ok', { userAgent: 'fake/0.166.0', codexHome: sc.codexHome || home });
     else if (m.method === 'hooks/list') answer(m.id, sc.list || 'ok', { data: sc.data || [{ cwd: '/', hooks: sc.hooks || [], warnings: [], errors: [] }] });
   }
 });
@@ -103,6 +103,32 @@ if (firm) {
   fs.writeFileSync(path.join(inner, 'fake.json'), JSON.stringify({ hooks: [hook('trusted')] }));
   const r = run(['--codex-home', inner, '--timeout-ms', '5000'], { env: { HOME: FHOME } });
   ok('T6 a directory inside ~/.codex is not refused (equal, not contained)', r.status === 0 && r.starts.length === 1, show(r));
+}
+
+{
+  // ~/.codex/. is the same directory.
+  const r = run(['--codex-home', path.join(FHOME, '.codex', '.')], { env: { HOME: FHOME } });
+  ok('T6 the personal ~/.codex spelled ~/.codex/. -> exit 2 before any start', r.status === 2 && !r.starts.length, show(r));
+}
+
+// ---- T6b: initialize names the home under another spelling of the same directory -> the check goes on;
+// a codexHome that does not exist -> not checked.
+{
+  const h = mkHome('t6b-spell', { hooks: [hook('trusted')] });
+  const spellings = [];
+  if (caseInsensitive) spellings.push(['case variant', path.join(TMP, 'T6B-SPELL')]);
+  const fh = path.join('/System/Volumes/Data', h);
+  try { const a = fs.statSync(fh), b = fs.statSync(h); if (a.dev === b.dev && a.ino === b.ino) spellings.push(['firmlink', fh]); } catch { /* not macOS */ }
+  fs.symlinkSync(h, path.join(TMP, 't6b-link'));
+  spellings.push(['symlink', path.join(TMP, 't6b-link')]);
+  for (const [what, alt] of spellings) {
+    fs.writeFileSync(path.join(h, 'fake.json'), JSON.stringify({ codexHome: alt, hooks: [hook('trusted')] }));
+    const r = run(['--codex-home', h, '--timeout-ms', '5000']);
+    ok(`T6b initialize names the home through a ${what} -> the same directory, trusted -> 0`, r.status === 0, show(r));
+  }
+  fs.writeFileSync(path.join(h, 'fake.json'), JSON.stringify({ codexHome: path.join(TMP, 'no-such-home'), hooks: [hook('trusted')] }));
+  const r = run(['--codex-home', h, '--timeout-ms', '5000']);
+  ok('T6b initialize names a codexHome that does not exist -> exit 3, never 0', r.status === 3 && /codexHome/.test(r.out), show(r));
 }
 
 // ---- T6: bad arguments before any start
