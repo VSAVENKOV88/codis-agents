@@ -7,7 +7,9 @@
 // Cells: success and parsing (A1-13 codex, A1-14 claude, A1-22 notes, A1-23 big prompt and stream), outcomes (A1-15
 // schema-refused, A1-16 rate-limited, A1-17 auth, A1-18 crashed, A1-19 killed, A1-20 ceiling, A1-21 no-result),
 // signals and parallel calls (A1-24, A1-25 and a unique call folder), the record (A1-26), login and sandbox (A1-27,
-// A1-28, the personal ~/.codex refused), descendants outside the group (A1-35), the isolation of claude -p (A1-37).
+// A1-28, the personal ~/.codex refused), descendants outside the group (A1-35), the isolation of claude -p (A1-37),
+// env-check with an unmeasured swap (A1-34). A1-33 (the slot scripts inside the codex sandbox) is a live check of the
+// tester: this file does not run the slot scripts (tests/slots-hermetic.test.js).
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -401,17 +403,6 @@ const iv = setInterval(() => { if (dumps() === 2) { clearInterval(iv); process.k
     e = ec([]);
     ok('A1-34 env-check.js without --min-swap-mb and no sysctl -> exit 0 with the note, as before', e.status === 0 && /could not be measured/.test(e.stdout), e.stdout + e.stderr);
   } else ok('A1-34 env-check.js on this platform: the CLI cells run on darwin only (sysctl)', true);
-
-  // ---- A1-33 live without a model: heavy.sh / medium.sh inside the codex sandbox refuse at once with a reason line
-  const codexBin = (process.env.PATH || '').split(path.delimiter).map((p) => path.join(p, 'codex')).find((f) => { try { fs.accessSync(f, fs.constants.X_OK); return true; } catch { return false; } });
-  if (process.platform === 'darwin' && codexBin) {
-    const sbHome = path.join(TMP, 'sandbox-home'); fs.mkdirSync(sbHome);
-    for (const s of ['heavy.sh', 'medium.sh']) {
-      t0 = Date.now();
-      const r = spawnSync(codexBin, ['sandbox', '-P', ':workspace', '--', path.join(ROOT, 'scripts', s), 'true'], { encoding: 'utf8', cwd: TMP, timeout: 60000, env: Object.assign({}, process.env, { CODEX_HOME: sbHome }) });
-      ok(`A1-33 codex sandbox -P :workspace -- ${s} true -> rc 72 or 77 with a refusal line, not a wait`, (r.status === 72 || r.status === 77) && /refused/.test(r.stdout + r.stderr) && Date.now() - t0 < 60000, J({ status: r.status, out: (r.stdout + r.stderr).slice(0, 300) }));
-    }
-  } else ok('A1-33 codex sandbox: no codex binary on this machine (the live check is the tester\'s)', true);
 
   done();
 })().catch((e) => { ok('the test ran to its end', false, e.stack); done(); });
