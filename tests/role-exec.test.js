@@ -407,11 +407,26 @@ const readCall = (plan, f) => { try { return fs.readFileSync(path.join(plan.call
 
   // A1-31(4), createAgent refusals
   const ca = (cfg) => { try { createAgent(cfg); return ''; } catch (e) { return e.message; } };
-  const baseC = { host: 'codex', pluginRoot: PR, callsDir: CALLS, launch: fake, codex: { catalog: CATALOG } };
+  const baseC = { host: 'codex', pluginRoot: PR, callsDir: CALLS, launch: fake, codex: { catalog: CATALOG, home: path.join(TMP, 'chome') } };
   ok('A1-31(4) createAgent refuses a task key with ":" or "#"', /key/.test(ca(Object.assign({}, baseC, { tasks: { 'a:b': TASKS.K } }))) && /key/.test(ca(Object.assign({}, baseC, { tasks: { 'a#b': TASKS.K } }))));
   ok('createAgent refuses an unknown host, a missing callsDir, a missing launch', /host/.test(ca(Object.assign({}, baseC, { tasks: TASKS, host: 'gpt' })))
     && /callsDir/.test(ca(Object.assign({}, baseC, { tasks: TASKS, callsDir: undefined }))) && /launch/.test(ca(Object.assign({}, baseC, { tasks: TASKS, launch: undefined }))));
   ok('createAgent accepts a valid config', ca(Object.assign({}, baseC, { tasks: TASKS })) === '');
+  // Review 1: on codex the run home is required (owner decision 6, analysis 2.4): without it the child would run in the
+  // parent's CODEX_HOME or the personal ~/.codex, even when the catalog comes from cfg.codex.catalog.
+  const noHome = (home, env) => ca(Object.assign({}, baseC, { tasks: TASKS, env, codex: home === 'absent' ? { catalog: CATALOG } : { catalog: CATALOG, home } }));
+  ok('codex.home: createAgent on codex refuses a config without codex.home (catalog given)', /codex\.home/.test(noHome('absent')), noHome('absent'));
+  ok('codex.home: createAgent on codex refuses an empty or non-string codex.home', /codex\.home/.test(noHome('')) && /codex\.home/.test(noHome(7)) && /codex\.home/.test(noHome(null)));
+  ok('codex.home: the parent\'s CODEX_HOME does not stand in for codex.home', /codex\.home/.test(noHome('absent', { CODEX_HOME: path.join(TMP, 'parent-home') })));
+  ok('codex.home: createAgent on codex refuses a relative codex.home (the child runs with cwd = task dir)', /codex\.home/.test(noHome('rel/home')));
+  ok('codex.home: claude needs no codex.home', ca(Object.assign({}, baseC, { tasks: TASKS, host: 'claude', codex: undefined })) === '');
+  {
+    const HX = path.join(TMP, 'chome-x');
+    const XE = createAgent(Object.assign({}, baseC, { tasks: TASKS, log: () => {}, env: { CODEX_HOME: path.join(TMP, 'parent-home'), PATH: '/bin' }, codex: { catalog: CATALOG, home: HX } }));
+    answer = { rc: 0, output: JSON.stringify(sample(ST.REVIEW_SCHEMA, true)) };
+    const re = await call(XE, 'review:K#1');
+    ok('codex.home: the child\'s CODEX_HOME is codex.home, never the parent\'s', re.plan && re.plan.env.CODEX_HOME === HX, re.plan && re.plan.env.CODEX_HOME);
+  }
 
   // ---- A1-29 check on fake CLIs (no model): codex --version, login status (by rc), debug models, effort of the model
   const BIN = path.join(TMP, 'bin'); fs.mkdirSync(BIN);
