@@ -928,6 +928,17 @@ fallback to another slot directory: a second directory would be a second queue t
 
 ## Known gaps
 
+- The session hook under Codex CLI (0.166.0, p-codex-D1a). Codex installs this repository as a plugin as it is (its
+  marketplace and manifest come from `.claude-plugin/`) and runs the same `hooks/hooks.json`: the model's shell
+  (`exec_command`) reaches the hook as `Bash` with `tool_input.command` and the tool's working directory as the
+  input's `cwd`, so the hook gives the same verdicts as under Claude Code (`tests/hooks-codex.test.js`). What it does
+  not see there: input written by `write_stdin` into an already open terminal (Codex runs no PreToolUse for it);
+  the user's own shell commands (`!` in the TUI, `userShell`), which are the owner's, not the agent's; and Codex
+  keeps the hook inactive until it is trusted (`/hooks`), and resets that trust at every change of any file of the
+  installed plugin, an update included, so after each update the hook stays silent until `/hooks` again (a
+  read-only check of that trust is a later part, D1b). Like under Claude Code the hook is fail-open: no `node` in
+  `PATH`, its timeout of 10 s or an exception lets the command run. The role chain itself does not run on Codex yet
+  (its skills start a Claude Code Workflow; part D2); the git `pre-push` hook stays the second layer for pushes.
 - The role adapter `scripts/role-exec.js` (p-codex) is its contract and data only (part A1a): it does not start the
   role's process yet (`cfg.launch` is the caller's until part A1b), the chain still runs on the Workflow `agent()`, and
   on codex only the roles that write a report alone (analyst, reviewers) are accepted.

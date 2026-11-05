@@ -4,6 +4,20 @@ Every version of the codis-agents plugin, newest first. What the plugin does now
 [README.md](README.md); its [Technical reference](README.md#technical-reference) is the current state of every rule,
 key and script, and this file says when and why each one changed. Versions before 0.4.14 are in the git history.
 
+## 0.4.29 - 2026-11-05
+
+- **The session hook under Codex CLI** (p-codex-D1a; owner 2026-11-05 "p-codex: 1-5 as recommended", "all as
+  recommended, start wave 8"). Codex CLI 0.166.0 installs this repository as a plugin as it is and runs the same
+  PreToolUse hook `scripts/hooks/guard-bash.js` from `hooks/hooks.json`; measured (experiment X-D), the model's shell
+  `exec_command` reaches it as `tool_name: "Bash"`, `tool_input: {"command": "<string>"}` with the tool's working
+  directory as the input's absolute `cwd`, and no `CLAUDE_PROJECT_DIR` in its environment. No change of the hook's
+  code: new `tests/hooks-codex.test.js` pins its verdicts on that input (a blanket `git add`, pushes to protected
+  branches and tags, a commit of the arc under a live train, the real process started by the line of
+  `hooks/hooks.json`, the input's `cwd` judged rather than the process's directory, the raw inputs of X-D, silence for
+  `apply_patch` and MCP tools) and that `hooks/hooks.json` and `.claude-plugin/marketplace.json` stay as they were for
+  Claude Code. README "Known gaps": what the hook does not see under Codex (`write_stdin`, the user's own `!`
+  commands), the trust Codex resets at every change of the plugin, fail-open, the chain not yet on Codex.
+
 ## 0.4.26 - 2026-11-05
 
 - **Code comments describe the current code** (owner 2026-11-05 "yes", after an outside review of the product project
