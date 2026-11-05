@@ -409,8 +409,10 @@ const readCall = (plan, f) => { try { return fs.readFileSync(path.join(plan.call
   const ca = (cfg) => { try { createAgent(cfg); return ''; } catch (e) { return e.message; } };
   const baseC = { host: 'codex', pluginRoot: PR, callsDir: CALLS, launch: fake, codex: { catalog: CATALOG, home: path.join(TMP, 'chome') } };
   ok('A1-31(4) createAgent refuses a task key with ":" or "#"', /key/.test(ca(Object.assign({}, baseC, { tasks: { 'a:b': TASKS.K } }))) && /key/.test(ca(Object.assign({}, baseC, { tasks: { 'a#b': TASKS.K } }))));
-  ok('createAgent refuses an unknown host, a missing callsDir, a missing launch', /host/.test(ca(Object.assign({}, baseC, { tasks: TASKS, host: 'gpt' })))
-    && /callsDir/.test(ca(Object.assign({}, baseC, { tasks: TASKS, callsDir: undefined }))) && /launch/.test(ca(Object.assign({}, baseC, { tasks: TASKS, launch: undefined }))));
+  // launch is optional since part A1b (the default is the real process of the host CLI); a launch that is given must be a function.
+  ok('createAgent refuses an unknown host, a missing callsDir, a launch that is not a function; a missing launch is the real process', /host/.test(ca(Object.assign({}, baseC, { tasks: TASKS, host: 'gpt' })))
+    && /callsDir/.test(ca(Object.assign({}, baseC, { tasks: TASKS, callsDir: undefined }))) && /launch/.test(ca(Object.assign({}, baseC, { tasks: TASKS, launch: 'x' })))
+    && ca(Object.assign({}, baseC, { tasks: TASKS, launch: undefined })) === '');
   ok('createAgent accepts a valid config', ca(Object.assign({}, baseC, { tasks: TASKS })) === '');
   // Review 1: on codex the run home is required (owner decision 6, analysis 2.4): without it the child would run in the
   // parent's CODEX_HOME or the personal ~/.codex, even when the catalog comes from cfg.codex.catalog.
