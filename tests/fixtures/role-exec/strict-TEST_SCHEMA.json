@@ -1,0 +1,36 @@
+{
+  "type": "object",
+  "properties": {
+    "verdict": {
+      "type": "string",
+      "enum": [
+        "green",
+        "red",
+        "environment"
+      ],
+      "description": "environment - red caused by the environment, not by the product: the task stops for the coordinator"
+    },
+    "environment": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "with verdict environment: the cause and its evidence (a cut-off full run, a refused slot queue, disk or swap, Docker down)"
+    },
+    "head": {
+      "type": "string",
+      "description": "git rev-parse HEAD of the worktree after your commits: the full sha (40 hex digits), not an abbreviation"
+    },
+    "summary": {
+      "type": "string",
+      "description": "acceptance numbers per profile/environment, own guards and mutations, red with file:line"
+    }
+  },
+  "required": [
+    "verdict",
+    "environment",
+    "head",
+    "summary"
+  ],
+  "additionalProperties": false
+}

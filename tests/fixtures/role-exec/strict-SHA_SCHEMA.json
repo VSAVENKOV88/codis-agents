@@ -1,0 +1,19 @@
+{
+  "type": "object",
+  "properties": {
+    "sha": {
+      "type": "string"
+    },
+    "error": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "sha",
+    "error"
+  ],
+  "additionalProperties": false
+}

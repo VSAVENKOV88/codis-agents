@@ -1,0 +1,30 @@
+{
+  "type": "object",
+  "properties": {
+    "ready": {
+      "type": "boolean",
+      "description": "use-cases.md is written: every use case has all sections of the template"
+    },
+    "useCases": {
+      "type": "number",
+      "description": "number of use cases"
+    },
+    "questions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "open questions to the owner, each with a recommendation (the same list ends use-cases.md)"
+    },
+    "summary": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "ready",
+    "useCases",
+    "questions",
+    "summary"
+  ],
+  "additionalProperties": false
+}

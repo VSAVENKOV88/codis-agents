@@ -1,0 +1,61 @@
+{
+  "type": "object",
+  "properties": {
+    "ready": {
+      "type": "boolean",
+      "description": "the matrix or diagnosis is ready and the programmer can start"
+    },
+    "cells": {
+      "type": "number"
+    },
+    "subsystems": {
+      "type": "number"
+    },
+    "split": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "if the task must be split (rules: \"Split the task\") - the proposed subtasks"
+    },
+    "questions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "mechanismSection": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "only the analyst before the first programmer (analystFirst): true when you wrote a section \"Mechanism\" into analyst.md in this answer"
+    },
+    "mechanismOrCells": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "mechanism",
+        "cells",
+        null
+      ],
+      "description": "only when the prompt asks \"mechanism or cells?\" (a second red or a second rejection): mechanism - the reds show the mechanism is wrong and analyst.md replaces it (a new section \"Mechanism\"); cells - new cells of the same mechanism"
+    },
+    "summary": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "ready",
+    "cells",
+    "subsystems",
+    "split",
+    "questions",
+    "mechanismSection",
+    "mechanismOrCells",
+    "summary"
+  ],
+  "additionalProperties": false
+}

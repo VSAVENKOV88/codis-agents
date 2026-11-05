@@ -1,0 +1,68 @@
+{
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "ready",
+        "blocked",
+        "environment",
+        "mechanism"
+      ],
+      "description": "blocked - an answer of the coordinator or owner is needed; mechanism - your solution needs a protocol, timer or state that the analysis does not name: you stopped before the code with one line in prog.md (what and why), and the analyst gets one pass; environment - the red is the environment's, not the product's (a full run cut off before its tally, the slot queue refused your job - exit 77 or 78 - or your waiting process vanished without an exit code, disk or swap exhausted; a long queue while your process is alive is not one): the task stops for the coordinator"
+    },
+    "changedFiles": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "paths changed in this round (git diff --name-only from the start of the round)"
+    },
+    "commits": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "head": {
+      "type": "string",
+      "description": "git rev-parse HEAD of the worktree after your commits: the full sha (40 hex digits), not an abbreviation"
+    },
+    "mutations": {
+      "type": "string",
+      "description": "table: mutant -> guard result -> after checkout"
+    },
+    "fullRun": {
+      "type": "string",
+      "description": "result of your full guard run: N green, N new red (repeated alone), N flaky (green alone), N known red; when the workflow runs the full run (the prompt says so), \"the workflow runs it\" and the result of your new guards"
+    },
+    "acceptance": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "light mode only: the acceptance scenario run by you - result and where its evidence is (test.md, test-* files)"
+    },
+    "questions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "summary": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "status",
+    "changedFiles",
+    "commits",
+    "head",
+    "mutations",
+    "fullRun",
+    "acceptance",
+    "questions",
+    "summary"
+  ],
+  "additionalProperties": false
+}

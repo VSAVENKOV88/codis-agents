@@ -1,0 +1,27 @@
+{
+  "type": "object",
+  "properties": {
+    "ok": {
+      "type": "boolean"
+    },
+    "problems": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "blockingQuestions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "questions to the owner in the brief, unanswered, on which acceptance depends"
+    }
+  },
+  "required": [
+    "ok",
+    "problems",
+    "blockingQuestions"
+  ],
+  "additionalProperties": false
+}

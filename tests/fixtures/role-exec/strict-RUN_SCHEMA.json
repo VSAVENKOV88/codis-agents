@@ -1,0 +1,58 @@
+{
+  "type": "object",
+  "properties": {
+    "done": {
+      "type": "boolean"
+    },
+    "rc": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "seconds": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "log": {
+      "type": "string"
+    },
+    "tail": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "alive": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "pid": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "error": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "done",
+    "rc",
+    "seconds",
+    "log",
+    "tail",
+    "alive",
+    "pid",
+    "error"
+  ],
+  "additionalProperties": false
+}

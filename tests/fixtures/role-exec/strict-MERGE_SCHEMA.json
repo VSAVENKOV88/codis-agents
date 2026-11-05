@@ -1,0 +1,36 @@
+{
+  "type": "object",
+  "properties": {
+    "mergeOnly": {
+      "type": "boolean"
+    },
+    "reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "files": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "string"
+      }
+    },
+    "error": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "mergeOnly",
+    "reason",
+    "files",
+    "error"
+  ],
+  "additionalProperties": false
+}

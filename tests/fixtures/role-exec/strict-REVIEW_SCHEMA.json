@@ -1,0 +1,34 @@
+{
+  "type": "object",
+  "properties": {
+    "verdict": {
+      "type": "string",
+      "enum": [
+        "done",
+        "rejected"
+      ]
+    },
+    "docsOnly": {
+      "type": "boolean",
+      "description": "rejected only for docs, guard wording, comments"
+    },
+    "fixBehaviourUnchanged": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "only when the scope asks: the diff of the fix changes comments, wording or docs alone, no behaviour"
+    },
+    "summary": {
+      "type": "string",
+      "description": "findings with file:line"
+    }
+  },
+  "required": [
+    "verdict",
+    "docsOnly",
+    "fixBehaviourUnchanged",
+    "summary"
+  ],
+  "additionalProperties": false
+}
