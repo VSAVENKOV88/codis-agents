@@ -238,7 +238,7 @@ codis-agents/
 ├── agents/       6 role agents: analyst, programmer, tester, reviewer, security-reviewer, analysis-checker
 ├── skills/       3 skills: role-chain (starts a chain), coordinator (its loop), brief (how to write one)
 ├── workflows/    role-chain.js - the chain itself, fix rounds, the analyst after a second red, the train
-├── rules/        multi-agent.md - the process rules; 19 marked lines go into every role prompt
+├── rules/        multi-agent.md - the process rules; 20 marked lines go into every role prompt
 ├── hooks/        hooks.json - refuses git add -A, pushes to protected branches and tags
 ├── scripts/      29 scripts: memory slots, guard runs and selection, the train, post-checks, remote runner, cost
 ├── examples/     example project and machine configs
@@ -396,6 +396,7 @@ it. Agents do not replace that.
 | a layout arrived "locally" with a mockup, no decision behind it, and had to be redone | what the owner judges by the screen is never decided by an agent; a mockup of all states before code |
 | a programmer invented a height probe with a timer that no matrix named; its flicker was one question among 36, the second analyst wrote more cells of the same probe: 7 rounds, 30M, and the owner saw the flicker after the acceptance | a mechanism is challenged before cells: a section "Mechanism" of the analyst (choices seen on the screen or resting on time go to the owner), status `mechanism` of the programmer, "mechanism or cells?" first for the analyst of a second red, a line of the reviewer |
 | a UX spec last touched at a redesign said nothing about the features built after it | living specs change in the same commit as the behaviour they describe |
+| an outside review found that the comments of an AI edit loop retold the history of decisions and hid the current behaviour | a comment says what the code does now and why; history goes into commits and reports; a comment the code contradicts is a rejection, a history-only one a tail |
 | one task was re-scoped three times mid-flight and cost twice the median | split before the first programmer: over ~30 cells or more than two subsystems |
 | the precondition check stopped tasks with an incomplete acceptance three times in one day | acceptance is a scenario in the real environment |
 | agents were killed while their run waited for a heavy slot | reports are written as you go and end with "Next step"; a fresh agent continues |
@@ -702,7 +703,9 @@ review findings.
   without timings, or "no".
 - **Programmer** commits a red guard, then the code, then mutation-tests the guards after the commit and runs the full
   guard suite in a heavy slot - or, with `guardSubsetCommand` in the config, the programmer runs only its new guards and
-  mutations, and the workflow runs the selection of the task's guards.
+  mutations, and the workflow runs the selection of the task's guards. A code comment says what the code does now and
+  why; the history of decisions goes into the commit message and the reports, and a change of behaviour rewrites the
+  comments next to it (0.4.26).
 - **No full guard run in the task: the selection of its diff, run by the workflow after every programmer round** (with
   `guardSubsetCommand`; it replaces "one full guard run per task, run by the workflow after the programmer's last
   commit"): a cheap agent starts `guards-all.sh --select <base>` through `scripts/wait-step.js` and waits in slices of
@@ -738,7 +741,8 @@ review findings.
   run, a refused slot queue, disk or swap exhausted, Docker down) is the verdict `environment`: the task stops with its cause for the
   coordinator, not for a programmer.
 - **Reviewer** reads only and tries to refute. It rejects only for a broken cell of the acceptance or the matrix, a
-  changed path without a guard or mutation, a regression, a security hole or docs the code contradicts; minor points go
+  changed path without a guard or mutation, a regression, a security hole or docs the code contradicts (a code comment
+  that contradicts the code is one); minor points and comments that only retell history go
   under "Tails" in `review.md`. With `security: true` the reviewer and the security reviewer run in
   parallel on the same HEAD, with one git post-check after both; done needs both, a rejection by either is a rejection,
   and a change of the worktree by either stops the task.

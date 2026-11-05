@@ -589,6 +589,14 @@ async function run(script, task = T, extra = {}) {
   const roleAgents = ['tester', 'programmer', 'reviewer', 'security-reviewer', 'analyst'];
   const disallowOf = (a) => { const fm = fs.readFileSync(path.join(ROOT, 'agents', a + '.md'), 'utf8').split('---')[1] || ''; const m = fm.match(/disallowedTools:\s*(.*)/); return m ? m[1] : ''; };
   ok('M4. the role agents disallow Monitor in their frontmatter', roleAgents.every((a) => /\bMonitor\b/.test(disallowOf(a))), roleAgents.map((a) => a + ':' + disallowOf(a)).join(' | '));
+  // K (comments, 2026-11-05): a code comment describes the current code; history goes into commits and reports; the
+  // programmer rewrites the comments of changed behaviour, the reviewer rejects a contradicting one and tails a history-only one.
+  ok('K1. rule comments: current behaviour and why, history into commits and reports, programmer rewrites, reviewer: contradiction rejects, history is a tail',
+    /what the code does now and why/.test(ruleOf('comments')) && /commit message/.test(ruleOf('comments')) && /Programmer:[^.]*rewrite the comments/.test(ruleOf('comments'))
+      && /Reviewer:[^.]*contradicts the code[^.]*rejection/.test(ruleOf('comments')) && /Tails/.test(ruleOf('comments')), ruleOf('comments'));
+  ok('K2. agents programmer and reviewer carry the comments rule',
+    /rewrite the comments/.test(fs.readFileSync(path.join(ROOT, 'agents', 'programmer.md'), 'utf8'))
+      && /comment that contradicts the code/.test(fs.readFileSync(path.join(ROOT, 'agents', 'reviewer.md'), 'utf8')), '');
   const ruleListOne = await new AsyncFunction('args', SRC.slice(0, SRC.indexOf('const PRE_SCHEMA')) + '\nreturn RULE_LIST(TASKS[0])')({ owner: 'o', config: ONE, tasks: [T] });
   const onerunOne = (ruleListOne.find((r) => r[0] === 'onerun') || ['', ''])[1];
   ok('C5. rule onerun (one run): the programmer runs no selection, the tester runs it after its own commits',

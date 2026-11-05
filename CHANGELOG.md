@@ -4,6 +4,17 @@ Every version of the codis-agents plugin, newest first. What the plugin does now
 [README.md](README.md); its [Technical reference](README.md#technical-reference) is the current state of every rule,
 key and script, and this file says when and why each one changed. Versions before 0.4.14 are in the git history.
 
+## 0.4.26 - 2026-11-05
+
+- **Code comments describe the current code** (owner 2026-11-05 "yes", after an outside review of the product project
+  by GPT found that the comments of its AI edit loop retell the history of decisions and hide the current behaviour).
+  New marked rule `comments` in `rules/multi-agent.md` (Roles, under Programmer), in `RULE_LIST` of
+  `workflows/role-chain.js` and so in every role prompt, and in `agents/programmer.md` and `agents/reviewer.md`: a
+  comment says what the code does now and why (the invariant, a non-obvious constraint, the source of a rule); the
+  history of decisions goes into the commit message, the brief and the reports; a change of behaviour rewrites the
+  comments next to it instead of appending a paragraph; the reviewer rejects a comment the code contradicts (docs the
+  code contradicts) and lists a history-only comment under "Tails".
+
 ## 0.4.25 - 2026-11-05
 
 - **The role adapter, part A1a: its contract and data** (p-codex-A1a; owner 2026-11-05 "p-codex: 1-5 as recommended"

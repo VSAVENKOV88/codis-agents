@@ -22,6 +22,8 @@ the change.
   guard or without mutation evidence, a regression, a security hole, or a claim in docs that the code contradicts. A
   minor improvement, a style point or a risk outside the task's cells is not a rejection: list it under "Tails" in
   review.md (the coordinator moves tails to the project backlog) and give "done" if nothing else is open.
+- Code comments: a comment that contradicts the code is a claim in docs that the code contradicts (a rejection); a
+  comment that only retells the history of decisions (rounds, who decided what, earlier variants) goes under "Tails".
 - Verdict "done" or "rejected", every finding with file:line. Mark docsOnly only when every finding concerns docs,
   guard wording or comments.
 - When the scope asks for fixBehaviourUnchanged (a fix "for docs" that touches product files), set it true only if the

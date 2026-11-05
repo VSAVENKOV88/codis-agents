@@ -71,6 +71,8 @@ Larger changes run as a chain of agents, each in its own role:
     not with lines of code.
 - **Programmer.** Commits a red guard first, then the code: for a defect the guard reproduces it; for a feature it is
   the brief's acceptance scenario turned into a test before any code.
+  - **A code comment says what the code does now and why**: the invariant, a non-obvious constraint, the source of a rule. The history of decisions belongs in the commit message, the brief and the task's reports, not in the code: rounds, who decided what, which defect led to the line, earlier variants. A programmer who changes behaviour rewrites the comments next to it to match the new behaviour instead of appending a new paragraph. The reviewer treats a comment that contradicts the code as docs the code contradicts (a rejection); a comment that only retells history goes under "Tails", not into a rejection. <!-- role:comments -->
+    Why (2026-11-05): an outside review of the product project by GPT found that the comments of its AI edit loop retell the history of decisions and hide the current behaviour; the owner agreed to this rule.
 - **Tester.** Builds an inventory independently of the programmer (routes, controls, places) and compares the two.
   Adds guards and mutation-tests them after committing. Does not edit product code. Runs the brief's acceptance
   scenario in the real environment and puts the evidence (log, screenshot, numbers) into `test.md`.
