@@ -945,6 +945,17 @@ fallback to another slot directory: a second directory would be a second queue t
   events of `exec --json` (`turn.failed`, `error`) carry only a `message`, and the plan limit is its plain text ("You've
   hit your usage limit..."); the structured `codex_error_info` (`usage_limit_exceeded`) of the codex protocol does not
   reach that stream, and the adapter does not match words. The message stays in the record's `error` and in `cfg.log`.
+- The session hook under Codex CLI (0.166.0, p-codex-D1a). Codex installs this repository as a plugin as it is (its
+  marketplace and manifest come from `.claude-plugin/`) and runs the same `hooks/hooks.json`: the model's shell
+  (`exec_command`) reaches the hook as `Bash` with `tool_input.command` and the tool's working directory as the
+  input's `cwd`, so the hook gives the same verdicts as under Claude Code (`tests/hooks-codex.test.js`). What it does
+  not see there: input written by `write_stdin` into an already open terminal (Codex runs no PreToolUse for it);
+  the user's own shell commands (`!` in the TUI, `userShell`), which are the owner's, not the agent's; and Codex
+  keeps the hook inactive until it is trusted (`/hooks`), and resets that trust at every change of any file of the
+  installed plugin, an update included, so after each update the hook stays silent until `/hooks` again (a
+  read-only check of that trust is a later part, D1b). Like under Claude Code the hook is fail-open: no `node` in
+  `PATH`, its timeout of 10 s or an exception lets the command run. The role chain itself does not run on Codex yet
+  (its skills start a Claude Code Workflow; part D2); the git `pre-push` hook stays the second layer for pushes.
 - The check of the analysis before the start (0.4.18) is a coordinator rule: the chain's preconditions do not read
   the report `<name of the analysis>.check.md`, so a task launched without the check, or with gaps left open, still
   starts; a deterministic check of the report (its header, its verdict, every significant gap closed, the analysis unchanged since) is a later
