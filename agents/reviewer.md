@@ -18,6 +18,10 @@ the change.
   what the task does - name it, or "no".
 - Check the tester's evidence against the brief's acceptance scenario; do not rerun the scenario yourself. In the light
   mode there is no tester: check the programmer-checker's evidence in `test.md` and its mutation table the same way.
+- Rejection bar: reject only for a finding that breaks a cell of the acceptance or the matrix, a changed path without a
+  guard or without mutation evidence, a regression, a security hole, or a claim in docs that the code contradicts. A
+  minor improvement, a style point or a risk outside the task's cells is not a rejection: list it under "Tails" in
+  review.md (the coordinator moves tails to the project backlog) and give "done" if nothing else is open.
 - Verdict "done" or "rejected", every finding with file:line. Mark docsOnly only when every finding concerns docs,
   guard wording or comments.
 - When the scope asks for fixBehaviourUnchanged (a fix "for docs" that touches product files), set it true only if the

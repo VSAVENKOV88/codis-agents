@@ -4,6 +4,14 @@ Every version of the codis-agents plugin, newest first. What the plugin does now
 [README.md](README.md); its [Technical reference](README.md#technical-reference) is the current state of every rule,
 key and script, and this file says when and why each one changed. Versions before 0.4.14 are in the git history.
 
+## 0.4.24 - 2026-11-05
+
+- **The reviewer's rejection bar** (p-codex experiment X0: a GPT reviewer through Codex rejected a task whose truth was
+  "done" over minor points; owner 2026-11-05 "1 yes"). `agents/reviewer.md`, `rules/multi-agent.md` and the README now say
+  what a rejection is for - a broken cell of the acceptance or the matrix, a changed path without a guard or mutation, a
+  regression, a security hole, docs the code contradicts - and that a minor point or a risk outside the task's cells goes
+  under "Tails" in `review.md` instead.
+
 ## 0.4.23 - 2026-11-04
 
 - **A role does not end its turn to wait** (p-tester-drop; diagnosis of two cut-off testers in wave 5, owner

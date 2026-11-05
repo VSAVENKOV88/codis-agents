@@ -736,7 +736,9 @@ review findings.
   after that analyst stops the task for the coordinator (`tester red after analyst`). A red from the environment (a cut-off full
   run, a refused slot queue, disk or swap exhausted, Docker down) is the verdict `environment`: the task stops with its cause for the
   coordinator, not for a programmer.
-- **Reviewer** reads only and tries to refute. With `security: true` the reviewer and the security reviewer run in
+- **Reviewer** reads only and tries to refute. It rejects only for a broken cell of the acceptance or the matrix, a
+  changed path without a guard or mutation, a regression, a security hole or docs the code contradicts; minor points go
+  under "Tails" in `review.md`. With `security: true` the reviewer and the security reviewer run in
   parallel on the same HEAD, with one git post-check after both; done needs both, a rejection by either is a rejection,
   and a change of the worktree by either stops the task.
 - **Rejection**: a fix round, then a second review. A rejection only for docs, guard wording or comments skips the

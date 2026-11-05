@@ -75,7 +75,10 @@ Larger changes run as a chain of agents, each in its own role:
   Adds guards and mutation-tests them after committing. Does not edit product code. Runs the brief's acceptance
   scenario in the real environment and puts the evidence (log, screenshot, numbers) into `test.md`.
 - **Reviewer.** Reads only and tries to refute the claim; may rerun guards. Checks the tester's evidence against the
-  acceptance scenario rather than re-running the scenario. Gives a verdict of done or rejected, with file:line. Do not
+  acceptance scenario rather than re-running the scenario. Gives a verdict of done or rejected, with file:line. It rejects
+  only for a broken cell of the acceptance or the matrix, a changed path without a guard or mutation, a regression, a
+  security hole or docs the code contradicts; a minor point or a risk outside the task's cells goes under "Tails" in
+  `review.md`, not into a rejection. Do not
   lower the reviewer's effort: it pays for itself (security holes, a guard fed data the server never sends).
 - **Security reviewer.** Only when the brief marks the task as security work (accounts and login, connectors and OAuth,
   access passes, rollout to a host). Reads the diff with an attacker's view against the project's threat model.
