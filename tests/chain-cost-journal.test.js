@@ -161,6 +161,8 @@ try {
     ok('C-18 no feature in the journal: the run record\'s feature of the key holds (fd in G)', both.features.fd === 'G' && L.some((l) => l.startsWith('feature G: ') && l.includes('part(s) fd')), L.join(' | '));
     ok('C-19 the run record and the journal name different features of one key: a note with both, the key in no feature',
       both.notes.some((n) => n.includes('fc') && n.includes('F1') && n.includes('F2')) && !L.some((l) => /^feature F[12]: /.test(l) && l.includes('fc')), both.notes.join(' | ') + ' || ' + L.join(' | '));
+    const bf = CC.byFeature({ F: { ie: 1 }, x: { ie: 2 } }, { F: null, x: 'F' });
+    ok('C-19 a key with two features is in no feature, even when its key is a feature name', bf.F && bf.F.parts.join() === 'x' && bf.F.ie === 2, JSON.stringify(bf));
     const onlyJ = CC.costAll([], [jA]);
     const lineJ = CC.report(onlyJ.tasks, 5e6)[0];
     ok('C-23 a task from the journal alone: max context n/a, no waiting drops, its sources', lineJ === 'ai-gate-a: 0.8M IE, 3 agents, max context n/a (review 0.8M) [codex 0.8M]', lineJ);
