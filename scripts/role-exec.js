@@ -199,7 +199,9 @@ function leave(stop) {
   else for (const s of Object.keys(handlers)) { process.removeListener(s, handlers[s]); delete handlers[s]; }
 }
 
-// {status, code} of an API error message of codex: a JSON string {"type":"error","error":{..,"code"},"status":n}.
+// {status, code} of an API error message of codex: a JSON string {"type":"error","error":{..,"code"},"status":n} (the
+// form of the 400 seen live). The error events of exec --json carry only a message; a plain-text message (the plan
+// limit of a subscription among them) has no status and ends as crashed, never matched by words.
 function apiStatus(msg) {
   try { const j = JSON.parse(msg); return { status: typeof j.status === 'number' ? j.status : null, code: (j.error && j.error.code) || null }; } catch { return { status: null, code: null }; }
 }
@@ -215,7 +217,7 @@ function spawnRole(plan, o) {
   return new Promise((resolve) => {
     const notes = [DESCENDANTS_NOTE];
     const note = (m) => { if (notes.length < NOTES_MAX) notes.push(m); else if (notes.length === NOTES_MAX) notes.push('later notes dropped'); };
-    const st = { turns: 0, usage: null, failed: null, errors: [], result: null, sessionId: null, cliVersion: null, line: 0 };
+    const st = { turns: 0, usage: null, failed: null, errors: [], result: null, sessionId: null, cliVersion: null, line: 0, limited: null };
     const events = fs.createWriteStream(path.join(plan.callDir, 'events.jsonl'));
     const errlog = fs.createWriteStream(path.join(plan.callDir, 'stderr.log'));
     let child = null, tail = '', why = null, exited = null, graceT = null, finished = false, spawnErr = null, heldOpen = false;
@@ -249,6 +251,8 @@ function spawnRole(plan, o) {
       } else if (e.type === 'rate_limit_event') {
         const r = e.rate_limit_info || {};
         note(`rate_limit_event ${r.status} (${r.rateLimitType || '?'})`);
+        // UC-2 Errors 5: a status other than "allowed", followed by an error, makes the error rate-limited.
+        if (r.status !== 'allowed') st.limited = `rate_limit_event ${r.status} (${r.rateLimitType || '?'})`;
       } else if (e.type === 'result') st.result = e;
     };
     const onLine = (l) => {
@@ -304,15 +308,17 @@ function spawnRole(plan, o) {
         return r;
       }
       const x = st.result;
+      const limited = (msg) => failed('rate-limited', `${msg}, after ${st.limited}`);
       if (x) {
         if (x.is_error || x.subtype !== 'success' || x.api_error_status != null) {
-          return failed(byStatus({ status: x.api_error_status }, false), `result ${x.subtype}, api_error_status ${x.api_error_status}: ${String(x.result || '').slice(0, 300)}`);
+          const msg = `result ${x.subtype}, api_error_status ${x.api_error_status}: ${String(x.result || '').slice(0, 300)}`;
+          return st.limited ? limited(msg) : failed(byStatus({ status: x.api_error_status }, false), msg);
         }
         if (x.structured_output === undefined || x.structured_output === null) return failed('no-result', 'result success without structured_output');
         r.output = x.structured_output;
         return r;
       }
-      if (r.rc !== 0) return failed('crashed', `exit ${r.rc} without a result event${stderrTail}`);
+      if (r.rc !== 0) return st.limited ? limited(`exit ${r.rc} without a result event${stderrTail}`) : failed('crashed', `exit ${r.rc} without a result event${stderrTail}`);
       return failed('no-result', `exit 0 without a result event${stderrTail}`);
     };
     const flush = (w) => new Promise((ok) => w.end(ok));

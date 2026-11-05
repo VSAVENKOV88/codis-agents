@@ -20,6 +20,9 @@ key and script, and this file says when and why each one changed. Versions befor
   folder, `--strict-mcp-config` and `--disallowedTools` (subagents, schedules, notifications). Every call gets a folder
   of its own (`mkdtemp`); the personal `~/.codex` as the run home is refused (owner decision 6). `env-check.js`: a swap
   that cannot be measured is a problem when the floor is on the command line (a codex sandbox refuses `sysctl`).
+  Claude: a `rate_limit_event` whose status is not `allowed`, followed by an error, is `rate-limited` (UC-2 Errors 5).
+  Codex: the plain-text plan limit of a ChatGPT subscription is `crashed` for now (README, Known gaps): the
+  `exec --json` stream of codex 0.166.0 has no structured field for it.
 
 ## 0.4.26 - 2026-11-05
 
