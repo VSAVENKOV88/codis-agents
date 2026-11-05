@@ -66,7 +66,8 @@ process.stdin.on('data', (d) => {
     }
   }
 });
-process.stdin.on('end', () => process.exit(0));
+// No exit at the end of stdin: the fake lives until it is killed, so the tests see the check stop it.
+if (sc.stubborn) process.on('SIGTERM', () => {});
 `;
 fs.writeFileSync(path.join(BIN, 'codex'), FAKE, { mode: 0o755 });
 const NOBIN = path.join(TMP, 'nobin');
@@ -150,6 +151,8 @@ ok('T5 the app-server exits before the answer -> exit 3 "not checked" with its s
 r = check('t5c', { list: 'silent', hooks: [hook('trusted')] }, { args: ['--timeout-ms', '400'] });
 ok('T5 no answer in --timeout-ms -> exit 3 "not checked: no answer"', r.status === 3 && /not checked/.test(r.out) && /no answer/.test(r.out), show(r));
 ok('T5 the silent app-server is killed', pids(r).length === 1 && !alive(pids(r)[0]), JSON.stringify(pids(r)));
+r = check('t5c2', { list: 'silent', stubborn: true }, { args: ['--timeout-ms', '300'] });
+ok('T5 an app-server that ignores SIGTERM is killed too (SIGKILL after the grace)', r.status === 3 && pids(r).length === 1 && !alive(pids(r)[0]), show(r));
 r = check('t5d', { init: 'silent' }, { args: ['--timeout-ms', '400'] });
 ok('T5 no answer to initialize in time -> exit 3', r.status === 3 && /no answer/.test(r.out), show(r));
 r = check('t5e', { list: 'notjson', hooks: [hook('trusted')] });
