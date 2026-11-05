@@ -13,7 +13,8 @@
 // Exit codes:
 //   0  every hook of this plugin is `trustStatus: trusted` and `enabled: true`, and the answer has no errors
 //   1  not so: no hook of the plugin, a hook untrusted, modified, managed or disabled, or errors in the answer
-//   2  refused before any start: no --codex-home, it is the personal ~/.codex (also through a link), bad arguments
+//   2  refused before any start: no --codex-home, it is the personal ~/.codex (the same directory
+//      by device and inode: a link, a case variant, a firmlink), bad arguments
 //   3  not checked: codex cannot start, exits before the answer, no answer in --timeout-ms, an answer that is not JSON,
 //      a JSON-RPC error, a result off the schema of Codex 0.166.0, or another codexHome. The app-server protocol is
 //      marked experimental, so anything unexpected is a failure, never a pass.
@@ -31,7 +32,15 @@ const KILL_GRACE_MS = 3000;
 const USAGE = 'usage: codex-hooks-check.js --codex-home <dir> [--cwd <project dir>] [--codex <bin>] [--timeout-ms <n, default 30000>]';
 
 const real = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
-const isPersonalCodex = (home) => real(home) === real(path.join(os.homedir(), '.codex'));
+// One directory, by identity: the same device and inode when both exist. A realpath string is not enough on macOS:
+// it keeps the letter case given (APFS ignores case by default, so ~/.CODEX is ~/.codex) and does not resolve the
+// /System/Volumes/Data firmlink. Without both stats only the realpath strings are compared.
+const sameDir = (a, b) => {
+  let sa, sb;
+  try { sa = fs.statSync(a); sb = fs.statSync(b); } catch { return real(a) === real(b); }
+  return sa.dev === sb.dev && sa.ino === sb.ino;
+};
+const isPersonalCodex = (home) => sameDir(home, path.join(os.homedir(), '.codex'));
 const pluginName = () => JSON.parse(fs.readFileSync(path.join(__dirname, '..', '.claude-plugin', 'plugin.json'), 'utf8')).name;
 
 function parseArgs(argv) {
@@ -92,7 +101,7 @@ function listHooks({ codex, home, cwd, timeoutMs }) {
       const res = m.result;
       if (step === 'initialize') {
         if (!res || typeof res.codexHome !== 'string') return finish({ ok: false, reason: 'initialize: the result has no codexHome' });
-        if (real(res.codexHome) !== home) return finish({ ok: false, reason: `initialize: codexHome ${res.codexHome} is not ${home}` });
+        if (!sameDir(res.codexHome, home)) return finish({ ok: false, reason: `initialize: codexHome ${res.codexHome} is not ${home}` });
         step = 'hooks/list';
         send({ method: 'initialized' });
         send({ id: 2, method: 'hooks/list', params: { cwds: [cwd] } });

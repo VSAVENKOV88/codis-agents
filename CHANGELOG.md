@@ -15,7 +15,8 @@ key and script, and this file says when and why each one changed. Versions befor
   `initialize` names the same `codexHome`, and exits 0 only when every hook of this plugin (`pluginId` before `@` =
   the `name` of `.claude-plugin/plugin.json`) is `trusted` and `enabled` and the answer has no errors; 1 names what
   to do (`/hooks`), 3 is "not checked" (no `codex`, no answer in `--timeout-ms`, 30000 by default, an answer off the
-  schema), 2 refuses the personal `~/.codex` before any start. It never writes trust. Tested on a fake app-server
+  schema), 2 refuses the personal `~/.codex` before any start (the same directory by device and inode, so a link, a case
+  variant on a case-insensitive disk and the `/System/Volumes/Data` firmlink are refused too). It never writes trust. Tested on a fake app-server
   (`tests/codex-hooks-check.test.js`). No second Codex manifest: `tests/codex-manifests.test.js` forbids
   `.codex-plugin/`, a root `plugin.json`, `.agents/plugins/marketplace.json` and `api_marketplace.json`, each of
   which Codex would read over `.claude-plugin/`. README "Install" has a Codex CLI part (install, `/hooks`, the check,
