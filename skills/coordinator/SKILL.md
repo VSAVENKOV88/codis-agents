@@ -69,7 +69,7 @@ one. For whatever the owner judges by the screen, show a mockup of all states be
    owner can overturn it; everything the owner judges by the screen (look, placement, UI wording), anything new,
    irreversible, or two principles in conflict - to the owner as one list, each question with a recommendation. Roles
    never answer owner questions themselves; they write them into their reports.
-8. **Cost.** After each run, `node "${CLAUDE_PLUGIN_ROOT}/scripts/chain-cost.js" <transcripts>`; a task above twice the
+8. **Cost.** After each run, `node "${CLAUDE_PLUGIN_ROOT}/scripts/chain-cost.js" <transcripts>` (and `--journal <task folder>` for the tasks whose roles ran through the role adapter, `calls.jsonl`); a task above twice the
    median means the next similar one is split earlier.
 
 ## Check the analysis

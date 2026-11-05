@@ -465,7 +465,7 @@ writes that into the report's section Closure. A task with `noAnalysis` gets no 
 | `scripts/role-diff-check.js` | git post-check of the tester and reviewers |
 | `scripts/role-post-check.js` | the post-check after the tester in one command: `role-diff-check.js` and `role-leftovers-check.js` together, one JSON `{ok, diff, left}` - one service agent per tester round instead of two |
 | `scripts/role-leftovers-check.js` | post-check after the tester and at the end of a task: Docker resources of the task's stack (by the compose project label), processes in its worktree, slots they hold; `--fix` removes only those, never the owner's stack |
-| `scripts/chain-cost.js` | cost of chain runs per task from the agent transcripts, and per feature (parts summed by `feature`, across runs) |
+| `scripts/chain-cost.js` | cost of chain runs per task from the agent transcripts, and per feature (parts summed by `feature`, across runs); `--journal <task dir | calls.jsonl>` (repeatable) adds the calls of the role adapter (`scripts/role-exec.js`, hosts codex and claude) from the task's `calls.jsonl`: IE = fresh + 1.25 x cache write + 0.1 x cache read + 5 x output, where on claude fresh is `usage.input` and on codex `input - cachedInput - cacheWrite` (codex counts the cache inside its input) with the coefficients of the model's price table (`gpt-6-astra`; a model without prices is a note and the task line says `IE incomplete`), output the real output tokens (codex reasoning is inside them); a journal named twice (folder and file, a symbolic or hard link) is read once, a call already counted from another journal (same non-empty `callDir`) is skipped, `refused` calls are no agents, a call without usage counts as an agent with a note that IE is a lower bound, a broken record is a note with `<file>:<line>`, the call folders `calls/*/events.jsonl` are never read; a task with journal calls names its sources (`[workflow 4.2M, claude 0.5M, codex 0.6M]`) and, without transcripts, `max context n/a`; its feature comes from the run record or the records' field `feature`, and a key with two different features is in none (a note); a `--journal` path that is missing, a folder without `calls.jsonl`, an empty file or no value: one line on stderr, exit 66; without `--journal` the output is the one before it |
 | `scripts/detect.js` | the facts of a repository for onboarding, read only, as JSON: git (default branch from origin/HEAD, main/master, tag shapes, remotes without passwords, hooksPath), GitHub workflow files, stacks by manifest, venvs, compose services (`docker compose config`, no daemon), ignored data with sizes, what an earlier onboarding left; the contract is in its header |
 | `scripts/env-check.js` | free disk and swap headroom for the preconditions, floors `minFreeDiskGB` and `swapMinMB` of the machine file (the command line wins; 0 - off, said in notes); a swap that cannot be measured (a codex sandbox refuses `sysctl`) is a problem `swap not checked: <reason>` when the floor is on the command line (`--min-swap-mb`, as the chain passes it), a note otherwise; `--worktree <dir>`: the task worktree is not the main working copy |
 | `scripts/git-hooks/` | `pre-push` (protected branches and tags) and `pre-commit` (cloud conflict copies, extra checks) |
@@ -928,6 +928,13 @@ fallback to another slot directory: a second directory would be a second queue t
 
 ## Known gaps
 
+- The cost of adapter calls (`chain-cost.js --journal`) is a lower bound in three cases: gpt-6-astra charges a request
+  above 272K input tokens 2x input and cache and 1.5x output, but `turn.completed.usage` is the sum of a turn, so the
+  size of one request is not seen and the normal rate is used; a call killed before its usage (`killed`, `ceiling`,
+  `signalled`, `crashed`) is counted without usage (a note); `claude -p` writes its cache for one hour, which Anthropic
+  bills above 1.25x, while the claude formula stays the one of the transcripts. A ChatGPT subscription reports cache
+  writes as 0 and an API key does not, so the same work costs more IE by key. The 2 x median flag uses the one
+  `medianTaskIE` for both hosts until there are accepted codex tasks to measure their own.
 - The role adapter `scripts/role-exec.js` (p-codex, parts A1a and A1b) runs one role on a host CLI, but no conductor
   uses it yet (part B): the chain still runs on the Workflow `agent()`; on codex only the roles that write a report
   alone (analyst, reviewers) are accepted, and they cannot take memory slots: inside the codex sandbox `heavy.sh` and
