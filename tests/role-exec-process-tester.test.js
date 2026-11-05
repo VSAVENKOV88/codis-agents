@@ -8,7 +8,10 @@
 // T3 claude result errors by api_error_status: 403 -> auth, 500 -> crashed, 400 -> crashed (no schema-refused on claude);
 // T4 spawn EACCES (the bin is not executable) -> crashed, one record, no throw;
 // T5 a process outside the group keeps stdout open after the leader exits: the call still ends (bounded by the
-//    ceiling), its outcome is that of the exit, the note says stdout stayed open, the adapter does not kill that process.
+//    ceiling), its outcome is that of the exit, the note says stdout stayed open, the adapter does not kill that process;
+// T6 claude rate_limit_event not "allowed" (UC-2 Errors 5) beside the other outcomes: a kill from outside stays killed,
+//    the ceiling stays ceiling, exit 0 without a result stays no-result, a result error with any status (401 too) is
+//    rate-limited, and the reason names the event in the record and in log().
 // No model is called: the CLI is a fake Node script in a temporary folder.
 const fs = require('fs');
 const os = require('os');
@@ -53,6 +56,16 @@ const out = (b) => new Promise((r) => process.stdout.write(b, r));
   }
   if (sc.mode === 'chunks') {
     for (const c of sc.chunks) { await out(Buffer.from(c, 'base64')); await sleep(40); }
+    process.exit(0);
+  }
+  if (sc.mode === 'selfkill') {
+    for (const l of sc.lines) await out(JSON.stringify(l) + '\\n');
+    process.kill(process.pid, 'SIGKILL');
+    return;
+  }
+  if (sc.mode === 'hang') {
+    for (const l of sc.lines) await out(JSON.stringify(l) + '\\n');
+    await sleep(30000);
     process.exit(0);
   }
   if (sc.mode === 'holdout') {
@@ -168,6 +181,23 @@ const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { retu
     ok('T5 C the outcome is that of the exit (ok, the answer), one record', x.rec.outcome === 'ok' && x.res && x.res.verdict === 'done' && x.n === 1, JSON.stringify(x.rec).slice(0, 300));
     ok('T5 C the note says stdout stayed open after the exit', (x.rec.notes || []).some((s) => /stdout stayed open/.test(s)), JSON.stringify(x.rec.notes));
     ok('T5 C the process of the other session is not killed by the adapter', hp > 0 && alive(hp), String(hp));
+  }
+
+  // ---- T6 claude rate_limit_event not "allowed" beside the other outcomes
+  {
+    const RL = { type: 'rate_limit_event', rate_limit_info: { status: 'rejected', rateLimitType: 'five_hour' } };
+    let x = await call('claude', { mode: 'selfkill', lines: [INIT, RL] });
+    ok('T6 C rejected, then SIGKILL from outside -> killed (not rate-limited)', x.res === null && x.rec.outcome === 'killed' && x.n === 1, JSON.stringify(x.rec).slice(0, 300));
+    x = await call('claude', { mode: 'hang', lines: [INIT, RL] }, { cfg: { ceilingMs: 1500, killGraceMs: 300 } });
+    ok('T6 C rejected, then the ceiling -> ceiling (not rate-limited)', x.res === null && x.rec.outcome === 'ceiling' && x.n === 1, JSON.stringify(x.rec).slice(0, 300));
+    x = await call('claude', { lines: [INIT, RL], exit: 0 });
+    ok('T6 C rejected, then exit 0 without a result -> no-result (no error, so not rate-limited)', x.res === null && x.rec.outcome === 'no-result', JSON.stringify(x.rec).slice(0, 300));
+    const before = logs.length;
+    x = await call('claude', { lines: [INIT, RL, RESULT({ is_error: true, structured_output: undefined, api_error_status: 401, result: 'API Error' })], exit: 1 });
+    ok('T6 C rejected, then a result error with api_error_status 401 -> rate-limited (any error after the event)', x.res === null && x.rec.outcome === 'rate-limited' && x.n === 1, JSON.stringify(x.rec).slice(0, 300));
+    ok('T6 C the reason of rate-limited names the event and the error, in the record and in log()',
+      /api_error_status 401.*after rate_limit_event rejected \(five_hour\)/.test(x.rec.error || '')
+        && logs.slice(before).some((l) => /rate-limited/.test(l) && /after rate_limit_event rejected/.test(l)), `${x.rec.error} | ${logs.slice(before).join(' | ')}`);
   }
 
   // every non-ok outcome above went to log()
