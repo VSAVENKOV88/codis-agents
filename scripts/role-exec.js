@@ -4,19 +4,23 @@
 // (Claude Code) - with the same contract as the Workflow global agent(): agent(prompt, {schema, model?, effort?, label,
 // phase?, agentType}) -> the object of the schema, or null (never an exception). role-chain.js does not change.
 //
-// This file holds part A1a: the contract and the data. createAgent(cfg) checks the config; each call is prepared here
-// (the task from the label, the role from the kind of the label, the body of the role, model and effort, the strict
-// schema, the argv of the host), its prompt is saved, the prepared plan is handed to cfg.launch(plan), and the answer is
-// checked against the original schema. The process of the role (spawn, the event stream, outcomes, the ceiling) is part
-// A1b: until then the caller passes launch. One line of <task dir>/calls.jsonl per call, whatever its outcome.
+// createAgent(cfg) checks the config; each call is prepared here (the task from the label, the role from the kind of the
+// label, the body of the role, model and effort, the strict schema, the argv of the host), its prompt is saved in a call
+// folder of its own, the plan is run by the launcher, and the answer is checked against the original schema. The
+// launcher is the real process of the host CLI (spawnRole: no shell, its own process group, the prompt on stdin, the
+// JSONL stream parsed line by line, the outcome by the fields of the terminal event, the exit code and the signal, the
+// ceiling of 3 h on the monotonic clock, SIGTERM/SIGINT/SIGHUP of the adapter passed to every live group); cfg.launch
+// replaces it (tests, chain-cost). One line of <task dir>/calls.jsonl per call, whatever its outcome.
 //
 // usage: node role-exec.js check --host codex [--bin <codex>] --home <run home> [--auth chatgpt|apiKeyFile]
 //          [--key-file <file>] [--model <slug>] [--effort <level>] [--versions <a,b>]
 //        node role-exec.js check --host claude [--bin <claude>] [--plugin-root <dir>]
 // check calls no model: it prints JSON {ok, host, version, binKind?, problems} and exits 0 (ok), 1 (problems), 2 (usage).
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
-const { spawnSync } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
+const { StringDecoder } = require('string_decoder');
 
 // The JSON Schema keywords the twelve schemas of role-chain.js use. Strict mode of the OpenAI API supports a subset of
 // JSON Schema; only these words are converted, and any other one is refused before a call, never guessed (A1-04).
@@ -29,6 +33,17 @@ const DEFAULT_CODEX_VERSIONS = ['0.166.0'];
 // The catalog of codex models (`codex debug models`), cached by `check` in the run home and read by the adapter.
 const CATALOG_FILE = 'codis-agents-models.json';
 const AGENT_PREFIX = 'codis-agents:';
+// The only timer of a role (owner decision 2: no silence timer, a ceiling of 3 h). Node timers run on the monotonic
+// clock, which stands still while the Mac sleeps (owner answer 9); the record keeps the wall seconds as well.
+const CEILING_MS = 3 * 60 * 60 * 1000;
+// The pause between SIGTERM and SIGKILL of a role's group, at the ceiling and on a signal (owner answer 2).
+const KILL_GRACE_MS = 30 * 1000;
+const SIGNALS = ['SIGTERM', 'SIGINT', 'SIGHUP'];
+// Tools of `claude -p` that a Workflow agent lacks: subagents, schedules and notifications. Names as the init event of
+// claude 2.1.318 lists them in its tools (experiment X0 E1c); MCP servers are off by --strict-mcp-config.
+const CLAUDE_DISALLOWED = ['Task', 'CronCreate', 'CronDelete', 'CronList', 'ScheduleWakeup', 'RemoteTrigger', 'PushNotification'];
+const NOTES_MAX = 50;
+const DESCENDANTS_NOTE = 'descendants outside the process group are not tracked';
 const ROLE_FILES = ['analyst', 'programmer', 'tester', 'reviewer', 'security-reviewer'];
 // The role is the kind of the label (role-chain.js labels are "<kind>:<task key>..."), not the agentType: agentType only
 // picks the body (with agentTypePrefix "" every role is general-purpose).
@@ -152,12 +167,198 @@ function codexEnv(base, home, auth, key) {
   return env;
 }
 
+// The personal ~/.codex of the user is never the run home of the chains (owner decision 6: a separate home with its own
+// login); compared by realpath, so a link to it is the same home.
+const real = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+const isPersonalCodex = (home) => real(home) === real(path.join(os.homedir(), '.codex'));
+const personalNo = (home) => `codex.home ${home} is the personal ~/.codex: the chains run in a separate home with its own login (CODEX_HOME=<home> codex login)`;
+
+// ---- signals of the adapter (UC-5): every live role process of this Node process, of any adapter
+const LIVE = new Set();
+const handlers = {};
+let stopping = null;
+function finishStop() {
+  for (const s of Object.keys(handlers)) { process.removeListener(s, handlers[s]); delete handlers[s]; }
+  process.exitCode = 128 + os.constants.signals[stopping];
+}
+function gotSignal(sig) {
+  if (!stopping) stopping = sig;
+  for (const stop of LIVE) stop('signalled');
+  if (!LIVE.size) finishStop();
+}
+// The handlers are on while a role process lives; after a signal, when the last one is gone, they are removed and
+// process.exitCode is 128+n: the host exits by itself, and no new call starts.
+function enter(stop) {
+  LIVE.add(stop);
+  if (!stopping) for (const s of SIGNALS) if (!handlers[s]) { handlers[s] = () => gotSignal(s); process.on(s, handlers[s]); }
+}
+function leave(stop) {
+  LIVE.delete(stop);
+  if (LIVE.size) return;
+  if (stopping) finishStop();
+  else for (const s of Object.keys(handlers)) { process.removeListener(s, handlers[s]); delete handlers[s]; }
+}
+
+// {status, code} of an API error message of codex: a JSON string {"type":"error","error":{..,"code"},"status":n}.
+function apiStatus(msg) {
+  try { const j = JSON.parse(msg); return { status: typeof j.status === 'number' ? j.status : null, code: (j.error && j.error.code) || null }; } catch { return { status: null, code: null }; }
+}
+// The outcome of an API status: by the fields, never by the words of the message.
+const byStatus = (s, schemaCode) => (s.status === 400 && schemaCode && s.code === 'invalid_json_schema' ? 'schema-refused'
+  : s.status === 429 ? 'rate-limited' : s.status === 401 || s.status === 403 ? 'auth' : 'crashed');
+const addUsage = (a, b) => { const o = Object.assign({}, a); for (const [k, v] of Object.entries(b)) o[k] = (o[k] || 0) + (Number(v) || 0); return o; };
+
+// The process of one call: plan {host, bin, argv, stdin, env, cwd, callDir, home?, auth?, keyFile?}; o {ceilingMs,
+// graceMs}. Resolves {outcome?, error?, output?, rc, signal, pid, usage, costUSD, notes, sessionId, cliVersion,
+// credentialExpiresAt}; an outcome is set for everything but a run whose answer settle() still checks. Never rejects.
+function spawnRole(plan, o) {
+  return new Promise((resolve) => {
+    const notes = [DESCENDANTS_NOTE];
+    const note = (m) => { if (notes.length < NOTES_MAX) notes.push(m); else if (notes.length === NOTES_MAX) notes.push('later notes dropped'); };
+    const st = { turns: 0, usage: null, failed: null, errors: [], result: null, sessionId: null, cliVersion: null, line: 0 };
+    const events = fs.createWriteStream(path.join(plan.callDir, 'events.jsonl'));
+    const errlog = fs.createWriteStream(path.join(plan.callDir, 'stderr.log'));
+    let child = null, tail = '', why = null, exited = null, graceT = null, finished = false, spawnErr = null, heldOpen = false;
+    const kill = (sig) => { try { process.kill(-child.pid, sig); } catch { /* the group is gone */ } };
+    const stop = (reason) => {
+      if (why || exited) return;
+      why = reason;
+      kill('SIGTERM');
+      graceT = setTimeout(() => kill('SIGKILL'), o.graceMs);
+    };
+    // The ceiling; after the leader's exit it only bounds a stdout held open by a process outside the group.
+    const ceilT = setTimeout(() => { if (exited) { heldOpen = true; finish(); } else stop('ceiling'); }, o.ceilingMs);
+
+    const onEvent = (e) => {
+      if (plan.host === 'codex') {
+        if (e.type === 'thread.started') st.sessionId = e.thread_id || null;
+        else if (e.type === 'turn.completed') {
+          st.turns++;
+          const u = e.usage || {};
+          st.usage = addUsage(st.usage || {}, { input: u.input_tokens, cachedInput: u.cached_input_tokens, cacheWrite: u.cache_write_input_tokens, output: u.output_tokens, reasoning: u.reasoning_output_tokens });
+        } else if (e.type === 'turn.failed') st.failed = e.error || {};
+        else if (e.type === 'error') { st.errors.push(String(e.message)); note(`error event: ${String(e.message).slice(0, 300)}`); }
+        return;
+      }
+      if (e.type === 'system' && e.subtype === 'init') {
+        st.sessionId = e.session_id || st.sessionId;
+        st.cliVersion = e.claude_code_version || null;
+        for (const p of e.plugins || []) if (p && p.name === 'codis-agents') note(`init plugin codis-agents: ${p.path} ${p.version || ''}`.trim());
+        const off = (e.tools || []).filter((t) => (plan.disallowed || []).includes(t) || /^mcp__/.test(t));
+        if (off.length) note(`init.tools has tools a Workflow agent lacks: ${off.join(',')}`);
+      } else if (e.type === 'rate_limit_event') {
+        const r = e.rate_limit_info || {};
+        note(`rate_limit_event ${r.status} (${r.rateLimitType || '?'})`);
+      } else if (e.type === 'result') st.result = e;
+    };
+    const onLine = (l) => {
+      st.line++;
+      if (!l.trim()) return;
+      let e;
+      try { e = JSON.parse(l); } catch { note(`line ${st.line} is not JSON: ${l.slice(0, 80)}`); return; }
+      if (e && typeof e === 'object') onEvent(e);
+    };
+
+    const verdict = () => {
+      const r = { pid: (child && child.pid) || null, rc: exited ? exited.rc : null, signal: exited ? exited.sig : null, notes,
+        sessionId: st.sessionId, cliVersion: st.cliVersion, usage: null, costUSD: null, credentialExpiresAt: null };
+      if (heldOpen) note('stdout stayed open after the exit until the ceiling (held by a process outside the group)');
+      if (spawnErr) return Object.assign(r, { outcome: 'crashed', error: `spawn ${plan.bin}: ${spawnErr.code || spawnErr.message}` });
+      const stderrTail = tail.trim() ? `; stderr: ${tail.trim().slice(-300)}` : '';
+      if (plan.host === 'codex') {
+        r.usage = st.usage;
+        note(`turn.completed events: ${st.turns}`);
+      } else if (st.result) {
+        const x = st.result, u = x.usage;
+        if (u) r.usage = { input: u.input_tokens || 0, cachedInput: u.cache_read_input_tokens || 0, cacheWrite: u.cache_creation_input_tokens || 0,
+          output: u.output_tokens || 0, reasoning: (u.output_tokens_details && u.output_tokens_details.thinking_tokens) || 0 };
+        r.costUSD = typeof x.total_cost_usd === 'number' ? x.total_cost_usd : null;
+        r.credentialExpiresAt = x.credential_expires_at || null;
+        r.sessionId = x.session_id || r.sessionId;
+        if (Array.isArray(x.permission_denials) && x.permission_denials.length) note(`permission_denials: ${x.permission_denials.map((p) => p.tool_name).join(',')}`);
+        if (x.modelUsage && u) {
+          const m = Object.values(x.modelUsage).reduce((a, v) => addUsage(a, { input: v.inputTokens, output: v.outputTokens, cachedInput: v.cacheReadInputTokens, cacheWrite: v.cacheCreationInputTokens }), {});
+          const same = ['input', 'output', 'cachedInput', 'cacheWrite'].every((k) => (m[k] || 0) === (r.usage[k] || 0));
+          note(same ? `modelUsage matches result.usage (${Object.keys(x.modelUsage).length} model)`
+            : `modelUsage differs from result.usage: models ${Object.keys(x.modelUsage).join(',')}, modelUsage ${JSON.stringify(m)}`);
+        }
+      }
+      if (why === 'signalled') return Object.assign(r, { outcome: 'signalled', error: `the adapter got ${stopping}: SIGTERM to the group, SIGKILL after ${o.graceMs} ms` });
+      if (why === 'ceiling') return Object.assign(r, { outcome: 'ceiling', error: `the ceiling of ${o.ceilingMs} ms: SIGTERM to the group, SIGKILL after ${o.graceMs} ms` });
+      if (r.signal) return Object.assign(r, { outcome: 'killed', error: `killed by ${r.signal}${stderrTail}` });
+      const hint = plan.host === 'claude' ? 'log in to claude (claude, then /login)'
+        : plan.auth === 'apiKeyFile' ? `check the key file ${plan.keyFile}` : `log in to the run home: CODEX_HOME=${plan.home} codex login`;
+      const failed = (outcome, msg) => Object.assign(r, { outcome, error: outcome === 'auth' ? `${hint}: ${msg}` : msg });
+      if (plan.host === 'codex') {
+        if (st.failed) {
+          const msg = typeof st.failed.message === 'string' ? st.failed.message : JSON.stringify(st.failed);
+          return failed(byStatus(apiStatus(msg), true), `turn.failed: ${msg}`);
+        }
+        if (r.rc !== 0) {
+          const e = st.errors.slice().reverse().find((m) => apiStatus(m).status !== null);
+          if (e) return failed(byStatus(apiStatus(e), true), `exit ${r.rc} after the error event: ${e}`);
+          return failed('crashed', `exit ${r.rc} without turn.failed${stderrTail}`);
+        }
+        if (!st.turns) return failed('no-result', `exit 0 without turn.completed${stderrTail}`);
+        try { r.output = fs.readFileSync(path.join(plan.callDir, 'last.json'), 'utf8'); } catch { r.output = undefined; }
+        return r;
+      }
+      const x = st.result;
+      if (x) {
+        if (x.is_error || x.subtype !== 'success' || x.api_error_status != null) {
+          return failed(byStatus({ status: x.api_error_status }, false), `result ${x.subtype}, api_error_status ${x.api_error_status}: ${String(x.result || '').slice(0, 300)}`);
+        }
+        if (x.structured_output === undefined || x.structured_output === null) return failed('no-result', 'result success without structured_output');
+        r.output = x.structured_output;
+        return r;
+      }
+      if (r.rc !== 0) return failed('crashed', `exit ${r.rc} without a result event${stderrTail}`);
+      return failed('no-result', `exit 0 without a result event${stderrTail}`);
+    };
+    const flush = (w) => new Promise((ok) => w.end(ok));
+    const finish = async () => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(ceilT); clearTimeout(graceT);
+      leave(stop);
+      if (child) { for (const s of [child.stdout, child.stderr]) if (s) s.destroy(); }
+      await Promise.all([flush(events), flush(errlog)]);
+      resolve(verdict());
+    };
+
+    try {
+      child = spawn(plan.bin, plan.argv, { cwd: plan.cwd, env: plan.env, detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
+    } catch (e) { spawnErr = e; finish(); return; }
+    enter(stop);
+    child.on('error', (e) => { if (!child.pid) { spawnErr = e; finish(); } else note(`process error: ${e.message}`); });
+    child.stdin.on('error', (e) => note(`stdin: ${e.code || e.message}`));
+    child.stdin.end(plan.stdin);
+    const dec = new StringDecoder('utf8');
+    let buf = '';
+    child.stdout.on('data', (d) => {
+      events.write(d);
+      buf += dec.write(d);
+      let i;
+      while ((i = buf.indexOf('\n')) >= 0) { onLine(buf.slice(0, i)); buf = buf.slice(i + 1); }
+    });
+    child.stdout.on('end', () => { buf += dec.end(); if (buf) onLine(buf); buf = ''; });
+    child.stderr.on('data', (d) => { errlog.write(d); tail = (tail + d.toString('utf8')).slice(-2000); });
+    // After the leader's exit its group is killed: no process of the role's group outlives the call (a process the role
+    // moved into a session of its own does, see DESCENDANTS_NOTE).
+    child.on('exit', (rc, sig) => { exited = { rc, sig }; clearTimeout(graceT); kill('SIGKILL'); });
+    child.on('close', (rc, sig) => { if (!exited) exited = { rc, sig }; finish(); });
+  });
+}
+
 function createAgent(cfg) {
   const c = cfg || {};
   const no = (why) => { throw new Error(`role-exec: refused: ${why}`); };
   if (c.host !== 'codex' && c.host !== 'claude') no(`unknown host ${JSON.stringify(c.host)} (codex or claude)`);
   if (typeof c.callsDir !== 'string' || !c.callsDir) no('callsDir is required (the record of a call whose task is unknown)');
-  if (typeof c.launch !== 'function') no('launch is required: the process of a role is part A1b');
+  if (c.launch !== undefined && typeof c.launch !== 'function') no('launch must be a function (without it the adapter runs the host CLI)');
+  const posMs = (v, d, name) => (v === undefined ? d : Number.isFinite(v) && v > 0 ? v : no(`${name} must be a positive number of ms`));
+  const ceilingMs = posMs(c.ceilingMs, CEILING_MS, 'ceilingMs'), graceMs = posMs(c.killGraceMs, KILL_GRACE_MS, 'killGraceMs');
+  const launch = c.launch || ((plan) => spawnRole(plan, { ceilingMs, graceMs }));
   if (typeof c.pluginRoot !== 'string' || !c.pluginRoot) no('pluginRoot is required');
   const tasks = c.tasks && typeof c.tasks === 'object' ? c.tasks : no('tasks is required');
   for (const [k, t] of Object.entries(tasks)) {
@@ -173,8 +374,8 @@ function createAgent(cfg) {
   if (c.host === 'codex' && (typeof cx.home !== 'string' || !path.isAbsolute(cx.home))) {
     no(`codex.home is required and absolute on the host codex (the run home with its own login), got ${JSON.stringify(cx.home)}`);
   }
-  const cl = Object.assign({ bin: 'claude', permissionMode: 'auto' }, c.claude || {});
-  let seq = 0;
+  if (c.host === 'codex' && isPersonalCodex(cx.home)) no(personalNo(cx.home));
+  const cl = Object.assign({ bin: 'claude', permissionMode: 'auto', disallowedTools: CLAUDE_DISALLOWED }, c.claude || {});
 
   // {refused} or the plan of the call.
   function prepare(prompt, opts) {
@@ -216,7 +417,7 @@ function createAgent(cfg) {
       if (cx.auth === 'apiKeyFile') { const k = readKey(cx.keyFile); if (k.error) return refuse(k.error); key = k.key; }
       const body = roleFile ? fs.readFileSync(roleFile, 'utf8').replace(/^---[\s\S]*?\n---\n/, '') : null;
       return Object.assign(plan, {
-        model: slug, effort, bin: cx.bin, strictSchema: strict(o.schema),
+        model: slug, effort, bin: cx.bin, strictSchema: strict(o.schema), home: cx.home, auth: cx.auth, keyFile: cx.keyFile,
         stdin: body === null ? prompt : body.trim() + '\n\n' + prompt,
         env: codexEnv(c.env || process.env, cx.home, cx.auth, key),
         argv: (callDir) => ['exec', '--json', '--ephemeral', '--output-schema', path.join(callDir, 'schema.json'), '-o', path.join(callDir, 'last.json'),
@@ -225,10 +426,11 @@ function createAgent(cfg) {
     }
     return Object.assign(plan, {
       model: o.model === undefined ? null : o.model, effort: o.effort === undefined ? null : o.effort, bin: cl.bin, stdin: prompt,
-      env: Object.assign({}, c.env || process.env),
+      env: Object.assign({}, c.env || process.env), disallowed: cl.disallowedTools,
       argv: () => ['-p', '--output-format', 'stream-json', '--verbose'].concat(bodyRole ? ['--agent', at] : [], ['--json-schema', JSON.stringify(o.schema)],
         o.model === undefined ? [] : ['--model', o.model], o.effort === undefined ? [] : ['--effort', o.effort],
-        ['--plugin-dir', c.pluginRoot, '--permission-mode', cl.permissionMode, '--no-session-persistence']),
+        ['--plugin-dir', c.pluginRoot, '--permission-mode', cl.permissionMode, '--no-session-persistence', '--strict-mcp-config'],
+        cl.disallowedTools.length ? ['--disallowedTools', cl.disallowedTools.join(',')] : []),
     });
   }
 
@@ -252,17 +454,20 @@ function createAgent(cfg) {
     let plan, fin, res = null;
     try { plan = prepare(prompt, opts); } catch (e) { plan = { label: opts && opts.label, refused: `internal error: ${e.message}` }; }
     if (plan.refused) fin = { outcome: 'refused', error: plan.refused };
+    else if (stopping) fin = { outcome: 'signalled', error: `the adapter got ${stopping}: no new call starts` };
     else {
       try {
+        // the last level by mkdtemp: two calls never share a folder (two adapters, one label, one second)
         const stamp = started.toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
-        plan.callDir = path.join(plan.t.dir, 'calls', `${String(plan.label).replace(/[^A-Za-z0-9._-]/g, '_')}-${stamp}-${process.pid}-${++seq}`);
-        fs.mkdirSync(plan.callDir, { recursive: true });
+        const parent = path.join(plan.t.dir, 'calls');
+        fs.mkdirSync(parent, { recursive: true });
+        plan.callDir = fs.mkdtempSync(path.join(parent, `${String(plan.label).replace(/[^A-Za-z0-9._-]/g, '_')}-${stamp}-`));
         fs.writeFileSync(path.join(plan.callDir, 'prompt.txt'), plan.stdin);
         if (plan.strictSchema) fs.writeFileSync(path.join(plan.callDir, 'schema.json'), JSON.stringify(plan.strictSchema, null, 1) + '\n');
         plan.argv = plan.argv(plan.callDir);
       } catch (e) { fin = { outcome: 'crashed', error: `the call folder: ${e.message}` }; }
       if (!fin) {
-        try { res = await c.launch(plan); fin = settle(plan, res); } catch (e) { fin = { outcome: 'crashed', error: `the launcher threw: ${e.message}` }; }
+        try { res = await launch(plan); fin = settle(plan, res); } catch (e) { fin = { outcome: 'crashed', error: `the launcher threw: ${e.message}` }; }
       }
     }
     const ended = new Date();
@@ -321,6 +526,7 @@ function check(a) {
     out.bin = bin;
     const home = a.home || process.env.CODEX_HOME;
     if (!home) { problems.push('no run home: --home <dir> (CODEX_HOME of the chain)'); return out; }
+    if (isPersonalCodex(home)) { problems.push(personalNo(home)); return out; }
     try { fs.accessSync(home, fs.constants.W_OK); } catch { problems.push(`the run home ${home} is not writable (every codex command writes into it)`); return out; }
     const auth = a.auth || 'chatgpt';
     let key = null;
@@ -383,4 +589,4 @@ if (require.main === module) {
   process.exit(r.ok ? 0 : 1);
 }
 
-module.exports = { createAgent, strict, unstrict, validate, schemaProblems, parseLabel, check, KINDS, KEYWORDS, DEFAULT_CODEX_MODELS, CATALOG_FILE };
+module.exports = { createAgent, spawnRole, CEILING_MS, KILL_GRACE_MS, CLAUDE_DISALLOWED, strict, unstrict, validate, schemaProblems, parseLabel, check, KINDS, KEYWORDS, DEFAULT_CODEX_MODELS, CATALOG_FILE };

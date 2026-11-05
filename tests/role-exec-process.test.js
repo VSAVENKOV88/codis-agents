@@ -56,12 +56,13 @@ const chunks = [];
 process.stdin.on('data', (d) => chunks.push(d));
 process.stdin.on('end', async () => {
   fs.writeFileSync(here('stdin-' + process.pid + '.txt'), Buffer.concat(chunks));
-  fs.writeFileSync(here('dump-' + process.pid + '.json'), JSON.stringify({ argv, cwd: process.cwd(), env: process.env, pid: process.pid }));
+  // children first: the dump file tells a waiting test that the fake and its children are all up
   for (const k of [].concat(sc.child || [])) {
     const c = spawn('sleep', ['300'], { detached: k === 'session', stdio: 'ignore' });
     c.unref();
     fs.writeFileSync(here('child-' + k + '.pid'), String(c.pid));
   }
+  fs.writeFileSync(here('dump-' + process.pid + '.json'), JSON.stringify({ argv, cwd: process.cwd(), env: process.env, pid: process.pid }));
   if (sc.delayMs) await sleep(sc.delayMs);
   for (const l of sc.lines || []) {
     const s = typeof l === 'string' ? l : JSON.stringify(l);
@@ -105,6 +106,8 @@ const dumpOf = (t) => { const f = files(t.dir, /^dump-\d+\.json$/)[0]; return f 
 const stdinOf = (t) => { const f = files(t.dir, /^stdin-\d+\.txt$/)[0]; return f ? fs.readFileSync(path.join(t.dir, f)) : null; };
 const runsOf = (t) => { try { return fs.readFileSync(path.join(t.dir, 'runs.txt'), 'utf8').split('\n').filter(Boolean).length; } catch { return 0; } };
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+// A killed orphan stays a zombie until launchd/init reaps it: wait up to 5 s for it to vanish.
+const gone = async (pid) => { if (!(pid > 0)) return false; for (let i = 0; i < 100 && alive(pid); i++) await new Promise((r) => setTimeout(r, 50)); return !alive(pid); };
 const pidFile = (t, k) => { try { return +fs.readFileSync(path.join(t.dir, `child-${k}.pid`), 'utf8'); } catch { return 0; } };
 const opts = (label) => ({ schema: REVIEW, model: 'opus', effort: 'high', label, phase: 'P', agentType: 'codis-agents:reviewer' });
 const callX = async (sc, extra) => { const t = task(sc); const res = await mk('codex', [t], extra)(`Review task ${t.key}.\n`, opts(`review:${t.key}#1`)); return { t, res, rec: records(t.dir).slice(-1)[0] || {}, n: records(t.dir).length }; };
@@ -236,7 +239,7 @@ const seen = (name, x) => { OUTCOMES.push([name, x]); return x; };
   let t0 = Date.now();
   x = seen('A1-20 X', await callX({ lines: xOk().slice(0, 2), child: 'group', ignoreTerm: true, sleepMs: 60000 }, { cfg: { ceilingMs: 800, killGraceMs: 300 } }));
   ok('A1-20 X past the ceiling (SIGTERM ignored) -> ceiling, null, ends well before the sleep', x.res === null && x.rec.outcome === 'ceiling' && Date.now() - t0 < 30000, J(x.rec));
-  ok('A1-20 X the child in the group of the role is dead after the call', pidFile(x.t, 'group') > 0 && !alive(pidFile(x.t, 'group')), String(pidFile(x.t, 'group')));
+  ok('A1-20 X the child in the group of the role is dead after the call', pidFile(x.t, 'group') > 0 && await gone(pidFile(x.t, 'group')), String(pidFile(x.t, 'group')));
   x = await callC({ lines: [CINIT], sleepMs: 60000 }, { cfg: { ceilingMs: 800, killGraceMs: 300 } });
   ok('A1-20 C past the ceiling -> ceiling', x.res === null && x.rec.outcome === 'ceiling', J(x.rec));
   x = await callX({ delayMs: 1500, lines: xOk(), writeO: J(ANSWER) }, { cfg: { killGraceMs: 300 } });
@@ -268,7 +271,7 @@ const seen = (name, x) => { OUTCOMES.push([name, x]); return x; };
 
   // ---- A1-23 a 60 KB prompt with ` $ ' and Cyrillic by stdin; a 0.7 MB stream; a line cut between chunks; a broken line
   const cyr = String.fromCharCode(0x41f, 0x440, 0x438, 0x432, 0x435, 0x442);
-  const big = ('Line with `backticks`, $HOME and $(date), \'single\' "double" \\ ' + cyr + '\n').repeat(700);
+  const big = ('Line with `backticks`, $HOME and $(date), \'single\' "double" \\ ' + cyr + '\n').repeat(900);
   const tb = task({ lines: xOk().slice(0, 3), pad: 700, tail: ['{"type":"item.completed","item":', ...xOk().slice(3)], split: true, writeO: J(ANSWER) });
   const rb = await mk('codex', [tb])(big, opts(`review:${tb.key}#1`));
   const recb = records(tb.dir).slice(-1)[0] || {};
@@ -301,7 +304,7 @@ const seen = (name, x) => { OUTCOMES.push([name, x]); return x; };
   x = await callX({ child: ['group', 'session'], lines: xOk(), writeO: J(ANSWER) });
   const gp = pidFile(x.t, 'group'), sp = pidFile(x.t, 'session');
   if (sp) leftovers.push(sp);
-  ok('A1-35 X after the leader exits the child of its group is dead', gp > 0 && !alive(gp), String(gp));
+  ok('A1-35 X after the leader exits the child of its group is dead', gp > 0 && await gone(gp), String(gp));
   ok('A1-35 X a child in its own session lives on (the adapter does not kill it)', sp > 0 && alive(sp), String(sp));
   ok('A1-35 X the record says descendants outside the group are not tracked', x.rec.outcome === 'ok' && x.rec.notes.some((n) => /outside the (process )?group are not tracked/.test(n)), J(x.rec.notes));
 
@@ -372,11 +375,13 @@ const iv = setInterval(() => { if (dumps() === 2) { clearInterval(iv); process.k
     try { o = JSON.parse(fs.readFileSync(out, 'utf8')); } catch { /* below */ }
     const recs = [...records(tA.dir), ...records(tB.dir)];
     const pids = recs.map((r) => r.pid).filter(Boolean);
+    const dead = [];
+    for (const p of pids.concat(pidFile(tA, 'group'))) dead.push(await gone(p));
     ok(`A1-24 ${sig} with two live calls: both null, the wrapper exits with ${128 + os.constants.signals[sig]} by itself, well before the fakes' sleep`,
       o && J(o.res) === '[null,null]' && w.status === 128 + os.constants.signals[sig] && Date.now() - t0 < 30000, J({ status: w.status, signal: w.signal, o, err: (w.stderr || '').slice(0, 300) }));
     ok(`A1-24 ${sig}: two records signalled (plus the later call, not started), the fakes and the child of the group are dead`,
-      recs.filter((r) => r.outcome === 'signalled').length === 3 && runsOf(tA) === 1 && pids.length === 2 && pids.every((p) => !alive(p)) && !alive(pidFile(tA, 'group')),
-      J(recs.map((r) => [r.outcome, r.pid])));
+      recs.filter((r) => r.outcome === 'signalled').length === 3 && runsOf(tA) === 1 && pids.length === 2 && pidFile(tA, 'group') > 0 && dead.every(Boolean),
+      J({ recs: recs.map((r) => [r.outcome, r.pid]), dead }));
     ok(`A1-24 ${sig}: the adapter removed its handlers`, o && o.listeners === 0, o && String(o.listeners));
   }
 

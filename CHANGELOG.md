@@ -4,6 +4,23 @@ Every version of the codis-agents plugin, newest first. What the plugin does now
 [README.md](README.md); its [Technical reference](README.md#technical-reference) is the current state of every rule,
 key and script, and this file says when and why each one changed. Versions before 0.4.14 are in the git history.
 
+## 0.4.27 - 2026-11-05
+
+- **The role adapter, part A1b: the process of a role** (p-codex-A1b; owner 2026-11-05 "p-codex: 1-5 as recommended",
+  "9 questions on p-codex-A1 as recommended", wave 8). `scripts/role-exec.js` now starts the host CLI itself when
+  `cfg.launch` is not given (`spawnRole`): no shell, a process group of its own, the prompt on stdin, the JSONL stream
+  saved and parsed line by line, the outcome by the fields of the terminal event, the exit code and the signal
+  (`ok`, `schema-refused`, `rate-limited`, `auth`, `crashed`, `killed`, `ceiling`, `signalled`, `no-result`,
+  `invalid-result`; no retries). The ceiling is 3 h on the monotonic clock with SIGTERM, 30 s, SIGKILL to the group
+  (owner answers 2 and 9; no silence timer); SIGTERM/SIGINT/SIGHUP to the adapter stop every live group the same way,
+  then `process.exitCode = 128+n` and no new call starts. The record of a call carries the host's raw usage numbers
+  (codex: the sum of every `turn.completed`, the number of them in `notes`), `costUSD` of claude, notes (error events,
+  rate limit events, permission denials, `modelUsage` against `result.usage`, the codis-agents plugin and the tools of
+  the claude `init` event) and the reason of every non-ok outcome in `cfg.log`. `claude -p` runs with cwd the task
+  folder, `--strict-mcp-config` and `--disallowedTools` (subagents, schedules, notifications). Every call gets a folder
+  of its own (`mkdtemp`); the personal `~/.codex` as the run home is refused (owner decision 6). `env-check.js`: a swap
+  that cannot be measured is a problem when the floor is on the command line (a codex sandbox refuses `sysctl`).
+
 ## 0.4.26 - 2026-11-05
 
 - **Code comments describe the current code** (owner 2026-11-05 "yes", after an outside review of the product project
