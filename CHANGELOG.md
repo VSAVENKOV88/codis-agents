@@ -4,6 +4,23 @@ Every version of the codis-agents plugin, newest first. What the plugin does now
 [README.md](README.md); its [Technical reference](README.md#technical-reference) is the current state of every rule,
 key and script, and this file says when and why each one changed. Versions before 0.4.14 are in the git history.
 
+## 0.4.30 - 2026-11-05
+
+- **Install under Codex CLI and a read-only check of the hook's trust** (p-codex-D1b; owner 2026-11-05 answers 1, 2
+  and 5: "all as recommended"). Codex runs a plugin hook only after the user trusts it in `/hooks`, and resets that
+  trust at every change of any file of the installed plugin, an update included, so the git protection of the hook
+  went silent after each update without a sign. New `scripts/codex-hooks-check.js --codex-home <dir> [--cwd <dir>]`
+  asks Codex itself: it starts `codex app-server` with `CODEX_HOME` = the realpath of `--codex-home` (never the
+  parent's) and `hooks/list` over stdio JSON-RPC, matches answers by `id` and skips notifications, checks that
+  `initialize` names the same `codexHome`, and exits 0 only when every hook of this plugin (`pluginId` before `@` =
+  the `name` of `.claude-plugin/plugin.json`) is `trusted` and `enabled` and the answer has no errors; 1 names what
+  to do (`/hooks`), 3 is "not checked" (no `codex`, no answer in `--timeout-ms`, 30000 by default, an answer off the
+  schema), 2 refuses the personal `~/.codex` before any start. It never writes trust. Tested on a fake app-server
+  (`tests/codex-hooks-check.test.js`). No second Codex manifest: `tests/codex-manifests.test.js` forbids
+  `.codex-plugin/`, a root `plugin.json`, `.agents/plugins/marketplace.json` and `api_marketplace.json`, each of
+  which Codex would read over `.claude-plugin/`. README "Install" has a Codex CLI part (install, `/hooks`, the check,
+  update = `marketplace upgrade` + `plugin add` + `/hooks` again); "What's inside" counts recounted.
+
 ## 0.4.29 - 2026-11-05
 
 - **The session hook under Codex CLI** (p-codex-D1a; owner 2026-11-05 "p-codex: 1-5 as recommended", "all as

@@ -86,11 +86,12 @@ const mkHome = (name, scenario) => {
   if (scenario) fs.writeFileSync(path.join(h, 'fake.json'), JSON.stringify(scenario));
   return h;
 };
-// Runs the check; returns {status, out, log: [journal records]}.
+// Runs the check; returns {status, out, log: [journal records]}. PATH is only the fake's directory (the script and the
+// fake run by the absolute node path), so a real codex next to node is never started.
 const run = (args, opts) => {
   const o = opts || {};
   const log = path.join(TMP, `log-${seq++}.jsonl`);
-  const env = Object.assign({}, process.env, { PATH: (o.bin || BIN) + path.delimiter + path.dirname(process.execPath), FAKE_CODEX_LOG: log }, o.env || {});
+  const env = Object.assign({}, process.env, { PATH: o.bin || BIN, FAKE_CODEX_LOG: log }, o.env || {});
   if (!(o.env && 'CODEX_HOME' in o.env)) delete env.CODEX_HOME;
   const r = spawnSync(process.execPath, [SCRIPT].concat(args), { env, encoding: 'utf8', timeout: 20000, cwd: o.cwd || TMP });
   let recs = [];
