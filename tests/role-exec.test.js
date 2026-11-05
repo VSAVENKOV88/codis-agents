@@ -201,7 +201,7 @@ const call = async (ag, label, extra = {}) => {
   let res;
   try { res = await ag(extra.prompt || `Task text for ${label}.\n`, Object.assign({ label, phase: 'P', schema: SCH[kind] || S.SHA_SCHEMA, agentType: ROLE[kind] || 'general-purpose' }, extra.opts || {})); }
   catch (e) { res = { threw: e.message }; }
-  return { res, plan: launched.length > n0 ? launched[launched.length - 1] : null };
+  return { res, plan: launched.slice(n0).reverse().find((x) => x.label === label) || null };
 };
 const argOf = (plan, flag) => { const i = plan ? plan.argv.indexOf(flag) : -1; return i < 0 ? undefined : plan.argv[i + 1]; };
 const readCall = (plan, f) => { try { return fs.readFileSync(path.join(plan.callDir, f), 'utf8'); } catch { return null; } };
@@ -365,7 +365,7 @@ const readCall = (plan, f) => { try { return fs.readFileSync(path.join(plan.call
     const n0 = records(TASKS.K.dir).length;
     const x = await call(ag, 'review:K#1');
     const rec = records(TASKS.K.dir).slice(n0);
-    ok(`A1-06 ${name}: invalid-result, null, the reason in the record`, x.res === null && rec.length === 1 && rec[0].outcome === 'invalid-result' && /verdict|docsOnly|summary/.test(rec[0].error || ''), JSON.stringify(rec));
+    ok(`A1-06 ${name}: invalid-result, null, the reason in the record`, x.res === null && rec.length === 1 && rec[0].outcome === 'invalid-result' && /verdict|docsOnly|summary|fixBehaviourUnchanged/.test(rec[0].error || ''), JSON.stringify(rec));
   };
   await inval(X, JSON.stringify({ verdict: 'maybe', docsOnly: false, fixBehaviourUnchanged: null, summary: 's' }), 'X enum');
   await inval(X, JSON.stringify({ verdict: 'done', docsOnly: 'no', fixBehaviourUnchanged: null, summary: 's' }), 'X type');

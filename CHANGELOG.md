@@ -4,6 +4,23 @@ Every version of the codis-agents plugin, newest first. What the plugin does now
 [README.md](README.md); its [Technical reference](README.md#technical-reference) is the current state of every rule,
 key and script, and this file says when and why each one changed. Versions before 0.4.14 are in the git history.
 
+## 0.4.25 - 2026-11-05
+
+- **The role adapter, part A1a: its contract and data** (p-codex-A1a; owner 2026-11-05 "p-codex: 1-5 as recommended"
+  and "9 questions on p-codex-A1 as recommended"). New `scripts/role-exec.js`: `createAgent(cfg)` returns
+  `agent(prompt, opts)` with the contract of the Workflow `agent()` (an object of the schema or `null`, never an
+  exception) for the hosts `codex` and `claude`. The task comes from the label and the role from its kind (`agentType`
+  only picks the body and must match it); `strict()` and `unstrict()` are pure functions that turn the twelve schemas
+  of `role-chain.js` into the strict form the OpenAI API requires (`additionalProperties: false`, every key required,
+  optional fields nullable; the live check accepted all twelve) and back (a `null` is removed only from a field that was
+  optional and not nullable, so `RUN.rc: null` stays); the answer is checked against the original schema; refusals
+  before any process (unknown task or kind, a foreign or mismatched `agentType`, a missing role file, an unknown schema
+  keyword, a model outside the table or the catalog, an effort the model lacks, `pre`, service steps and
+  programmer/tester on codex); the codex model table `opus -> gpt-6-astra`, effort `high` (owner, question 8); the codex
+  prompt `body.trim() + "\n\n" + prompt` saved as `prompt.txt`; one line of `calls.jsonl` per call; `role-exec.js check`
+  for both hosts without a model. The process of the role (A1b) and the chain on the adapter (B) come later;
+  `role-chain.js` is unchanged.
+
 ## 0.4.24 - 2026-11-05
 
 - **The reviewer's rejection bar** (p-codex experiment X0: a GPT reviewer through Codex rejected a task whose truth was
