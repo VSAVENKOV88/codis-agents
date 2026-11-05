@@ -210,6 +210,24 @@ const seen = (name, x) => { OUTCOMES.push([name, x]); return x; };
   ok('A1-16 X an error event with 429 and exit 1 without turn.failed -> rate-limited', x.res === null && x.rec.outcome === 'rate-limited', J(x.rec));
   x = seen('A1-16 C', await callC({ lines: [CINIT, cResult({ subtype: 'error_during_execution', is_error: true, api_error_status: 429, structured_output: undefined })], exit: 1 }));
   ok('A1-16 C api_error_status 429 -> rate-limited, null, one run', x.res === null && x.rec.outcome === 'rate-limited' && runsOf(x.t) === 1, J(x.rec));
+  // UC-2 Errors 5: a rate_limit_event whose status is not "allowed", then an error -> rate-limited, by the field.
+  const cRl = (status) => ({ type: 'rate_limit_event', rate_limit_info: { status, rateLimitType: 'five_hour' } });
+  const cErr = cResult({ subtype: 'error_during_execution', is_error: true, api_error_status: null, structured_output: undefined });
+  x = seen('A1-16 C rejected', await callC({ lines: [CINIT, cRl('rejected'), cErr], exit: 1 }));
+  ok('A1-16 C rate_limit_event rejected, then a result error without api_error_status -> rate-limited, null, one run',
+    x.res === null && x.rec.outcome === 'rate-limited' && runsOf(x.t) === 1 && x.rec.notes.some((n) => /rate_limit_event rejected/.test(n)), J(x.rec));
+  x = await callC({ lines: [CINIT, cRl('allowed_warning'), cErr], exit: 1 });
+  ok('A1-16 C rate_limit_event allowed_warning (not "allowed"), then a result error -> rate-limited', x.res === null && x.rec.outcome === 'rate-limited', J(x.rec));
+  x = await callC({ lines: [CINIT, cRl('rejected')], stderr: 'claude: stopped\n', exit: 1 });
+  ok('A1-16 C rate_limit_event rejected, then exit 1 without a result -> rate-limited', x.res === null && x.rec.outcome === 'rate-limited', J(x.rec));
+  x = await callC({ lines: [CINIT, cRl('allowed'), cErr], exit: 1 });
+  ok('A1-16 C rate_limit_event allowed, then the same result error -> crashed', x.res === null && x.rec.outcome === 'crashed', J(x.rec));
+  x = await callC({ lines: [CINIT, cRl('rejected'), ...cOk().slice(1)] });
+  ok('A1-16 C rate_limit_event rejected, then a success -> ok (no error, no outcome from the event)', x.rec.outcome === 'ok', J(x.rec));
+  // Codex 0.166.0: the error events of exec --json carry only a message (no codex_error_info), and the plan limit is
+  // plain text; it is not classified by words, so it ends as crashed with the message (README, Known gaps).
+  x = await callX({ lines: [{ type: 'thread.started', thread_id: 't' }, { type: 'turn.failed', error: { message: "You've hit your usage limit. Try again later." } }], exit: 1 });
+  ok('A1-16 X the plain-text plan limit -> crashed with the message (a known gap, not matched by words)', x.res === null && x.rec.outcome === 'crashed' && /usage limit/.test(x.rec.error), J(x.rec));
 
   // ---- A1-17 auth: by status 401/403 only (G12); the reason names the login command of this home
   x = seen('A1-17 X', await callX({ lines: xFail(401, 'invalid_api_key'), exit: 1 }));
