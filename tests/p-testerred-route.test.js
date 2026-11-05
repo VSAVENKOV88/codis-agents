@@ -263,7 +263,7 @@ const refused = (x, re) => x.r.status === 'stopped' && x.r.why === 'precondition
   ok('D3. coordinator skill: a relaunch passes prior from the reports of the earlier run', /`prior`/.test(co) && /testerReds/.test(co) && !/say so in `start`/.test(co), '');
   const cl = read('CHANGELOG.md');
   ok('D4. CHANGELOG: 0.4.17 names prior', /## 0\.4\.17\b[\s\S]*?`prior`[\s\S]*?## 0\.4\.16\b/.test(cl), '');
-  ok('D4. version 0.4.26 in package.json and plugin.json (the one pin of the version, moved at each bump)', /"version": "0\.4\.26"/.test(read('package.json')) && /"version": "0\.4\.26"/.test(read('.claude-plugin/plugin.json')), '');
+  ok('D4. version 0.4.28 in package.json and plugin.json (the one pin of the version, moved at each bump)', /"version": "0\.4\.28"/.test(read('package.json')) && /"version": "0\.4\.28"/.test(read('.claude-plugin/plugin.json')), '');
   ok('D5. rule role:testerred and both skills: copy the counts of the run results (counts), the field rejections',
     /`counts`/.test(rule('testerred')) && /rejections/.test(rule('testerred')) && /`counts`/.test(co) && /`counts`/.test(rc), rule('testerred'));
   const prow = (read('skills/role-chain/SKILL.md').match(/^\| `prior` \|.*$/m) || [''])[0];

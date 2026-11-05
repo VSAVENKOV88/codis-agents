@@ -113,7 +113,7 @@ role agents are unavailable).
 - Cost: `node "${CLAUDE_PLUGIN_ROOT}/scripts/chain-cost.js" <directory with the run's agent transcripts>...` prints the
   input-equivalent cost per task and flags tasks above twice `medianTaskIE`; give it the transcript directories of all
   runs of a split feature, and it sums the parts that carry the same `feature` and flags the feature above
-  `featureIELimit` (default 3 x `medianTaskIE`). Put the lines into the report to the owner.
+  `featureIELimit` (default 3 x `medianTaskIE`). Add `--journal <task folder>` for the tasks whose roles ran through the role adapter (`scripts/role-exec.js`, its `calls.jsonl`): their calls are added to the same task key, and the line names its sources. Put the lines into the report to the owner.
 - An interrupted run with several tasks is never resumed with `resumeFromRunId`: cached agent results replay by call
   order, which differs between parallel tasks, so results land in the wrong task. Relaunch each unfinished task alone,
   with `start` pointing to its report and the step it stopped at.

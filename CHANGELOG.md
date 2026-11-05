@@ -4,6 +4,22 @@ Every version of the codis-agents plugin, newest first. What the plugin does now
 [README.md](README.md); its [Technical reference](README.md#technical-reference) is the current state of every rule,
 key and script, and this file says when and why each one changed. Versions before 0.4.14 are in the git history.
 
+## 0.4.28 - 2026-11-05
+
+- **Chain cost for both hosts: `chain-cost.js --journal`** (p-codex-C; owner 2026-11-05 "C 1-2 as recommended").
+  Calls of the role adapter leave no transcript (`codex exec --ephemeral`, `claude -p --no-session-persistence`); the
+  adapter already writes one line per call to `<task dir>/calls.jsonl`, and `--journal <task folder | calls.jsonl>`
+  (repeatable) now reads it: one IE formula, fresh + 1.25 x cache write + 0.1 x cache read + 5 x output, where codex
+  fresh is `input - cachedInput - cacheWrite` (its input holds the cache) by the price table of `gpt-6-astra` (cache
+  writes $12.5 = 1.25 x input, so they are not zero on an API key) and claude fresh is `input`; output is the real
+  output tokens, codex reasoning not added. Every call counts once: a journal named twice is read once (device and
+  inode), the same `callDir` in two journals once, records without `callDir` never merged, `refused` calls are no
+  agents, the call folders are never read. Transcripts and journals add up per task key, the line names its sources
+  (`[workflow 4.2M, claude 0.5M, codex 0.6M]`) and the 2 x median flag uses the one `medianTaskIE`; the feature of a
+  journal key comes from the run record or the records' `feature`. Without `--journal` the output is unchanged. New
+  guard `tests/chain-cost-journal.test.js` on the real usage of experiments X0 and G6 (E1 343 913, G6 202 019.75,
+  E1c 529 714.2 IE).
+
 ## 0.4.26 - 2026-11-05
 
 - **Code comments describe the current code** (owner 2026-11-05 "yes", after an outside review of the product project
