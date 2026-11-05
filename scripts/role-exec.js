@@ -147,7 +147,7 @@ function readKey(file) {
 function codexEnv(base, home, auth, key) {
   const env = Object.assign({}, base);
   delete env.CODEX_API_KEY; delete env.OPENAI_API_KEY;
-  if (home) env.CODEX_HOME = home;
+  env.CODEX_HOME = home;
   if (auth === 'apiKeyFile' && key) env.CODEX_API_KEY = key;
   return env;
 }
@@ -168,6 +168,11 @@ function createAgent(cfg) {
   const cx = Object.assign({ bin: 'codex', auth: 'chatgpt', effort: DEFAULT_CODEX_EFFORT, models: DEFAULT_CODEX_MODELS }, c.codex || {});
   if (!cx.models) cx.models = DEFAULT_CODEX_MODELS;
   if (!cx.effort) cx.effort = DEFAULT_CODEX_EFFORT;
+  // The run home of the chains (owner decision 6, analysis 2.4): never the parent's CODEX_HOME or the personal ~/.codex,
+  // also when the catalog comes from cfg.codex.catalog; absolute, since the child runs with cwd = the task dir.
+  if (c.host === 'codex' && (typeof cx.home !== 'string' || !path.isAbsolute(cx.home))) {
+    no(`codex.home is required and absolute on the host codex (the run home with its own login), got ${JSON.stringify(cx.home)}`);
+  }
   const cl = Object.assign({ bin: 'claude', permissionMode: 'auto' }, c.claude || {});
   let seq = 0;
 

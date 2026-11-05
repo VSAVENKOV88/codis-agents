@@ -19,7 +19,9 @@ key and script, and this file says when and why each one changed. Versions befor
   programmer/tester on codex); the codex model table `opus -> gpt-6-astra`, effort `high` (owner, question 8); the codex
   prompt `body.trim() + "\n\n" + prompt` saved as `prompt.txt`; one line of `calls.jsonl` per call; `role-exec.js check`
   for both hosts without a model. The process of the role (A1b) and the chain on the adapter (B) come later;
-  `role-chain.js` is unchanged.
+  `role-chain.js` is unchanged. `createAgent` on codex refuses a config without an absolute `codex.home` (the run home
+  with its own login, owner decision 6): the child never runs in the parent's `CODEX_HOME` or the personal `~/.codex`,
+  also when the catalog comes from `codex.catalog` (review 1).
 
 ## 0.4.24 - 2026-11-05
 
