@@ -14,6 +14,9 @@
 //     and non-ASCII; a "---" line inside the body stays; prompt.txt holds the same bytes.
 // T5  the apiKeyFile mode in agent(): the key only in the child's CODEX_API_KEY, never in argv, the record, the call
 //     folder or the log; chatgpt mode drops the parent's key variables; a key file wider than 600 is refused.
+// T6  the run home on codex (review 1, owner decision 6): the parent's CODEX_HOME from process.env (no cfg.env) never
+//     reaches the child and its cached catalog is never read; "~/.codex" (not absolute, not expanded) and the
+//     apiKeyFile mode without codex.home are refused by createAgent.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -197,6 +200,37 @@ ok('T3 strict(): no object or array of the output is an object of the input, at 
   const rr = records(TASKS.K.dir).slice(r0);
   ok('T5 key file 640: refused, nothing launched, one record naming mode 600, without the key',
     r644 === null && launched.length === n5 && rr.length === 1 && rr[0].outcome === 'refused' && /600/.test(rr[0].error) && !JSON.stringify(rr).includes(SECRET), JSON.stringify(rr));
+
+  // ---- T6: the run home on codex - the parent's CODEX_HOME through process.env, the catalog of the run home only
+  {
+    const PH = path.join(TMP, 'parent-home'), RH = path.join(TMP, 'run-home-t6'), EMPTY = path.join(TMP, 'run-home-empty');
+    [PH, RH, EMPTY].forEach((d) => fs.mkdirSync(d, { recursive: true }));
+    fs.writeFileSync(path.join(PH, RX.CATALOG_FILE), JSON.stringify(CATALOG));
+    fs.writeFileSync(path.join(RH, RX.CATALOG_FILE), JSON.stringify(CATALOG));
+    const saved = process.env.CODEX_HOME;
+    process.env.CODEX_HOME = PH;
+    try {
+      const base6 = { host: 'codex', tasks: TASKS, pluginRoot: ROOT, callsDir: CALLS, launch, log: (m) => logs.push(m) };
+      const A = createAgent(Object.assign({}, base6, { codex: { bin: '/fake/codex', home: RH } }));
+      answer = { rc: 0, output: G6.REVIEW_SCHEMA };
+      const n6 = launched.length;
+      const ra = await A('task\n', { label: 'review:K#8', schema: S.REVIEW_SCHEMA, agentType: 'codis-agents:reviewer' });
+      const pa = launched[n6];
+      ok('T6 no cfg.env, parent CODEX_HOME in process.env: the child\'s CODEX_HOME is codex.home', ra && pa && pa.env.CODEX_HOME === RH, pa && pa.env.CODEX_HOME);
+      const B = createAgent(Object.assign({}, base6, { codex: { bin: '/fake/codex', home: EMPTY } }));
+      const n7 = launched.length, r7 = records(TASKS.K.dir).length;
+      const rb = await B('task\n', { label: 'review:K#9', schema: S.REVIEW_SCHEMA, agentType: 'codis-agents:reviewer' });
+      const rr7 = records(TASKS.K.dir).slice(r7);
+      ok('T6 the run home has no cached catalog: refused, nothing launched - the catalog of the parent\'s CODEX_HOME is not read',
+        rb === null && launched.length === n7 && rr7.length === 1 && rr7[0].outcome === 'refused' && /catalog/.test(rr7[0].error), JSON.stringify(rr7));
+      const ca6 = (codex) => { try { createAgent(Object.assign({}, base6, { codex })); return ''; } catch (e) { return e.message; } };
+      ok('T6 codex.home "~/.codex" (not absolute, never expanded) is refused by createAgent', /codex\.home/.test(ca6({ catalog: CATALOG, home: '~/.codex' })));
+      ok('T6 apiKeyFile mode without codex.home is refused by createAgent (the parent\'s CODEX_HOME does not stand in)',
+        /codex\.home/.test(ca6({ catalog: CATALOG, auth: 'apiKeyFile', keyFile: KEY })));
+    } finally {
+      if (saved === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = saved;
+    }
+  }
 
   done();
 })().catch((e) => { ok('no exception in the test', false, e.stack); done(); });
