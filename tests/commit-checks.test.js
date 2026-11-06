@@ -628,6 +628,29 @@ const underAny = (p, roots) => roots.some((r) => p === r || p.startsWith(r + pat
     ok('MA-08 close() at the step of the intent, after a check -> committed', a && a.status === 'committed' && f.mark('pre-commit') && sum && sum.commits.length === 1 && f.tip() === a.sha, J({ a, sum }));
   }
 
+  // ---- role-exec gives the checks the network of the role: off for the programmer, on for the tester
+  {
+    const { createAgent } = require(path.join(ROOT, 'scripts', 'role-exec.js'));
+    for (const [kind, want] of [['prog', false], ['test', true]]) {
+      const f = fixture({ hooks: { 'pre-commit': '' } });
+      let seen = null;
+      const agent = createAgent({ host: 'codex', callsDir: path.join(f.d, 'calls'), pluginRoot: ROOT, log: () => {}, codex: { home: path.join(f.d, 'chome'), catalog: CATALOG, bin: CODEX },
+        env: Object.assign({}, process.env, f.userEnv), tasks: { K: { dir: f.tdir, wt: f.wt, branch: 'task' } }, commit: { stateDir: f.state, git: GIT },
+        launch: async (plan) => {
+          fs.writeFileSync(path.join(f.wt, 'a.txt'), `${kind}\n`);
+          const id = put(plan.commit.box, { paths: ['a.txt'], message: kind });
+          const end = Date.now() + 30000;
+          while (!seen && Date.now() < end) { seen = readJson(path.join(plan.commit.answers, `${id}.json`)); await sleep(50); }
+          return { rc: 0, output: JSON.stringify({ status: 'ready' }) };
+        } });
+      await agent('x', { label: `${kind}:K#1`, schema: { type: 'object', properties: { status: { type: 'string' } }, required: ['status'] }, agentType: 'general-purpose' });
+      const c0 = seen && seen.checks && seen.checks[0];
+      ok(`role-exec: the checks of a ${kind} call get network ${want} and the task folder and npm cache of the call among their roots`,
+        seen && seen.status === 'committed' && seen.environment.network === want && c0 && c0.launch.network === want
+        && c0.launch.writeRoots.includes(fs.realpathSync(f.tdir)), J(seen));
+    }
+  }
+
   // ---- MA-04, MA-04b, MA-05, MA-07: the adapter as a process (createAgent with a launcher on spawnRole)
   const DRIVER = path.join(BIN, 'driver.js'), ROLE = path.join(BIN, 'role.js');
   fs.writeFileSync(ROLE, `const fs=require('fs'),path=require('path');const {spawn}=require('child_process');
