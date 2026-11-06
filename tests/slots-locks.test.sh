@@ -19,7 +19,7 @@
 #           root in a container over a shared slot directory) - a slot file, admit.lock, the slot directory itself - is
 #           a refusal: one line naming the path, code 77, within seconds, the command never runs (zsystem flock reads a
 #           failed open as "busy", so the job waited forever); a lock turning unwritable while the job waits is refused on
-#           the next poll.
+#           the next poll; 12. a slot directory that cannot be created is the same refusal (code 77, one line).
 H=${SLOTS_H:-${0:A:h:h}/scripts}
 zmodload zsh/datetime zsh/system
 T=$(mktemp -d "${${TMPDIR:-/tmp}%/}/slots-locks.XXXXXX"); T=${T:A}
@@ -208,6 +208,14 @@ else
   ok '11. admit.lock turned unwritable while waiting: refused with code 77, the command did not run' '(( rc == 77 )) && [[ ! -e $T/11.ran ]]' "$rc $(tail -2 $T/11l.out; tail -2 $T/11l.err)"
   ok '11. ... one line on stderr naming admit.lock' '[[ $(wc -l < $T/11l.err | tr -d " ") == 1 ]] && grep -qF -- "$d/admit.lock " $T/11l.err' "$(tail -3 $T/11l.err)"
 fi
+
+# 12. a slot directory that cannot be created (its parent is a regular file here; inside a sandbox whose write roots
+#     do not hold it, the same): one refusal line naming it, code 77, within seconds, the command never runs (before:
+#     the failed creation of admit.lock was silent and the job retried the lock it could never open until killed)
+rm -f $T/12.ran; : > $T/s12-file
+SLOTS_DIR=$T/s12-file/slots SLOT_MEDIUM_N=1 tm 10 "$H/medium.sh" zsh -c 'touch '$T'/12.ran' > $T/12.out 2> $T/12.err; rc=$?
+ok '12. a slot directory that cannot be created: medium.sh refused with code 77 within 10 s, the command did not run' '(( rc == 77 )) && [[ ! -e $T/12.ran ]]' "$rc $(tail -2 $T/12.out; tail -2 $T/12.err)"
+ok '12. ... one line on stderr naming the slot directory' '[[ $(wc -l < $T/12.err | tr -d " ") == 1 ]] && grep -qF -- "$T/s12-file/slots " $T/12.err' "$(tail -3 $T/12.err)"
 
 print -r -- "
 $pass passed, $fail failed"

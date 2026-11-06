@@ -567,6 +567,67 @@ const underAny = (p, roots) => roots.some((r) => p === r || p.startsWith(r + pat
     await s.close();
   }
 
+  // ---- EV-15: heavy.sh inside a check cannot take a slot (the slot folder is not a write root of the check): it fails
+  // at once with code 77, and the hook's failure refuses the request with its output. Two slot folders: the default
+  // one under the new empty home of the check (cannot be created), and an existing one outside the roots (its locks
+  // cannot be opened for writing in the sandbox although their mode allows it).
+  {
+    const slots = path.join(BASE, 'ev15-slots');
+    fs.mkdirSync(path.join(slots, 'queue'), { recursive: true });
+    for (const n of ['admit.lock', 'queue.lock']) fs.writeFileSync(path.join(slots, n), '');
+    const heavy = path.join(ROOT, 'scripts', 'heavy.sh');
+    for (const [label, pre] of [['the default slot folder in the home of the check', ''], ['an existing slot folder outside the roots', `SLOTS_DIR='${slots}' `]]) {
+      const f = fixture({ hooks: { 'pre-commit': `${pre}'${heavy}' touch "$T/ev15.ran"; rc=$?; echo "heavy rc=$rc"; exit $rc` } });
+      const s = service(f);
+      fs.writeFileSync(path.join(f.wt, 'a.txt'), 'x\n');
+      const t0 = Date.now();
+      const a = await answer(s, ask(s, ['a.txt']), 60000);
+      const secs = (Date.now() - t0) / 1000;
+      const c0 = a && a.checks && a.checks[0];
+      const log = c0 ? rd(c0.log) : '';
+      ok(`EV-15 heavy.sh in a hook (${label}): refused with the hook's failure (rc 77) within 60 s, not left waiting until the call ends`,
+        a && a.status === 'refused' && /pre-commit failed \(rc 77\)/.test(a.why || '') && c0 && c0.rc === 77, J({ secs, a }));
+      ok(`EV-15 (${label}): the output of the check names the refusal of the slot, the command never ran, the branch did not move`,
+        /heavy rc=77/.test(log) && /slot_run: refused/.test(log) && !fs.existsSync(path.join(f.tdir, 'ev15.ran')) && f.tip() === f.h0, log.slice(-600));
+      await s.close();
+    }
+    ok('EV-15 the existing slot folder outside the roots got no ticket and no new file', fs.readdirSync(path.join(slots, 'queue')).length === 0
+      && fs.readdirSync(slots).sort().join(',') === 'admit.lock,queue,queue.lock', fs.readdirSync(slots).join(','));
+  }
+
+  // ---- the npm cache of a check adds no write root: a role that swaps its call folder for a link to a folder D
+  // outside its roots while a request waits gets that request refused (no safe check path), and nothing is written
+  // into D (security review S-1)
+  {
+    const D = path.join(BASE, 's1-victim');
+    fs.mkdirSync(D, { recursive: true });
+    const f = fixture({ hooks: { 'pre-commit': `if [ -f "$T/hold" ]; then i=0; while [ ! -f "$T/go" ] && [ $i -lt 150 ]; do sleep 0.1; i=$((i+1)); done; rm -f "$T/hold"; else mkdir -p '${D}/npm-cache'; echo pwned > '${D}/npm-cache/pwn'; echo "$npm_config_cache" > "$T/cache2.txt"; fi` } });
+    fs.writeFileSync(path.join(f.tdir, 'hold'), '');
+    const s = service(f, { pollMs: 200 });
+    const callDir = path.dirname(s.box);
+    fs.writeFileSync(path.join(f.wt, 'a.txt'), 'one\n');
+    const id1 = ask(s, ['a.txt']);
+    const t0 = Date.now();
+    while (!f.mark('pre-commit') && Date.now() - t0 < 15000) await sleep(50);
+    fs.writeFileSync(path.join(f.wt, 'b.txt'), 'two\n');
+    const id2 = ask(s, ['a.txt', 'b.txt']);
+    await sleep(1500);
+    fs.renameSync(callDir, callDir + '.orig');
+    fs.symlinkSync(D, callDir);
+    fs.writeFileSync(path.join(f.tdir, 'go'), '');
+    const a1 = await answer(s, id1, 30000);
+    const a2 = await answer(s, id2, 30000);
+    const roots = (a1 && a1.checks && a1.checks[0] && a1.checks[0].launch.writeRoots) || [];
+    ok('the npm cache inside the task folder adds no write root of its own (the roots: the worktree, the task folder, the message folder)',
+      a1 && a1.status === 'committed' && roots.length === 3 && roots[0] === fs.realpathSync(f.wt) && roots[1] === fs.realpathSync(f.tdir), J({ a1, roots }));
+    ok('S-1 the call folder swapped for a link outside the roots while a request waits: that request is refused, no safe check path (the npm cache)',
+      a2 && a2.status === 'refused' && /no safe check path/.test(a2.why || '') && /npm cache/.test(a2.why || ''), J(a2));
+    ok('S-1 nothing was written into the folder behind the link, and the hook of the second request never ran',
+      !fs.existsSync(path.join(D, 'npm-cache', 'pwn')) && !fs.existsSync(path.join(f.tdir, 'cache2.txt')) && f.marks().length === 1, J({ marks: f.marks(), d: fs.readdirSync(D) }));
+    await s.close();
+    fs.unlinkSync(callDir);
+  }
+
   // ---- MA-01, MA-02: one request at a time, the loop of the adapter alive during a check
   {
     const f = fixture({ hooks: { 'pre-commit': 'if [ -f "$T/hold" ]; then i=0; while [ ! -f "$T/go" ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i+1)); done; [ -f "$T/go" ] && echo go > "$T/held" || echo timeout > "$T/held"; rm -f "$T/hold"; fi' } });
