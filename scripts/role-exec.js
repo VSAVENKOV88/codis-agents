@@ -10,7 +10,8 @@
 // launcher is the real process of the host CLI (spawnRole: no shell, its own process group, the prompt on stdin, the
 // JSONL stream parsed line by line, the outcome by the fields of the terminal event, the exit code and the signal, the
 // ceiling of 3 h on the monotonic clock, SIGTERM/SIGINT/SIGHUP of the adapter passed to every live group); cfg.launch
-// replaces it (tests, chain-cost). One line of <task dir>/calls.jsonl per call, whatever its outcome.
+// replaces it (tests, chain-cost). One line of <task dir>/calls.jsonl per call, whatever its outcome (never written through a
+// link, FIFO or hard link the role left in place of the file: appendRecord).
 // With cfg.commit a prog or test call on codex gets the commit channel (scripts/commit-service.js): a box in its call
 // folder, the answers in commit.stateDir, CODIS_COMMIT_BOX and CODIS_COMMIT_ANSWERS in its environment, the service
 // open exactly while the launcher runs; the record carries its summary.
@@ -547,11 +548,30 @@ function createAgent(cfg) {
     try {
       const dir = plan.t ? plan.t.dir : c.callsDir;
       fs.mkdirSync(dir, { recursive: true });
-      fs.appendFileSync(path.join(dir, 'calls.jsonl'), JSON.stringify(rec) + '\n');
+      appendRecord(path.join(fs.realpathSync(dir), 'calls.jsonl'), JSON.stringify(rec) + '\n');
     } catch (e) { log(`role-exec: ${rec.label}: the record of the call could not be written: ${e.message}`); }
     if (fin.outcome !== 'ok') log(`role-exec: ${rec.label} ${fin.outcome}: ${rec.error || ''}`);
     return fin.outcome === 'ok' ? fin.value : null;
   };
+}
+
+// The record of a call goes to <task dir>/calls.jsonl, a folder the role writes (owner 2026-11-06, answer to G2: the
+// role's folder is an untrusted source). The adapter runs outside the sandbox, so it never writes through what the role
+// left there. The folder's own path is resolved first (it is the adapter's; the role writes only inside it), then the
+// open follows no symbolic link (macOS O_NOFOLLOW_ANY, elsewhere O_NOFOLLOW; a dangling link is not created either),
+// never blocks (O_NONBLOCK: a FIFO without a reader fails with ENXIO), and fstat must show a regular file with one link
+// (a FIFO with a reader, a device or a hard link to a file outside the roots is refused). A refused record is lost and
+// the reason goes to log().
+const RECORD_FLAGS = fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_CREAT | fs.constants.O_NONBLOCK
+  | (process.platform === 'darwin' ? 0x20000000 : fs.constants.O_NOFOLLOW); // macOS refuses both together (EINVAL)
+function appendRecord(file, line) {
+  const fd = fs.openSync(file, RECORD_FLAGS, 0o644);
+  try {
+    const st = fs.fstatSync(fd);
+    if (!st.isFile()) throw new Error(`${file} is not a regular file`);
+    if (st.nlink !== 1) throw new Error(`${file} has ${st.nlink} links`);
+    fs.writeSync(fd, line);
+  } finally { fs.closeSync(fd); }
 }
 
 // ---- check (A1-29): the host CLI is ready, without a model

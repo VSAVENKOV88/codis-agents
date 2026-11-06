@@ -8,7 +8,8 @@
 // - a request is read with open(O_RDONLY | O_NONBLOCK | O_NOFOLLOW_ANY) and fstat: a symbolic link in any component of
 //   the path fails the open itself (ELOOP), so no check-then-read race; a FIFO, socket, device or folder opens without
 //   blocking and is refused by fstat; a request above MAX_REQUEST_BYTES is refused. O_NOFOLLOW_ANY is macOS only;
-//   elsewhere the service refuses every request without reading it;
+//   elsewhere the flag means nothing, so a request is still opened and hashed (for its id in the journal) but never
+//   parsed or committed: the service refuses every request;
 // - only names <32 hex>.json are requests (the client publishes a request by renaming a finished temporary file);
 //   every other name is ignored and no file of that name is made;
 // - answers, the journal and the private index live in the adapter's state folder, outside the roots the role writes;

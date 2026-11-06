@@ -22,7 +22,9 @@ key and script, and this file says when and why each one changed. Versions befor
   with `no safe check path` until part A2a-2. A journal per task (one writer, numbered events, intent before each
   action, a torn tail cut off, a damaged line refuses, recovery by the tip of the branch, `undetermined` blocks).
   `role-exec.js`: `cfg.commit`, `tasks[k].branch`, the channel for `prog`/`test` on codex with a launcher (the real
-  CLI keeps refusing them until part A2a-3), the record's `commit`. Tested on real repositories with a hostile
+  CLI keeps refusing them until part A2a-3), the record's `commit`; the record of a call (`<task dir>/calls.jsonl`, a
+  folder the role writes) is opened with no link followed, without blocking and only as a regular file with one link,
+  so a link, a FIFO or a hard link the role leaves there is never written through by the adapter. Tested on real repositories with a hostile
   config (`tests/commit-channel.test.js`) and under the real `codex sandbox` without a model
   (`tests/commit-channel-sandbox.test.js`). README "What's inside" counts recounted.
 
