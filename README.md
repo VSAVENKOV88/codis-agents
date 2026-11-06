@@ -1,31 +1,37 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/banner-dark.svg">
-    <img src="assets/banner-light.svg" alt="codis-agents: brief, analyst, analysis check, programmer, tester, reviewer, train, owner digest" width="100%">
-  </picture>
-</p>
-
-<p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT"></a>
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-0.4.23-informational" alt="Version 0.4.23"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-0.4.31-informational" alt="Version 0.4.31"></a>
   <a href="https://claude.com/claude-code"><img src="https://img.shields.io/badge/Claude%20Code-plugin-D97757" alt="Claude Code plugin"></a>
+  <a href="#codex-cli"><img src="https://img.shields.io/badge/Codex%20CLI-coming%20soon-lightgrey" alt="Codex CLI: coming soon"></a>
 </p>
 
-# codis-agents
+# Agents work. The graph checks. You decide.
 
-codis-agents turns [Claude Code](https://claude.com/claude-code) from one assistant into a small delivery team. You
-say what you want; your main Claude session becomes the coordinator, writes it down as a task, and hands it to a chain
-of role agents - an analyst, a programmer, a tester and a reviewer - each of whom tries to prove the one before wrong.
-You are asked only what really needs you, and you get evidence instead of promises.
+**codis-agents** turns [Claude Code](https://claude.com/claude-code) from one assistant into a small delivery team. You say what you want; your main Claude session becomes the coordinator, writes it down as a task, and hands it to a chain of role agents - an analyst, a programmer, a tester and a reviewer - each of whom tries to prove the one before wrong. You are asked only what really needs you, and you get evidence instead of promises.
 
-```text
-brief -> analyst -> analysis check -> programmer -> tester -> reviewer -> train -> owner digest
+**Install in a minute** (Claude Code), then restart the session and follow the [Quick start](#quick-start):
+```sh
+claude plugin marketplace add VSAVENKOV88/codis-agents
+claude plugin install codis-agents@codis-agents
 ```
+
+## Everyone knows who goes next
+
+<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/graph-dark.svg"><img src="assets/graph-light.svg" alt="The agent graph: coordinator, analyst, programmer, tester, reviewer, train; a queue of tasks on the left; the tester is red and sends the task Cart back to the programmer" width="70%"></picture></p>
+
+The coordinator hands each task to the analyst, the programmer, the tester and the reviewer in turn. A red result goes back along a fixed edge: a red tester returns the task to the programmer, a second red brings the analyst back.
+
+## The train checks the code
+
+<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/train-dark.svg"><img src="assets/train-light.svg" alt="The train: main at the front, the wagon Cart green; the wagon Payments is red and uncoupled onto the siding" width="70%"></picture></p>
+
+Ready branches ride one train that runs the whole test suite. A red wagon is uncoupled, fixed on the siding and coupled again; only what rode together is merged.
+
+<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/banner-dark.svg"><img src="assets/banner-light.svg" alt="codis-agents: brief, analyst, analysis check, programmer, tester, reviewer, train, owner digest" width="100%"></picture></p>
 
 > **Agents are not what makes this work. What is written down around them is.**
 
-It grew out of a product project that I built in Claude Code. Every rule in it exists because something broke without it. New to the words? See the
-[Glossary](#glossary).
+It grew out of a product project that I built in Claude Code. Every rule in it exists because something broke without it. New to the words? See the [Glossary](#glossary).
 
 > [!NOTE]
 > Nothing is merged into your main branch, tagged or released without your explicit "yes". A project may let the
@@ -218,7 +224,7 @@ input-equivalent tokens (IE, see the [Glossary](#glossary)) are marked as such.
 
 | Step | Command |
 |---|---|
-| 1. Add the marketplace (a local clone) | `claude plugin marketplace add /path/to/codis-agents` |
+| 1. Add the marketplace | `claude plugin marketplace add VSAVENKOV88/codis-agents` (or a local clone: `claude plugin marketplace add /path/to/codis-agents`) |
 | 2. Install the plugin, then restart the session | `claude plugin install codis-agents@codis-agents` |
 | 3. Turn it on for a project | copy `examples/codis-agents.example.json` to `<project>/.claude/codis-agents.json`; set where worktrees and task folders live and how your tests run |
 | 4. Check the project config | `node /path/to/codis-agents/scripts/config.js check` |
