@@ -162,6 +162,23 @@ const underAny = (p, roots) => roots.some((r) => p === r || p.startsWith(r + pat
     await s.close();
   }
 
+  // ---- 2a boundary (coordinator G2, run 3): a conversion of the repository is refused before any hook
+  for (const [name, setup, re] of [
+    ['a tracked .gitattributes with a filter', (f) => { fs.writeFileSync(path.join(f.wt, '.gitattributes'), '*.txt filter=x\n'); git(f.wt, ['add', '.gitattributes']); git(f.wt, ['commit', '-q', '-m', 'attrs']); }, /filter=x/],
+    ['core.autocrlf true in the user\'s config', (f) => fs.appendFileSync(path.join(f.home, '.gitconfig'), '[core]\n\tautocrlf = true\n'), /core\.autocrlf true/],
+    ['core.eol in the repository config', (f) => git(f.repo, ['config', 'core.eol', 'crlf']), /core\.eol crlf/],
+  ]) {
+    const f = fixture({ hooks: { 'pre-commit': '' } });
+    setup(f);
+    f.h0 = f.tip();
+    const s = service(f);
+    fs.writeFileSync(path.join(f.wt, 'a.txt'), 'x\n');
+    const a = await answer(s, ask(s, ['a.txt']));
+    ok(`2a: ${name} -> refused "conversion not supported until A2a-2b" before any hook`, a && a.status === 'refused' && /conversion not supported until A2a-2b/.test(a.why)
+      && re.test(a.why) && f.marks().length === 0 && f.tip() === f.h0, J(a));
+    await s.close();
+  }
+
   // ---- CK2-02, EV-01, EV-02, EV-03, EV-10: pre-commit rc 0 in the sandbox, the environment by the white list
   {
     const f = fixture({ hooks: { 'pre-commit': 'npm config get cache > "$T/npmcache.txt" 2>/dev/null\necho w > "$npm_config_cache/written" ; echo $? > "$T/npmwrite.rc"\nnpm view --offline --fetch-retries=0 left-pad version > /dev/null 2>&1; echo $? > "$T/npmview.rc"' } });
@@ -575,7 +592,9 @@ const underAny = (p, roots) => roots.some((r) => p === r || p.startsWith(r + pat
     const ms = Date.now() - t0;
     await sleep(200);
     const pids = ['bg1', 'bg2'].map((n) => +rd(path.join(f.tdir, n)).trim());
-    ok('MA-06 the check ends by the exit of its leader (< 5 s) and both background processes are gone', a && a.status === 'committed' && ms < 5000 && pids.every((p) => p > 0 && !alive(p)), J({ ms, pids, a }));
+    const hookMs = a && a.checks && a.checks[0] ? a.checks[0].ms : null;
+    ok('MA-06 the check ends by the exit of its leader (the hook < 5 s, not its 300 s background) and both background processes are gone',
+      a && a.status === 'committed' && hookMs !== null && hookMs < 5000 && pids.every((p) => p > 0 && !alive(p)), J({ ms, hookMs, pids, a }));
     await s.close();
   }
 

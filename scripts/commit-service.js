@@ -675,9 +675,11 @@ function openCommitService(o) {
       const log = path.join(answers, `${id}.1.${h}.log`);
       const inner = [gitBin, '-c', `core.hooksPath=${hk.dir}`, 'hook', 'run', '--ignore-missing', h]
         .concat(h === 'pre-commit' ? [] : ['--', msgFile].concat(h === 'prepare-commit-msg' ? ['message'] : []));
+      const t0 = Date.now();
       const res = await launchCheck('hook', inner, { home, log, profile });
+      const ms = Date.now() - t0;
       fs.rmSync(home, { recursive: true, force: true });
-      checks.push({ hook: h, pass: 1, rc: res.rc, signal: res.signal || null, log, tail: tailOf(log),
+      checks.push({ hook: h, pass: 1, rc: res.rc, signal: res.signal || null, ms, log, tail: tailOf(log),
         launch: { codex: codexBin, profile: profile.text, network: profile.network, writeRoots: profile.roots, home } });
       if (res.cancelled || cancelling) return { cancelled: true, checks };
       if (res.error) return fail(`no safe check path: ${h} could not be launched under codex sandbox (${res.error})`);
