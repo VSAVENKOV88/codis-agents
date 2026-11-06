@@ -9,7 +9,13 @@
 //   K   the marker line (owner, generator version, source, sha256 of the body); hand edit, stale, foreign, damaged
 //   D   the connection key agentsMd: missing file when connected, not used, generated file without connection
 //   E   write --enable: connects only in a consistent state; a foreign AGENTS.md blocks it
-//   S   not in this part: a tracked nested CLAUDE.md and a root AGENTS.override.md are an explicit red
+//   N   nested CLAUDE.md tracked by git: one AGENTS.md next to each, its source in the marker as a path from the root,
+//       without the text the AGENTS.md of its parent directories already carries (Codex reads them all on the way);
+//       added, changed, moved, deleted (own files removed, edited and foreign ones kept and named), untracked, .claude/
+//   O   AGENTS.override.md next to a generated file (any content, ignored by git too) is red; elsewhere on the way named
+//   G20 imports in list items and block quotes, as Claude Code 2.1.318 reads them (oracle O-list, measured)
+//   G21 an import of a generated AGENTS.md or of an AGENTS.override.md is refused
+//   W   write and write --enable change nothing while any file is in the way, and name every one
 //   F5  an exception is never green; F6 check writes nothing
 const fs = require('fs');
 const os = require('os');
@@ -395,22 +401,305 @@ const sect = (h, c) => `\nContents of ${h}:\n\n${c}`;
   ok('E4. --enable with no project config: exit 1 naming .claude/codis-agents.json, nothing written', w5.status === 1 && /codis-agents\.json/.test(w5.out) && !agents(d4), w5.out);
 }
 
-// ---- S: outside this part - explicit red, never a silent green ----
+// ---- N, O, G20, G21, W: nested CLAUDE.md, AGENTS.override.md, list items, imports of generated files ----
+const mtimeOf = (d, f) => { try { return fs.statSync(path.join(d, f)).mtimeMs; } catch { return null; } };
+const tick = () => { const t = Date.now(); while (Date.now() - t < 20) { /* let the clock move */ } };
 {
+  // N1, N8, G-C: a nested CLAUDE.md in the index (never committed): write creates sub/AGENTS.md next to it; its imports
+  // are relative to sub/; what the root AGENTS.md already carries (the root CLAUDE.md, a shared import) is not repeated.
+  const files = {
+    'CLAUDE.md': 'ROOT\n\x40r/shared.md\n',
+    'r/shared.md': 'SHARED\n',
+    'sub/CLAUDE.md': 'SUB\n\x40imp.md\n\x40../r/shared.md\n\x40../CLAUDE.md\n',
+    'sub/imp.md': 'SUBIMP\n',
+  };
+  const d = project(files);
+  const c0 = check(d);
+  ok('N1. before write: check exit 1 naming sub/AGENTS.md missing', c0.status === 1 && /sub\/AGENTS\.md is missing/.test(c0.out), c0.out);
+  const w = write(d);
+  const s = split(agents(d, 'sub/AGENTS.md'));
+  ok('N1. write exits 0 and names both files', w.status === 0 && /wrote AGENTS\.md/.test(w.out) && /wrote sub\/AGENTS\.md/.test(w.out), w.out);
+  ok('N1/G-C. sub/AGENTS.md = sub/CLAUDE.md byte for byte + its own import; the root and the shared import not repeated',
+    s && s.body.toString() === files['sub/CLAUDE.md'] + sect('sub/imp.md', 'SUBIMP\n'), s && JSON.stringify(s.body.toString()));
+  ok('N1/G-B. the marker of sub/AGENTS.md: source sub/CLAUDE.md, sha256 of its body, the hint names sub/CLAUDE.md',
+    s && s.m && s.m[2] === 'sub/CLAUDE.md' && s.m[3] === sha(s.body) && /edit sub\/CLAUDE\.md/.test(s.m[4]), s && s.first);
+  const rs = split(agents(d));
+  ok('N1. the root AGENTS.md is the root generation (source CLAUDE.md)', rs && rs.m && rs.m[2] === 'CLAUDE.md'
+    && rs.body.toString() === files['CLAUDE.md'] + sect('r/shared.md', 'SHARED\n'), rs && rs.body.toString());
+  const c1 = check(d);
+  ok('N1. check after write is green and names both files', c1.status === 0 && /^ok AGENTS\.md/m.test(c1.out) && /^ok sub\/AGENTS\.md/m.test(c1.out), c1.out);
+  // N1: one more nested CLAUDE.md added to the index later: only it is missing, write creates only it.
+  fs.mkdirSync(path.join(d, 'other'));
+  fs.writeFileSync(path.join(d, 'other/CLAUDE.md'), 'OTHER\n');
+  git(d, 'add', '--', 'other/CLAUDE.md');
+  const before = [mtimeOf(d, 'AGENTS.md'), mtimeOf(d, 'sub/AGENTS.md')];
+  const c2 = check(d);
+  ok('N1. a CLAUDE.md added to git later: check exit 1 naming other/AGENTS.md only', c2.status === 1 && /other\/AGENTS\.md is missing/.test(c2.out)
+    && !/agents-md: (sub\/)?AGENTS\.md /.test(c2.out), c2.out);
+  tick();
+  const w2 = write(d);
+  ok('N1. write creates other/AGENTS.md and leaves the root and sub files (same mtime)', w2.status === 0 && agents(d, 'other/AGENTS.md')
+    && mtimeOf(d, 'AGENTS.md') === before[0] && mtimeOf(d, 'sub/AGENTS.md') === before[1] && check(d).status === 0, w2.out);
+  // N2: sub/CLAUDE.md changed: red only for sub, write changes only sub.
+  fs.writeFileSync(path.join(d, 'sub/CLAUDE.md'), 'SUB CHANGED\n');
+  const c3 = check(d);
+  ok('N2. sub/CLAUDE.md changed: check exit 1 "sub/AGENTS.md is stale", the root not named', c3.status === 1 && /sub\/AGENTS\.md is stale/.test(c3.out)
+    && !/agents-md: AGENTS\.md/.test(c3.out) && !/other\/AGENTS\.md/.test(c3.out), c3.out);
+  const rootBytes = agents(d), rootM = mtimeOf(d, 'AGENTS.md');
+  tick();
+  const w3 = write(d);
+  ok('N2. write rewrites sub/AGENTS.md only', w3.status === 0 && split(agents(d, 'sub/AGENTS.md')).body.toString() === 'SUB CHANGED\n'
+    && agents(d).equals(rootBytes) && mtimeOf(d, 'AGENTS.md') === rootM && /unchanged AGENTS\.md/.test(w3.out), w3.out);
+  // G-C: the root starts to import what sub imports: sub/AGENTS.md drops that section, so it is stale.
+  fs.writeFileSync(path.join(d, 'sub/CLAUDE.md'), 'SUB\n\x40imp.md\n');
+  write(d);
+  fs.writeFileSync(path.join(d, 'CLAUDE.md'), 'ROOT\n\x40r/shared.md\n\x40sub/imp.md\n');
+  const c4 = check(d);
+  ok('G-C. the root now imports sub/imp.md: check names sub/AGENTS.md stale too', c4.status === 1 && /sub\/AGENTS\.md is stale/.test(c4.out) && /^agents-md: AGENTS\.md is stale/m.test(c4.out), c4.out);
+  const w4 = write(d);
+  ok('G-C. after write sub/AGENTS.md is sub/CLAUDE.md alone (its import is in the root file)', w4.status === 0
+    && split(agents(d, 'sub/AGENTS.md')).body.toString() === 'SUB\n\x40imp.md\n' && check(d).status === 0, w4.out);
+}
+{
+  // Two levels: a/CLAUDE.md and a/b/CLAUDE.md; b skips what the root and a already carry, in that order.
+  const d = project({
+    'CLAUDE.md': 'ROOT\n\x40r/one.md\n', 'r/one.md': 'ONE\n', 'r/two.md': 'TWO\n', 'r/three.md': 'THREE\n',
+    'a/CLAUDE.md': 'A\n\x40../r/two.md\n', 'a/b/CLAUDE.md': 'B\n\x40../../r/one.md\n\x40../../r/two.md\n\x40../../r/three.md\n',
+  });
+  const w = write(d);
+  ok('N1/G-C. a/b/AGENTS.md skips the imports of the root and of a/, keeps its own', w.status === 0
+    && split(agents(d, 'a/b/AGENTS.md')).body.toString() === 'B\n\x40../../r/one.md\n\x40../../r/two.md\n\x40../../r/three.md\n' + sect('r/three.md', 'THREE\n')
+    && split(agents(d, 'a/AGENTS.md')).body.toString() === 'A\n\x40../r/two.md\n' + sect('r/two.md', 'TWO\n') && check(d).status === 0, w.out);
+}
+{
+  // N2: hand edit and foreign file in sub, messages name sub/.
   const d = project({ 'CLAUDE.md': 'R\n', 'sub/CLAUDE.md': 'S\n' });
-  const w = write(d), c = check(d);
-  ok('S1. a tracked nested CLAUDE.md: write and check exit 1 "not supported until D3-2" with its path, nothing written',
-    [w, c].every((r) => r.status === 1 && /not supported until D3-2: sub\/CLAUDE\.md/.test(r.out)) && !agents(d) && !agents(d, 'sub/AGENTS.md'), w.out + c.out);
-  const d1 = project({ 'CLAUDE.md': 'R\n', 'sub/CLAUDE.md': 'S\n' }, { tracked: ['.claude/codis-agents.json', 'CLAUDE.md'] });
-  ok('S1. an untracked nested CLAUDE.md does not stop the root', write(d1).status === 0 && check(d1).status === 0);
-  for (const content of ['OVERRIDE\n', '', '  \n']) {
-    const d2 = project({ 'CLAUDE.md': 'R\n' });
-    write(d2);
-    fs.writeFileSync(path.join(d2, 'AGENTS.override.md'), content);
-    const c2 = check(d2), w2 = write(d2);
-    ok(`S2. a root AGENTS.override.md (${JSON.stringify(content)}): check and write exit 1 "not supported until D3-2" naming it`,
-      [c2, w2].every((r) => r.status === 1 && /not supported until D3-2: AGENTS\.override\.md/.test(r.out)), c2.out + w2.out);
+  write(d);
+  fs.appendFileSync(path.join(d, 'sub/AGENTS.md'), 'an edit\n');
+  const c = check(d);
+  ok('K2/N. sub/AGENTS.md edited by hand: check exit 1 naming sub/AGENTS.md and sub/CLAUDE.md', c.status === 1
+    && /sub\/AGENTS\.md was edited by hand: move the edit into sub\/CLAUDE\.md/.test(c.out), c.out);
+  const d2 = project({ 'CLAUDE.md': 'R\n', 'sub/CLAUDE.md': 'S\n', 'sub/AGENTS.md': 'FOREIGN\n' });
+  const w2 = write(d2), c2 = check(d2);
+  ok('K5/N. a foreign sub/AGENTS.md next to a tracked sub/CLAUDE.md: write and check exit 1 conflict naming sub/, file kept',
+    [w2, c2].every((r) => r.status === 1 && /conflict: sub\/AGENTS\.md is not generated by codis-agents/.test(r.out) && /move its rules into sub\/CLAUDE\.md/.test(r.out))
+    && agents(d2, 'sub/AGENTS.md').toString() === 'FOREIGN\n', w2.out + c2.out);
+  ok('W. that conflict stops the whole write: the root AGENTS.md is not written either, "nothing written"', !agents(d2) && /nothing written/.test(w2.out), w2.out);
+}
+{
+  // W1: mixed state - a/ stale, b/ edited by hand: write refuses all with the list, a/ is not rewritten.
+  const d = project({ 'CLAUDE.md': 'R\n', 'a/CLAUDE.md': 'A\n', 'b/CLAUDE.md': 'B\n' });
+  write(d);
+  fs.writeFileSync(path.join(d, 'a/CLAUDE.md'), 'A2\n');
+  fs.appendFileSync(path.join(d, 'b/AGENTS.md'), 'edit\n');
+  const aBefore = agents(d, 'a/AGENTS.md');
+  const w = write(d);
+  ok('W1. a stale a/ and an edited b/: write exit 1, names b/AGENTS.md, a/AGENTS.md not rewritten', w.status === 1 && /b\/AGENTS\.md was edited by hand/.test(w.out)
+    && /nothing written/.test(w.out) && agents(d, 'a/AGENTS.md').equals(aBefore), w.out);
+  const w2 = write(d, ['--discard-edits']);
+  ok('W1. write --discard-edits then writes both, check green', w2.status === 0 && split(agents(d, 'a/AGENTS.md')).body.toString() === 'A2\n' && check(d).status === 0, w2.out);
+}
+{
+  // N3, N4, N5: CLAUDE.md removed from git.
+  const d = project({ 'CLAUDE.md': 'R\n', 'sub/CLAUDE.md': 'S\n' });
+  write(d);
+  git(d, 'rm', '-q', '--cached', '--', 'sub/CLAUDE.md');
+  fs.unlinkSync(path.join(d, 'sub/CLAUDE.md'));
+  const c = check(d);
+  ok('N3. own sub/AGENTS.md without sub/CLAUDE.md: check exit 1 "generated sub/AGENTS.md without sub/CLAUDE.md"', c.status === 1
+    && /generated sub\/AGENTS\.md without sub\/CLAUDE\.md/.test(c.out), c.out);
+  const w = write(d);
+  ok('N3. write removes it and says so; check green', w.status === 0 && !agents(d, 'sub/AGENTS.md') && /removed sub\/AGENTS\.md/.test(w.out) && check(d).status === 0, w.out);
+  // The same with the CLAUDE.md file left on disk, untracked: still an orphan of ours.
+  const d1 = project({ 'CLAUDE.md': 'R\n', 'sub/CLAUDE.md': 'S\n' });
+  write(d1);
+  git(d1, 'rm', '-q', '--cached', '--', 'sub/CLAUDE.md');
+  const w1 = write(d1);
+  ok('N3. sub/CLAUDE.md untracked but on disk: write removes own sub/AGENTS.md', w1.status === 0 && !agents(d1, 'sub/AGENTS.md'), w1.out);
+  // N4: own but edited by hand: never removed, exit 1 (also with --discard-edits).
+  const d2 = project({ 'CLAUDE.md': 'R\n', 'sub/CLAUDE.md': 'S\n' });
+  write(d2);
+  git(d2, 'rm', '-q', '--cached', '--', 'sub/CLAUDE.md');
+  fs.unlinkSync(path.join(d2, 'sub/CLAUDE.md'));
+  fs.appendFileSync(path.join(d2, 'sub/AGENTS.md'), 'an edit\n');
+  const ed = agents(d2, 'sub/AGENTS.md');
+  const c2 = check(d2);
+  ok('N4. an edited own sub/AGENTS.md without sub/CLAUDE.md: check exit 1 naming it as edited', c2.status === 1 && /sub\/AGENTS\.md was edited by hand/.test(c2.out)
+    && /no tracked sub\/CLAUDE\.md/.test(c2.out), c2.out);
+  for (const extra of [[], ['--discard-edits']]) {
+    const w2 = write(d2, extra);
+    ok(`N4. write${extra.map((x) => ' ' + x).join('')} keeps it: exit 1, the file unchanged`, w2.status === 1 && /sub\/AGENTS\.md was edited by hand/.test(w2.out)
+      && agents(d2, 'sub/AGENTS.md').equals(ed), w2.out);
   }
+  // N5: a foreign AGENTS.md in a directory without CLAUDE.md: kept, not a conflict, named (Codex and Claude Code read it).
+  const d3 = project({ 'CLAUDE.md': 'R\n', 'docs/AGENTS.md': 'FOREIGN\n' });
+  const w3 = write(d3), c3 = check(d3);
+  ok('N5. a foreign docs/AGENTS.md without CLAUDE.md: write and check exit 0, the file kept and named as read by Codex and Claude Code',
+    [w3, c3].every((r) => r.status === 0 && /docs\/AGENTS\.md/.test(r.out) && /not generated by codis-agents/.test(r.out) && /Claude Code/.test(r.out))
+    && agents(d3, 'docs/AGENTS.md').toString() === 'FOREIGN\n', w3.out + c3.out);
+}
+{
+  // N6: an untracked nested CLAUDE.md is named, not mirrored.
+  const d = project({ 'CLAUDE.md': 'R\n', 'sub/CLAUDE.md': 'S\n' }, { tracked: ['.claude/codis-agents.json', 'CLAUDE.md'] });
+  const w = write(d), c = check(d);
+  ok('N6. an untracked sub/CLAUDE.md: write and check exit 0, "not tracked: skipped" with its path, no sub/AGENTS.md',
+    [w, c].every((r) => r.status === 0 && /sub\/CLAUDE\.md not tracked: skipped/.test(r.out)) && !agents(d, 'sub/AGENTS.md'), w.out + c.out);
+  // N7: tracked but deleted in the worktree.
+  const d2 = project({ 'CLAUDE.md': 'R\n', 'sub/CLAUDE.md': 'S\n' });
+  fs.unlinkSync(path.join(d2, 'sub/CLAUDE.md'));
+  const w2 = write(d2), c2 = check(d2);
+  ok('N7. tracked sub/CLAUDE.md missing in the worktree: write and check exit 1 naming it, nothing written',
+    [w2, c2].every((r) => r.status === 1 && /tracked sub\/CLAUDE\.md is missing in the worktree/.test(r.out)) && !agents(d2), w2.out + c2.out);
+  // N9: .claude/CLAUDE.md is not mirrored: explicit refusal.
+  const d3 = project({ 'CLAUDE.md': 'R\n', '.claude/CLAUDE.md': 'C\n' });
+  const w3 = write(d3), c3 = check(d3);
+  ok('N9. a tracked .claude/CLAUDE.md: write and check exit 1 ".claude/CLAUDE.md is not mirrored", nothing written',
+    [w3, c3].every((r) => r.status === 1 && /\.claude\/CLAUDE\.md is not mirrored/.test(r.out)) && !agents(d3) && !agents(d3, '.claude/AGENTS.md'), w3.out + c3.out);
+}
+{
+  // N11: the directory moved with git mv: the file is still ours, stale (source moved), write regenerates it.
+  const d = project({ 'CLAUDE.md': 'R\n', 'sub/CLAUDE.md': 'S\n' });
+  write(d);
+  git(d, 'add', '--', 'sub/AGENTS.md');
+  git(d, 'mv', 'sub', 'other');
+  const c = check(d);
+  ok('N11. moved: check exit 1 "other/AGENTS.md is stale (source moved: sub/CLAUDE.md -> other/CLAUDE.md)"', c.status === 1
+    && /other\/AGENTS\.md is stale \(source moved: sub\/CLAUDE\.md -> other\/CLAUDE\.md\)/.test(c.out) && !/conflict/.test(c.out), c.out);
+  const w = write(d);
+  ok('N11. write regenerates it with source other/CLAUDE.md, check green', w.status === 0 && split(agents(d, 'other/AGENTS.md')).m[2] === 'other/CLAUDE.md' && check(d).status === 0, w.out);
+  // K9: a directory with a space: the source is written encoded, the file stays ours.
+  const d2 = project({ 'CLAUDE.md': 'R\n', 'Design Docs/CLAUDE.md': 'DD\n' });
+  const w2 = write(d2);
+  const s2 = split(agents(d2, 'Design Docs/AGENTS.md'));
+  ok('K9. "Design Docs/CLAUDE.md": the marker source Design%20Docs/CLAUDE.md, check green, a second write unchanged',
+    w2.status === 0 && s2 && s2.m && s2.m[2] === 'Design%20Docs/CLAUDE.md' && check(d2).status === 0 && /unchanged Design Docs\/AGENTS\.md/.test(write(d2).out), w2.out + (s2 && s2.first));
+}
+{
+  // O1, O2, O5: AGENTS.override.md next to a generated file, at the root and in sub/, any content, ignored by git too.
+  for (const where of ['', 'sub/']) {
+    for (const content of ['OVERRIDE\n', '', '  \n']) {
+      const d = project({ 'CLAUDE.md': 'R\n', 'sub/CLAUDE.md': 'S\n' });
+      write(d);
+      fs.writeFileSync(path.join(d, where + 'AGENTS.override.md'), content);
+      const c = check(d), w = write(d);
+      const re = where ? /AGENTS\.override\.md at sub\/ replaces the generated sub\/AGENTS\.md for Codex/ : /AGENTS\.override\.md at the root replaces the generated AGENTS\.md for Codex/;
+      ok(`O1/O2. ${where || 'root '}AGENTS.override.md (${JSON.stringify(content)}): check and write exit 1 naming it`, [c, w].every((r) => r.status === 1 && re.test(r.out)), c.out + w.out);
+    }
+  }
+  const d = project({ 'CLAUDE.md': 'R\n', 'sub/CLAUDE.md': 'S\n', '.gitignore': 'AGENTS.override.md\n' });
+  write(d);
+  fs.writeFileSync(path.join(d, 'sub/AGENTS.override.md'), 'MINE\n');
+  const c = check(d);
+  ok('O5. sub/AGENTS.override.md ignored by git: check exit 1 all the same', c.status === 1 && /AGENTS\.override\.md at sub\/ replaces/.test(c.out), c.out);
+  // O3: an override on the way to a generated file, in a directory without one: named, not red.
+  const d2 = project({ 'CLAUDE.md': 'R\n', 'a/b/CLAUDE.md': 'B\n', 'a/AGENTS.override.md': 'MID\n' });
+  const w2 = write(d2), c2 = check(d2);
+  ok('O3. a/AGENTS.override.md on the way to a/b/AGENTS.md: write and check exit 0 and name it', [w2, c2].every((r) => r.status === 0 && /a\/AGENTS\.override\.md/.test(r.out)), w2.out + c2.out);
+}
+{
+  // E4: --enable with nested files writes all of them and connects; a foreign sub/AGENTS.md blocks it whole.
+  const d = project({ 'CLAUDE.md': 'R\n', 'sub/CLAUDE.md': 'S\n' }, { connected: false });
+  const w = write(d, ['--enable']);
+  const cfg = JSON.parse(fs.readFileSync(path.join(d, '.claude/codis-agents.json'), 'utf8'));
+  ok('E4. write --enable with a tracked sub/CLAUDE.md: both files written, the key set, check green', w.status === 0 && agents(d) && agents(d, 'sub/AGENTS.md')
+    && cfg.agentsMd === true && check(d).status === 0, w.out);
+  const d2 = project({ 'CLAUDE.md': 'R\n', 'sub/CLAUDE.md': 'S\n', 'sub/AGENTS.md': 'FOREIGN\n' }, { connected: false });
+  const bc = fs.readFileSync(path.join(d2, '.claude/codis-agents.json'), 'utf8');
+  const w2 = write(d2, ['--enable']);
+  ok('E4. a foreign sub/AGENTS.md blocks --enable: exit 1 naming it, the key not set, the root AGENTS.md not written, the file kept',
+    w2.status === 1 && /conflict: sub\/AGENTS\.md/.test(w2.out) && /not connected/.test(w2.out) && fs.readFileSync(path.join(d2, '.claude/codis-agents.json'), 'utf8') === bc
+    && !agents(d2) && agents(d2, 'sub/AGENTS.md').toString() === 'FOREIGN\n', w2.out);
+  // D3 nested: not connected, an own sub/AGENTS.md left behind: red.
+  const d3 = project({ 'CLAUDE.md': 'R\n', 'sub/CLAUDE.md': 'S\n' });
+  write(d3);
+  try { fs.unlinkSync(path.join(d3, 'AGENTS.md')); } catch { /* not written */ }
+  const cfgFile = path.join(d3, '.claude/codis-agents.json');
+  const j = JSON.parse(fs.readFileSync(cfgFile, 'utf8')); delete j.agentsMd; fs.writeFileSync(cfgFile, JSON.stringify(j));
+  const c3 = check(d3);
+  ok('D3/N. not connected, a generated sub/AGENTS.md left: check exit 1 naming it', c3.status === 1 && /generated sub\/AGENTS\.md without connection/.test(c3.out), c3.out);
+}
+{
+  // G21: an import of a generated file or of an override is refused, nothing written (write would never converge).
+  const cases = [
+    ['CLAUDE.md imports AGENTS.md', { 'CLAUDE.md': 'R\n\x40AGENTS.md\n' }, /CLAUDE\.md:2 imports a generated AGENTS\.md/],
+    ['CLAUDE.md imports sub/AGENTS.md', { 'CLAUDE.md': 'R\n\x40sub/AGENTS.md\n', 'sub/CLAUDE.md': 'S\n' }, /CLAUDE\.md:2 imports a generated sub\/AGENTS\.md/],
+    ['sub/CLAUDE.md imports ../AGENTS.md', { 'CLAUDE.md': 'R\n', 'sub/CLAUDE.md': 'S\n\x40../AGENTS.md\n' }, /sub\/CLAUDE\.md:2 imports a generated AGENTS\.md/],
+    ['CLAUDE.md imports AGENTS.override.md', { 'CLAUDE.md': 'R\n\x40AGENTS.override.md\n' }, /CLAUDE\.md:2 imports AGENTS\.override\.md/],
+    ['an imported file imports AGENTS.md', { 'CLAUDE.md': 'R\n\x40r/a.md\n', 'r/a.md': 'A\n\x40../AGENTS.md\n' }, /r\/a\.md:2 imports a generated AGENTS\.md/],
+  ];
+  for (const [name, files, re] of cases) {
+    const d = project(files);
+    const w1 = write(d);
+    // Second round: the target exists now (an earlier generator or a hand-made file); still refused.
+    fs.writeFileSync(path.join(d, 'AGENTS.md'), 'X\n');
+    const w2 = write(d);
+    ok(`G21. ${name}: write exit 1 naming file:line, nothing written`, [w1, w2].every((r) => r.status === 1 && re.test(r.out))
+      && agents(d).toString() === 'X\n' && !agents(d, 'sub/AGENTS.md'), w1.out + w2.out);
+  }
+}
+{
+  // G20: imports in list items and block quotes, the oracle O-list (Claude Code 2.1.318, a fake provider, no model).
+  const A = '\x40';
+  const cases = [
+    ['li1', ['- item', '', '    ' + A + 'r/li1.md'], true],
+    ['li2', ['1. item', '', '    ' + A + 'r/li2.md'], true],
+    ['li3', ['- item', '', '  ' + A + 'r/li3.md'], true],
+    ['li4', ['- item', '  - nested', '', '      ' + A + 'r/li4.md'], true],
+    ['code1', ['Para text', '', '    ' + A + 'r/code1.md'], false],
+    ['li6', ['- item', '', '      ' + A + 'r/li6.md'], false],
+    ['li8', ['- item', '', '        ' + A + 'r/li8.md'], false],
+    ['n10a', ['10. item', '', '    ' + A + 'r/n10a.md'], true],
+    ['n10b', ['10. item', '', '        ' + A + 'r/n10b.md'], false],
+    ['n10c', ['10. item', '', '       ' + A + 'r/n10c.md'], true],
+    ['wide4', ['-   item', '', '    ' + A + 'r/wide4.md'], true],
+    ['wide8', ['-   item', '', '        ' + A + 'r/wide8.md'], false],
+    ['ended', ['- item', '', 'Back to para', '', '    ' + A + 'r/ended.md'], false],
+    ['quote', ['> quoted', '', '    ' + A + 'r/quote.md'], false],
+    ['star', ['* item', '', '    ' + A + 'r/star.md'], true],
+    ['plus', ['+ item', '', '    ' + A + 'r/plus.md'], true],
+    ['paren', ['1) item', '', '    ' + A + 'r/paren.md'], true],
+    ['tab', ['- item', '', '\t' + A + 'r/tab.md'], true],
+    ['twoitems', ['- a', '', '- b', '', '    ' + A + 'r/twoitems.md'], true],
+    ['after2blank', ['- item', '', '', '    ' + A + 'r/after2blank.md'], true],
+    ['nest6code', ['- item', '  - nested', '', '          ' + A + 'r/nest6code.md'], false],
+    ['hdr', ['# Head', '    ' + A + 'r/hdr.md'], false],
+    ['li1dedent', ['- item', '', '    text', '', '  ' + A + 'r/li1dedent.md'], true],
+    ['emptyitem', ['-', '', '    ' + A + 'r/emptyitem.md'], false],
+    ['codeitem', ['-     code in item', '', '    ' + A + 'r/codeitem.md'], true],
+    ['ordered9', ['9. item', '', '   ' + A + 'r/ordered9.md'], true],
+    ['inlist4', ['- item', '    ' + A + 'r/inlist4.md'], true],
+    ['quotelist', ['> - item', '>', '>     ' + A + 'r/quotelist.md'], true],
+    ['fenceitem', ['- item', '', '  ```', '  ' + A + 'r/fenceitem.md', '  ```'], false],
+    ['q1', ['> para', '>', '>     ' + A + 'r/q1.md'], false],
+    ['q2', ['> para', '>     ' + A + 'r/q2.md'], true],
+    ['q3', ['> - item', '>', '>       ' + A + 'r/q3.md'], false],
+    ['q4', ['- item', '', '  > quoted', '  >', '  >     ' + A + 'r/q4.md'], false],
+    ['f1', ['10. item', '', '    ```', '    ' + A + 'r/f1.md', '    ```'], false],
+    ['f2', ['- item', '', '  ```', A + 'r/f2.md', '  ```', 'still fenced', '```'], true],
+    ['lazy', ['- item', A + 'r/lazy.md'], true],
+    ['ntab', ['- item', '', '\t\t' + A + 'r/ntab.md'], false],
+    ['deep', ['- a', '  - b', '    - c', '', '        ' + A + 'r/deep.md'], true],
+    ['star7', ['*  item', '', '       ' + A + 'r/star7.md'], false],
+    ['star6', ['*  item', '', '      ' + A + 'r/star6.md'], true],
+    ['q5', ['> quoted', A + 'r/q5.md'], true],
+    ['q6', ['> quoted', '', A + 'r/q6.md'], true],
+  ];
+  let text = '# Rules\n\n';
+  const files = {};
+  for (const [name, ls] of cases) { text += ls.join('\n') + '\n\n<!-- end ' + name + ' -->\n\n'; files[`r/${name}.md`] = `MARK ${name}\n`; }
+  files['CLAUDE.md'] = text;
+  const d = project(files);
+  const w = write(d);
+  const body = w.status === 0 ? split(agents(d)).body.toString() : '';
+  const got = cases.filter(([name]) => body.includes(`Contents of r/${name}.md:`)).map(([name]) => name);
+  const want = cases.filter((c) => c[2]).map(([name]) => name);
+  ok('G20. list items and block quotes: the imports are exactly the ones Claude Code read in O-list, in order', w.status === 0 && JSON.stringify(got) === JSON.stringify(want),
+    `got ${JSON.stringify(got)} want ${JSON.stringify(want)} ${w.out}`);
+}
+{
+  // G-F: no message of the generator says "not supported until" any more.
+  const src = fs.readFileSync(SCRIPT, 'utf8');
+  ok('G-F. scripts/agents-md.js has no "not supported until" left', !/not supported until/.test(src));
 }
 
 // ---- F5, F6 ----
@@ -497,12 +786,6 @@ const sect = (h, c) => `\nContents of ${h}:\n\n${c}`;
   const wh = write(h, ['--enable']);
   ok('TE3a. write --enable over an edited generated file: exit 1 "edited by hand", key not set, the edit kept',
     wh.status === 1 && /edited by hand/.test(wh.out) && cfgOf(h) === bh && /an edit\n$/.test(agents(h).toString()), wh.out);
-  // TE3b. --enable with a tracked nested CLAUDE.md (outside this part): blocked, the key not set, nothing written.
-  const nn = project({ 'CLAUDE.md': 'R\n', 'sub/CLAUDE.md': 'S\n' }, { connected: false });
-  const bn = cfgOf(nn);
-  const wn = write(nn, ['--enable']);
-  ok('TE3b. write --enable with a tracked nested CLAUDE.md: exit 1 "not supported until D3-2", key not set, nothing written',
-    wn.status === 1 && /not supported until D3-2/.test(wn.out) && cfgOf(nn) === bn && !agents(nn), wn.out);
   // TD3a. not connected, a generated file edited by hand: still red (it would go stale silently), not "not used".
   const ne = project({ 'CLAUDE.md': 'R\n' }, { agentsMd: false });
   fs.writeFileSync(path.join(ne, 'AGENTS.md'), Buffer.concat([gen, Buffer.from('an edit\n')]));
