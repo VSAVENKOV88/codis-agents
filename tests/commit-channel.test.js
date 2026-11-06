@@ -347,8 +347,8 @@ const markScript = (f, name) => `#!/bin/sh\necho ${name} >> '${f.marks}'\ncat >/
     git(f.wt, ['commit', '-q', '--allow-empty', '-m', 'outside']);
     const t1 = tip(f.wt);
     const r = await client(s, ['-m', 'm', '--', 'a.txt']);
-    ok('CH-17 the branch moved outside the adapter -> refused "branch moved", the tip stays', r.j && r.j.status === 'refused'
-      && /branch moved/.test(r.j.why) && tip(f.wt) === t1 && r.rc === 1, JSON.stringify(r.j));
+    ok('CH-17 the branch moved outside the adapter -> refused "branch moved" before any intent, the tip stays', r.j && r.j.status === 'refused'
+      && /branch moved/.test(r.j.why) && tip(f.wt) === t1 && r.rc === 1 && !journal(f).some((e) => e.ev === 'intent' && e.id === r.j.id), JSON.stringify(r.j));
     s.close();
     const s2 = service(f);
     fs.writeFileSync(path.join(f.gitDir, 'index.lock'), '');
@@ -435,7 +435,11 @@ const markScript = (f, name) => `#!/bin/sh\necho ${name} >> '${f.marks}'\ncat >/
     exe(path.join(H, 'inc-hooks', 'reference-transaction'), markScript(f, 'include-reference-transaction'));
     fs.writeFileSync(path.join(H, 'inc.cfg'), `[core]\n\thooksPath = ${path.join(H, 'inc-hooks')}\n\tfsmonitor = ${path.join(H, 'fsmon')}\n`);
     fs.writeFileSync(path.join(f.wt, '.gitattributes'), '* filter=x\n');
+    // attributes git reads without a worktree: info/attributes of the common git dir and core.attributesFile
+    fs.writeFileSync(path.join(f.repo, '.git', 'info', 'attributes'), '* filter=x\n');
+    fs.writeFileSync(path.join(H, 'attrs'), '* filter=x\n');
     const cfg = (k, v) => git(f.repo, ['config', k, v]);
+    cfg('core.attributesFile', path.join(H, 'attrs'));
     cfg('core.hooksPath', path.join(H, 'hooks'));
     cfg('core.fsmonitor', path.join(H, 'fsmon'));
     cfg('filter.x.clean', path.join(H, 'clean'));
@@ -568,6 +572,7 @@ const markScript = (f, name) => `#!/bin/sh\necho ${name} >> '${f.marks}'\ncat >/
     const f = fixture();
     const H = path.join(f.d, 'ext.sh');
     exe(H, markScript(f, 'ext-transport'));
+    // a blob of HEAD that the request does not name is missing: write-tree of the private index needs it
     fs.writeFileSync(path.join(f.wt, 'b.txt'), 'b big\n');
     git(f.wt, ['commit', '-q', '-am', 'b big']);
     const bBlob = git(f.wt, ['rev-parse', 'HEAD:b.txt']).out;
@@ -579,8 +584,8 @@ const markScript = (f, name) => `#!/bin/sh\necho ${name} >> '${f.marks}'\ncat >/
     git(f.repo, ['config', 'protocol.ext.allow', 'always']);
     const s = service(f);
     fs.writeFileSync(path.join(f.wt, 'a.txt'), 'partial\n');
-    const r = await client(s, ['-m', 'm', '--', 'a.txt', 'b.txt']);
-    ok('OC-13 a promisor remote with ext:: and a missing object: the transport never ran', hostileMarks(f) === '' && r.j && ['committed', 'refused'].includes(r.j.status),
+    const r = await client(s, ['-m', 'm', '--', 'a.txt']);
+    ok('OC-13 a promisor remote with ext:: and a missing object: the transport never ran, the request is refused with the text of git', hostileMarks(f) === '' && r.j && r.j.status === 'refused',
       JSON.stringify({ r: r.j, marks: hostileMarks(f) }));
     s.close();
   }
