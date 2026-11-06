@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 'use strict';
 // Tester cells of the commit channel (p-codex A2a-1), run by tests/commit-channel.test.js as a child (its own tally and
 // exit code); the cells the programmer's guards do not hold:
