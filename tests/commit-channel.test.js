@@ -233,27 +233,28 @@ const markScript = (f, name) => `#!/bin/sh\necho ${name} >> '${f.marks}'\ncat >/
       ['CH-10 an extra field (author)', (i) => ({ id: i, paths: ['a.txt'], message: 'm', author: 'X <x@y>' })],
       ['CH-12 an answer path in the request', (i) => ({ id: i, paths: ['a.txt'], message: 'm', answer: path.join(f.d, 'out.json') })],
       ['CH-10 the id differs from the file name', () => ({ id: newId(), paths: ['a.txt'], message: 'm' })],
-      ['PA-01 an absolute path', (i) => req([path.join(f.wt, 'a.txt')], 'm', i)],
-      ['PA-01 ../ outside the worktree', (i) => req(['../control.txt'], 'm', i)],
-      ['PA-01 a ".." component inside', (i) => req(['sub/../a.txt'], 'm', i)],
-      ['PA-02 .git in any case (.GIT/config)', (i) => req(['.GIT/config'], 'm', i)],
-      ['PA-02 a .git component deeper (sub/.git/x)', (i) => req(['sub/.git/x'], 'm', i)],
+      ['PA-01 an absolute path', (i) => req([path.join(f.wt, 'a.txt')], 'm', i), /absolute path/],
+      ['PA-01 ../ outside the worktree', (i) => req(['../control.txt'], 'm', i), /"\.\." component/],
+      ['PA-01 a ".." component inside', (i) => req(['sub/../a.txt'], 'm', i), /"\.\." component/],
+      ['PA-02 .git in any case (.GIT/config)', (i) => req(['.GIT/config'], 'm', i), /\.git component/],
+      ['PA-02 the .git pointer file itself (.Git)', (i) => req(['.Git'], 'm', i), /\.git component/],
+      ['PA-02 a .git component deeper (sub/.git/x)', (i) => req(['sub/.git/x'], 'm', i), /\.git component/],
       ['PA-06 a directory', (i) => req(['sub'], 'm', i)],
-      ['PA-11 a leading "-"', (i) => req(['-a.txt'], 'm', i)],
+      ['PA-11 a leading "-"', (i) => req(['-a.txt'], 'm', i), /start with "-"/],
       ['PA-11 a NUL in a path', (i) => req(['a.txt\u0000b'], 'm', i)],
       ['PA-11 a newline in a path', (i) => req(['a\n.txt'], 'm', i)],
       ['PA-11 a duplicate path', (i) => req(['a.txt', 'a.txt'], 'm', i)],
-      ['PA-11 a duplicate path by case (APFS)', (i) => req(['a.txt', 'A.txt'], 'm', i)],
+      ['PA-11 a duplicate path by case (APFS)', (i) => req(['a.txt', 'A.txt'], 'm', i), /duplicate/],
       ['PA-11 an empty list', (i) => req([], 'm', i)],
       ['PA-11 an empty path', (i) => req([''], 'm', i)],
       ['a missing path that is not tracked', (i) => req(['nope.txt'], 'm', i)],
     ];
-    for (const [name, body] of cases) {
+    for (const [name, body, whyRe] of cases) {
       const id = newId();
       put(s.box, typeof body === 'function' ? JSON.stringify(body(id)) : body, id);
       const a = await answer(s, id);
       ok(`${name} -> refused with a reason, no commit`, a && a.status === 'refused' && typeof a.why === 'string' && a.why.length > 0
-        && !a.why.includes('xoxb') && countCommits(f.wt) === n0, JSON.stringify(a));
+        && !a.why.includes('xoxb') && countCommits(f.wt) === n0 && (!whyRe || whyRe.test(a.why)), JSON.stringify(a));
     }
     ok('CH-12 no file appeared at the answer path a request named', !fs.existsSync(path.join(f.d, 'out.json')));
     const big = newId();
