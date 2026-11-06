@@ -117,7 +117,7 @@ _SLOT_THIRD_SET=${SLOT_THIRD_FREE_PCT:+1}   # set explicitly - the extra heavy s
 # Exported so that child shells (which source this file again, possibly from another directory) agree.
 [[ -v SLOT_JOURNAL ]] || SLOT_JOURNAL=$SLOTS_DIR/journal.tsv
 export GUARDS_EXCLUSIVE_LOCK SLOTS_DIR SLOT_JOURNAL SLOT_LEGACY_LOCK SLOT_MEDIUM_N SLOT_HEAVY_N SLOT_TOTAL_MAX GUARDS_JOBS_ALONE GUARDS_JOBS_SHARED
-mkdir -p "$SLOTS_DIR"
+mkdir -p "$SLOTS_DIR" 2>/dev/null   # a directory that cannot be created is refused by slot_run (code 77)
 _SLOT_HEAVY_MAX=$(( SLOT_HEAVY_N + 1 ))
 
 # -- Journal ---------------------------------------------------------------------------------------------------------
@@ -435,7 +435,15 @@ slot_run() {
     fi
     rm -f $got; _slot_journal $treq - $(_slot_now) $class - $kind 78 "${jcmd[@]}"; return 78
   fi
-  : > $SLOTS_DIR/admit.lock; mkdir -p $SLOTS_DIR/queue
+  # The admission lock, the queue folder and its lock are opened here for writing (append: an existing lock keeps its
+  # holders). One that cannot be created or opened - a slot directory under a regular file, or outside the write roots
+  # of a sandbox (a check of a commit under codex sandbox: its home is not a root, and an existing slot directory there
+  # is read only whatever its mode) - is the same refusal as an unwritable lock: zsystem flock would read the failed
+  # open as "busy" and the job would wait forever.
+  if ! { : >> $SLOTS_DIR/admit.lock && mkdir -p $SLOTS_DIR/queue && : >> $SLOTS_DIR/queue.lock } 2>/dev/null; then
+    print -u2 -r -- "slot_run: refused - $SLOTS_DIR cannot be written by this process (admit.lock, queue/ or queue.lock cannot be created or opened for writing): a slot lock that cannot be opened would count as busy forever; inside a sandbox the slot directory is not among its write roots"
+    rm -f $got; _slot_journal $treq - $(_slot_now) $class - $kind 77 "${jcmd[@]}"; return 77
+  fi
   # The trap is set before the holder starts: a signal between the command start and `wait` would otherwise kill only
   # us (the command an orphan outside the slot). No holder - remove the ticket and exit; a holder - stop the whole
   # command tree: collect the descendants first (while the holder lives they are its children), then TERM from the

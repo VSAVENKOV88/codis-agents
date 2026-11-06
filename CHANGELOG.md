@@ -10,7 +10,8 @@ key and script, and this file says when and why each one changed. Versions befor
   digest of wave 10, the answer to G7, c4). A repository with hooks of a check (`pre-commit`, `prepare-commit-msg`,
   `commit-msg`) is no longer refused with `no safe check path`: `scripts/commit-service.js` runs its hooks - from the
   folder the user's git would use - under `codex sandbox` with the rights of the role (write to the worktree, the task
-  folder, the npm cache of the call and a message folder of the adapter; `.git` and `.codex` of the worktree read
+  folder and a message folder of the adapter; the npm cache of the call must resolve inside the worktree or the task
+  folder and adds no root of its own, so a call folder swapped for a link refuses the request; `.git` and `.codex` of the worktree read
   only; the role's network, only the tester's on), asynchronously in a process group of their own, in an environment
   built from a white list (no key, token, `NODE_OPTIONS` or `GIT_*` of the adapter; a new empty home per launch).
   Once per call codex of a verified version (0.166.0) and a probe of the sandbox. Before the hooks, tracked changes
@@ -21,7 +22,10 @@ key and script, and this file says when and why each one changed. Versions befor
   output, the log file, the record of the launch), `changed` and `environment`. `close()` is a Promise: it cancels a
   running check (SIGTERM to its group, SIGKILL after `killGraceMs`) and waits for it; `role-exec.js` passes the role's
   network, task folder, npm cache and grace, and keeps its signal handlers on while a check is stopped, so a second
-  signal does not orphan it. Known gaps: untracked inputs, setsid, Docker and `heavy.sh` inside a check. New
+  signal does not orphan it. `heavy.sh` and `medium.sh` inside a check refuse at once with code 77 (`slots.zsh`: a
+  slot directory, `admit.lock`, `queue/` or `queue.lock` that cannot be created or opened for writing is refused like
+  an unwritable lock, not retried forever), so the hook fails and the request is refused with its output. Known gaps:
+  untracked inputs, setsid, Docker inside a check. New
   `tests/commit-checks.test.js` under the real `codex sandbox` without a model; the A2a-1 tests await `close()` and
   OC-12 now expects the hooks to run in the sandbox. README "What's inside" counts recounted.
 

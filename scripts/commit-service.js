@@ -48,8 +48,10 @@
 // and a message folder of the adapter (owner c4), read only <wt>/.git and <wt>/.codex, the network of the role given
 // explicitly - in a process group of its own (spawn, never spawnSync: the adapter's loop goes on), cwd the worktree,
 // GIT_INDEX_FILE the private index (outside every root: a hook cannot change it), an environment built from a white
-// list (PATH with the adapter's node and git, a new empty home per launch as HOME and CODEX_HOME, the role's TMPDIR,
-// LANG, LC_ALL, npm_config_cache of the call), its output into a file of the answers. The end of a hook is the exit of
+// list (PATH with the adapter's node and git, a new empty home per launch as HOME and CODEX_HOME - outside the write
+// roots, so a tool that keeps its state there, such as the slot directory of heavy.sh, fails -, the role's TMPDIR,
+// LANG, LC_ALL, npm_config_cache of the call, which must resolve inside the worktree or the task folder and never
+// adds a root of its own), its output into a file of the answers. The end of a hook is the exit of
 // its leader; the rest of its group is killed then. Before the first hook of a call, once: codex of a verified version
 // (VERIFIED_CODEX_VERSIONS) and a probe of the sandbox with the same command (a write outside the roots refused, the
 // npm cache writable, the network as the role's, CODEX_SANDBOX=seatbelt and no variable outside the white list);
@@ -192,7 +194,8 @@ const which = (bin, envPath) => {
 // o: {task, callId, wt, branch, box, stateDir, git?, gitVersions?, author?, userEnv?, pollMs?, watch?, inject?, log?,
 // codex?, codexVersions?, network?, tdir?, npmCache?, killGraceMs?} - codex: the binary (a name looked up in the
 // PATH of userEnv, default "codex"); network: the network of the role, given to its checks; tdir: the task folder,
-// a write root of the role and of its checks; npmCache: the npm cache of the call (default <folder of the box>/npm-cache).
+// a write root of the role and of its checks; npmCache: the npm cache of the call (default <folder of the box>/npm-cache),
+// which must resolve inside the worktree or the task folder when a check runs (else the request is refused).
 // Returns {box, answers, notes(), cancel(), close()}. Requests run one at a time; cancel() stops a running check
 // (SIGTERM to its group, SIGKILL after killGraceMs) and starts no new one; close() ends the call: it cancels the
 // running check, waits for it, cancels the requests still queued or in the box, and resolves to the summary
@@ -535,12 +538,22 @@ function openCommitService(o) {
     if (typeof userEnv.TMPDIR === 'string' && path.isAbsolute(userEnv.TMPDIR)) e.TMPDIR = userEnv.TMPDIR;
     return e;
   };
-  // the profile: the role's write roots (the worktree, the task folder, the npm cache of the call when it is not inside
-  // them) and the message folder; .git and .codex of the worktree read only
-  const roleRoots = () => {
-    const r = [wtReal].concat(tdirReal ? [tdirReal] : []);
-    const c = (() => { try { return path.join(fs.realpathSync(path.dirname(npmCache)), path.basename(npmCache)); } catch { return path.resolve(npmCache); } })();
-    return r.some((x) => c === x || c.startsWith(x + path.sep)) ? r : r.concat([c]);
+  // the profile: the role's write roots (the worktree, the task folder) and the message folder; .git and .codex of the
+  // worktree read only. The npm cache never adds a root: its path lies in the call folder, which the role can replace
+  // by a link at any time, so a root taken from it would be a folder of the role's choosing.
+  const roleRoots = () => [wtReal].concat(tdirReal ? [tdirReal] : []);
+  // the npm cache must resolve (through its nearest existing folder) inside a root of the role; checked per request,
+  // before the probe and the hooks: a cache elsewhere is refused instead of failing inside the sandbox
+  const cacheOutside = () => {
+    let d = path.resolve(npmCache);
+    const rest = [];
+    for (;;) {
+      try { d = path.join(fs.realpathSync(d), ...rest); break; } catch {
+        if (path.dirname(d) === d) return `${npmCache} does not resolve`;
+        rest.unshift(path.basename(d)); d = path.dirname(d);
+      }
+    }
+    return roleRoots().some((x) => d === x || d.startsWith(x + path.sep)) ? null : `the npm cache ${npmCache} resolves to ${d}, outside the worktree and the task folder`;
   };
   const profileOf = (msgDir) => {
     const p = { roots: roleRoots().concat(msgDir ? [msgDir] : []), network };
@@ -661,6 +674,8 @@ function openCommitService(o) {
     const checks = [];
     const fail = (why, changed) => ({ why, changed, checks });
     if (cancelling) return { cancelled: true, checks };
+    const nc = cacheOutside();
+    if (nc) return fail(`no safe check path: ${nc}`);
     const rd = await sandboxReady();
     if (rd.cancelled || cancelling) return { cancelled: true, checks };
     if (rd.error) return fail(`no safe check path: ${rd.error}`);
