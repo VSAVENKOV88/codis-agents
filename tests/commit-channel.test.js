@@ -551,7 +551,9 @@ const markScript = (f, name) => `#!/bin/sh\necho ${name} >> '${f.marks}'\ncat >/
     for (const [name, setup] of variants) {
       const f = fixture();
       setup(f);
-      const s = service(f);
+      // the box (and so the npm cache of the call) lies in the task folder, as role-exec gives it: a check needs its
+      // npm cache inside a write root of the role
+      const s = service(f, { tdir: f.tdir });
       fs.writeFileSync(path.join(f.wt, 'a.txt'), 'hooked\n');
       const t0 = tip(f.wt);
       const r = await client(s, ['-m', 'm', '--', 'a.txt']);
