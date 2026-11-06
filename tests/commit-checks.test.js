@@ -58,7 +58,7 @@ const dir=path.join(tdir,'marks');fs.mkdirSync(dir,{recursive:true});
 let n=1;while(fs.existsSync(path.join(dir,hook+'-'+n+'.json')))n++;
 const e=process.env;
 fs.writeFileSync(path.join(dir,hook+'-'+n+'.json'),JSON.stringify({sandbox:e.CODEX_SANDBOX||null,netOff:e.CODEX_SANDBOX_NETWORK_DISABLED||null,
-names:Object.keys(e).sort(),env:{HOME:e.HOME,CODEX_HOME:e.CODEX_HOME,TMPDIR:e.TMPDIR,PATH:e.PATH,npm_config_cache:e.npm_config_cache,GIT_INDEX_FILE:e.GIT_INDEX_FILE},
+names:Object.keys(e).sort(),env:{HOME:e.HOME,CODEX_HOME:e.CODEX_HOME,TMPDIR:e.TMPDIR,PATH:e.PATH,npm_config_cache:e.npm_config_cache,GIT_INDEX_FILE:e.GIT_INDEX_FILE,GIT_DIR:e.GIT_DIR,GIT_CONFIG_PARAMETERS:e.GIT_CONFIG_PARAMETERS},
 cwd:process.cwd(),node:process.execPath,args,shpid:+shpid}));
 `);
 fs.writeFileSync(TRY, `const fs=require('fs');const [out,...files]=process.argv.slice(2);const r={};
@@ -137,7 +137,9 @@ const J = (x) => String(JSON.stringify(x)).slice(0, 1500);
 const kindsOf = (a) => ((a && a.changed) || []).map((c) => `${c.kind}${c.status ? ' ' + c.status : ''} ${c.path || ''}`.trim()).sort();
 // the variables a check may see: the white list of the adapter and what codex sandbox adds itself (E-A4)
 const ALLOWED = new Set(['PATH', 'HOME', 'CODEX_HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'GIT_INDEX_FILE', 'npm_config_cache', 'CODEX_MANAGED_BY_NPM',
-  'CODEX_MANAGED_PACKAGE_ROOT', 'CODEX_SANDBOX', 'CODEX_SANDBOX_NETWORK_DISABLED', 'PWD', 'SHLVL', 'OLDPWD', '_', '__CF_USER_TEXT_ENCODING']);
+  'CODEX_MANAGED_PACKAGE_ROOT', 'CODEX_SANDBOX', 'CODEX_SANDBOX_NETWORK_DISABLED', 'PWD', 'SHLVL', 'OLDPWD', '_', '__CF_USER_TEXT_ENCODING',
+  // what git hook run sets for its hook: the repository and the -c of the adapter (core.hooksPath)
+  'GIT_DIR', 'GIT_EXEC_PATH', 'GIT_PREFIX', 'GIT_CONFIG_PARAMETERS']);
 const underAny = (p, roots) => roots.some((r) => p === r || p.startsWith(r + path.sep));
 
 (async () => {
@@ -183,6 +185,8 @@ const underAny = (p, roots) => roots.some((r) => p === r || p.startsWith(r + pat
     const extra = m ? m.names.filter((n) => !ALLOWED.has(n)) : ['no mark'];
     ok('EV-01 the check sees only the white list and what codex adds (no keys, tokens, SSH_AUTH_SOCK, NODE_OPTIONS, GIT_DIR)', extra.length === 0, extra.join(','));
     ok('EV-01 NODE_OPTIONS of the adapter never ran in the check', !fs.existsSync(nodeHit));
+    ok('EV-01 GIT_DIR in the hook is the one git hook run gives (not the adapter\'s), GIT_CONFIG_PARAMETERS only names core.hooksPath',
+      m && m.env.GIT_DIR !== f.userEnv.GIT_DIR && /^'core\.hookspath'='[^']*'$/i.test(m.env.GIT_CONFIG_PARAMETERS || ''), J(m && m.env));
     ok('EV-02 the hook finds the node of the adapter although the PATH of the adapter has none', m && m.node === process.execPath, m && m.node);
     ok('EV-03 the home of the check is new, outside the roots and tmp, and removed after the pass', m && m.env.HOME === m.env.CODEX_HOME && !underAny(m.env.HOME, [f.wt, f.tdir, '/tmp', '/private/tmp', f.rtmp])
       && !fs.existsSync(m.env.HOME), J(m && m.env));
@@ -314,7 +318,7 @@ const underAny = (p, roots) => roots.some((r) => p === r || p.startsWith(r + pat
     const want = ['deleted b.txt', 'deleted r1.txt', 'mode m.txt', 'modified a.txt', 'staged A e.txt', 'staged A r2.txt', 'staged D r1.txt', 'typechange l.txt'];
     ok('G7-02 one refusal with the full list: modified, deleted, typechange, mode, staged additions and both sides of a rename in the index',
       a && a.status === 'refused' && /tracked changes outside the request/.test(a.why) && want.every((k) => kindsOf(a).includes(k)) && f.marks().length === 0, J({ got: kindsOf(a), why: a && a.why }));
-    ok('G7-02 nothing rolled back or hidden: the index and the worktree as the role left them', git(f.wt, ['diff', '--cached', '--name-only']).out.split('\n').sort().join() === 'e.txt,r1.txt,r2.txt'
+    ok('G7-02 nothing rolled back or hidden: the index and the worktree as the role left them', git(f.wt, ['diff', '--cached', '--no-renames', '--name-only']).out.split('\n').sort().join() === 'e.txt,r1.txt,r2.txt'
       && fs.lstatSync(path.join(f.wt, 'l.txt')).isSymbolicLink());
     await s.close();
   }
@@ -510,7 +514,7 @@ const underAny = (p, roots) => roots.some((r) => p === r || p.startsWith(r + pat
     await s.close();
   }
   {
-    const f = fixture({ hooks: {} });
+    const f = fixture({ hooks: {}, hooksPath: false });
     const common = git(f.wt, ['rev-parse', '--path-format=absolute', '--git-common-dir']).out;
     f.hook('pre-commit', '', path.join(common, 'hooks'));
     const s = service(f);

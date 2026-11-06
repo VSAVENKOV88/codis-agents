@@ -198,7 +198,7 @@ const stop = async (c) => {
     await sleep(2500);
     await stop(c);
     await sleep(50);
-    const sum = s.close();
+    const sum = await s.close();
     const log = git(f.wt, ['log', '--format=%s', '--name-only', 'refs/heads/task']).out;
     ok('G2 the box swapped for a link during the scans: the request behind the link is never committed',
       !/evil\.txt/.test(log) && !/from the decoy/.test(log), log);
@@ -233,7 +233,7 @@ const stop = async (c) => {
       results.push(a ? a.status : 'none');
     }
     await stop(c1); await stop(c2);
-    s.close();
+    await s.close();
     const objs = allObjects(f.wt);
     const tally = results.reduce((m, x) => { m[x] = (m[x] || 0) + 1; return m; }, {});
     ok(`G3 a named file and its parent swapped for links during the reads: no object of the repository holds the secret (${JSON.stringify(tally)})`,
@@ -253,7 +253,7 @@ const stop = async (c) => {
     const t = Date.now();
     const a = await answer(s, id, 4000);
     srv.close();
-    s.close();
+    await s.close();
     ok('G2 a request that is a Unix socket -> refused, without hanging', a && a.status === 'refused' && Date.now() - t < 4000, JSON.stringify(a));
   }
 
@@ -271,12 +271,14 @@ const stop = async (c) => {
     await sleep(30);
     put(box, B);
     const s = service(f, { box, pollMs: 3600 * 1000, watch: silentWatch });
+    // the first scan queues both at once; the worker takes the queue without a timer (one turn of the loop)
+    await new Promise((r) => setImmediate(r));
     const a1 = readAnswer(s, A.id), b1 = readAnswer(s, B.id);
     ok('answer 6: the first scan runs at once (both answers exist when the service opens, no event and no poll yet)',
       a1 && a1.status === 'committed' && b1 && b1.status === 'committed', JSON.stringify({ a1, b1 }));
     ok('answer 6: one queue in the order of publication: the request published first is committed first (its id sorts later)',
       a1 && b1 && git(f.wt, ['rev-parse', `${b1.sha}^`]).out === a1.sha, JSON.stringify({ a1, b1 }));
-    s.close();
+    await s.close();
   }
 
   // ---- answer 6: missed events - polling alone answers; the default interval without pollMs
@@ -287,7 +289,7 @@ const stop = async (c) => {
     const id = put(s.box, req(['a.txt']));
     const a = await answer(s, id, 3000);
     ok('answer 6: the subscription never fires (missed events) -> the backup poll commits the request', a && a.status === 'committed', JSON.stringify(a));
-    s.close();
+    await s.close();
     const f2 = fixture();
     const s2 = service(f2, { watch: silentWatch });
     fs.writeFileSync(path.join(f2.wt, 'a.txt'), 'default poll\n');
@@ -296,7 +298,7 @@ const stop = async (c) => {
     const a2 = await answer(s2, id2, 8000);
     const ms = Date.now() - t;
     ok(`answer 6: without pollMs the backup poll runs every second (answered after ${ms} ms, no event)`, a2 && a2.status === 'committed' && ms < 6000, JSON.stringify(a2));
-    s2.close();
+    await s2.close();
   }
 
   // ---- answer 6: the subscription is a signal enough (real fs.watch, the poll an hour away)
@@ -307,7 +309,7 @@ const stop = async (c) => {
     const id = put(s.box, req(['a.txt']));
     const a = await answer(s, id, 4000);
     ok('answer 6: fs.watch signals a rescan: the request is committed with the poll an hour away', a && a.status === 'committed', JSON.stringify(a));
-    s.close();
+    await s.close();
   }
 
   // ---- answer 6: the subscription breaks while running -> named in the notes, polling goes on
@@ -324,7 +326,7 @@ const stop = async (c) => {
     const id = put(s.box, req(['a.txt']));
     const a = await answer(s, id, 3000);
     ok('answer 6: after the subscription broke a new request is still committed by polling', a && a.status === 'committed', JSON.stringify(a));
-    s.close();
+    await s.close();
   }
 
   // ---- S-1 (security review 1): the record of a call, <task dir>/calls.jsonl, sits in a folder the role writes. Cells

@@ -166,7 +166,7 @@ const markScript = (f, name) => `#!/bin/sh\necho ${name} >> '${f.marks}'\ncat >/
     const fx = fs.openSync(path.join(f.wt, 'x.sh'), 'w'); fs.writeSync(fx, '#!/bin/sh\n'); fs.closeSync(fx); fs.chmodSync(path.join(f.wt, 'x.sh'), 0o755);
     const r5 = await client(s, ['-m', 'exec bit', '--', 'x.sh']);
     ok('a new executable file -> mode 100755', r5.j && r5.j.status === 'committed' && /^100755 /.test(git(f.wt, ['ls-tree', tip(f.wt), 'x.sh']).out), git(f.wt, ['ls-tree', tip(f.wt), 'x.sh']).out);
-    const sum = s.close();
+    const sum = await s.close();
     ok('the summary of the call names the commits', sum && Array.isArray(sum.commits) && sum.commits.length === 4
       && sum.commits[0].sha === t1 && sum.commits[0].paths.join() === 'a.txt', JSON.stringify(sum));
     ok('the box keeps every request: the adapter renamed, removed and wrote nothing in the role folder',
@@ -190,7 +190,7 @@ const markScript = (f, name) => `#!/bin/sh\necho ${name} >> '${f.marks}'\ncat >/
     await sleep(2500);
     ok('CH-08 the requests stay in the box and are read again by the rescans: no second commit', countCommits(f.wt) === n0);
     // the same id copied into the box of a new call (a repeat after a crash): the earlier answer, no commit
-    s.close();
+    await s.close();
     const s2 = service(f);
     fs.writeFileSync(path.join(f.wt, 'a.txt'), 'a3\n');
     put(s2.box, fs.readFileSync(path.join(s.box, `${x.j.id}.json`)), x.j.id);
@@ -214,7 +214,7 @@ const markScript = (f, name) => `#!/bin/sh\necho ${name} >> '${f.marks}'\ncat >/
     ok('CH-10b temporary files and names off ^[0-9a-f]{32}\\.json$ are not requests: no commit, no answer of their name',
       countCommits(f.wt) === n0 && !fs.existsSync(path.join(s2.answers, 'abc.json')) && !fs.existsSync(path.join(s2.answers, `${tid}.json`))
       && fs.readdirSync(s2.answers).filter((n) => !n.startsWith('.')).length === 1, fs.readdirSync(s2.answers).join());
-    s2.close();
+    await s2.close();
   }
 
   // ---- CH-10, CH-12, PA-01, -02, -05, -06, -11: refusals with a reason, no object, no ref
@@ -280,7 +280,7 @@ const markScript = (f, name) => `#!/bin/sh\necho ${name} >> '${f.marks}'\ncat >/
     const t = Date.now();
     const af = await answer(s, pf);
     ok('a named path that is a FIFO -> refused without hanging', af && af.status === 'refused' && Date.now() - t < 4000, JSON.stringify(af));
-    s.close();
+    await s.close();
     ok('the control file outside the worktree is unchanged (refusals)', f.controlSha() === f.control0);
   }
 
@@ -332,7 +332,7 @@ const markScript = (f, name) => `#!/bin/sh\necho ${name} >> '${f.marks}'\ncat >/
     const apar = readAnswer(s, ipar);
     ok('CH-11 a parent folder of the box replaced by a symlink: the request behind it is not committed',
       countCommits(f.wt) === n0 && (!apar || apar.status === 'refused'), JSON.stringify(apar));
-    const sum = s.close();
+    const sum = await s.close();
     ok('CH-11 the summary of the call names the refusals', sum.refused.length >= 3, JSON.stringify(sum.refused));
     ok('the control file outside the worktree is unchanged (CH-11)', f.controlSha() === f.control0);
   }
@@ -349,7 +349,7 @@ const markScript = (f, name) => `#!/bin/sh\necho ${name} >> '${f.marks}'\ncat >/
     const r = await client(s, ['-m', 'm', '--', 'a.txt']);
     ok('CH-17 the branch moved outside the adapter -> refused "branch moved" before any intent, the tip stays', r.j && r.j.status === 'refused'
       && /branch moved/.test(r.j.why) && tip(f.wt) === t1 && r.rc === 1 && !journal(f).some((e) => e.ev === 'intent' && e.id === r.j.id), JSON.stringify(r.j));
-    s.close();
+    await s.close();
     const s2 = service(f);
     fs.writeFileSync(path.join(f.gitDir, 'index.lock'), '');
     const r2 = await client(s2, ['-m', 'm', '--', 'a.txt']);
@@ -372,19 +372,19 @@ const markScript = (f, name) => `#!/bin/sh\necho ${name} >> '${f.marks}'\ncat >/
       r4.j && r4.j.status === 'refused' && /git dir/.test(r4.j.why) && tip(f.repo) === t1 && tip(other.wt) === git(other.repo, ['rev-parse', 'task']).out
       && countCommits(other.wt) === 1, JSON.stringify(r4.j));
     fs.writeFileSync(dotgit, ptr);
-    s2.close();
+    await s2.close();
     // OC-11: HEAD detached / on another branch
     git(f.wt, ['checkout', '-q', '--detach']);
     const s3 = service(f);
     const r5 = await client(s3, ['-m', 'm', '--', 'a.txt']);
     ok('OC-11 HEAD of the worktree detached -> refused', r5.j && r5.j.status === 'refused' && /HEAD/.test(r5.j.why) && tip(f.wt) === t1, JSON.stringify(r5.j));
-    s3.close();
+    await s3.close();
     git(f.wt, ['checkout', '-q', '-b', 'other']);
     const s4 = service(f);
     const r6 = await client(s4, ['-m', 'm', '--', 'a.txt']);
     ok('OC-11 HEAD of the worktree on another branch -> refused', r6.j && r6.j.status === 'refused' && /HEAD/.test(r6.j.why)
       && git(f.wt, ['rev-parse', 'other']).out === t1, JSON.stringify(r6.j));
-    s4.close();
+    await s4.close();
   }
 
   // ---- CH-17 with a fault injected between commit-tree and update-ref; OC-09 the checked snapshot is what is committed
@@ -400,7 +400,7 @@ const markScript = (f, name) => `#!/bin/sh\necho ${name} >> '${f.marks}'\ncat >/
     ok('CH-17 the branch moves between commit-tree and update-ref -> refused, the tip is the outside commit',
       r.j && r.j.status === 'refused' && moved && tip(f.wt) === moved && /branch moved/.test(r.j.why), JSON.stringify(r.j));
     ok('CH-17 the journal ends the request refused (no undetermined)', journal(f).some((e) => e.ev === 'result' && e.id === r.j.id && e.status === 'refused'));
-    s.close();
+    await s.close();
     const f2 = fixture();
     const s2 = service(f2, { inject: { afterSnapshot: () => fs.writeFileSync(path.join(f2.wt, 'a.txt'), 'edited after the snapshot\n') } });
     fs.writeFileSync(path.join(f2.wt, 'a.txt'), 'snapshot\n');
@@ -408,7 +408,7 @@ const markScript = (f, name) => `#!/bin/sh\necho ${name} >> '${f.marks}'\ncat >/
     ok('OC-09 the file changes after the snapshot -> the commit holds the snapshot bytes; the real index too, the worktree keeps the edit',
       r2.j && r2.j.status === 'committed' && git(f2.wt, ['cat-file', '-p', `${r2.j.sha}:a.txt`]).out === 'snapshot'
       && git(f2.wt, ['diff-index', '--cached', '--quiet', 'HEAD']).rc === 0 && git(f2.wt, ['status', '--porcelain']).out === 'M a.txt', JSON.stringify({ r: r2.j, st: git(f2.wt, ['status', '--porcelain']).out }));
-    s2.close();
+    await s2.close();
     // OC-10: the sync of the real index fails -> committed + indexSync failed; the next request is refused
     const f3 = fixture();
     const s3 = service(f3, { inject: { beforeIndexSync: () => fs.writeFileSync(path.join(f3.gitDir, 'index.lock'), '') } });
@@ -419,7 +419,7 @@ const markScript = (f, name) => `#!/bin/sh\necho ${name} >> '${f.marks}'\ncat >/
     fs.writeFileSync(path.join(f3.wt, 'b.txt'), 'next\n');
     const r4 = await client(s3, ['-m', 'm', '--', 'b.txt']);
     ok('OC-10 after a failed sync the next request is refused until the index equals HEAD', r4.j && r4.j.status === 'refused' && /index/.test(r4.j.why), JSON.stringify(r4.j));
-    s3.close();
+    await s3.close();
   }
 
   // ---- OC-01..05: a hostile repository config; nothing of it runs
@@ -493,7 +493,7 @@ const markScript = (f, name) => `#!/bin/sh\necho ${name} >> '${f.marks}'\ncat >/
       && ofCommit.every((c) => ['ENV GIT_CONFIG_NOSYSTEM=1', 'ENV GIT_CONFIG_GLOBAL=/dev/null', 'ENV GIT_NO_LAZY_FETCH=1'].every((x) => c.env.includes(x))), envOfCommit.filter((l) => /GIT_/.test(l)).slice(0, 20).join('\n'));
     ok('OC-07 the GIT_DIR and GIT_INDEX_FILE of the parent were not used: the real repo moved only refs/heads/task',
       tip(f.wt) === r.j.sha && !fs.existsSync(path.join(f.d, 'other-index')));
-    s.close();
+    await s.close();
     ok('the control file outside the worktree is unchanged (hostile config)', f.controlSha() === f.control0);
   }
 
@@ -511,22 +511,24 @@ const markScript = (f, name) => `#!/bin/sh\necho ${name} >> '${f.marks}'\ncat >/
     ok('OC-06 the user\'s global fsmonitor and hooks (non-check hooks) did not run; the author is the user\'s',
       r.j && r.j.status === 'committed' && hostileMarks(f) === '' && git(f.wt, ['show', '-s', '--format=%an <%ae>', r.j.sha]).out === 'Role Owner <owner@example.com>',
       JSON.stringify({ r: r.j, marks: hostileMarks(f) }));
-    s.close();
+    await s.close();
     const f2 = fixture();
     fs.writeFileSync(path.join(f2.home, '.gitconfig'), '');
     const s2 = service(f2);
     fs.writeFileSync(path.join(f2.wt, 'a.txt'), 'no identity\n');
     const r2 = await client(s2, ['-m', 'm', '--', 'a.txt']);
     ok('G8 no user.name/user.email in the user\'s config -> refused "no identity"', r2.j && r2.j.status === 'refused' && /identity/.test(r2.j.why), JSON.stringify(r2.j));
-    s2.close();
+    await s2.close();
     const s3 = service(f2, { author: { name: 'codis-agents', email: 'noreply@example.com' } });
     const r3 = await client(s3, ['-m', 'm', '--', 'a.txt']);
     ok('G8 commit.author of the config names the identity', r3.j && r3.j.status === 'committed'
       && git(f2.wt, ['show', '-s', '--format=%an <%ae>|%cn <%ce>', r3.j.sha]).out === 'codis-agents <noreply@example.com>|codis-agents <noreply@example.com>', JSON.stringify(r3.j));
-    s3.close();
+    await s3.close();
   }
 
-  // ---- OC-12: hooks of a check in the repository -> refused "no safe check path" (checks inside the sandbox: A2a-2)
+  // ---- OC-12: hooks of a check in the repository, found where the user's git would look -> they run only inside
+  // codex sandbox (part A2a-2a: tests/commit-checks.test.js); a mark outside the roots is never written. Without codex
+  // there is no safe check path and the request is refused. A hook named in the config (hook.*) is refused.
   {
     const variants = [
       ['OC-12 a pre-commit in the default hooks folder', (f) => exe(path.join(f.repo, '.git', 'hooks', 'pre-commit'), markScript(f, 'pre-commit'))],
@@ -553,9 +555,15 @@ const markScript = (f, name) => `#!/bin/sh\necho ${name} >> '${f.marks}'\ncat >/
       fs.writeFileSync(path.join(f.wt, 'a.txt'), 'hooked\n');
       const t0 = tip(f.wt);
       const r = await client(s, ['-m', 'm', '--', 'a.txt']);
-      ok(`${name} -> refused "no safe check path", no commit, no hook ran`, r.j && r.j.status === 'refused' && /no safe check path/.test(r.j.why)
-        && tip(f.wt) === t0 && hostileMarks(f) === '', JSON.stringify(r.j));
-      s.close();
+      const named = /hook\.<name>/.test(name);
+      if (named || !has('codex')) {
+        ok(`${name} -> refused "no safe check path", no commit, no hook ran`, r.j && r.j.status === 'refused' && /no safe check path/.test(r.j.why)
+          && tip(f.wt) === t0 && hostileMarks(f) === '', JSON.stringify(r.j));
+      } else {
+        ok(`${name} -> the hook ran inside the sandbox only (committed, its mark outside the roots not written)`, r.j && r.j.status === 'committed'
+          && r.j.checks && r.j.checks.length === 1 && r.j.checks[0].rc === 0 && hostileMarks(f) === '', JSON.stringify(r.j));
+      }
+      await s.close();
     }
     const f = fixture();
     fs.writeFileSync(path.join(f.repo, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\nexit 1\n');
@@ -564,7 +572,7 @@ const markScript = (f, name) => `#!/bin/sh\necho ${name} >> '${f.marks}'\ncat >/
     fs.writeFileSync(path.join(f.wt, 'a.txt'), 'not executable hook\n');
     const r = await client(s, ['-m', 'm', '--', 'a.txt']);
     ok('OC-12e a hook file that is not executable (git skips it) -> committed', r.j && r.j.status === 'committed', JSON.stringify(r.j));
-    s.close();
+    await s.close();
   }
 
   // ---- OC-13 (G1): a partial clone whose promisor remote is an ext:: command; a missing object is never fetched
@@ -587,7 +595,7 @@ const markScript = (f, name) => `#!/bin/sh\necho ${name} >> '${f.marks}'\ncat >/
     const r = await client(s, ['-m', 'm', '--', 'a.txt']);
     ok('OC-13 a promisor remote with ext:: and a missing object: the transport never ran, the request is refused with the text of git', hostileMarks(f) === '' && r.j && r.j.status === 'refused',
       JSON.stringify({ r: r.j, marks: hostileMarks(f) }));
-    s.close();
+    await s.close();
   }
 
   // ---- CH-15 the end of a call: queued requests -> cancelled; CH-14 pending and wait
@@ -599,7 +607,7 @@ const markScript = (f, name) => `#!/bin/sh\necho ${name} >> '${f.marks}'\ncat >/
     const q1 = put(s.box, req(['a.txt'], 'q1'));
     const q2 = put(s.box, req(['a.txt'], 'q2'));
     const t0 = tip(f.wt);
-    const sum = s.close();
+    const sum = await s.close();
     ok('CH-15 requests still queued at the end of the call -> cancelled, no commit, the summary and the journal name them',
       tip(f.wt) === t0 && readAnswer(s, q1).status === 'cancelled' && readAnswer(s, q2).status === 'cancelled'
       && sum.cancelled.includes(q1) && sum.cancelled.includes(q2)
@@ -614,7 +622,7 @@ const markScript = (f, name) => `#!/bin/sh\necho ${name} >> '${f.marks}'\ncat >/
     ok('CH-14 wait --id then gets the answer', w.rc === 0 && w.j && w.j.status === 'committed' && w.j.sha === tip(f2.wt), JSON.stringify(w));
     const m = await client(s2, ['wait', '--id', r.j.id, '--max', '300']);
     ok('CH-14 --max above 270 is refused (270 s is the ceiling of one wait)', m.rc === 2, JSON.stringify(m));
-    s2.close();
+    await s2.close();
     const c = await client(s2, ['-m', 'm', '--', 'a.txt'], {});
     ok('CH-06 the client without the channel of the adapter -> "channel closed for this role", exit 4', c.rc === 4 && /channel closed/.test(c.err + c.out), JSON.stringify(c));
   }
@@ -651,7 +659,7 @@ setTimeout(() => process.exit(9), 20000);
     put(s.box, fs.readFileSync(path.join(f.tdir, 'box-k1', `${k1.id}.json`)), k1.id);
     const a1 = await answer(s, k1.id);
     ok('CH-16 the same request again -> its recorded result, never a second attempt', a1 && a1.status === 'refused' && tip(f.wt) === t0, JSON.stringify(a1));
-    s.close();
+    await s.close();
     // killed after update-ref, before the result: the tip is the intended commit -> committed, no second commit
     const f2 = fixture();
     fs.writeFileSync(path.join(f2.wt, 'a.txt'), 'killed after update-ref\n');
@@ -669,7 +677,7 @@ setTimeout(() => process.exit(9), 20000);
     const r2 = await client(s2, ['-m', 'next', '--', 'b.txt']);
     ok('CH-16 after the recovery the next request commits on top of the recovered sha', r2.j && r2.j.status === 'committed'
       && git(f2.wt, ['rev-parse', `${r2.j.sha}^`]).out === t2, JSON.stringify(r2.j));
-    s2.close();
+    await s2.close();
     // killed after update-ref, then the branch moved elsewhere: undetermined, every request refused until resolve
     const f3 = fixture();
     fs.writeFileSync(path.join(f3.wt, 'a.txt'), 'undetermined\n');
@@ -681,13 +689,13 @@ setTimeout(() => process.exit(9), 20000);
     const r3 = await client(s3, ['-m', 'm', '--', 'b.txt']);
     ok('CH-16d the tip is neither the intended sha nor its parent -> undetermined in the journal; requests refused until the coordinator resolves it',
       journal(f3).some((e) => e.ev === 'undetermined' && e.id === k3.id) && r3.j && r3.j.status === 'refused' && /undetermined/.test(r3.j.why) && tip(f3.wt) === t3, JSON.stringify(r3.j));
-    s3.close();
+    await s3.close();
     // a torn last line: shown in the diagnostics, not taken as a result; a damaged line inside: recovery refused
     const f4 = fixture();
     fs.writeFileSync(path.join(f4.wt, 'a.txt'), 'torn\n');
     const s4a = service(f4);
     const r4a = await client(s4a, ['-m', 'm', '--', 'a.txt']);
-    s4a.close();
+    await s4a.close();
     const jf = path.join(f4.state, 'K', 'commits.jsonl');
     const lines = fs.readFileSync(jf, 'utf8');
     fs.appendFileSync(jf, '{"v":1,"n":99,"ev":"result","id":"' + 'f'.repeat(32) + '","status":"comm');
@@ -697,7 +705,7 @@ setTimeout(() => process.exit(9), 20000);
     fs.writeFileSync(path.join(f4.wt, 'b.txt'), 'after torn\n');
     const r4 = await client(s4, ['-m', 'm', '--', 'b.txt']);
     ok('CH-16b after a torn tail the next request commits', r4.j && r4.j.status === 'committed' && git(f4.wt, ['rev-parse', `${r4.j.sha}^`]).out === r4a.j.sha, JSON.stringify(r4.j));
-    s4.close();
+    await s4.close();
     const all = fs.readFileSync(jf, 'utf8').split('\n');
     all.splice(1, 0, '{broken');
     fs.writeFileSync(jf, all.join('\n'));
@@ -707,7 +715,7 @@ setTimeout(() => process.exit(9), 20000);
     const r5 = await client(s5, ['-m', 'm', '--', 'a.txt']);
     ok('CH-16c a damaged line inside the journal -> every request refused naming the journal, no commit',
       r5.j && r5.j.status === 'refused' && /journal/.test(r5.j.why) && tip(f4.wt) === t5, JSON.stringify(r5.j));
-    s5.close();
+    await s5.close();
     // one writer: a second live service of the same task refuses its requests
     const f6 = fixture();
     const s6 = service(f6);
@@ -715,10 +723,10 @@ setTimeout(() => process.exit(9), 20000);
     fs.writeFileSync(path.join(f6.wt, 'a.txt'), 'two writers\n');
     const r7 = await client(s7, ['-m', 'm', '--', 'a.txt']);
     ok('one writer of the journal: a second live service of the task refuses (another adapter writes it)', r7.j && r7.j.status === 'refused' && /another adapter/.test(r7.j.why), JSON.stringify(r7.j));
-    s7.close();
+    await s7.close();
     const r6 = await client(s6, ['-m', 'm', '--', 'a.txt']);
     ok('one writer: the first service still commits', r6.j && r6.j.status === 'committed', JSON.stringify(r6.j));
-    s6.close();
+    await s6.close();
   }
 
   // ---- role-exec.js: cfg.commit, tasks[k].branch, the channel only for prog and test (CH-01, CH-03, CH-05, CH-06, CH-07)
