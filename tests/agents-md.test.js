@@ -926,4 +926,70 @@ const tick = () => { const t = Date.now(); while (Date.now() - t < 20) { /* let 
       && c.status === 0 && w2.status === 0 && !/^wrote /m.test(w2.out), w.out + c.out + w2.out);
   }
 }
+{
+  // R1 cells of the tester (review 1): AGENTS.md that git ignores - next to a tracked source, by .git/info/exclude,
+  // moved with its directory, in a directory with a non-ASCII name and a tab, edited while not connected, in an ignored folder.
+  const ign = { '.gitignore': 'AGENTS.md\n', 'CLAUDE.md': 'R\n', 'sub/CLAUDE.md': 'S\n' };
+  const d = project(ign);
+  const w = write(d), c = check(d), w2 = write(d), c2 = check(d);
+  ok('TR1. AGENTS.md ignored by git next to tracked sources: write creates both, check green, a second write unchanged, no orphan named',
+    w.status === 0 && agents(d, 'sub/AGENTS.md') && agents(d) && c.status === 0 && w2.status === 0 && !/^wrote /m.test(w2.out)
+    && c2.status === 0 && !/without|removed/.test(w.out + c.out + w2.out + c2.out), w.out + c.out + w2.out + c2.out);
+  // Ignored by .git/info/exclude, not by a .gitignore.
+  const e = project({ 'CLAUDE.md': 'R\n', 'sub/CLAUDE.md': 'S\n' });
+  fs.appendFileSync(path.join(e, '.git/info/exclude'), 'AGENTS.md\n');
+  write(e);
+  git(e, 'rm', '-q', '--cached', '--', 'sub/CLAUDE.md');
+  fs.unlinkSync(path.join(e, 'sub/CLAUDE.md'));
+  const ce = check(e);
+  ok('TR2. own sub/AGENTS.md ignored by .git/info/exclude, its CLAUDE.md gone: check exit 1 naming it', ce.status === 1
+    && /generated sub\/AGENTS\.md without sub\/CLAUDE\.md/.test(ce.out), ce.out);
+  // git mv a/b a/c renames the directory on disk, so the ignored AGENTS.md moves with it and is stale (moved).
+  const m = project({ '.gitignore': 'AGENTS.md\n', 'CLAUDE.md': 'R\n', 'a/b/CLAUDE.md': 'B\n' });
+  write(m);
+  git(m, 'mv', 'a/b', 'a/c');
+  const cm = check(m);
+  ok('TR3. git mv a/b a/c with AGENTS.md ignored: check exit 1, a/c/AGENTS.md stale (source moved), a/b/ gone', cm.status === 1
+    && /a\/c\/AGENTS\.md is stale \(source moved: a\/b\/CLAUDE\.md -> a\/c\/CLAUDE\.md\)/.test(cm.out) && !fs.existsSync(path.join(m, 'a/b')), cm.out);
+  // The ignored file left behind by a copy of the directory (cp -R a/c a/d, then a/d/CLAUDE.md not added): own file of
+  // another source, no tracked CLAUDE.md beside it - red, and write removes it.
+  const wm = write(m);
+  fs.mkdirSync(path.join(m, 'a/d'));
+  fs.copyFileSync(path.join(m, 'a/c/AGENTS.md'), path.join(m, 'a/d/AGENTS.md'));
+  const cm2 = check(m);
+  const wm2 = write(m);
+  ok('TR3. write rewrites a/c/AGENTS.md; a copy a/d/AGENTS.md (ignored, no CLAUDE.md): check exit 1 naming it, write removes it, check green',
+    wm.status === 0 && split(agents(m, 'a/c/AGENTS.md')).m[2] === 'a/c/CLAUDE.md' && cm2.status === 1
+    && /generated a\/d\/AGENTS\.md without a\/d\/CLAUDE\.md/.test(cm2.out) && wm2.status === 0 && !agents(m, 'a/d/AGENTS.md')
+    && check(m).status === 0, wm.out + cm2.out + wm2.out);
+  // A directory name git quotes without -z (non-ASCII and a tab).
+  const odd = 'dü\tx';
+  const q = project({ '.gitignore': 'AGENTS.md\n', 'CLAUDE.md': 'R\n', [`${odd}/CLAUDE.md`]: 'Q\n' });
+  write(q);
+  git(q, 'rm', '-q', '--cached', '--', `${odd}/CLAUDE.md`);
+  fs.unlinkSync(path.join(q, odd, 'CLAUDE.md'));
+  const cq = check(q);
+  const wq = write(q);
+  ok(`TR4. own ignored ${JSON.stringify(odd)}/AGENTS.md without its CLAUDE.md: check exit 1 naming it, write removes it`, cq.status === 1
+    && cq.out.includes(`generated ${odd}/AGENTS.md without`) && wq.status === 0 && !agents(q, `${odd}/AGENTS.md`), cq.out + wq.out);
+  // Not connected: an ignored generated nested file that was edited by hand is still red.
+  const n = project(ign);
+  write(n);
+  const cfgFile = path.join(n, '.claude/codis-agents.json');
+  const j = JSON.parse(fs.readFileSync(cfgFile, 'utf8')); delete j.agentsMd; fs.writeFileSync(cfgFile, JSON.stringify(j));
+  fs.unlinkSync(path.join(n, 'AGENTS.md'));
+  fs.appendFileSync(path.join(n, 'sub/AGENTS.md'), 'an edit\n');
+  const cn = check(n);
+  ok('TR5. not connected, an edited ignored sub/AGENTS.md left: check exit 1 naming it', cn.status === 1
+    && /generated sub\/AGENTS\.md without connection/.test(cn.out), cn.out);
+  // A generated file copied into an ignored folder (build/): its source path does not exist there; check red, write removes it.
+  const b = project({ '.gitignore': 'build/\n', 'CLAUDE.md': 'R\n' });
+  write(b);
+  fs.mkdirSync(path.join(b, 'build'), { recursive: true });
+  fs.copyFileSync(path.join(b, 'AGENTS.md'), path.join(b, 'build/AGENTS.md'));
+  const cb = check(b);
+  const wb = write(b);
+  ok('TR6. own AGENTS.md copied into the ignored build/: check exit 1 naming build/AGENTS.md, write removes it, check green', cb.status === 1
+    && /build\/AGENTS\.md/.test(cb.out) && wb.status === 0 && !agents(b, 'build/AGENTS.md') && check(b).status === 0, cb.out + wb.out);
+}
 done();
