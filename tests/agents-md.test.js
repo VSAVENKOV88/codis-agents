@@ -885,7 +885,7 @@ const tick = () => { const t = Date.now(); while (Date.now() - t < 20) { /* let 
     const c = check(d);
     const w2 = write(d);
     ok(`TK9. directory ${JSON.stringify(dir)}: the marker source decodes to ${JSON.stringify(dir + '/CLAUDE.md')}, check green, a second write unchanged`,
-      w.status === 0 && s && s.m && decodeURIComponent(s.m[2]) === `${dir}/CLAUDE.md` && !/[\s%;>]/.test(s.m[2].replace(/%[0-9A-F]{2}/g, ''))
+      w.status === 0 && s && s.m && (() => { try { return decodeURIComponent(s.m[2]); } catch { return null; } })() === `${dir}/CLAUDE.md` && !/[\s%;>]/.test(s.m[2].replace(/%[0-9A-F]{2}/g, ''))
       && c.status === 0 && w2.status === 0 && !/^wrote /m.test(w2.out), w.out + c.out + w2.out);
   }
 }
