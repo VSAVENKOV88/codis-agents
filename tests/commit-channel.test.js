@@ -50,8 +50,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const sha256 = (b) => crypto.createHash('sha256').update(b).digest('hex');
 const newId = () => crypto.randomBytes(16).toString('hex');
 const SETUP_ENV = Object.assign({}, process.env, {
-  GIT_AUTHOR_NAME: 'Setup', GIT_AUTHOR_EMAIL: 'setup@example.invalid', GIT_COMMITTER_NAME: 'Setup',
-  GIT_COMMITTER_EMAIL: 'setup@example.invalid', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null',
+  GIT_AUTHOR_NAME: 'Setup', GIT_AUTHOR_EMAIL: 'setup@example.com', GIT_COMMITTER_NAME: 'Setup',
+  GIT_COMMITTER_EMAIL: 'setup@example.com', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null',
 });
 // The test's own git: never a hook, fsmonitor or filter of a hostile fixture.
 const git = (cwd, args, extra) => {
@@ -72,7 +72,7 @@ function fixture(opts) {
     rtmp: path.join(d, 'rtmp'), home: path.join(d, 'home'), xdg: path.join(d, 'xdg'), marks: path.join(d, 'marks.log'),
     control: path.join(d, 'control.txt') };
   for (const k of ['repo', 'tdir', 'rtmp', 'home', 'xdg']) fs.mkdirSync(f[k], { recursive: true });
-  fs.writeFileSync(path.join(f.home, '.gitconfig'), '[user]\n\tname = Role Owner\n\temail = owner@example.invalid\n' + (o.global || ''));
+  fs.writeFileSync(path.join(f.home, '.gitconfig'), '[user]\n\tname = Role Owner\n\temail = owner@example.com\n' + (o.global || ''));
   fs.writeFileSync(f.control, 'control ' + d + '\n');
   git(f.repo, ['init', '-q', '-b', 'main']);
   fs.writeFileSync(path.join(f.repo, 'a.txt'), 'a\n');
@@ -142,7 +142,7 @@ const markScript = (f, name) => `#!/bin/sh\necho ${name} >> '${f.marks}'\ncat >/
     ok('CH-01 a request -> committed, a sha of 40 hex = the branch tip, exit 0', r1.rc === 0 && r1.j && r1.j.status === 'committed'
       && /^[0-9a-f]{40}$/.test(r1.j.sha) && r1.j.sha === t1 && t1 !== t0, JSON.stringify(r1));
     ok('CH-01 the commit holds the bytes, the message, the parent and the identity of the user\'s config (G8)',
-      git(f.wt, ['show', '-s', '--format=%P|%an <%ae>|%cn <%ce>|%s', t1]).out === `${t0}|Role Owner <owner@example.invalid>|Role Owner <owner@example.invalid>|red guard`
+      git(f.wt, ['show', '-s', '--format=%P|%an <%ae>|%cn <%ce>|%s', t1]).out === `${t0}|Role Owner <owner@example.com>|Role Owner <owner@example.com>|red guard`
       && git(f.wt, ['cat-file', '-p', `${t1}:a.txt`]).out === 'a red guard', git(f.wt, ['show', '-s', '--format=%P|%an <%ae>|%cn <%ce>|%s', t1]).out);
     const j1 = journal(f);
     ok('CH-01 the journal: version 1, numbered events, an intent before the result, the sha in both',
@@ -466,21 +466,26 @@ const markScript = (f, name) => `#!/bin/sh\necho ${name} >> '${f.marks}'\ncat >/
     ok('OC-05 the include.path of the repo set nothing that ran', !/include/.test(hostileMarks(f)), hostileMarks(f));
     ok('OC-01..05 nothing of the hostile config ran at all (marks empty)', hostileMarks(f) === '', hostileMarks(f));
     const wl = fs.existsSync(wlog) ? fs.readFileSync(wlog, 'utf8') : '';
-    const argvs = wl.split('\n').filter((l) => l.startsWith('ARGV'));
+    // one record per git command: its ARGV line and the ENV lines after it; "git config" reads the user's config to
+    // find hooks and the identity (it runs nothing), "git --version" checks the binary - every other one is the commit
+    const cmds = [];
+    for (const l of wl.split('\n')) { if (l.startsWith('ARGV')) cmds.push({ argv: l, env: [] }); else if (l.startsWith('ENV ') && cmds.length) cmds[cmds.length - 1].env.push(l); }
+    const ofCommit = cmds.filter((c) => !/\[--version\]/.test(c.argv) && !/\[config\]/.test(c.argv));
+    const argvs = ofCommit.map((c) => c.argv);
     const commitTree = argvs.find((l) => / \[commit-tree\]/.test(l)) || '';
     ok('OC-04 commit-tree runs with --no-gpg-sign and -c commit.gpgSign=false', /\[--no-gpg-sign\]/.test(commitTree) && /\[commit\.gpgSign=false\]/.test(commitTree), commitTree);
     ok('OC-01 every git command of the service carries -c core.hooksPath=<an empty folder of the adapter> and core.fsmonitor=false',
-      argvs.length > 3 && argvs.filter((l) => !/\[--version\]/.test(l)).every((l) => /\[core\.hooksPath=[^\]]+\]/.test(l) && /\[core\.fsmonitor=false\]/.test(l)),
-      argvs.filter((l) => !/\[core\.fsmonitor=false\]/.test(l)).join('\n'));
+      argvs.length > 8 && argvs.every((l) => /\[core\.hooksPath=[^\]]+\]/.test(l) && /\[core\.fsmonitor=false\]/.test(l)),
+      argvs.filter((l) => !/\[core\.hooksPath=/.test(l) || !/\[core\.fsmonitor=false\]/.test(l)).join('\n'));
+    ok('the reads of the user\'s config are "git config" with core.fsmonitor=false', cmds.filter((c) => /\[config\]/.test(c.argv)).every((c) => /\[core\.fsmonitor=false\]/.test(c.argv)));
     const hp = /\[core\.hooksPath=([^\]]+)\]/.exec(commitTree);
     ok('OC-01 the hooks folder of the adapter is empty and outside the worktree, the task folder and tmp of the role',
       hp && fs.readdirSync(hp[1]).length === 0 && hp[1].startsWith(f.state), hp && hp[1]);
     ok('OC-07 GIT_TRACE of the parent did not reach git (no trace file)', !fs.existsSync(trace));
-    const envOfCommit = wl.split('\n').filter((l) => l.startsWith('ENV '));
+    const envOfCommit = [].concat(...ofCommit.map((c) => c.env));
     ok('OC-07 no inherited GIT_* variable reaches the git of the commit (GIT_CONFIG_PARAMETERS, GIT_CONFIG_COUNT, GIT_EXEC_PATH, GIT_EXTERNAL_DIFF, GIT_TRACE)',
       !envOfCommit.some((l) => /^ENV (GIT_CONFIG_PARAMETERS|GIT_CONFIG_COUNT|GIT_CONFIG_KEY_0|GIT_EXEC_PATH|GIT_EXTERNAL_DIFF|GIT_TRACE)=/.test(l))
-      && envOfCommit.some((l) => l === 'ENV GIT_CONFIG_NOSYSTEM=1') && envOfCommit.some((l) => l === 'ENV GIT_CONFIG_GLOBAL=/dev/null')
-      && envOfCommit.some((l) => l === 'ENV GIT_NO_LAZY_FETCH=1'), envOfCommit.filter((l) => /GIT_/.test(l)).slice(0, 20).join('\n'));
+      && ofCommit.every((c) => ['ENV GIT_CONFIG_NOSYSTEM=1', 'ENV GIT_CONFIG_GLOBAL=/dev/null', 'ENV GIT_NO_LAZY_FETCH=1'].every((x) => c.env.includes(x))), envOfCommit.filter((l) => /GIT_/.test(l)).slice(0, 20).join('\n'));
     ok('OC-07 the GIT_DIR and GIT_INDEX_FILE of the parent were not used: the real repo moved only refs/heads/task',
       tip(f.wt) === r.j.sha && !fs.existsSync(path.join(f.d, 'other-index')));
     s.close();
@@ -499,7 +504,7 @@ const markScript = (f, name) => `#!/bin/sh\necho ${name} >> '${f.marks}'\ncat >/
     fs.writeFileSync(path.join(f.wt, 'a.txt'), 'global\n');
     const r = await client(s, ['-m', 'global', '--', 'a.txt']);
     ok('OC-06 the user\'s global fsmonitor and hooks (non-check hooks) did not run; the author is the user\'s',
-      r.j && r.j.status === 'committed' && hostileMarks(f) === '' && git(f.wt, ['show', '-s', '--format=%an <%ae>', r.j.sha]).out === 'Role Owner <owner@example.invalid>',
+      r.j && r.j.status === 'committed' && hostileMarks(f) === '' && git(f.wt, ['show', '-s', '--format=%an <%ae>', r.j.sha]).out === 'Role Owner <owner@example.com>',
       JSON.stringify({ r: r.j, marks: hostileMarks(f) }));
     s.close();
     const f2 = fixture();
@@ -509,10 +514,10 @@ const markScript = (f, name) => `#!/bin/sh\necho ${name} >> '${f.marks}'\ncat >/
     const r2 = await client(s2, ['-m', 'm', '--', 'a.txt']);
     ok('G8 no user.name/user.email in the user\'s config -> refused "no identity"', r2.j && r2.j.status === 'refused' && /identity/.test(r2.j.why), JSON.stringify(r2.j));
     s2.close();
-    const s3 = service(f2, { author: { name: 'codis-agents', email: 'noreply@users.noreply.github.com' } });
+    const s3 = service(f2, { author: { name: 'codis-agents', email: 'noreply@example.com' } });
     const r3 = await client(s3, ['-m', 'm', '--', 'a.txt']);
     ok('G8 commit.author of the config names the identity', r3.j && r3.j.status === 'committed'
-      && git(f2.wt, ['show', '-s', '--format=%an <%ae>|%cn <%ce>', r3.j.sha]).out === 'codis-agents <noreply@users.noreply.github.com>|codis-agents <noreply@users.noreply.github.com>', JSON.stringify(r3.j));
+      && git(f2.wt, ['show', '-s', '--format=%an <%ae>|%cn <%ce>', r3.j.sha]).out === 'codis-agents <noreply@example.com>|codis-agents <noreply@example.com>', JSON.stringify(r3.j));
     s3.close();
   }
 

@@ -11,6 +11,9 @@
 // JSONL stream parsed line by line, the outcome by the fields of the terminal event, the exit code and the signal, the
 // ceiling of 3 h on the monotonic clock, SIGTERM/SIGINT/SIGHUP of the adapter passed to every live group); cfg.launch
 // replaces it (tests, chain-cost). One line of <task dir>/calls.jsonl per call, whatever its outcome.
+// With cfg.commit a prog or test call on codex gets the commit channel (scripts/commit-service.js): a box in its call
+// folder, the answers in commit.stateDir, CODIS_COMMIT_BOX and CODIS_COMMIT_ANSWERS in its environment, the service
+// open exactly while the launcher runs; the record carries its summary.
 //
 // usage: node role-exec.js check --host codex [--bin <codex>] --home <run home> [--auth chatgpt|apiKeyFile]
 //          [--key-file <file>] [--model <slug>] [--effort <level>] [--versions <a,b>]
@@ -21,6 +24,7 @@ const os = require('os');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const { StringDecoder } = require('string_decoder');
+const { openCommitService } = require('./commit-service');
 
 // The JSON Schema keywords the twelve schemas of role-chain.js use. Strict mode of the OpenAI API supports a subset of
 // JSON Schema; only these words are converted, and any other one is refused before a call, never guessed (A1-04).
@@ -51,6 +55,9 @@ const KINDS = {
   pre: 'preconditions', analyst: 'analyst', usecases: 'analyst', prog: 'programmer', test: 'tester', review: 'reviewer',
   sec: 'security-reviewer', sha: 'service', diff: 'service', left: 'service', post: 'service', run: 'service', merge: 'service',
 };
+// The kinds of label that get the commit channel (cfg.commit): the roles that commit code or guards.
+const COMMIT_KINDS = new Set(['prog', 'test']);
+const COMMIT_CLIENT = path.join(__dirname, 'commit-req.js');
 // Refusals of the codex host by the kind of the label; the claude host runs every kind.
 const CODEX_REFUSED = (kind) => (KINDS[kind] === 'service'
   ? `service step "${kind}" on codex: the conductor runs it as a child process (part B)`
@@ -162,6 +169,8 @@ function readKey(file) {
 function codexEnv(base, home, auth, key) {
   const env = Object.assign({}, base);
   delete env.CODEX_API_KEY; delete env.OPENAI_API_KEY;
+  // the commit channel is given per call (prog and test with cfg.commit); an inherited one never reaches a role
+  delete env.CODIS_COMMIT_BOX; delete env.CODIS_COMMIT_ANSWERS;
   env.CODEX_HOME = home;
   if (auth === 'apiKeyFile' && key) env.CODEX_API_KEY = key;
   return env;
@@ -170,6 +179,19 @@ function codexEnv(base, home, auth, key) {
 // The personal ~/.codex of the user is never the run home of the chains (owner decision 6: a separate home with its own
 // login); compared by realpath, so a link to it is the same home.
 const real = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+// realpath of the longest existing prefix plus the rest: a folder that does not exist yet compares like the real one
+const realish = (p) => {
+  const abs = path.resolve(p);
+  let head = abs, rest = '';
+  for (;;) {
+    try { return path.join(fs.realpathSync(head), rest); } catch { /* go up */ }
+    const up = path.dirname(head);
+    if (up === head) return abs;
+    rest = path.join(path.basename(head), rest);
+    head = up;
+  }
+};
+const inside = (a, b) => a === b || a.startsWith(b.endsWith(path.sep) ? b : b + path.sep);
 const isPersonalCodex = (home) => real(home) === real(path.join(os.homedir(), '.codex'));
 const personalNo = (home) => `codex.home ${home} is the personal ~/.codex: the chains run in a separate home with its own login (CODEX_HOME=<home> codex login)`;
 
@@ -382,6 +404,22 @@ function createAgent(cfg) {
   }
   if (c.host === 'codex' && isPersonalCodex(cx.home)) no(personalNo(cx.home));
   const cl = Object.assign({ bin: 'claude', permissionMode: 'auto', disallowedTools: CLAUDE_DISALLOWED }, c.claude || {});
+  // The commit channel (p-codex A2a-1): prog and test on codex ask the adapter to commit (scripts/commit-req.js); the
+  // adapter keeps its answers, journal and private index in commit.stateDir, which no role may write: not under a task
+  // folder or worktree (or holding one), not under /tmp or the TMPDIR a role gets (the codex sandbox lets a role write
+  // both). The claude host gets the channel in part A2c.
+  const cm = c.commit === undefined || c.commit === null ? null : c.commit;
+  if (cm) {
+    if (typeof cm !== 'object') no('commit must be an object {stateDir, git?, gitVersions?, author?}');
+    if (c.host !== 'codex') no('commit on the claude host: the commit channel of claude -p comes with part A2c');
+    if (typeof cm.stateDir !== 'string' || !path.isAbsolute(cm.stateDir)) no(`commit.stateDir is required and absolute, got ${JSON.stringify(cm.stateDir)}`);
+    const sd = realish(cm.stateDir);
+    const roleTmp = (c.env || process.env).TMPDIR;
+    const roots = [].concat(...Object.values(tasks).map((t) => [t.dir, t.wt]), ['/tmp'], roleTmp ? [roleTmp] : []).map(realish);
+    for (const r of roots) {
+      if (inside(sd, r) || inside(r, sd)) no(`commit.stateDir ${cm.stateDir} overlaps ${r}, a folder a role writes: the adapter's answers and journal must be out of the role's reach`);
+    }
+  }
 
   // {refused} or the plan of the call.
   function prepare(prompt, opts) {
@@ -395,7 +433,11 @@ function createAgent(cfg) {
     if (!t) return refuse(`unknown task ${lb.key} (label ${o.label})`);
     base.t = t;
     if (typeof prompt !== 'string') return refuse('the prompt is not a string');
-    if (c.host === 'codex' && CODEX_REFUSED(lb.kind)) return refuse(CODEX_REFUSED(lb.kind));
+    const channel = !!cm && COMMIT_KINDS.has(lb.kind);
+    // prog and test on the real codex CLI wait for the sandbox profile of code writes (part A2a-3); a launcher of the
+    // caller with the commit channel runs them (the acceptance of the channel under codex sandbox)
+    if (c.host === 'codex' && CODEX_REFUSED(lb.kind) && !(channel && c.launch)) return refuse(CODEX_REFUSED(lb.kind));
+    if (channel && (typeof t.branch !== 'string' || !t.branch)) return refuse(`task ${lb.key} has no branch: the commit channel needs tasks[k].branch`);
     const at = o.agentType;
     let bodyRole = null;
     if (at !== 'general-purpose') {
@@ -408,7 +450,7 @@ function createAgent(cfg) {
     if (roleFile && !fs.existsSync(roleFile)) return refuse(`no role file agents/${bodyRole}.md in ${c.pluginRoot}`);
     const probs = schemaProblems(o.schema);
     if (probs.length) return refuse(`schema: ${probs.join('; ')}`);
-    const plan = Object.assign(base, { host: c.host, kind: lb.kind, phase: o.phase, schema: o.schema, cwd: t.dir });
+    const plan = Object.assign(base, { host: c.host, kind: lb.kind, phase: o.phase, schema: o.schema, cwd: t.dir, channel });
     if (c.host === 'codex') {
       const alias = o.model === undefined ? 'default' : o.model;
       const slug = cx.models && own(cx.models, alias) ? cx.models[alias] : null;
@@ -457,7 +499,7 @@ function createAgent(cfg) {
   return async function agent(prompt, opts) {
     const started = new Date();
     const t0 = process.hrtime.bigint();
-    let plan, fin, res = null;
+    let plan, fin, res = null, svc = null, commitSum = null;
     try { plan = prepare(prompt, opts); } catch (e) { plan = { label: opts && opts.label, refused: `internal error: ${e.message}` }; }
     if (plan.refused) fin = { outcome: 'refused', error: plan.refused };
     else if (stopping) fin = { outcome: 'signalled', error: `the adapter got ${stopping}: no new call starts` };
@@ -472,9 +514,21 @@ function createAgent(cfg) {
         if (plan.strictSchema) fs.writeFileSync(path.join(plan.callDir, 'schema.json'), JSON.stringify(plan.strictSchema, null, 1) + '\n');
         plan.argv = plan.argv(plan.callDir);
       } catch (e) { fin = { outcome: 'crashed', error: `the call folder: ${e.message}` }; }
+      if (!fin && plan.channel) {
+        // the box in the call folder (a new one per call: a request of an earlier call is never read), the answers in
+        // the adapter's state folder; the service lives exactly as long as the role's process
+        try {
+          svc = openCommitService({ task: plan.key, callId: path.basename(plan.callDir), wt: plan.t.wt, branch: plan.t.branch,
+            box: path.join(plan.callDir, 'commit'), stateDir: cm.stateDir, git: cm.git, gitVersions: cm.gitVersions, author: cm.author,
+            userEnv: c.env || process.env, inject: cm.inject, log });
+          plan.commit = { box: svc.box, answers: svc.answers, client: COMMIT_CLIENT };
+          plan.env = Object.assign({}, plan.env, { CODIS_COMMIT_BOX: svc.box, CODIS_COMMIT_ANSWERS: svc.answers });
+        } catch (e) { fin = { outcome: 'crashed', error: `the commit channel: ${e.message}` }; }
+      }
       if (!fin) {
         try { res = await launch(plan); fin = settle(plan, res); } catch (e) { fin = { outcome: 'crashed', error: `the launcher threw: ${e.message}` }; }
       }
+      if (svc) { try { commitSum = svc.close(); } catch (e) { commitSum = { error: e.message }; } }
     }
     const ended = new Date();
     const r = res && typeof res === 'object' ? res : {};
@@ -489,6 +543,7 @@ function createAgent(cfg) {
       notes: Array.isArray(r.notes) ? r.notes : [], sessionId: r.sessionId || null, credentialExpiresAt: r.credentialExpiresAt || null,
       callDir: plan.callDir || null,
     };
+    if (commitSum) rec.commit = Object.assign({ box: svc.box, answers: svc.answers }, commitSum);
     try {
       const dir = plan.t ? plan.t.dir : c.callsDir;
       fs.mkdirSync(dir, { recursive: true });

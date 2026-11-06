@@ -4,6 +4,28 @@ Every version of the codis-agents plugin, newest first. What the plugin does now
 [README.md](README.md); its [Technical reference](README.md#technical-reference) is the current state of every rule,
 key and script, and this file says when and why each one changed. Versions before 0.4.14 are in the git history.
 
+## 0.4.31 - 2026-11-06
+
+- **The commit channel of the role adapter and a safe outside commit** (p-codex A2a-1; owner 2026-11-06: answers 3
+  and 4 to the use cases of A2, the answer to G2 of the analysis check, question 6). A role on Codex cannot commit
+  inside its sandbox, so a programmer or tester asks the adapter: new `scripts/commit-req.js` (the client: a request
+  `{id, paths, message}` published into the call's box by a rename, the answer - sha or the reason - within at most
+  270 s, `pending` and `wait --id` after that) and `scripts/commit-service.js` (the adapter's half). The box is an
+  untrusted source: read only, never renamed, removed or written by the adapter, each request opened with
+  `O_NOFOLLOW_ANY | O_NONBLOCK` and `fstat` (a symbolic link in any component, a FIFO or a folder: refused, no
+  hang), answers and the journal in the adapter's `commit.stateDir`, which `createAgent` refuses under any folder a
+  role writes. The box is scanned at once, on each `fs.watch` event (a signal only) and every second; requests run
+  one at a time in order. The commit is plumbing only with every hook, fsmonitor, filter, signing program and
+  promisor transport off (`-c core.hooksPath=<empty> -c core.fsmonitor=false -c commit.gpgSign=false`,
+  `--no-filters`, `--no-gpg-sign`, `GIT_NO_LAZY_FETCH=1`, an environment built from nothing, git of a verified
+  version), the author from the user's config or `commit.author`; a repository with hooks of a check is refused
+  with `no safe check path` until part A2a-2. A journal per task (one writer, numbered events, intent before each
+  action, a torn tail cut off, a damaged line refuses, recovery by the tip of the branch, `undetermined` blocks).
+  `role-exec.js`: `cfg.commit`, `tasks[k].branch`, the channel for `prog`/`test` on codex with a launcher (the real
+  CLI keeps refusing them until part A2a-3), the record's `commit`. Tested on real repositories with a hostile
+  config (`tests/commit-channel.test.js`) and under the real `codex sandbox` without a model
+  (`tests/commit-channel-sandbox.test.js`). README "What's inside" counts recounted.
+
 ## 0.4.30 - 2026-11-05
 
 - **Install under Codex CLI and a read-only check of the hook's trust** (p-codex-D1b; owner 2026-11-05 answers 1, 2
