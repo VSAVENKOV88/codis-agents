@@ -76,7 +76,7 @@ let fixN = 0;
 // state folder, the role's TMPDIR, a user home, and canaries outside every root.
 function fixture(o) {
   const x = o || {};
-  const d = path.join(BASE, `f${++fixN}`);
+  const d = path.join(x.under || BASE, `f${++fixN}`);
   const f = { d, repo: path.join(d, 'repo'), tdir: path.join(d, 'tdir'), state: path.join(d, 'state'), rtmp: path.join(d, 'rtmp'),
     home: path.join(d, 'home'), xdg: path.join(d, 'xdg'), hooks: path.join(d, 'hooks'), canary: path.join(d, 'canary') };
   for (const k of ['repo', 'tdir', 'rtmp', 'home', 'xdg', 'canary']) fs.mkdirSync(f[k], { recursive: true });
@@ -449,8 +449,16 @@ const underAny = (p, roots) => roots.some((r) => p === r || p.startsWith(r + pat
   }
 
   // ---- EV-08, EV-08b: what the hook may not write
+  // the worktree under /private/tmp, a write root of the :workspace profile itself: there only the read rule of the
+  // profile keeps .git and .codex from the check (measured: without it the hook writes .git/config); the canaries and
+  // the adapter's state stay outside tmp
+  const TMP_BASE = fs.realpathSync(fs.mkdtempSync('/private/tmp/commit-chk-'));
+  process.on('exit', () => fs.rmSync(TMP_BASE, { recursive: true, force: true }));
   for (const main of [false, true]) {
-    const f = fixture({ main, hooks: {} });
+    const f = fixture({ main, hooks: {}, under: TMP_BASE });
+    f.canary = path.join(BASE, `canary-ev08-${fixN}`);
+    f.state = path.join(BASE, `state-ev08-${fixN}`);
+    fs.mkdirSync(f.canary, { recursive: true });
     const ssh = path.join(f.canary, 'ssh', 'id_rsa');
     fs.mkdirSync(path.dirname(ssh));
     fs.writeFileSync(ssh, 'key\n');
