@@ -817,5 +817,13 @@ setTimeout(() => process.exit(9), 20000);
     ok('without a launcher prog on codex is still refused (A2)', vr === null && lr.outcome === 'refused' && /A2/.test(lr.error), JSON.stringify(lr));
     ok('the control file outside the worktree is unchanged (role-exec)', f.controlSha() === f.control0);
   }
+  // ---- the tester's cells (swaps during the read, a socket request, the first scan, the queue order, the poll and the
+  // subscription): tests/commit-channel-tester-cases.js, a child with its own tally, so README keeps counting test files
+  {
+    const tc = spawnSync(process.execPath, [path.join(__dirname, 'commit-channel-tester-cases.js')], { encoding: 'utf8', timeout: 240000 });
+    process.stdout.write((tc.stdout || '').replace(/\n+$/, '').replace(/^/gm, '  | ') + '\n');
+    ok('the tester cells of the channel (tests/commit-channel-tester-cases.js) pass', tc.status === 0,
+      `exit ${tc.status} ${tc.signal || ''} ${(tc.stderr || '').slice(-500)}`);
+  }
   done();
 })().catch((e) => { ok('the test ran to the end', false, e && e.stack); done(); });

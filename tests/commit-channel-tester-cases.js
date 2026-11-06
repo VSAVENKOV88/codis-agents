@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 'use strict';
-// Tester guard of the commit channel (p-codex A2a-1), the cells the programmer's guards do not hold:
+// Tester cells of the commit channel (p-codex A2a-1), run by tests/commit-channel.test.js as a child (its own tally and
+// exit code); the cells the programmer's guards do not hold:
 // - the owner's answer to G2: "a swap of the request file and of its parent folder during the read" - a child process
 //   swaps a request (and the box folder, and a named file of the worktree, and its parent folder) between a regular
 //   file or folder and a symbolic link to a secret outside, while the service reads; nothing of the secret is ever
