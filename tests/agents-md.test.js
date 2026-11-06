@@ -452,4 +452,101 @@ const sect = (h, c) => `\nContents of ${h}:\n\n${c}`;
   const r = spawnSync(process.execPath, [SCRIPT, 'nonsense'], { encoding: 'utf8' });
   ok('usage: an unknown command exits 64', r.status === 64, r.stderr);
 }
+
+// ---- tester: cells next to the programmer's (K5 through a link, E on an existing key, D3 for an edited file, root) ----
+{
+  const cfgOf = (d) => fs.readFileSync(path.join(d, '.claude/codis-agents.json'), 'utf8');
+  // TK5a. AGENTS.md is a symbolic link to a generated file: it is not ours (never followed), check and write refuse it
+  // and leave both the link and its target as they are.
+  const d = project({ 'CLAUDE.md': 'R\n' });
+  write(d);
+  fs.renameSync(path.join(d, 'AGENTS.md'), path.join(d, 'gen.md'));
+  fs.symlinkSync('gen.md', path.join(d, 'AGENTS.md'));
+  const target = fs.readFileSync(path.join(d, 'gen.md'));
+  const c = check(d), w = write(d, ['--discard-edits']);
+  ok('TK5a. AGENTS.md as a link to a generated file: check and write --discard-edits exit 1 conflict, link and target kept',
+    [c, w].every((r) => r.status === 1 && /conflict/.test(r.out)) && fs.lstatSync(path.join(d, 'AGENTS.md')).isSymbolicLink()
+      && fs.readlinkSync(path.join(d, 'AGENTS.md')) === 'gen.md' && fs.readFileSync(path.join(d, 'gen.md')).equals(target), c.out + w.out);
+  // TK5b. --discard-edits never discards a foreign file.
+  const f = project({ 'CLAUDE.md': 'R\n', 'AGENTS.md': 'FOREIGN\n' });
+  const wf = write(f, ['--discard-edits']);
+  ok('TK5b. write --discard-edits over a foreign AGENTS.md: exit 1 conflict, file kept', wf.status === 1 && /conflict/.test(wf.out)
+    && agents(f).toString() === 'FOREIGN\n', wf.out);
+  // TE2a. --enable where the config says "agentsMd": false: flips it to true, every other byte of the config kept.
+  const e = project({ 'CLAUDE.md': 'R\n' }, { agentsMd: false });
+  const before = cfgOf(e);
+  const we = write(e, ['--enable']);
+  ok('TE2a. write --enable on "agentsMd": false: exit 0, only false -> true changed in the config, check green',
+    we.status === 0 && cfgOf(e) === before.replace('"agentsMd": false', '"agentsMd": true') && cfgOf(e) !== before && check(e).status === 0, we.out + cfgOf(e));
+  // TE2b. --enable on a one-line config without the key: valid JSON, the other keys as they were.
+  const o = project({ 'CLAUDE.md': 'R\n', '.claude/codis-agents.json': '{"repoDir": ".", "sharedDir": "/tmp/shared"}' }, { connected: false });
+  const wo = write(o, ['--enable']);
+  let parsed = null; try { parsed = JSON.parse(cfgOf(o)); } catch { /* red below */ }
+  ok('TE2b. write --enable on a one-line config: valid JSON with agentsMd true and the other keys kept, check green',
+    wo.status === 0 && parsed && parsed.agentsMd === true && parsed.repoDir === '.' && parsed.sharedDir === '/tmp/shared' && check(o).status === 0, wo.out + cfgOf(o));
+  // TE2c. --enable on a project already connected changes no byte of the config.
+  const a = project({ 'CLAUDE.md': 'R\n' });
+  const ba = cfgOf(a);
+  const wa = write(a, ['--enable']);
+  ok('TE2c. write --enable when already connected: exit 0, the config unchanged', wa.status === 0 && cfgOf(a) === ba && check(a).status === 0, wa.out);
+  // TE3a. --enable over a generated file edited by hand (not connected yet): refused, the key not set, the edit kept.
+  const gen = (() => { const x = project({ 'CLAUDE.md': 'R\n' }); write(x); return agents(x); })();
+  const h = project({ 'CLAUDE.md': 'R\n' }, { agentsMd: false });
+  fs.writeFileSync(path.join(h, 'AGENTS.md'), Buffer.concat([gen, Buffer.from('an edit\n')]));
+  const bh = cfgOf(h);
+  const wh = write(h, ['--enable']);
+  ok('TE3a. write --enable over an edited generated file: exit 1 "edited by hand", key not set, the edit kept',
+    wh.status === 1 && /edited by hand/.test(wh.out) && cfgOf(h) === bh && /an edit\n$/.test(agents(h).toString()), wh.out);
+  // TE3b. --enable with a tracked nested CLAUDE.md (outside this part): blocked, the key not set, nothing written.
+  const nn = project({ 'CLAUDE.md': 'R\n', 'sub/CLAUDE.md': 'S\n' }, { connected: false });
+  const bn = cfgOf(nn);
+  const wn = write(nn, ['--enable']);
+  ok('TE3b. write --enable with a tracked nested CLAUDE.md: exit 1 "not supported until D3-2", key not set, nothing written',
+    wn.status === 1 && /not supported until D3-2/.test(wn.out) && cfgOf(nn) === bn && !agents(nn), wn.out);
+  // TD3a. not connected, a generated file edited by hand: still red (it would go stale silently), not "not used".
+  const ne = project({ 'CLAUDE.md': 'R\n' }, { agentsMd: false });
+  fs.writeFileSync(path.join(ne, 'AGENTS.md'), Buffer.concat([gen, Buffer.from('an edit\n')]));
+  const cn = check(ne);
+  ok('TD3a. not connected, a generated AGENTS.md edited by hand: check exit 1 "without connection"', cn.status === 1 && /without connection/.test(cn.out), cn.out);
+  // TD2a. not connected, a foreign AGENTS.md: "not used", the file kept (the project does not use the generator).
+  const nf = project({ 'CLAUDE.md': 'R\n', 'AGENTS.md': 'FOREIGN\n' }, { agentsMd: false });
+  const cf = check(nf);
+  ok('TD2a. not connected, a foreign AGENTS.md: check exit 0 "not used", file kept', cf.status === 0 && /not used/.test(cf.out) && agents(nf).toString() === 'FOREIGN\n', cf.out);
+  // TG-root. --root a subdirectory of the worktree: the top level is used (AGENTS.md next to the root CLAUDE.md).
+  const s = project({ 'CLAUDE.md': 'R\n', 'sub/keep.txt': 'k\n' });
+  const ws = run(path.join(s, 'sub'), ['write']);
+  ok('TG-root. write --root <subdirectory>: AGENTS.md written at the top level only, check from the subdirectory green',
+    ws.status === 0 && agents(s) && !agents(s, 'sub/AGENTS.md') && run(path.join(s, 'sub'), ['check']).status === 0, ws.out);
+  // TG-self. CLAUDE.md importing itself: no section, the line stays text (Claude Code reads each file once).
+  const me = project({ 'CLAUDE.md': 'R\n\x40CLAUDE.md\n\x40./CLAUDE.md\n' });
+  const wm = write(me);
+  ok('TG-self. CLAUDE.md importing itself: exit 0, body is CLAUDE.md only', wm.status === 0 && split(agents(me)).body.toString() === 'R\n\x40CLAUDE.md\n\x40./CLAUDE.md\n', wm.out);
+  // TU. write-only flags on check are a usage error (64) and write nothing.
+  const u = project({ 'CLAUDE.md': 'R\n' }, { agentsMd: false });
+  const bu = cfgOf(u);
+  const u1 = run(u, ['check', '--enable']), u2 = run(u, ['check', '--discard-edits']);
+  ok('TU. check --enable and check --discard-edits: exit 64, nothing written', u1.status === 64 && u2.status === 64 && !agents(u) && cfgOf(u) === bu, u1.out + u2.out);
+  // TF6. check writes nothing in the states the programmer's F6 does not list.
+  const snap = (dir) => {
+    const out = [];
+    const walk = (p) => {
+      for (const e2 of fs.readdirSync(p, { withFileTypes: true })) {
+        if (e2.name === '.git') continue;
+        const q = path.join(p, e2.name);
+        if (e2.isDirectory()) walk(q); else { const st = fs.lstatSync(q); out.push(`${path.relative(dir, q)} ${st.size} ${st.mtimeMs}`); }
+      }
+    };
+    walk(dir);
+    return out.sort().join('\n');
+  };
+  const ed = project({ 'CLAUDE.md': 'R\n' }); write(ed); fs.appendFileSync(path.join(ed, 'AGENTS.md'), 'x\n');
+  const ov = project({ 'CLAUDE.md': 'R\n' }); write(ov); fs.writeFileSync(path.join(ov, 'AGENTS.override.md'), 'O\n');
+  const br = project({ 'CLAUDE.md': 'R\n\x40rules/none.md\n' });
+  const states = [['edited', ed], ['override', ov], ['broken import', br], ['not connected, foreign', nf], ['link', d]];
+  for (const [name, dir] of states) {
+    const b = snap(dir);
+    const r = check(dir);
+    ok(`TF6. check writes nothing (${name}), exit non-zero or not used`, snap(dir) === b && (r.status !== 0 || /not used/.test(r.out)), r.out);
+  }
+}
 done();
