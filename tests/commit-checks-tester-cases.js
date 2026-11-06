@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 'use strict';
 // The tester's cells of the checks of a commit (p-codex A2a-2a), run as a child of tests/commit-checks.test.js with
 // its own tally: the order and the set of the hooks of a check (post-commit is not a check), the message the hooks
