@@ -832,4 +832,61 @@ const tick = () => { const t = Date.now(); while (Date.now() - t < 20) { /* let 
     ok(`TF6. check writes nothing (${name}), exit non-zero or not used`, snap(dir) === b && (r.status !== 0 || /not used/.test(r.out)), r.out);
   }
 }
+
+// ---- Tester cells of D3-2 (p-codex-D3-2 test.md): the nested file lost after a write (D4), --enable blocked by a
+// nested override or a nested broken import, imports of a nested file named from the repository root, and directory
+// names the marker must encode (%, ;, a tab, a newline). ----
+{
+  // D4: connected, both files written, then sub/AGENTS.md deleted: check names sub/ only; write recreates it alone.
+  const d = project({ 'CLAUDE.md': 'R\n', 'sub/CLAUDE.md': 'S\n' });
+  const w0 = write(d);
+  const rootBefore = fs.statSync(path.join(d, 'AGENTS.md')).mtimeMs;
+  fs.unlinkSync(path.join(d, 'sub/AGENTS.md'));
+  const c = check(d);
+  ok('TD4. connected, sub/AGENTS.md deleted after write: check exit 1 "sub/AGENTS.md is missing", the root file not named',
+    w0.status === 0 && c.status === 1 && /^agents-md: sub\/AGENTS\.md is missing/m.test(c.out) && !/^agents-md: AGENTS\.md/m.test(c.out), c.out);
+  const w = write(d);
+  ok('TD4. write recreates sub/AGENTS.md only (the root file keeps its mtime), check green',
+    w.status === 0 && /wrote sub\/AGENTS\.md/.test(w.out) && /unchanged AGENTS\.md/.test(w.out)
+    && fs.statSync(path.join(d, 'AGENTS.md')).mtimeMs === rootBefore && check(d).status === 0, w.out);
+}
+{
+  // --enable is blocked whole by a nested override and by a broken import in a nested CLAUDE.md.
+  const cfgOf = (dir) => fs.readFileSync(path.join(dir, '.claude/codis-agents.json'), 'utf8');
+  const o = project({ 'CLAUDE.md': 'R\n', 'sub/CLAUDE.md': 'S\n', 'sub/AGENTS.override.md': '' }, { connected: false });
+  const bo = cfgOf(o);
+  const wo = write(o, ['--enable']);
+  ok('TE5. an empty sub/AGENTS.override.md blocks --enable: exit 1 naming sub/, the key not set, no AGENTS.md written',
+    wo.status === 1 && /AGENTS\.override\.md at sub\/ replaces the generated sub\/AGENTS\.md/.test(wo.out) && /not connected/.test(wo.out)
+    && cfgOf(o) === bo && !agents(o) && !agents(o, 'sub/AGENTS.md'), wo.out);
+  const b = project({ 'CLAUDE.md': 'R\n', 'sub/CLAUDE.md': 'S\n\x40gone.md\n' }, { connected: false });
+  const bb = cfgOf(b);
+  const wb = write(b, ['--enable']);
+  ok('TE6. a broken import in sub/CLAUDE.md blocks --enable: exit 1 naming sub/CLAUDE.md:2 and sub/gone.md, the key not set, nothing written',
+    wb.status === 1 && /broken import @gone\.md \(sub\/CLAUDE\.md:2\): no file sub\/gone\.md/.test(wb.out)
+    && cfgOf(b) === bb && !agents(b) && !agents(b, 'sub/AGENTS.md'), wb.out);
+}
+{
+  // N1: the imports of a nested CLAUDE.md are relative to its directory, and their headers are paths from the root.
+  const d = project({ 'CLAUDE.md': 'R\n', 'sub/CLAUDE.md': 'S\n\x40notes.md\n\x40../shared.md\n', 'sub/notes.md': 'N\n', 'shared.md': 'SH\n' });
+  const w = write(d);
+  const s = split(agents(d, 'sub/AGENTS.md'));
+  ok('TN1. sub/CLAUDE.md imports @notes.md and @../shared.md: sections "sub/notes.md" and "shared.md", in that order',
+    w.status === 0 && s && s.body.toString() === 'S\n\x40notes.md\n\x40../shared.md\n' + sect('sub/notes.md', 'N\n') + sect('shared.md', 'SH\n'),
+    s && s.body.toString());
+  ok('TN1. the root AGENTS.md does not carry the nested imports', split(agents(d)).body.toString() === 'R\n');
+}
+{
+  // G-B: directory names with %, ;, a tab and a newline: the marker stays one parsable line, check green, write unchanged.
+  for (const dir of ['100%', 'a;b', 'tab\there', 'new\nline']) {
+    const d = project({ 'CLAUDE.md': 'R\n', [`${dir}/CLAUDE.md`]: 'X\n' });
+    const w = write(d);
+    const s = split(agents(d, `${dir}/AGENTS.md`));
+    const c = check(d);
+    const w2 = write(d);
+    ok(`TK9. directory ${JSON.stringify(dir)}: the marker source decodes to ${JSON.stringify(dir + '/CLAUDE.md')}, check green, a second write unchanged`,
+      w.status === 0 && s && s.m && decodeURIComponent(s.m[2]) === `${dir}/CLAUDE.md` && !/[\s%;>]/.test(s.m[2].replace(/%[0-9A-F]{2}/g, ''))
+      && c.status === 0 && w2.status === 0 && !/^wrote /m.test(w2.out), w.out + c.out + w2.out);
+  }
+}
 done();
