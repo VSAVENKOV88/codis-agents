@@ -112,6 +112,7 @@ const sect = (h, c) => `\nContents of ${h}:\n\n${c}`;
       'ROOT TEXT',
       '@rules/a.md',
       'see @rules/d.md here',
+      '\t@rules/tab.md',
       'Inline `@rules/b.md` code span and `` @rules/w.md `` double.',
       'mail x@rules/c.md please',
       'Parens (@rules/r.md) and link [x](@rules/lnk.md).',
@@ -142,6 +143,7 @@ const sect = (h, c) => `\nContents of ${h}:\n\n${c}`;
     'rules/i.md': 'I TEXT\n\x40j.md\n',
     'rules/j.md': 'J TEXT\n',
     'rules/d.md': 'D TEXT\n',
+    'rules/tab.md': 'TAB TEXT\n',
     'rules/k.md': 'K TEXT\n',
     'Design Docs/x.md': 'SPACE TEXT\n',
     'rules/cyc1.md': 'CYC1\n\x40cyc2.md\n',
@@ -156,7 +158,8 @@ const sect = (h, c) => `\nContents of ${h}:\n\n${c}`;
   const s = split(agents(d));
   const want = files['CLAUDE.md']
     + sect('rules/a.md', files['rules/a.md']) + sect('rules/g.md', files['rules/g.md']) + sect('rules/h.md', files['rules/h.md'])
-    + sect('rules/i.md', files['rules/i.md']) + sect('rules/d.md', files['rules/d.md']) + sect('rules/k.md', files['rules/k.md'])
+    + sect('rules/i.md', files['rules/i.md']) + sect('rules/d.md', files['rules/d.md']) + sect('rules/tab.md', files['rules/tab.md'])
+    + sect('rules/k.md', files['rules/k.md'])
     + sect('Design Docs/x.md', files['Design Docs/x.md']) + sect('rules/cyc1.md', files['rules/cyc1.md'])
     + sect('rules/cyc2.md', files['rules/cyc2.md']) + sect('rules/dbl.md', files['rules/dbl.md']) + sect('rules/hd.md', files['rules/hd.md'])
     + sect('rules/n1.md', files['rules/n1.md']);
@@ -167,6 +170,7 @@ const sect = (h, c) => `\nContents of ${h}:\n\n${c}`;
   ok('G4. no section for a code span, a double code span, x@path, (@path), a link, an HTML comment, a fence, ~~~, an indented code block, an unclosed fence',
     !/^(NOT|Contents of rules\/(b|w|c|r|lnk|s|t|s2|f|f2|ind|unclosed)\.md)/m.test(body.slice(files['CLAUDE.md'].length)), body.slice(files['CLAUDE.md'].length));
   ok('G2. the @ lines stay as text in the CLAUDE.md part', body.startsWith(files['CLAUDE.md']));
+  ok('G4. an indented line right after a paragraph line continues it: its import is read (measured)', body.includes('Contents of rules/tab.md:'));
   ok('G5. an escaped space is part of the path', body.includes('Contents of Design Docs/x.md:'));
   ok('G7. the fifth hop is not expanded and the output names it', !body.includes('J TEXT') && /not expanded/.test(r.out) && /@j\.md/.test(r.out), r.out);
   ok('G8 (analysis check). two sections never share a header: the path is from the repository root', body.includes('Contents of rules/g.md:'));
