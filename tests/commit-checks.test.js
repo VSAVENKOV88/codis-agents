@@ -723,5 +723,13 @@ agent('x',{label:'prog:K#1',schema:{type:'object',properties:{status:{type:'stri
     ok('MA-07 a setsid daemon of a hook and SIGKILL of the adapter: the leftovers check finds it by its cwd in the worktree and removes it',
       before && !alive(dpid), J({ before, dpid, out: lc.stdout.slice(0, 800) }));
   }
+  // ---- the tester's cells (the order and set of the hooks, the message after stripspace, LANG/LC_ALL, nothing to
+  // commit, mode and recreation of a named path, close with a queued request, non-executable hooks):
+  // tests/commit-checks-tester-cases.js, a child with its own tally, so README keeps counting test files
+  {
+    const tc = spawnSync(process.execPath, [path.join(__dirname, 'commit-checks-tester-cases.js')], { encoding: 'utf8', timeout: 300000 });
+    process.stdout.write((tc.stdout || '').replace(/\n+$/, '').replace(/^/gm, '  | ') + '\n');
+    ok('the tester cells of the checks (tests/commit-checks-tester-cases.js) pass', tc.status === 0, `exit ${tc.status} ${tc.signal || ''} ${(tc.stderr || '').slice(-500)}`);
+  }
   done();
 })().catch((e) => { ok('the test ran to the end', false, e && e.stack); done(); });
