@@ -605,12 +605,12 @@ const underAny = (p, roots) => roots.some((r) => p === r || p.startsWith(r + pat
     fs.writeFileSync(path.join(f.tdir, 'hold'), '');
     const s = service(f, { pollMs: 200 });
     const callDir = path.dirname(s.box);
-    fs.writeFileSync(path.join(f.wt, 'a.txt'), 'one\n');
-    const id1 = ask(s, ['a.txt']);
+    fs.writeFileSync(path.join(f.wt, 'n1.txt'), 'one\n');
+    const id1 = ask(s, ['n1.txt']);
     const t0 = Date.now();
     while (!f.mark('pre-commit') && Date.now() - t0 < 15000) await sleep(50);
-    fs.writeFileSync(path.join(f.wt, 'b.txt'), 'two\n');
-    const id2 = ask(s, ['a.txt', 'b.txt']);
+    fs.writeFileSync(path.join(f.wt, 'n2.txt'), 'two\n');   // untracked: no change outside the first request
+    const id2 = ask(s, ['n2.txt']);
     await sleep(1500);
     fs.renameSync(callDir, callDir + '.orig');
     fs.symlinkSync(D, callDir);
