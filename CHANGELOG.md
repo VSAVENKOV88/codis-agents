@@ -11,7 +11,8 @@ key and script, and this file says when and why each one changed. Versions befor
   counts), with the source in the marker as a path from the root (`%`, whitespace, `;` and `>` percent-encoded). A
   nested file leaves out what the files of its parent directories already carry - Codex reads them all on the way
   down, and Claude Code started in that directory reads each file once (measured). Its own file whose `CLAUDE.md` left
-  git is removed by `write` (an edited one is kept and red, a foreign one kept and named); a file moved with its
+  git is removed by `write`, found on disk also when git ignores it (an edited one is kept and red, a foreign one kept
+  and named unless git ignores it); a file moved with its
   directory is stale; a `.claude/CLAUDE.md` is refused; an untracked `CLAUDE.md` is named. `AGENTS.override.md` next
   to a generated file is red (looked up on disk, so one git ignores counts), one on the way is named. `write` and
   `--enable` build every file first and change nothing while one is in the way, naming each. The import grammar now
