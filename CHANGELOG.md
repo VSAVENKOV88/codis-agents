@@ -4,6 +4,22 @@ Every version of the codis-agents plugin, newest first. What the plugin does now
 [README.md](README.md); its [Technical reference](README.md#technical-reference) is the current state of every rule,
 key and script, and this file says when and why each one changed. Versions before 0.4.14 are in the git history.
 
+## 0.4.33 - 2026-11-06
+
+- **Nested AGENTS.md and AGENTS.override.md** (p-codex-D3-2; owner 2026-11-06 answers 29 and 18, the analysis check
+  run 2 G-A...G-I). `scripts/agents-md.js` now writes one `AGENTS.md` next to each `CLAUDE.md` git tracks (the index
+  counts), with the source in the marker as a path from the root (`%`, whitespace, `;` and `>` percent-encoded). A
+  nested file leaves out what the files of its parent directories already carry - Codex reads them all on the way
+  down, and Claude Code started in that directory reads each file once (measured). Its own file whose `CLAUDE.md` left
+  git is removed by `write` (an edited one is kept and red, a foreign one kept and named); a file moved with its
+  directory is stale; a `.claude/CLAUDE.md` is refused; an untracked `CLAUDE.md` is named. `AGENTS.override.md` next
+  to a generated file is red (looked up on disk, so one git ignores counts), one on the way is named. `write` and
+  `--enable` build every file first and change nothing while one is in the way, naming each. The import grammar now
+  reads list items and block quotes as CommonMark containers (oracle O-list on Claude Code 2.1.318: an indented line
+  after a blank line inside a list item is an import there, it was dropped silently), and an import of a generated
+  `AGENTS.md` or of an `AGENTS.override.md` is refused (the file grew with every write). The "not supported until
+  D3-2" reds are gone.
+
 ## 0.4.32 - 2026-11-06
 
 - **The commit channel of the role adapter and a safe outside commit** (p-codex A2a-1; owner 2026-11-06: answers 3
