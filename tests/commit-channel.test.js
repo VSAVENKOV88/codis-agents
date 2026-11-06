@@ -807,7 +807,9 @@ setTimeout(() => process.exit(9), 20000);
     const nob = mk({ tasks: { K: { dir: f.tdir, wt: f.wt } } });
     const n0 = seen.length;
     const vb = await nob('prompt', { label: 'prog:K#3', schema: SCHEMA, agentType: 'general-purpose' });
-    ok('a task without branch -> prog with the commit channel refused before the launch', vb === null && seen.length === n0);
+    const lb = fs.readFileSync(path.join(f.tdir, 'calls.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).pop();
+    ok('a task without branch -> prog with the commit channel refused before the launch, the record names the branch', vb === null && seen.length === n0
+      && lb.outcome === 'refused' && /has no branch/.test(lb.error), JSON.stringify(lb));
     // the real CLI is still refused for prog/test on codex (the sandbox profile of code writes: part A2a-3)
     const real = createAgent(Object.assign({}, base, { launch: undefined }));
     const vr = await real('prompt', { label: 'prog:K#4', schema: SCHEMA, agentType: 'general-purpose' });
