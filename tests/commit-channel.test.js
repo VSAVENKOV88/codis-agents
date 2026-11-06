@@ -815,6 +815,61 @@ setTimeout(() => process.exit(9), 20000);
     const vr = await real('prompt', { label: 'prog:K#4', schema: SCHEMA, agentType: 'general-purpose' });
     const lr = fs.readFileSync(path.join(f.tdir, 'calls.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).pop();
     ok('without a launcher prog on codex is still refused (A2)', vr === null && lr.outcome === 'refused' && /A2/.test(lr.error), JSON.stringify(lr));
+    // The record of the call (<task dir>/calls.jsonl) sits in a folder the role writes (owner's answer to G2): a link,
+    // a FIFO or a hard link the role leaves there is never written through, and the adapter does not hang on it.
+    const recFile = path.join(f.tdir, 'calls.jsonl');
+    const victim = path.join(f.d, 'victim.rc');
+    fs.writeFileSync(victim, 'export A=1\n');
+    const victim0 = sha256(fs.readFileSync(victim));
+    const logs = [];
+    const lagent = mk({ log: (m) => logs.push(String(m)) });
+    script = async (plan) => {
+      fs.rmSync(recFile, { force: true });
+      fs.symlinkSync(victim, recFile);
+      fs.writeFileSync(path.join(plan.t.wt, 'x.txt'), 'x\n');
+      return new Promise((resolve) => {
+        const c = spawn(process.execPath, [CLIENT, '-m', 'm', '--', 'x$(touch PWNED)'], { cwd: plan.t.wt, env: plan.env, stdio: 'ignore' });
+        c.on('close', resolve);
+      });
+    };
+    await lagent('prompt', { label: 'prog:K#5', schema: SCHEMA, agentType: 'general-purpose' });
+    ok('S-1 calls.jsonl replaced by the role with a link to a file outside its roots -> the file is not written, the link stays, the log says so',
+      sha256(fs.readFileSync(victim)) === victim0 && fs.lstatSync(recFile).isSymbolicLink() && logs.some((m) => /record of the call/.test(m)),
+      `${fs.readFileSync(victim, 'utf8').slice(0, 200)} | ${logs.join(' | ')}`);
+    script = async () => { fs.rmSync(recFile, { force: true }); fs.symlinkSync(path.join(f.d, 'dangling.rc'), recFile); };
+    await lagent('prompt', { label: 'review:K#5', schema: SCHEMA, agentType: 'general-purpose' });
+    ok('S-1 calls.jsonl replaced with a dangling link -> no file is created at its target', !fs.existsSync(path.join(f.d, 'dangling.rc')));
+    script = async () => { fs.rmSync(recFile, { force: true }); fs.linkSync(victim, recFile); };
+    await lagent('prompt', { label: 'review:K#6', schema: SCHEMA, agentType: 'general-purpose' });
+    ok('S-1 calls.jsonl replaced with a hard link to a file outside the roots -> not written', sha256(fs.readFileSync(victim)) === victim0);
+    // a FIFO with a reader: the old append wrote into it; a regular file only
+    const fifoOut = path.join(f.d, 'fifo-out.txt');
+    let reader = null;
+    script = async () => {
+      fs.rmSync(recFile, { force: true });
+      spawnSync('mkfifo', [recFile]);
+      reader = spawn('/bin/sh', ['-c', 'cat "$0" > "$1"', recFile, fifoOut], { stdio: 'ignore' });
+      kids.push(reader.pid);
+      await sleep(300);
+    };
+    await lagent('prompt', { label: 'review:K#7', schema: SCHEMA, agentType: 'general-purpose' });
+    await sleep(300);
+    try { reader.kill('SIGKILL'); } catch { /* gone */ }
+    ok('S-1 calls.jsonl replaced with a FIFO that has a reader -> nothing is written into it',
+      !fs.existsSync(fifoOut) || fs.readFileSync(fifoOut, 'utf8') === '', fs.existsSync(fifoOut) ? fs.readFileSync(fifoOut, 'utf8').slice(0, 200) : '');
+    // a FIFO without a reader: a blocking open would hang the whole adapter, so this runs in a child with a deadline
+    fs.rmSync(recFile, { force: true });
+    spawnSync('mkfifo', [recFile]);
+    const childCode = `const { createAgent } = require(${JSON.stringify(path.join(ROOT, 'scripts', 'role-exec.js'))});
+const a = createAgent({ host: 'codex', callsDir: ${JSON.stringify(path.join(f.d, 'calls'))}, pluginRoot: ${JSON.stringify(ROOT)},
+  launch: async () => ({ rc: 0, output: JSON.stringify({ status: 'ready' }), notes: [] }), log: (m) => console.log(m),
+  codex: { home: ${JSON.stringify(chome)}, catalog: ${JSON.stringify(CATALOG)} }, env: ${JSON.stringify(f.userEnv)},
+  tasks: { K: { dir: ${JSON.stringify(f.tdir)}, wt: ${JSON.stringify(f.wt)}, branch: 'task' } } });
+a('prompt', { label: 'review:K#8', schema: ${JSON.stringify(SCHEMA)}, agentType: 'general-purpose' }).then((v) => console.log('returned', JSON.stringify(v)));`;
+    const fc = spawnSync(process.execPath, ['-e', childCode], { encoding: 'utf8', timeout: 20000 });
+    ok('S-1 calls.jsonl replaced with a FIFO without a reader -> the adapter does not hang (the call returns, the log names the record)',
+      fc.status === 0 && /returned/.test(fc.stdout) && /record of the call/.test(fc.stdout), `exit ${fc.status} ${fc.signal || ''} ${(fc.stdout || '').slice(-300)} ${(fc.stderr || '').slice(-300)}`);
+    fs.rmSync(recFile, { force: true });
     ok('the control file outside the worktree is unchanged (role-exec)', f.controlSha() === f.control0);
   }
   // ---- the tester's cells (swaps during the read, a socket request, the first scan, the queue order, the poll and the
