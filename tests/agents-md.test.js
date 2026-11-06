@@ -619,6 +619,43 @@ const tick = () => { const t = Date.now(); while (Date.now() - t < 20) { /* let 
   ok('D3/N. not connected, a generated sub/AGENTS.md left: check exit 1 naming it', c3.status === 1 && /generated sub\/AGENTS\.md without connection/.test(c3.out), c3.out);
 }
 {
+  // N3 and D3/N with AGENTS.md ignored by git: Codex reads an ignored file too, so a generated one is found on disk.
+  const ign = { '.gitignore': 'AGENTS.md\nnm/\n', 'CLAUDE.md': 'R\n', 'sub/CLAUDE.md': 'S\n' };
+  const d = project(ign);
+  write(d);
+  git(d, 'rm', '-q', '--cached', '--', 'sub/CLAUDE.md');
+  fs.unlinkSync(path.join(d, 'sub/CLAUDE.md'));
+  const c = check(d);
+  ok('N3/ignored. own ignored sub/AGENTS.md without sub/CLAUDE.md (git knows no file of sub/): check exit 1 naming it', c.status === 1
+    && /generated sub\/AGENTS\.md without sub\/CLAUDE\.md/.test(c.out), c.out);
+  const w = write(d);
+  ok('N3/ignored. write removes it and says so; check green', w.status === 0 && !agents(d, 'sub/AGENTS.md') && /removed sub\/AGENTS\.md/.test(w.out) && check(d).status === 0, w.out);
+  // Edited by hand: red, kept.
+  const d2 = project(ign);
+  write(d2);
+  git(d2, 'rm', '-q', '--cached', '--', 'sub/CLAUDE.md');
+  fs.unlinkSync(path.join(d2, 'sub/CLAUDE.md'));
+  fs.appendFileSync(path.join(d2, 'sub/AGENTS.md'), 'an edit\n');
+  const w2 = write(d2);
+  ok('N4/ignored. an edited ignored sub/AGENTS.md without sub/CLAUDE.md: write exit 1 naming it, kept', w2.status === 1 && /sub\/AGENTS\.md was edited by hand/.test(w2.out)
+    && agents(d2, 'sub/AGENTS.md') !== null, w2.out);
+  // Not connected: an ignored generated nested file left behind is red.
+  const d3 = project(ign);
+  write(d3);
+  const cfgFile = path.join(d3, '.claude/codis-agents.json');
+  const j = JSON.parse(fs.readFileSync(cfgFile, 'utf8')); delete j.agentsMd; fs.writeFileSync(cfgFile, JSON.stringify(j));
+  fs.unlinkSync(path.join(d3, 'AGENTS.md'));
+  const c3 = check(d3);
+  ok('D3/N/ignored. not connected, an ignored generated sub/AGENTS.md left: check exit 1 naming it', c3.status === 1
+    && /generated sub\/AGENTS\.md without connection/.test(c3.out), c3.out);
+  // A foreign ignored AGENTS.md (a dependency's own file in an ignored folder) is not ours to name.
+  const d4 = project(Object.assign({ 'nm/pkg/AGENTS.md': 'PKG\n' }, ign), { tracked: ['.claude/codis-agents.json', '.gitignore', 'CLAUDE.md', 'sub/CLAUDE.md'] });
+  const w4 = write(d4);
+  const c4 = check(d4);
+  ok('N5/ignored. a foreign AGENTS.md in an ignored folder: write and check exit 0, not named, kept', w4.status === 0 && c4.status === 0
+    && !/nm\/pkg/.test(w4.out + c4.out) && agents(d4, 'nm/pkg/AGENTS.md').toString() === 'PKG\n', w4.out + c4.out);
+}
+{
   // G21: an import of a generated file or of an override is refused, nothing written (write would never converge).
   const cases = [
     ['CLAUDE.md imports AGENTS.md', { 'CLAUDE.md': 'R\n\x40AGENTS.md\n' }, /CLAUDE\.md:2 imports a generated AGENTS\.md/],
