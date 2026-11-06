@@ -1,31 +1,37 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/banner-dark.svg">
-    <img src="assets/banner-light.svg" alt="codis-agents: brief, analyst, analysis check, programmer, tester, reviewer, train, owner digest" width="100%">
-  </picture>
-</p>
-
-<p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT"></a>
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-0.4.23-informational" alt="Version 0.4.23"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-0.4.31-informational" alt="Version 0.4.31"></a>
   <a href="https://claude.com/claude-code"><img src="https://img.shields.io/badge/Claude%20Code-plugin-D97757" alt="Claude Code plugin"></a>
+  <a href="#codex-cli"><img src="https://img.shields.io/badge/Codex%20CLI-coming%20soon-lightgrey" alt="Codex CLI: coming soon"></a>
 </p>
 
-# codis-agents
+# Agents work. The graph checks. You decide.
 
-codis-agents turns [Claude Code](https://claude.com/claude-code) from one assistant into a small delivery team. You
-say what you want; your main Claude session becomes the coordinator, writes it down as a task, and hands it to a chain
-of role agents - an analyst, a programmer, a tester and a reviewer - each of whom tries to prove the one before wrong.
-You are asked only what really needs you, and you get evidence instead of promises.
+**codis-agents** turns [Claude Code](https://claude.com/claude-code) from one assistant into a small delivery team. You say what you want; your main Claude session becomes the coordinator, writes it down as a task, and hands it to a chain of role agents - an analyst, a programmer, a tester and a reviewer - each of whom tries to prove the one before wrong. You are asked only what really needs you, and you get evidence instead of promises.
 
-```text
-brief -> analyst -> analysis check -> programmer -> tester -> reviewer -> train -> owner digest
+**Install in a minute** (Claude Code), then restart the session and follow the [Quick start](#quick-start):
+```sh
+claude plugin marketplace add VSAVENKOV88/codis-agents
+claude plugin install codis-agents@codis-agents
 ```
+
+## Everyone knows who goes next
+
+<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/graph-dark.svg"><img src="assets/graph-light.svg" alt="The agent graph: coordinator, analyst, programmer, tester, reviewer, train; a queue of tasks on the left; the tester is red and sends the task Cart back to the programmer" width="70%"></picture></p>
+
+The coordinator hands each task to the analyst, the programmer, the tester and the reviewer in turn. A red result goes back along a fixed edge: a red tester returns the task to the programmer, a second red brings the analyst back.
+
+## The train checks the code
+
+<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/train-dark.svg"><img src="assets/train-light.svg" alt="The train: main at the front, the wagon Cart green; the wagon Payments is red and uncoupled onto the siding" width="70%"></picture></p>
+
+Ready branches ride one train that runs the whole test suite. A red wagon is uncoupled, fixed on the siding and coupled again; only what rode together is merged.
+
+<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/banner-dark.svg"><img src="assets/banner-light.svg" alt="codis-agents: brief, analyst, analysis check, programmer, tester, reviewer, train, owner digest" width="100%"></picture></p>
 
 > **Agents are not what makes this work. What is written down around them is.**
 
-It grew out of a product project that I built in Claude Code. Every rule in it exists because something broke without it. New to the words? See the
-[Glossary](#glossary).
+It grew out of a product project that I built in Claude Code. Every rule in it exists because something broke without it. New to the words? See the [Glossary](#glossary).
 
 > [!NOTE]
 > Nothing is merged into your main branch, tagged or released without your explicit "yes". A project may let the
@@ -218,7 +224,7 @@ input-equivalent tokens (IE, see the [Glossary](#glossary)) are marked as such.
 
 | Step | Command |
 |---|---|
-| 1. Add the marketplace (a local clone) | `claude plugin marketplace add /path/to/codis-agents` |
+| 1. Add the marketplace | `claude plugin marketplace add VSAVENKOV88/codis-agents` (or a local clone: `claude plugin marketplace add /path/to/codis-agents`) |
 | 2. Install the plugin, then restart the session | `claude plugin install codis-agents@codis-agents` |
 | 3. Turn it on for a project | copy `examples/codis-agents.example.json` to `<project>/.claude/codis-agents.json`; set where worktrees and task folders live and how your tests run |
 | 4. Check the project config | `node /path/to/codis-agents/scripts/config.js check` |
@@ -240,10 +246,10 @@ codis-agents/
 ├── workflows/    role-chain.js - the chain itself, fix rounds, the analyst after a second red, the train
 ├── rules/        multi-agent.md - the process rules; 20 marked lines go into every role prompt
 ├── hooks/        hooks.json - refuses git add -A, pushes to protected branches and tags
-├── scripts/      33 scripts: memory slots, guard runs and selection, the train, post-checks, remote runner, cost
+ ├── scripts/      34 scripts: memory slots, guard runs and selection, the train, post-checks, remote runner, cost
 ├── examples/     example project and machine configs
 ├── schemas/      their JSON schemas
-└── tests/        151 test files of the plugin itself (npm test)
+└── tests/        153 test files of the plugin itself (npm test)
 ```
 
 Every file, script and config key is described in the [Technical reference](#technical-reference).
@@ -465,6 +471,7 @@ writes that into the report's section Closure. A task with `noAnalysis` gets no 
 | `scripts/commit-service.js` | the adapter's half of the commit channel (p-codex A2a-1; owner 2026-11-06, answers 3 and 4, the answer to G2 and question 6): a programmer or tester inside its sandbox asks for a commit of named paths, and the adapter commits them outside the sandbox. The box (`<call folder>/commit`, written by the role) is an untrusted source: the adapter only reads it - nothing there is renamed, removed or written - and reads a request with `open(O_RDONLY \| O_NONBLOCK \| O_NOFOLLOW_ANY)` and `fstat` (a symbolic link in any component of the path fails the open itself; a FIFO, socket, device or folder is refused without blocking; above 64 KiB refused); only names `<32 hex>.json` are requests (temporary files and other names are ignored, no file of their name is made); a request is exactly `{id, paths, message}` (any other field - an author, an answer path - is refused); answers, the journal and the private index live in `commit.stateDir`. The box is scanned at once, then on every `fs.watch` event (only a signal to scan again) and every second (the interval of the fallback poll; a busy adapter and the scheduler can add to the delay); scans never overlap and requests are processed one at a time in the order they were created; without `fs.watch` the notes say so and the poll goes on. Paths: relative, no `.`/`..`/empty component, no `.git` component in any case, no leading `-`, NUL or line break, no duplicate (also by case), at most 1000; a file is read by Node with the same no-follow open (a symbolic link in the path, a FIFO or a folder: refused; a missing tracked file: deleted; a missing untracked one: refused). Before each request: the git dir of the worktree is the one at the start of the call, no `index.lock`, `HEAD` is `refs/heads/<tasks[k].branch>`, the tip is the adapter's last commit (or the tip at the start of the call: `branch moved` otherwise), the real index equals `HEAD`. A repository whose user config names hooks of a check (an executable `pre-commit`, `prepare-commit-msg` or `commit-msg` in any `core.hooksPath` of any config source - system, global, local, `config.worktree`, include - or in `<common git dir>/hooks`, or any `hook.*` key) is refused with `no safe check path` (checks inside the sandbox: part A2a-2). The commit: plumbing only (`hash-object -w --stdin --no-filters` of the bytes Node read, `read-tree` and `update-index --index-info` into a private index, `write-tree`, `commit-tree --no-gpg-sign`, `update-ref` with the old value), git an absolute path of a verified version (2.50.0, `commit.gitVersions`), its environment built from nothing (`GIT_CONFIG_NOSYSTEM`, `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_NO_LAZY_FETCH=1`, a home and an empty work tree of the adapter) and every command with `-c core.hooksPath=<an empty folder of the adapter> -c core.fsmonitor=false -c commit.gpgSign=false`: no hook, fsmonitor, filter, signing program or promisor transport of the repository or the user runs; the author and committer are `commit.author` or `user.name`/`user.email` of the user's config, read once (none: refused); after the commit the real index gets the named paths (`indexSync: failed` in the answer when it cannot, and the next request is refused until the index equals `HEAD`). The journal `<stateDir>/<task>/commits.jsonl`: one writer (a lock with the pid; a live other adapter refuses, a dead one's lock is taken over), version 1, a number per event, each line fsynced before its action - `intent` (tree, parent, entries) before `commit-tree`, `intent-commit` (sha, old tip) before `update-ref`, then `result`; a request id is bound to its result (read again or copied into a later box: its result again; other content under the same id: refused, the first result stands); a torn last line is cut off, kept beside the journal and named in the notes; a damaged line inside refuses every request; an intent without a result is settled at the next open by the tip: the intended sha - `committed`, the old tip or no sha yet - `refused` (interrupted), anything else - `undetermined`, and every request of the task is refused until the coordinator resolves it. At the end of the call (`close()`) the requests still in the box are `cancelled`. macOS only (`O_NOFOLLOW_ANY`): elsewhere every request is refused (its file is still opened and hashed for the journal, never parsed or committed) |
 | `scripts/commit-req.js` | the client of the commit channel, run by the role inside its sandbox: `commit-req.js [--max <s>] (-m <message> \| --message-file <file>) -- <path>...` writes `{id, paths, message}` (a random 32-hex id) into a temporary file of the box and publishes it by a rename, then waits for the answer at most `--max` seconds (default and ceiling 270: the longest single wait) and prints one JSON line `{id, status, sha?, why?, paths?, indexSync?}` or `{id, status: "pending"}`; `commit-req.js wait --id <id> [--max <s>]` waits again. The box and the answers folder come from `CODIS_COMMIT_BOX`/`CODIS_COMMIT_ANSWERS`, which only a prog or test call has (otherwise `channel closed for this role`). Exit 0 committed or nothing, 1 refused or cancelled, 2 usage, 3 pending, 4 the channel is closed |
 | `scripts/codex-hooks-check.js` | read-only check that Codex CLI will run the plugin's hook in a Codex home: `--codex-home <dir>` (required; the personal `~/.codex` - the same directory by device and inode, so also through a link, a case variant or the `/System/Volumes/Data` firmlink - is refused before any start, exit 2), `[--cwd <project>]`, `[--codex <bin>]`, `[--timeout-ms <n>]` (default 30000); starts `codex app-server` with `CODEX_HOME` = the realpath of `--codex-home` (never the parent's), checks that `initialize` names that same directory as `codexHome`, asks `hooks/list {cwds}` over stdio JSON-RPC, matches answers by `id` and skips notifications; the hooks of the plugin are those whose `pluginId` before `@` is the `name` of `.claude-plugin/plugin.json`; exit 0 only when every one is `trusted` and `enabled` and the answer has no `errors`, 1 otherwise (no hook, `untrusted`, `modified`, `managed`, disabled, errors), 3 not checked (no `codex`, exit before the answer, no answer in time, not JSON, a JSON-RPC error, a result off the schema); the app-server is stopped at the end |
+| `scripts/agents-md.js` | AGENTS.md for Codex from the project's CLAUDE.md: `write` / `check` `[--root <dir>] [--config <file>]` (`write` also `[--discard-edits] [--enable]`). The file is one marker line (`codis-agents agents-md v<N>`, source `CLAUDE.md`, sha256 of the body) and the body: `CLAUDE.md` byte for byte, then a section `Contents of <path>:` per imported file, in the order Claude Code reads its `@imports` (an `@token` that starts a line or follows whitespace, outside code spans, fenced and indented code and HTML comments; depth first, each file once, four hops; `<path>` from the repository root, `~/...` in the home, absolute elsewhere). Connected by the project key `agentsMd`; `check` is green only when `AGENTS.md` is what `write` generates now (red: missing, stale, edited by hand, foreign, or generated while not connected), and writes nothing; `write` refuses a foreign `AGENTS.md` and one edited by hand (`--discard-edits` overwrites the latter); `--enable` writes the file and then sets `"agentsMd": true`, or changes nothing. A missing import is exit 1 inside the repository, 69 outside it (not on this machine); a tracked nested `CLAUDE.md` and a root `AGENTS.override.md` are red, not supported yet. Exit 0 / 1 / 69 / 64 usage / 70 an unexpected error |
 | `scripts/role-diff-check.js` | git post-check of the tester and reviewers |
 | `scripts/role-post-check.js` | the post-check after the tester in one command: `role-diff-check.js` and `role-leftovers-check.js` together, one JSON `{ok, diff, left}` - one service agent per tester round instead of two |
 | `scripts/role-leftovers-check.js` | post-check after the tester and at the end of a task: Docker resources of the task's stack (by the compose project label), processes in its worktree, slots they hold; `--fix` removes only those, never the owner's stack |
@@ -613,6 +620,7 @@ smoke"); to try an edited copy first, point `CODIS_AGENTS_CONFIG` at it.
 | `standingPush` | only for the repository of process rules: `branches` its HEAD may be pushed to without `ALLOW_PROTECTED_PUSH=1`, and a `check` that must pass first; the hooks honour only the committed `standingPush` of the repository that pushes, never forced, never tags |
 | `gitHooks` | `blockICloudCopies` (refuse conflict copies `<name> 2.<ext>` of cloud-synced folders) and `preCommit` (extra shell commands) for `scripts/git-hooks/pre-commit` |
 | `remoteRun` | the full guard run on the remote runner of the machine file (`scripts/guards-remote.js`); left out, runs stay on this machine. `command` / `commandLegacy` - the guard command on the runner (default `guardCommand` / `guardCommandLegacy`, e.g. with a flag that skips guards the runner cannot run); `deps` - `[{files, install, link}]`: `files` (relative to the worktree) are copied into `<root>/deps/<hash>` (hash of their base names and contents, `install`, the node major version, platform, arch), `install` runs there once per hash in a medium slot of the runner, after which the directory is read-only and checked by its manifest on every reuse (a manual clone on the runner never links its `node_modules` into it), `link` maps worktree paths to paths in that directory (`""` = itself), each a link straight to its real path; `prepare` - commands run in the runner's worktree before the run (medium slot); `localPattern` - a regexp over the runner's log lines whose group 1 lists (`, `) guards the runner did not run: they run here after it in a heavy slot by `localCommand` (`{wt}`, `{onlyArgs}`; default `guardSubsetCommand`), as a section of the same log, and the worse exit code is the run's; `subsetCommand` - the selection of a task's guards on the runner (`guards-all.sh --select`; `{wt}`, `{onlyArgs}`, needs `guardSubsetCommand`; `{jobs}` and `{limitFile}` as `command` has them; without both the selection takes the runner's whole budget and selections there go one at a time): without it the selection runs in a heavy slot here |
+| `agentsMd` | `true` - the project's `AGENTS.md` for Codex is generated from `CLAUDE.md` (`scripts/agents-md.js`) and must exist and be fresh: `agents-md.js check` is red when it is missing, stale, edited by hand or foreign. `false` or left out (default) - not used; a generated `AGENTS.md` left in the project is red. `agents-md.js write --enable` writes the file and sets the key in one step. An older plugin refuses the key as unknown: commit it only after every machine of the project runs a version that knows it |
 | `stand` | the project's shared stand (`scripts/stand.sh`): `project` (its compose project, never `ownerStackReadOnly`), `ports`, command templates `up`, `deploy` (must contain `{wt}`), `reset`, `status` (exit 0 only while up), `down` - placeholders `{project}`, `{port}`, `{ports}`, `{repo}`, `{wt}`, values shell-quoted, run with zsh in `cwd` (an absolute or `~` path of an existing directory; without it `repoDir`); `imageFiles` (globs of the files that define the stand's image) and `memLimitMB` (for reference). The plugin only calls the commands; what they do is the project's |
 | `preconditions` | machine settings, read from the machine file (`minFreeDiskGB`, `swapMinMB`); a project config may still carry `minFreeDiskGB` (GB) and `minSwapGB` (GB, compared as x 1024 with `swapMinMB`) until `config.js migrate` |
 

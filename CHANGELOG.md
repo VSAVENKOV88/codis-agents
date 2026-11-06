@@ -4,7 +4,7 @@ Every version of the codis-agents plugin, newest first. What the plugin does now
 [README.md](README.md); its [Technical reference](README.md#technical-reference) is the current state of every rule,
 key and script, and this file says when and why each one changed. Versions before 0.4.14 are in the git history.
 
-## 0.4.31 - 2026-11-06
+## 0.4.32 - 2026-11-06
 
 - **The commit channel of the role adapter and a safe outside commit** (p-codex A2a-1; owner 2026-11-06: answers 3
   and 4 to the use cases of A2, the answer to G2 of the analysis check, question 6). A role on Codex cannot commit
@@ -27,6 +27,21 @@ key and script, and this file says when and why each one changed. Versions befor
   so a link, a FIFO or a hard link the role leaves there is never written through by the adapter. Tested on real repositories with a hostile
   config (`tests/commit-channel.test.js`) and under the real `codex sandbox` without a model
   (`tests/commit-channel-sandbox.test.js`). README "What's inside" counts recounted.
+
+## 0.4.31 - 2026-11-06
+
+- **AGENTS.md for Codex generated from CLAUDE.md** (p-codex-D3-1a; owner 2026-11-06 answers 25-31 and 18). New
+  `scripts/agents-md.js write|check`: the root `AGENTS.md` is CLAUDE.md with its `@imports` expanded the way Claude Code
+  2.1.318 reads them (measured: a whitespace-led `@token` outside code spans, fences, indented code and HTML comments;
+  depth first, each file once, four hops), with a marker line that names the owner, the source, the generator version and
+  the sha256 of the body. `check` compares the body byte for byte with the generator's output and writes nothing: a
+  missing file while generation is connected, a stale body, a hand edit (hint: edit CLAUDE.md), a foreign file and a file
+  generated without the connection are red. `write` refuses a foreign or hand-edited file (`--discard-edits` for its own),
+  `--enable` writes and then sets the new project key `agentsMd`, or changes nothing. A broken import is exit 1 inside the
+  repository and 69 outside. A tracked nested CLAUDE.md and a root `AGENTS.override.md` are red until part D3-2. The
+  budget check, nested files, the chain preconditions and the adapter flag come in D3-1b, D3-2 and D3-3. Why: Codex reads
+  `AGENTS.md`, not CLAUDE.md, and a hand-kept copy goes stale silently. Order of rollout (owner): this version first, then
+  the installs here and on the runner, and only then the key and the generated file in a project.
 
 ## 0.4.30 - 2026-11-05
 

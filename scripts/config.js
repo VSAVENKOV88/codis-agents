@@ -99,6 +99,9 @@ const SPEC = {
   // The full run on the remote runner of the machine file (scripts/guards-remote.js): what the runner needs that this
   // machine has by other means. Left out - the runs stay on this machine even with a runner set.
   remoteRun: ['object', null],
+  // AGENTS.md for Codex generated from CLAUDE.md (scripts/agents-md.js): true - connected, the generated file must exist
+  // and be fresh (agents-md.js check); false or left out - not used.
+  agentsMd: ['boolean', false],
   $schema: ['string', ''],
 };
 const REQUIRED = ['repoDir', 'worktreeRoot', 'sharedDir'];
