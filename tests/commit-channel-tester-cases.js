@@ -10,6 +10,8 @@
 //   queue in the order of publication (not the order of names), polling alone commits when the subscription never
 //   fires (missed events), the default interval of the backup poll is 1000 ms, a subscription that breaks while
 //   running ('error') is named in the notes and polling goes on, and the subscription alone is a signal enough.
+// - S-1 of the security review: the record of a call (<task dir>/calls.jsonl) swapped for a link by a process the role
+//   left running, while the adapter writes; a folder in place of the record; the value of a call whose record is refused.
 // Real git repositories in a temporary folder; no model is called. macOS only (O_NOFOLLOW_ANY).
 const fs = require('fs');
 const os = require('os');
@@ -323,6 +325,86 @@ const stop = async (c) => {
     const a = await answer(s, id, 3000);
     ok('answer 6: after the subscription broke a new request is still committed by polling', a && a.status === 'committed', JSON.stringify(a));
     s.close();
+  }
+
+  // ---- S-1 (security review 1): the record of a call, <task dir>/calls.jsonl, sits in a folder the role writes. Cells
+  // the programmer's guard does not hold: a process the role left behind swaps the file during the adapter's writes
+  // (a regular file one moment, a link to a file outside the next), a folder in place of the file, the
+  // value of the call kept when its record is refused, and the record written again once the place is a regular file.
+  {
+    const { createAgent } = require(path.join(ROOT, 'scripts', 'role-exec.js'));
+    const CATALOG = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'role-exec', 'codex-models.json'), 'utf8'));
+    const f = fixture();
+    const chome = path.join(f.d, 'chome');
+    fs.mkdirSync(chome);
+    const SCHEMA = { type: 'object', properties: { status: { type: 'string' } }, required: ['status'] };
+    const logs = [];
+    const agent = createAgent({ host: 'codex', callsDir: path.join(f.d, 'calls'), pluginRoot: ROOT, log: (m) => logs.push(String(m)),
+      launch: async () => ({ rc: 0, output: JSON.stringify({ status: 'ready' }), notes: [] }),
+      codex: { home: chome, catalog: CATALOG }, env: f.userEnv, tasks: { K: { dir: f.tdir, wt: f.wt, branch: 'task' } } });
+    const recFile = path.join(f.tdir, 'calls.jsonl');
+    const victim = path.join(f.out, 'victim.rc');
+    fs.writeFileSync(victim, 'export A=1\n');
+    const victim0 = sha256(fs.readFileSync(victim));
+    let n = 0;
+    const call = () => agent('prompt', { label: `review:K#${++n}`, schema: SCHEMA, agentType: 'general-purpose' });
+    const lines = () => { try { return fs.readFileSync(recFile, 'utf8').split('\n').filter(Boolean).length; } catch { return -1; } };
+
+    // the record goes to a regular file of the folder, one line per call (chain-cost reads it)
+    await call(); await call();
+    ok('S-1: a regular calls.jsonl gets one line per call', lines() === 2 && JSON.parse(fs.readFileSync(recFile, 'utf8').split('\n')[1]).label === 'review:K#2', String(lines()));
+
+    // a folder in place of the file: the call returns its value, the record is refused with its reason, no hang
+    fs.rmSync(recFile, { force: true });
+    fs.mkdirSync(recFile);
+    logs.length = 0;
+    const vd = await Promise.race([call(), sleep(10000).then(() => 'hung')]);
+    ok('S-1: a folder in place of calls.jsonl -> the call returns its value and the log names the record',
+      vd && vd.status === 'ready' && logs.some((m) => /record of the call/.test(m)), JSON.stringify(vd) + ' ' + logs.join(' | '));
+    fs.rmSync(recFile, { recursive: true, force: true });
+
+    // a link in place of the file: the value of the call is still returned; once the role's link is gone the record is
+    // written again to a regular file (a refused record leaves no sticky state)
+    fs.symlinkSync(victim, recFile);
+    const vl = await call();
+    ok('S-1: a link in place of calls.jsonl -> the value of the call is still returned, the file outside is unchanged',
+      vl && vl.status === 'ready' && sha256(fs.readFileSync(victim)) === victim0, JSON.stringify(vl));
+    fs.unlinkSync(recFile);
+    await call();
+    ok('S-1: after the link is gone the next record goes to a new regular file', fs.lstatSync(recFile).isFile() && lines() === 1, String(lines()));
+
+    // a process the role left running (it outlives codex sandbox) swaps calls.jsonl between a regular file and a link to
+    // the file outside, one rename at a time, while the adapter writes many records: nothing is ever written into the
+    // file outside. (A hard link is not swapped in: under codex sandbox link() of a file the role may not write is EPERM,
+    // and a file it may write it can change itself; the nlink check holds only for a link that stays.)
+    for (const kind of ['symlink']) {
+      const code = `
+const fs = require('fs');
+const [kind, target, victim] = process.argv.slice(1);
+const reg = target + '.reg', ln = target + '.ln';
+for (;;) {
+  try {
+    fs.writeFileSync(reg, ''); fs.renameSync(reg, target);
+    try { fs.unlinkSync(ln); } catch {}
+    if (kind === 'symlink') fs.symlinkSync(victim, ln); else fs.linkSync(victim, ln);
+    fs.renameSync(ln, target);
+  } catch {}
+}`;
+      const c = spawn(process.execPath, ['-e', code, kind, recFile, victim], { stdio: 'ignore' });
+      kids.push(c);
+      await sleep(200);
+      logs.length = 0;
+      const t0 = Date.now();
+      let calls = 0;
+      while (Date.now() - t0 < 6000 && calls < 400) { await call(); calls++; }
+      await stop(c);
+      const refused = logs.filter((m) => /record of the call/.test(m)).length;
+      ok(`S-1: calls.jsonl swapped for a link to a file outside while ${calls} records are written -> the file outside is unchanged`,
+        sha256(fs.readFileSync(victim)) === victim0, `${refused} records refused; victim: ${fs.readFileSync(victim, 'utf8').slice(0, 200)}`);
+      ok(`S-1: the swap really raced the writes (some records refused, some written)`, refused > 0 && refused < calls, `${refused} of ${calls}`);
+      for (const p of [recFile, recFile + '.reg', recFile + '.ln']) fs.rmSync(p, { force: true });
+    }
+    ok('S-1: the control file outside the worktree is unchanged', f.controlSha() === f.control0);
   }
 
   done();
