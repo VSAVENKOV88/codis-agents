@@ -1336,5 +1336,11 @@ agent('x',{label:'prog:K#1',schema:{type:'object',properties:{status:{type:'stri
     process.stdout.write((tc.stdout || '').replace(/\n+$/, '').replace(/^/gm, '  | ') + '\n');
     ok('the tester cells of the re-check and the walk (tests/commit-recheck-tester-cases.js) pass', tc.status === 0, `exit ${tc.status} ${tc.signal || ''} ${(tc.stderr || '').slice(-500)}`);
   }
+  // the tester's cells of a folder the walk cannot look into: tests/commit-noright-tester-cases.js, a child in the same way
+  {
+    const tc = spawnSync(process.execPath, [path.join(__dirname, 'commit-noright-tester-cases.js')], { encoding: 'utf8', timeout: 900000, maxBuffer: 64 << 20 });
+    process.stdout.write((tc.stdout || '').replace(/\n+$/, '').replace(/^/gm, '  | ') + '\n');
+    ok('the tester cells of a folder without rights (tests/commit-noright-tester-cases.js) pass', tc.status === 0, `exit ${tc.status} ${tc.signal || ''} ${(tc.stderr || '').slice(-500)}`);
+  }
   done();
 })().catch((e) => { ok('the test ran to the end', false, e && e.stack); done(); });
