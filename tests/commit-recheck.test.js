@@ -661,6 +661,196 @@ agent('x',{label:'prog:K#1',schema:{type:'object',properties:{status:{type:'stri
     ok('CK2-13b SIGTERM of the adapter during the walk -> outcome signalled, the walk process is gone, the request cancelled', got && ex && rec && rec.outcome === 'signalled' && rec.commit && rec.commit.cancelled.length === 1 && !alive(pid) && f.tip() === f.h0, J({ ex, pid, o: rec && rec.outcome, c: rec && rec.commit }));
   }
 
+  // ---- a folder the walk cannot look into is an entry with its own key: a change of it refuses with its path, whatever
+  // the ignore rules say (its contents cannot be classed), and it is no input of a check
+  {
+    const f = fixture({ hooks: { 'pre-commit': 'mkdir hid; echo evil > hid/evil; chmod 000 hid' } });
+    const s = service(f);
+    fs.writeFileSync(f.w('a.txt'), 'x\n');
+    const a = await answer(s, ask(s, ['a.txt']));
+    ok('CK2-13d a hook writes into a new folder and takes its rights away (000) -> refused with the path, the tip stays', a && a.status === 'refused' && /changed outside the request/.test(a.why) && has1(a, 'created hid') && f.tip() === f.h0, J(a));
+    await s.close();
+  }
+  {
+    const f = fixture({ hooks: { 'pre-commit': 'mkdir hid; echo evil > hid/evil; chmod 400 hid' } });
+    const s = service(f);
+    fs.writeFileSync(f.w('a.txt'), 'x\n');
+    const a = await answer(s, ask(s, ['a.txt']));
+    ok('CK2-13d the same with a listing but no search right (400) -> refused with the path', a && a.status === 'refused' && has1(a, 'created hid') && f.tip() === f.h0, J(a));
+    await s.close();
+  }
+  {
+    const f = fixture({ hooks: { 'pre-commit': 'chmod 755 hid; echo evil > hid/evil2; chmod 000 hid' } });
+    fs.mkdirSync(f.w('hid'));
+    fs.chmodSync(f.w('hid'), 0);
+    const s = service(f);
+    fs.writeFileSync(f.w('a.txt'), 'x\n');
+    const a = await answer(s, ask(s, ['a.txt']));
+    ok('CK2-13d a folder without rights from before the check, opened and closed again by the hook -> refused, modified', a && a.status === 'refused' && has1(a, 'modified hid') && f.tip() === f.h0, J(a));
+    await s.close();
+  }
+  {
+    const f = fixture({ hooks: { 'pre-commit': 'chmod 755 hid; echo evil > hid/evil2; chmod 400 hid' } });
+    fs.mkdirSync(f.w('hid'));
+    fs.writeFileSync(f.w('hid/old'), 'o');
+    fs.chmodSync(f.w('hid'), 0o400);
+    const s = service(f);
+    fs.writeFileSync(f.w('a.txt'), 'x\n');
+    const a = await answer(s, ask(s, ['a.txt']));
+    ok('CK2-13d a 400 folder from before the check, written and closed again by the hook -> refused, modified', a && a.status === 'refused' && has1(a, 'modified hid') && f.tip() === f.h0, J(a));
+    await s.close();
+  }
+  {
+    const f = fixture({ hooks: { 'pre-commit': 'chmod 755 hid' } });
+    fs.mkdirSync(f.w('hid'));
+    fs.writeFileSync(f.w('hid/old'), 'o');
+    fs.chmodSync(f.w('hid'), 0);
+    const s = service(f);
+    fs.writeFileSync(f.w('a.txt'), 'x\n');
+    const a = await answer(s, ask(s, ['a.txt']));
+    ok('CK2-13d the hook gives the rights back -> refused: the folder entry is gone, its file appears', a && a.status === 'refused' && has1(a, 'deleted hid', 'created hid/old') && f.tip() === f.h0, J(a));
+    await s.close();
+  }
+  {
+    const f = fixture({ files: { '.gitignore': 'build/\n' }, hooks: { 'pre-commit': 'mkdir -p build/hid; echo evil > build/hid/evil; chmod 000 build/hid' } });
+    const s = service(f);
+    fs.writeFileSync(f.w('a.txt'), 'x\n');
+    const a = await answer(s, ask(s, ['a.txt']));
+    ok('CK2-13d a folder without rights under an ignored one -> a change whatever its class: refused with the path', a && a.status === 'refused' && has1(a, 'created build/hid') && f.tip() === f.h0, J(a));
+    await s.close();
+  }
+  {
+    const f = fixture({ hooks: { 'pre-commit': '' } });
+    fs.mkdirSync(f.w('shut'));
+    fs.writeFileSync(f.w('shut/one'), '1');
+    fs.chmodSync(f.w('shut'), 0);
+    fs.mkdirSync(f.w('ro'));
+    fs.writeFileSync(f.w('ro/two'), '2');
+    fs.chmodSync(f.w('ro'), 0o400);
+    const s = service(f);
+    fs.writeFileSync(f.w('a.txt'), 'x\n');
+    const a = await answer(s, ask(s, ['a.txt']));
+    const inputs = (a && a.untrackedInputs) || [];
+    ok('CK2-13d folders without rights that the check leaves as they are -> committed, notes, no input of the check', a && a.status === 'committed' && !['shut', 'ro', 'shut/one', 'ro/two'].some((p) => inputs.includes(p))
+      && ['shut', 'ro/two'].every((p) => (a.walkNotes || []).some((n) => n.startsWith(`${p}:`))), J(a));
+    await s.close();
+  }
+  // ---- CK2-13b: the bytes read for hashes, before and after the hooks
+  {
+    const f = fixture({ hooks: { 'pre-commit': '' } });
+    fs.renameSync(f.w('r1.txt'), f.w('r2.txt'));
+    const s = service(f, { walkMaxReadBytes: 3 });
+    fs.writeFileSync(f.w('a.txt'), 'x\n');
+    const a = await answer(s, ask(s, ['a.txt']));
+    ok('CK2-13b above commit.walkMaxReadBytes before the hooks -> refused "no safe check path", "files to hash", did not finish, the hooks did not run, the tip stays',
+      a && a.status === 'refused' && /no safe check path: files to hash above 3 bytes/.test(a.why) && /did not finish/.test(a.why) && f.marks().length === 0 && f.tip() === f.h0, J(a));
+    await s.close();
+  }
+  {
+    const f = fixture({ hooks: { 'pre-commit': 'mv r1.txt r2.txt' } });
+    const s = service(f, { walkMaxReadBytes: 3 });
+    fs.writeFileSync(f.w('a.txt'), 'x\n');
+    const a = await answer(s, ask(s, ['a.txt']));
+    ok('CK2-13b above commit.walkMaxReadBytes after the hooks -> refused, what the hook did stays visible, the tip stays',
+      a && a.status === 'refused' && /no safe check path: files to hash above 3 bytes/.test(a.why) && /did not finish/.test(a.why) && f.marks('pre-commit').length === 1 && fs.existsSync(f.w('r2.txt')) && f.tip() === f.h0, J(a));
+    await s.close();
+  }
+  // ---- the environment of the walk process, outside the sandbox: only its own list, nothing of the adapter or the role
+  {
+    const f = fixture({ hooks: { 'pre-commit': '' } });
+    const dump = path.join(f.d, 'walk-env.json');
+    const p = preload('envdump.js', `fs.writeFileSync(${JSON.stringify(dump)},JSON.stringify(process.env));`);
+    process.env.CODIS_WALK_CANARY = 'canary-of-the-adapter';
+    f.userEnv.CODIS_ROLE_CANARY = 'canary-of-the-role';
+    let job = '';
+    const s = service(f, { inject: { walkLaunch: (spec) => { job = rd(spec.args[spec.args.length - 1]); return withPreload(p)(spec); } } });
+    fs.writeFileSync(f.w('a.txt'), 'x\n');
+    const a = await answer(s, ask(s, ['a.txt']));
+    delete process.env.CODIS_WALK_CANARY;
+    const env = readJson(dump) || {};
+    delete env.__CF_USER_TEXT_ENCODING; // macOS adds it to every process
+    ok('CK2-13b the walk process has PATH, HOME of the adapter, LANG, LC_ALL and nothing else', a && a.status === 'committed' && Object.keys(env).sort().join() === 'HOME,LANG,LC_ALL,PATH' && env.HOME !== f.home && env.HOME !== process.env.HOME, J(env));
+    ok('CK2-13b the job of the walk holds nothing of the adapter or the role', job.length > 0 && !/canary-of-the/.test(job) && !job.includes(f.home), job.slice(0, 600));
+    await s.close();
+  }
+  // ---- the limits through createAgent, a call of a real adapter; and its SIGKILL during a walk
+  const agentDriver = (f, o) => {
+    const role = path.join(f.d, 'role.js');
+    fs.writeFileSync(role, `const fs=require('fs'),path=require('path');const {spawn}=require('child_process');
+const wt=process.argv[2],out=process.argv[3],pids=process.argv[4];
+fs.appendFileSync(pids,process.pid+'\\n');
+${o.roleWork || ''}
+fs.writeFileSync(path.join(wt,'a.txt'),'from the role\\n');
+const c=spawn(process.execPath,[${JSON.stringify(CLIENT)},'-m','m','--','a.txt'],{stdio:['ignore',fs.openSync(out,'w'),'ignore']});
+fs.appendFileSync(pids,c.pid+'\\n');
+c.on('exit',()=>process.exit(0));
+`);
+    const driver = path.join(f.d, 'driver.js');
+    const out = path.join(f.d, 'role-out.json'), pids = path.join(f.d, 'role-pids');
+    fs.writeFileSync(driver, `const fs=require('fs');const a=JSON.parse(process.argv[2]);const {createAgent,spawnRole}=require(${JSON.stringify(path.join(ROOT, 'scripts', 'role-exec.js'))});
+const wl=(spec)=>{fs.writeFileSync(a.limitsOut,JSON.stringify(JSON.parse(fs.readFileSync(spec.args[spec.args.length-1],'utf8')).limits));
+ return a.preload?Object.assign({},spec,{args:['--require',a.preload].concat(spec.args),env:Object.assign({},spec.env,{PIDF:a.pidf})}):spec;};
+const agent=createAgent({host:'codex',callsDir:a.callsDir,pluginRoot:${JSON.stringify(ROOT)},log:()=>{},codex:{home:a.chome,catalog:a.catalog,bin:a.codex},
+ env:a.env,tasks:{K:{dir:a.tdir,wt:a.wt,branch:'task'}},commit:Object.assign({stateDir:a.state,git:a.git,inject:{walkLaunch:wl}},a.commit),ceilingMs:120000,killGraceMs:1500,
+ launch:(plan)=>spawnRole(Object.assign({},plan,{bin:process.execPath,argv:[a.role,a.wt,a.out,a.pids]}),{ceilingMs:120000,graceMs:1500})});
+agent('x',{label:'prog:K#1',schema:{type:'object',properties:{status:{type:'string'}},required:['status']},agentType:'general-purpose'}).catch(()=>{}).then(()=>process.exit(0));
+`);
+    const chome = path.join(f.d, 'chome');
+    fs.mkdirSync(chome);
+    const catalog = readJson(path.join(__dirname, 'fixtures', 'role-exec', 'codex-models.json'));
+    const limitsOut = path.join(f.d, 'walk-limits.json');
+    const c = spawn(process.execPath, [driver, JSON.stringify({ callsDir: path.join(f.d, 'calls'), chome, catalog, codex: CODEX, env: Object.assign({}, process.env, f.userEnv), tdir: f.tdir, wt: f.wt,
+      state: f.state, git: GIT, role, preload: o.preload, pidf: o.pidf, out, pids, limitsOut, commit: o.commit })], { stdio: 'ignore' });
+    kids.add(c.pid);
+    return { c, out, pids, limitsOut, ended: new Promise((r) => c.on('exit', (rc, sig) => r({ rc, sig }))) };
+  };
+  {
+    const f = fixture({ hooks: { 'pre-commit': '' } });
+    const want = { walkMaxEntries: 5000, walkTimeoutMs: 40000, walkMaxResultBytes: 7000000, walkMaxIgnoreBytes: 900000, walkMaxReadBytes: 3 };
+    const d = agentDriver(f, { commit: want, roleWork: "fs.renameSync(path.join(wt,'r1.txt'),path.join(wt,'r2.txt'));" });
+    const ex = await Promise.race([d.ended, sleep(60000).then(() => null)]);
+    const a = readJson(d.out);
+    const l = readJson(d.limitsOut) || {};
+    ok('CK2-13b commit.walkMaxReadBytes through createAgent -> the role gets the refusal "files to hash", no hooks, the tip stays', ex && a && a.status === 'refused' && /files to hash above 3 bytes/.test(a.why) && f.marks().length === 0 && f.tip() === f.h0, J({ ex, a }));
+    ok('CK2-13b the keys of the limits through createAgent reach the walk', l.entries === want.walkMaxEntries && l.timeoutMs === want.walkTimeoutMs && l.resultBytes === want.walkMaxResultBytes && l.ignoreBytes === want.walkMaxIgnoreBytes && l.readBytes === want.walkMaxReadBytes, J(l));
+  }
+  {
+    const f = fixture({ hooks: { 'pre-commit': '' } });
+    fs.mkdirSync(f.w('many'));
+    for (let i = 0; i < 2000; i++) fs.writeFileSync(f.w(`many/u${i}`), 'u');
+    const pidf = path.join(f.d, 'walker.pid');
+    const p = preload('slow.js', `const o=fs.lstatSync;const w=new Int32Array(new SharedArrayBuffer(4));let n=0;fs.lstatSync=(...a)=>{if(!n++)fs.writeFileSync(process.env.PIDF,String(process.pid));Atomics.wait(w,0,0,40);return o(...a);};`);
+    const d = agentDriver(f, { preload: p, pidf, commit: { walkTimeoutMs: 4000 } });
+    const got = await waitFile(pidf);
+    const pid = +rd(pidf);
+    kids.add(pid);
+    d.c.kill('SIGKILL');
+    const killed = await Promise.race([d.ended, sleep(10000).then(() => null)]);
+    for (const x of rd(d.pids).split('\n').filter(Boolean)) { try { process.kill(+x, 'SIGKILL'); } catch { /* gone */ } }
+    const t0 = Date.now();
+    while (alive(pid) && Date.now() - t0 < 20000) await sleep(50);
+    const outs = sh(`find '${f.state}' -name out.json`).split('\n').filter(Boolean);
+    const ans = outs.map(readJson).filter(Boolean);
+    ok('CK2-13b the adapter is killed by SIGKILL during a walk -> the orphan ends by its own deadline with limit timeout', got && killed && !alive(pid) && ans.some((x) => x.limit === 'timeout'), J({ got, killed, alive: alive(pid), ans }));
+  }
+  // ---- the deadline of the walk process in the modes without a walk, by the process itself (no adapter to remove it)
+  {
+    const f = fixture(null);
+    const WALKER = path.join(ROOT, 'scripts', 'commit-walk.js');
+    const limits = { entries: 100000, timeoutMs: 1, resultBytes: 1 << 24, ignoreBytes: 1 << 24, readBytes: 1 << 30 };
+    const direct = (job) => {
+      const jf = path.join(f.d, 'job.json');
+      fs.writeFileSync(jf, JSON.stringify(job));
+      const p = spawnSync(process.execPath, [WALKER, jf], { encoding: 'utf8' });
+      try { return JSON.parse(p.stdout); } catch { return { raw: p.stdout, err: p.stderr }; }
+    };
+    const named = Array.from({ length: 1500 }, (_, i) => `d${i}/x`);
+    const n = direct({ mode: 'named', wt: f.wt, named, mirror: path.join(f.d, 'mirror'), git: GIT, gitArgs: [], gitEnv: {}, limits });
+    ok('CK2-13b the deadline in mode named -> limit timeout at the check of the 1000th entry, not at the git command after the list', n.limit === 'timeout' && n.visited === 1000, J(n));
+    fs.writeFileSync(f.w('big.bin'), Buffer.alloc(32 << 20, 1));
+    const h = direct({ mode: 'hash', wt: f.wt, paths: ['big.bin', 'a.txt'], objFormat: 'sha1', limits });
+    ok('CK2-13b the deadline in mode hash -> limit timeout after the file it read, no partial ids', h.limit === 'timeout' && !h.ids, J(h));
+  }
   // ---- CK2-13c: a path deeper than the system's limit
   {
     const f = fixture({ hooks: { 'pre-commit': '' } });
