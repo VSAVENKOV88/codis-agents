@@ -343,5 +343,11 @@ const restore = () => { Object.assign(fs, real); };
       a && a.status === 'committed' && a.sha === f.tip() && a.indexSync === 'failed' && res.length === 1 && res[0].status === 'committed', J({ a, res }));
     await s.close();
   }
+  // the tester cells: tests/commit-answer-fail-tester-cases.js, a child with its own tally, so README keeps counting test files
+  {
+    const tc = spawnSync(process.execPath, [path.join(__dirname, 'commit-answer-fail-tester-cases.js')], { encoding: 'utf8', timeout: 300000, maxBuffer: 64 << 20 });
+    process.stdout.write(tc.stdout || '');
+    ok('the tester cells of a failed write (tests/commit-answer-fail-tester-cases.js) pass', tc.status === 0, `exit ${tc.status} ${tc.signal || ''} ${(tc.stderr || '').slice(-500)}`);
+  }
   done();
 })().catch((e) => { restore(); ok('the test ran to the end', false, e && e.stack); done(); });
