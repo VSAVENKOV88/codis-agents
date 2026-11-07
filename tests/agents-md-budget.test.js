@@ -507,7 +507,9 @@ if (process.getuid && process.getuid() !== 0) {
   fs.writeFileSync(path.join(only, 'sub/CLAUDE.md'), 'see \x40~/no-such-file-of-the-budget-guard.md\n');
   const c = check(only);
   ok('T10. an import not on this machine and a fitting chain: 69 stays', c.status === 69, show(c));
-  const over = project({ 'CLAUDE.md': fill(40000), 'sub/CLAUDE.md': 'see \x40~/no-such-file-of-the-budget-guard.md\n' });
+  const over = project({ 'CLAUDE.md': fill(40000), 'sub/CLAUDE.md': 's\n' });
+  write(over);
+  fs.writeFileSync(path.join(over, 'sub/CLAUDE.md'), 'see \x40~/no-such-file-of-the-budget-guard.md\n');
   const co = check(over);
   ok('T10. with a chain over the limit: 1, both named', co.status === 1 && /not on this machine/.test(co.stderr) && redLines(co).length === 1, show(co));
   const badCfg = project({ 'CLAUDE.md': 'r\n', 'sub/CLAUDE.md': 'see \x40~/no-such-file-of-the-budget-guard.md\n', [CFG]: `${KEY} = "x"\n` });
