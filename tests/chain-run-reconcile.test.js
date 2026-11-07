@@ -70,7 +70,8 @@ const finished = (j) => { const p = cr(['status', j.runDir, '--config', CFG, '--
 const resultOf = (s) => (s.j ? ((finished(s.j) || {}).results || [])[0] : null);
 const lockOf = (key) => path.join(RUNS, '.locks', `${key}.lock`);
 const registered = (key) => fs.readdirSync(RUNS).filter((n) => !n.startsWith('.') && fs.existsSync(path.join(RUNS, n, 'tasks', `${key}.json`)));
-const marks = () => { const out = []; const walk = (d) => { for (const n of fs.readdirSync(d)) { const p = path.join(d, n); if (n === 'undetermined.json') out.push(p); else if (fs.lstatSync(p).isDirectory()) walk(p); } }; walk(SHARED); return out; };
+// Mark files of the earlier design, anywhere in the test folder (the shared folder and the fabricated runs).
+const marks = () => { const out = []; const walk = (d) => { let ns = []; try { ns = fs.readdirSync(d); } catch { return; } for (const n of ns) { const p = path.join(d, n); if (n === 'undetermined.json') out.push(p); else if (fs.lstatSync(p).isDirectory()) walk(p); } }; walk(W); return out; };
 function cleanup() {
   for (const g of groups) { try { process.kill(-g, 'SIGKILL'); } catch { /* gone */ } try { process.kill(g, 'SIGKILL'); } catch { /* gone */ } }
   for (const d of fs.readdirSync(W).filter((x) => /^fake\d+$/.test(x))) for (const e of traceOf(path.join(W, d))) if (e.ev === 'start') { try { process.kill(-e.pid, 'SIGKILL'); } catch { /* gone */ } }
@@ -233,7 +234,7 @@ const text = (c) => c.reasons.map((r) => r.why).join(' | ') + ' || ' + c.notes.j
       fs.writeFileSync(notDir, 'x');
       c = CRM.reconcile(notDir, 'k', 'own', { dir: path.join(RD, 'taskdir') });
       ok('C6 the runs folder cannot be read: refused', blocks(c), text(c));
-      ok('C1 the reconciliation leaves no mark file anywhere', !marks().length && !fs.readdirSync(RD, { recursive: true }).some((n) => String(n).endsWith('undetermined.json')), marks().join());
+      ok('C1 the reconciliation leaves no mark file anywhere', !marks().length, marks().join());
     }
 
     // ---- L1-L3, G6, V3: the lock and its takeover
