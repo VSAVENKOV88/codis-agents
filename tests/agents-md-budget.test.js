@@ -446,17 +446,58 @@ const markerBytes = (src) => Buffer.byteLength(`<!-- codis-agents agents-md v1; 
   ok('T1. a foreign file counts in bytes, not characters', cf.status === 1 && cf.stderr.includes('a/AGENTS.md 38001'), show(cf));
 }
 {
-  // A key spelled with an escape is the same key for Codex: measured, the cut at 500 happens. Either the scan reads it
-  // or it refuses it; a green check under the default limit is the silent cut this budget exists to prevent.
-  for (const [label, name] of [['\\U escape', 'project_doc\\U0000005Fmax_bytes'], ['\\x escape', 'project_doc\\x5fmax_bytes']]) {
+  // Every expectation of T2 is a measured run of codex-cli 0.166.0 prompt-input: a basic string's escapes spell the same
+  // key for Codex, which cuts at it; a literal string's do not; an escape TOML does not define makes Codex refuse the file.
+  for (const name of ['project_doc\\U0000005Fmax_bytes', 'project_doc\\x5fmax_bytes', 'project_doc\\x5Fmax_bytes', 'project_doc\\u005fmax_bytes']) {
     const d = project({ 'CLAUDE.md': fill(1000), [CFG]: `"${name}" = 500\n` });
     write(d);
     const c = check(d);
-    ok(`T2. the limit key spelled with a ${label}: never green under the default limit`, c.status === 1 && (c.stderr.includes('> 500') || c.stderr.includes(`${CFG}:1`)), show(c));
+    ok(`T2. the limit key spelled "${name}": the limit is read and holds`, c.status === 1 && c.stderr.includes('bytes > 500'), show(c));
   }
+  const big = project({ 'CLAUDE.md': fill(40000), [CFG]: '"project_doc\\x5fmax_bytes" = 131072\n' });
+  write(big);
+  ok('T2. the same spelling raises the limit: green against it, not refused', check(big).status === 0 && check(big).stdout.includes('/131072 bytes'), show(check(big)));
+  const dup = project({ 'CLAUDE.md': 'r\n', [CFG]: `${KEY} = 131072\n"project_doc\\x5fmax_bytes" = 131072\n` });
+  write(dup);
+  ok('T2. the plain key and its escaped spelling are a duplicate', check(dup).status === 1 && check(dup).stderr.includes(`${CFG}:2`), show(check(dup)));
   const fb = project({ 'CLAUDE.md': 'r\n', [CFG]: `"project_doc\\U0000005Ffallback_filenames" = ["TEAM.md"]\n` });
   write(fb);
-  ok('T2. the fallback key spelled with a \\U escape: red (Codex reads the files it names, measured)', check(fb).status === 1 && check(fb).stderr.includes(`${CFG}:1`), show(check(fb)));
+  ok('T2. the fallback key spelled with a \\U escape: red (Codex reads the files it names)', check(fb).status === 1 && check(fb).stderr.includes(`${CFG}:1`), show(check(fb)));
+  const nested = project({ 'CLAUDE.md': 'r\n', 'sub/CLAUDE.md': 's\n', 'sub/.codex/config.toml': '"project_doc\\x5fmax_bytes" = 500\n' });
+  write(nested);
+  ok('T2. a nested config with the escaped key: red with its path', check(nested).status === 1 && check(nested).stderr.includes('sub/.codex/config.toml:1'), show(check(nested)));
+  for (const [label, text] of [
+    ['a table header', '["project_doc\\x5fmax_bytes"]\na = 1\n'],
+    ['a dotted key', '"project_doc\\x5fmax_bytes".a = 1\n'],
+  ]) {
+    const d = project({ 'CLAUDE.md': 'r\n', [CFG]: text });
+    write(d);
+    ok(`T2. the escaped key in ${label}: red with its line (Codex refuses)`, check(d).status === 1 && check(d).stderr.includes(`${CFG}:1`), show(check(d)));
+  }
+  // Other keys under every defined escape: the file stays usable and the default limit stays. A literal string keeps its
+  // backslash, so it is another key; a raw tab is allowed inside a basic string.
+  for (const [label, text] of [
+    ['\\t', '"a\\tb" = 500\n'], ['\\e', '"a\\eb" = 500\n'], ['\\u0000', '"a\\u0000b" = 500\n'], ['\\xe9', '"\\xe9" = 500\n'],
+    ['\\" in a key', '"a\\"b" = 500\n'], ['\\\\ in a key', '"project_doc\\\\x5fmax_bytes" = 500\n'],
+    ['\\b \\f \\r \\n', '"a\\b\\f\\r\\nb" = 500\n'], ['a raw tab in a key', '"a\tb" = 500\n'],
+    ['a literal string', "'project_doc\\x5fmax_bytes' = 500\n"], ['a defined escape in a value', 'a = "x\\ty"\n'], ['a raw tab in a value', 'a = "x\ty"\n'],
+  ]) {
+    const d = project({ 'CLAUDE.md': fill(1000), [CFG]: text });
+    write(d);
+    const c = check(d);
+    ok(`T2. ${label}: another key, green under the default limit`, c.status === 0 && c.stdout.includes('/32768 bytes'), show(c));
+  }
+  // An escape TOML does not define: Codex refuses the file, so the scan cannot call it readable.
+  for (const [label, text] of [
+    ['\\q in a key', '"a\\qb" = 500\n'], ['\\/ in a key', '"a\\/b" = 500\n'], ['a short \\x', '"a\\x5" = 500\n'], ['a short \\u', '"a\\u005" = 500\n'],
+    ['a surrogate', '"a\\uD83D" = 500\n'], ['\\U past the last code point', '"a\\U00110000" = 500\n'],
+    ['\\q in a value', 'a = "x\\qy"\n'], ['\\/ in a value', 'a = "x\\/y"\n'],
+  ]) {
+    const d = project({ 'CLAUDE.md': 'r\n', [CFG]: text });
+    write(d);
+    const c = check(d);
+    ok(`T2. ${label}: red with its line`, c.status === 1 && c.stderr.includes(`${CFG}:1`) && c.stderr.includes('escape'), show(c));
+  }
 }
 {
   const d = project({ 'CLAUDE.md': fill(40000), [CFG]: `${L131}[foo]\n${KEY} = 5\n` });
