@@ -406,5 +406,11 @@ const text = (c) => c.reasons.map((r) => r.why).join(' | ') + ' || ' + c.notes.j
   const left = spawnSync('ps', ['-axo', 'pid=,command='], { encoding: 'utf8' }).stdout.split('\n').filter((l) => l.includes(W) && !l.includes(' ps '));
   ok('no process of this test remains', !left.length, left.join('\n'));
   try { fs.rmSync(W, { recursive: true, force: true }); } catch { /* best effort */ }
+  // the tester cells: tests/chain-run-reconcile-tester-cases.js, a child with its own tally, so README keeps counting test files
+  {
+    const tc = spawnSync(process.execPath, [path.join(__dirname, 'chain-run-reconcile-tester-cases.js')], { encoding: 'utf8', timeout: 280000 });
+    ok('the tester cells of the reconciliation (tests/chain-run-reconcile-tester-cases.js) pass', tc.status === 0,
+      `${tc.status} ${tc.signal || ''} ${String(tc.stdout).split('\n').filter((l) => /FAIL/.test(l)).join(' | ').slice(0, 3000)}${(tc.stderr || '').slice(-500)}`);
+  }
   done();
 })().catch((e) => { cleanup(); console.log('  FAIL crashed: ' + e.stack); process.exit(1); });

@@ -474,6 +474,15 @@ async function run(script, task = T, extra = {}) {
   ok('the full run step: a cheap agent runs wait-step.js start with guards-all.sh on the worktree, then waits in slices of at most 270 s',
     rp && rp.opts.model === 'haiku' && rp.opts.agentType === 'general-purpose' && rp.prompt.includes("node /p/scripts/wait-step.js start --id '/d/wait-select-1' --cwd '/w'")
       && rp.prompt.includes('/p/scripts/guards-all.sh') && rp.prompt.includes('wait-step.js wait') && /--max 270/.test(rp.prompt), rp && rp.prompt);
+  // p-codex-B1-b2a (tester): without exec (the Workflow) a wait step lives in the task folder and starts without --once,
+  // also when the task carries a field stepDir (only the conductor gives it, and only with exec).
+  ok('B1-b2a under the Workflow the wait step starts without --once', !!rp && !/--once/.test(rp.prompt), rp && rp.prompt);
+  {
+    const xs = await run(G1(), Object.assign({}, TB, { stepDir: '/elsewhere/steps/x' }), { config: ONE });
+    const rs = runsOf(xs)[0];
+    ok('B1-b2a under the Workflow a field stepDir is ignored: the wait step and the selection copy stay in the task folder',
+      xs.r.status === 'done' && !!rs && rs.prompt.includes("--id '/d/wait-select-1'") && rs.prompt.includes('/d/wait-select-1.guards.txt') && !rs.prompt.includes('/elsewhere') && !/--once/.test(rs.prompt), rs && rs.prompt);
+  }
   // C1 (p-wait, form 1): the full run of the wait step includes the selection (guardSubsetCommand narrows guardCommand),
   // so the programmer runs no selection after its mutations: no guards-select, no heavy.sh for it in its Order line.
   const orderOf = (pr) => (pr.match(/^Order:.*$/m) || [''])[0];
