@@ -76,7 +76,10 @@
 // Nothing is rolled back or added after a refusal: the worktree stays as the check left it. The commit gets the tree
 // and the message of the last pass. Lists in an answer are cut to the first LIST_SHOWN entries with a count, and the
 // notes of those entries to LIST_SHOWN paths in all; the whole lists go to <id>.changes.json in the answers, and the
-// journal holds only the counts. Untracked and ignored files of
+// journal holds only the counts. The JSON of the rename pairs and of the whole lists is bounded by the volume of results
+// (commit.walkMaxResultBytes): pairs above it refuse "no safe check path" before they are built; lists above it, or a
+// file that cannot be written, leave no file and a changesFileError in the answer, and change no status: the status is
+// decided by the step that got it, so a request whose branch moved is always committed. Untracked and ignored files of
 // the worktree, and any file outside it, can influence a check and are not part of the commit (README, Known gaps).
 //
 // The journal of the task (<stateDir>/<task>/commits.jsonl, owner B 2026-11-06 answers 12, 13): one writer (a lock
@@ -140,6 +143,12 @@ const withCopyNotes = (list, allowance) => {
   });
 };
 const LIST_KEYS = ['changed', 'untrackedInputs', 'ignoredChanged', 'walkNotes'];
+const jsonBytes = (x) => Buffer.byteLength(JSON.stringify(x));
+const sumJsonBytes = (paths) => paths.reduce((n, p) => n + jsonBytes(p), 0);
+// The JSON of one entry of a list and its comma, without the paths: a path counts by its own JSON, whose quotes also
+// cover the separator of a path inside a note.
+const PAIR_BYTES = jsonBytes({ kind: 'renamed', from: '', path: '' }) - 4 + 1;
+const NOTE_BYTES = jsonBytes({ path: '', kind: 'deleted', note: 'the same content at the ignored path ' }) - 2 + 1;
 const isIgnoreFile = (p) => /(^|\/)\.gitignore$/i.test(p);
 // The probe of the sandbox, run inside it: argv canary, npm cache, port of the adapter's listener; one JSON line.
 const PROBE_JS = "const fs=require('fs'),net=require('net');const [canary,cache,port]=process.argv.slice(1);const o={};"
@@ -479,11 +488,34 @@ function openCommitService(o) {
   };
   const publicOf = (r) => {
     const a = { status: r.status };
-    for (const k of ['sha', 'why', 'paths', 'indexSync', 'rechecked', 'changesFile', 'checks', 'environment']) if (r[k] !== undefined) a[k] = r[k];
+    for (const k of ['sha', 'why', 'paths', 'indexSync', 'rechecked', 'changesFile', 'changesFileError', 'checks', 'environment']) if (r[k] !== undefined) a[k] = r[k];
     for (const k of LIST_KEYS) for (const n of [k, `${k}Count`]) if (r[n] !== undefined) a[n] = r[n];
     return a;
   };
   const local = new Map(); // id -> result, for the calls that may not write the journal
+  // The whole lists in a file of the adapter, at most walkLimits.resultBytes of entries (a string of that size stays below
+  // the limit of a string in Node). Published by a rename, so no partial file carries the name. Nothing is thrown: the
+  // status of the result is decided already.
+  const writeWhole = (id, whole) => {
+    const L = walkLimits.resultBytes;
+    let bytes = 0;
+    for (const list of Object.values(whole)) {
+      for (const entry of list) {
+        bytes += jsonBytes(entry) + 1;
+        if (bytes > L) return { changesFileError: `the whole lists take above ${L} bytes: not written` };
+      }
+    }
+    const file = path.join(answers, `${id}.changes.json`);
+    const tmp = path.join(answers, `.${id}.changes.${process.pid}.tmp`);
+    try {
+      fs.writeFileSync(tmp, JSON.stringify(whole) + '\n', { mode: 0o644 });
+      fs.renameSync(tmp, file);
+      return { changesFile: file };
+    } catch (e) {
+      try { fs.rmSync(tmp, { force: true }); } catch { /* only clutter of the adapter */ }
+      return { changesFileError: `the whole lists could not be written: ${e.code || e.message}` };
+    }
+  };
   const finish = (id, hash, res) => {
     const r = Object.assign({ status: res.status }, res);
     // a long list: the first entries and a count in the answer, the whole of it in a file of the adapter; the same for
@@ -503,10 +535,7 @@ function openCommitService(o) {
       r.changed = withCopyNotes(first, LIST_SHOWN);
       if (first.reduce((n, c) => n + (c.ignoredCopies ? c.ignoredCopies.length : 0), 0) > LIST_SHOWN) cut = true;
     }
-    if (cut) {
-      r.changesFile = path.join(answers, `${id}.changes.json`);
-      fs.writeFileSync(r.changesFile, JSON.stringify(whole) + '\n', { mode: 0o644 });
-    }
+    if (cut) Object.assign(r, writeWhole(id, whole));
     const line = Object.assign({}, r);
     for (const k of LIST_KEYS) delete line[k];
     if (writer && !broken) append(Object.assign({ ev: 'result', id, hash }, line));
@@ -797,7 +826,9 @@ function openCommitService(o) {
   };
   // Replaces each deleted entry of the list whose blob equals an untracked file by renamed pairs, one per such file: no
   // first candidate is chosen. An empty blob has no pair (it equals every empty file); a file the ignore rules hide
-  // is only a note on deleted.
+  // is only a note on deleted. Deleted files and candidates are grouped by blob and link or file, and the JSON of all
+  // pairs and notes is summed over the groups: time and memory are linear until the sum is within walkLimits.resultBytes,
+  // and only then are the pairs built, so the product of two lists the walk bounds one by one stays bounded (G1).
   const pairRenames = async (id, list, tree, u, named) => {
     const gone = list.filter((c) => c.kind === 'deleted');
     if (!gone.length) return { list };
@@ -815,14 +846,35 @@ function openCommitService(o) {
     const w = await walkRun(id, { mode: 'hash', paths: cands.map((c) => c.p), objFormat: objectFormat() });
     if (w.cancelled) return { cancelled: true };
     if (!w.ok) return { error: walkWhy(w) };
+    const groupKey = (oid, link) => `${oid} ${link ? 'link' : 'file'}`;
+    const groupOf = (c) => { const e = tree.map.get(c.path); return groupKey(e.oid, e.mode === '120000'); };
+    const groups = new Map();
+    for (const c of gone) {
+      const k = groupOf(c);
+      if (!groups.has(k)) groups.set(k, { gone: [], plain: [], ignored: [] });
+      groups.get(k).gone.push(c.path);
+    }
+    for (const x of cands) {
+      const group = groups.get(groupKey(w.ids[x.p], x.t === 'l'));
+      if (group) (x.i ? group.ignored : group.plain).push(x.p);
+    }
+    let bytes = 0, deleted = 0, copies = 0;
+    for (const group of groups.values()) {
+      const to = group.plain.length ? group.plain : group.ignored;
+      if (!to.length) continue;
+      const D = group.gone.length, C = to.length;
+      const fromBytes = sumJsonBytes(group.gone), toBytes = sumJsonBytes(to);
+      deleted += D;
+      copies += C;
+      bytes += group.plain.length ? D * toBytes + C * fromBytes + D * C * PAIR_BYTES : fromBytes + D * (toBytes + NOTE_BYTES);
+    }
+    if (bytes > walkLimits.resultBytes) return { error: `no safe check path: the rename pairs of ${deleted} deleted files and ${copies} files with the same content take ${bytes} bytes, above the ${walkLimits.resultBytes} of results; the walk finished, the pairs are not listed` };
     const out = [];
     for (const c of list) {
       if (c.kind !== 'deleted') { out.push(c); continue; }
-      const e = tree.map.get(c.path);
-      const same = cands.filter((x) => w.ids[x.p] === e.oid && (x.t === 'l') === (e.mode === '120000'));
-      const plain = same.filter((x) => !x.i);
-      if (plain.length) { for (const x of plain) out.push({ kind: 'renamed', from: c.path, path: x.p }); continue; }
-      out.push(same.length ? Object.assign({}, c, { ignoredCopies: same.map((x) => x.p) }) : c);
+      const group = groups.get(groupOf(c));
+      if (group.plain.length) { for (const p of group.plain) out.push({ kind: 'renamed', from: c.path, path: p }); continue; }
+      out.push(group.ignored.length ? Object.assign({}, c, { ignoredCopies: group.ignored }) : c);
     }
     return { list: out };
   };

@@ -22,7 +22,10 @@ key and script, and this file says when and why each one changed. Versions befor
   link entry; a path inside a gitlink, under a tracked file, another spelling of a tracked entry (by dev and inode) and
   an untracked ignored path are refused, on the path without hooks too. Lists in an answer are cut to 200 entries
   with counts and `changesFile`, the notes on ignored copies of a deleted file to 200 paths in all; the journal holds
-  only the counts. A file name that starts with `:` is no pathspec to `git check-ignore`: it is classed as
+  only the counts. The JSON of the rename pairs (every deleted file with every copy) and of the whole lists is bounded
+  by `commit.walkMaxResultBytes`: pairs above it refuse `no safe check path` before they are built, so the adapter holds no
+  product of two lists; lists above it, or a file that cannot be written, give `changesFileError` and no file, and change
+  no status (a failed write after `update-ref` was a refusal of a commit whose branch had moved). A file name that starts with `:` is no pathspec to `git check-ignore`: it is classed as
   `git status` classes it. New `tests/commit-recheck.test.js`; the cells of
   2a that refused a changed snapshot and the link path now expect the re-check and the link entry.
 

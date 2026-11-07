@@ -13,7 +13,7 @@
 // the longest single wait, not an interval) and prints one JSON line: {id, status: committed | nothing | refused |
 // cancelled, sha?, why?, paths?, indexSync?, and with hooks of a check: checks, environment, rechecked, changed,
 // untrackedInputs, ignoredChanged, walkNotes - each list its first 200 entries with a <name>Count, changesFile the whole
-// lists} or {id, status: "pending"} when no answer came in time - then
+// lists or changesFileError why they have no file} or {id, status: "pending"} when no answer came in time - then
 // "commit-req.js wait --id <id>" waits again. A pending request stays queued; the adapter answers it in order.
 // Exit: 0 committed or nothing, 1 refused or cancelled, 2 usage, 3 pending, 4 the channel is closed.
 const fs = require('fs');

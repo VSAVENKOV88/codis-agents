@@ -1075,7 +1075,7 @@ agent('x',{label:'prog:K#1',schema:{type:'object',properties:{status:{type:'stri
     const a = await answer(s, askAs(s, id, ['n.txt']));
     const res = resultOf(f, id);
     ok('LF-04 the write of the file fails after the commit: committed with its sha, the journal says committed, changesFileError with the code, no internal error',
-      a && a.status === 'committed' && a.sha && f.tip() === a.sha && a.why === undefined && a.changesFile === undefined && writeFailed.test(a.changesFileError || '') && res.length === 1 && res[0].status === 'committed' && res[0].changesFileError === a.changesFileError, J({ a: a && { status: a.status, why: a.why, sha: a.sha, e: a.changesFileError }, res }));
+      a && a.status === 'committed' && a.sha && f.tip() === a.sha && a.why === undefined && a.changesFile === undefined && writeFailed.test(a.changesFileError || '') && res.length === 1 && res[0].status === 'committed' && res[0].changesFileError === a.changesFileError && !fs.readdirSync(s.answers).some((n) => n.startsWith(`.${id}.`)), J({ a: a && { status: a.status, why: a.why, sha: a.sha, e: a.changesFileError }, res }));
     // LF-08: the same id again, in this call and in a later one, gets the result of the journal
     fs.rmSync(path.join(s.answers, `${id}.json`));
     const again = await answer(s, id, 10000);
