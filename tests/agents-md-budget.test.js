@@ -477,7 +477,7 @@ const markerBytes = (src) => Buffer.byteLength(`<!-- codis-agents agents-md v1; 
   // Other keys under every defined escape: the file stays usable and the default limit stays. A literal string keeps its
   // backslash, so it is another key; a raw tab is allowed inside a basic string.
   for (const [label, text] of [
-    ['\\t', '"a\\tb" = 500\n'], ['\\e', '"a\\eb" = 500\n'], ['\\u0000', '"a\\u0000b" = 500\n'], ['\\xe9', '"\\xe9" = 500\n'],
+    ['\\t', '"a\\tb" = 500\n'], ['\\e', '"a\\eb" = 500\n'], ['\\u0000', '"a\\u0000b" = 500\n'], ['\\xe9', '"\\xe9" = 500\n'], ['\\uD7FF', '"a\\uD7FF" = 500\n'], ['\\uE000', '"a\\uE000" = 500\n'], ['\\U0010FFFF', '"a\\U0010FFFF" = 500\n'],
     ['\\" in a key', '"a\\"b" = 500\n'], ['\\\\ in a key', '"project_doc\\\\x5fmax_bytes" = 500\n'],
     ['\\b \\f \\r \\n', '"a\\b\\f\\r\\nb" = 500\n'], ['a raw tab in a key', '"a\tb" = 500\n'],
     ['a literal string', "'project_doc\\x5fmax_bytes' = 500\n"], ['a defined escape in a value', 'a = "x\\ty"\n'], ['a raw tab in a value', 'a = "x\ty"\n'],
@@ -490,7 +490,7 @@ const markerBytes = (src) => Buffer.byteLength(`<!-- codis-agents agents-md v1; 
   // An escape TOML does not define: Codex refuses the file, so the scan cannot call it readable.
   for (const [label, text] of [
     ['\\q in a key', '"a\\qb" = 500\n'], ['\\/ in a key', '"a\\/b" = 500\n'], ['a short \\x', '"a\\x5" = 500\n'], ['a short \\u', '"a\\u005" = 500\n'],
-    ['a surrogate', '"a\\uD83D" = 500\n'], ['\\U past the last code point', '"a\\U00110000" = 500\n'],
+    ['a high surrogate', '"a\\uD83D" = 500\n'], ['a low surrogate', '"a\\uDFFF" = 500\n'], ['\\U past the last code point', '"a\\U00110000" = 500\n'],
     ['\\q in a value', 'a = "x\\qy"\n'], ['\\/ in a value', 'a = "x\\/y"\n'],
   ]) {
     const d = project({ 'CLAUDE.md': 'r\n', [CFG]: text });
