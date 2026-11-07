@@ -27,6 +27,8 @@ const safe = (f) => (...a) => { try { return f(...a); } catch (e) { return { thr
 // ---- the twelve schemas, cut out of the source of role-chain.js and run in order in a vm (POST refers to DIFF, LEFT)
 const SRC = fs.readFileSync(path.join(ROOT, 'workflows', 'role-chain.js'), 'utf8');
 const NAMES = ['PRE', 'ANALYST', 'USECASES', 'PROG', 'TEST', 'DIFF', 'REVIEW', 'SHA', 'LEFT', 'POST', 'RUN', 'MERGE'].map((n) => n + '_SCHEMA');
+// The env step is a step of the conductor alone (exec, p-codex-B1-c): its schema and label never reach agent().
+const EXEC_ONLY = ['ENV_SCHEMA'];
 const S = (() => {
   const ctx = {}; vm.createContext(ctx);
   const re = /const ([A-Z_]+_SCHEMA) = \{/g; let m; const found = [];
@@ -36,7 +38,7 @@ const S = (() => {
     vm.runInContext(SRC.slice(m.index, i + 1).replace(/^const /, 'var ') + ';', ctx);
     found.push(m[1]);
   }
-  ok('A1-01 the twelve schemas of role-chain.js are found in its source', JSON.stringify(found.slice().sort()) === JSON.stringify(NAMES.slice().sort()), found.join(','));
+  ok('A1-01 the twelve schemas of role-chain.js are found in its source (and the exec-only ENV_SCHEMA)', JSON.stringify(found.slice().sort()) === JSON.stringify(NAMES.concat(EXEC_ONLY).sort()), found.join(','));
   // A plain copy out of the vm realm, then frozen deeply: an adapter that changes a shared schema in place throws (A1-30).
   const out = {};
   for (const n of NAMES) out[n] = JSON.parse(JSON.stringify(ctx[n]));
@@ -160,7 +162,7 @@ ok('A1-12 parseLabel: every kind of label (13 + #retry) gives its kind and the k
   LABELS.every(([l, k]) => pl(l) && pl(l).kind === k && pl(l).key === 'K'), JSON.stringify(LABELS.map(([l]) => pl(l))));
 ok('A1-12 parseLabel: no kind, an empty key or an unknown kind gives null', [':K', 'K', 'review:', 'review:#1', 'foo:K', ''].every((l) => pl(l) === null || (pl(l) && pl(l).kind === undefined)));
 // The guard over the source of role-chain.js: every label literal starts with "<kind>:${t.key}" and parses.
-const lits = [...SRC.matchAll(/(?:label: |checkOpts\()`([^`]*)`/g)].map((m) => m[1]);
+const lits = [...SRC.matchAll(/(?:label: |checkOpts\()`([^`]*)`/g)].map((m) => m[1]).filter((l) => !/^env:/.test(l));
 const parsedLits = lits.map((l) => [l, pl(l.replace(/\$\{t\.key\}/g, 'K').replace(/\$\{[^}]*\}/g, 'v1'))]);
 const kindsInSrc = new Set(parsedLits.map(([, p]) => p && p.kind));
 ok('A1-12 role-chain.js: every label literal is "<kind>:${t.key}..." and parses to the key', lits.length >= 14

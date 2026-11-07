@@ -37,7 +37,7 @@ const S = (() => {
     let i = m.index + m[0].length - 1, d = 0;
     for (; i < SRC.length; i++) { if (SRC[i] === '{') d++; else if (SRC[i] === '}' && !--d) break; }
     vm.runInContext(SRC.slice(m.index, i + 1).replace(/^const /, 'var ') + ';', ctx);
-    names.push(m[1]);
+    if (m[1] !== 'ENV_SCHEMA') names.push(m[1]); // the env step is the conductor's alone (exec): it never reaches agent()
   }
   const out = {};
   for (const n of names) out[n] = JSON.parse(JSON.stringify(ctx[n]));
@@ -80,7 +80,7 @@ const defCheck = /const checkOpts = [^\n]*/.exec(SRC)[0];
 const SITES = [];
 for (const line of SRC.split('\n')) {
   let m = /label: `([a-z]+):\$\{t\.key\}[^`]*`/.exec(line);
-  if (m && !/const checkOpts/.test(line)) {
+  if (m && m[1] !== 'env' && !/const checkOpts/.test(line)) {
     const at = /agentType: (?:roleType\('([a-z-]+)'\)|'(general-purpose)')/.exec(line);
     const ef = /effort: '([a-z]+)'/.exec(line);
     const sc = /schema: ([A-Z_]+_SCHEMA)/.exec(line);

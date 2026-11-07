@@ -56,7 +56,7 @@ if (mode === 'start') {
   const m = meta();
   const rc = rcOf();
   if (m && rc === undefined && alive(m.pid)) { out({ started: false, attached: true, pid: m.pid, log: F.log }); process.exit(0); }
-  if (m && rc !== undefined && flag('--reuse')) { out({ started: false, reused: true, rc, log: F.log }); process.exit(0); }
+  if (m && rc !== undefined && flag('--reuse')) { out({ started: false, reused: true, rc, pid: m.pid, log: F.log }); process.exit(0); }
   for (const f of Object.values(F)) { if (fs.existsSync(f)) fs.renameSync(f, f.replace(/(\.\w+)$/, '.prev$1')); }
   // The wrapper writes the exit code through a temporary file, so a reader never sees a half-written .rc.
   const wrap = `( ${cmd} ) > ${q(F.log)} 2>&1; echo $? > ${q(F.rc + '.tmp')}; mv ${q(F.rc + '.tmp')} ${q(F.rc)}`;

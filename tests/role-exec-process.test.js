@@ -20,7 +20,7 @@ const { ok, done } = require('./lib');
 const ROOT = path.join(__dirname, '..');
 const SCRIPT = path.join(ROOT, 'scripts', 'role-exec.js');
 const FIX = path.join(__dirname, 'fixtures', 'role-exec');
-const { createAgent, check } = require(SCRIPT);
+const { createAgent, check, realish, overlap } = require(SCRIPT);
 const CATALOG = JSON.parse(fs.readFileSync(path.join(FIX, 'codex-models.json'), 'utf8'));
 
 // REVIEW_SCHEMA from the source of role-chain.js (the schema of the acceptance calls)
@@ -239,13 +239,13 @@ const seen = (name, x) => { OUTCOMES.push([name, x]); return x; };
   x = seen('A1-17 C', await callC({ lines: [CINIT, cResult({ subtype: 'error_during_execution', is_error: true, api_error_status: 401, structured_output: undefined })], exit: 1 }));
   ok('A1-17 C api_error_status 401 -> auth', x.res === null && x.rec.outcome === 'auth', J(x.rec));
 
-  // ---- A1-18 crashed: spawn ENOENT; exit != 0 without a terminal event, with the tail of stderr
+  // ---- A1-18 crashed: no binary (the exec of the launch gate fails: 126 or 127 with the text of the shell); exit != 0 without a terminal event, with the tail of stderr
   x = seen('A1-18 X enoent', await callX({}, { codex: { bin: path.join(TMP, 'no-such-codex') } }));
-  ok('A1-18 X spawn ENOENT -> crashed, null, one record', x.res === null && x.rec.outcome === 'crashed' && /ENOENT/.test(x.rec.error) && x.n === 1, J(x.rec));
+  ok('A1-18 X no binary under the gate -> crashed, null, one record', x.res === null && x.rec.outcome === 'crashed' && (x.rec.rc === 126 || x.rec.rc === 127) && /no-such-codex/.test(x.rec.error) && x.n === 1, J(x.rec));
   x = seen('A1-18 X rc', await callX({ lines: [{ type: 'thread.started', thread_id: 't' }], stderr: 'line one\nfatal: the tail of stderr\n', exit: 2 }));
   ok('A1-18 X exit 2 without turn.failed -> crashed, rc 2, the tail of stderr in the error', x.rec.outcome === 'crashed' && x.rec.rc === 2 && /the tail of stderr/.test(x.rec.error), J(x.rec));
   x = seen('A1-18 C enoent', await callC({}, { claude: { bin: path.join(TMP, 'no-such-claude') } }));
-  ok('A1-18 C spawn ENOENT -> crashed', x.res === null && x.rec.outcome === 'crashed' && /ENOENT/.test(x.rec.error), J(x.rec));
+  ok('A1-18 C no binary under the gate -> crashed', x.res === null && x.rec.outcome === 'crashed' && (x.rec.rc === 126 || x.rec.rc === 127) && /no-such-claude/.test(x.rec.error), J(x.rec));
   x = await callC({ lines: [CINIT], stderr: 'claude: the tail of stderr\n', exit: 3 });
   ok('A1-18 C exit 3 without a result -> crashed with the tail of stderr', x.rec.outcome === 'crashed' && x.rec.rc === 3 && /the tail of stderr/.test(x.rec.error), J(x.rec));
 
@@ -357,6 +357,29 @@ const seen = (name, x) => { OUTCOMES.push([name, x]); return x; };
   const r1 = ca(path.join(fakeHome, '.codex')), r2 = ca(path.join(TMP, 'link-to-personal')), r3 = ca(HOME);
   process.env.HOME = oldHome;
   ok('the personal ~/.codex as codex.home -> createAgent refuses (directly and through a link); another home passes', /~\/\.codex|personal/.test(r1) && /~\/\.codex|personal/.test(r2) && r3 === '', J([r1, r2, r3]));
+  // Another case of a name is the same folder on a case-insensitive disk (the default of macOS).
+  if (fs.existsSync(path.join(fakeHome, '.CODEX'))) {
+    process.env.HOME = fakeHome;
+    const r4 = ca(path.join(fakeHome, '.CODEX'));
+    process.env.HOME = oldHome;
+    ok('the personal ~/.codex spelled ~/.CODEX -> createAgent refuses', /~\/\.codex|personal/.test(r4), r4);
+    const onDisk = path.join(fs.realpathSync(fakeHome), '.codex');
+    ok('realish gives the name a folder has on disk, whatever the case asked', realish(path.join(fakeHome, '.CODEX')) === onDisk, realish(path.join(fakeHome, '.CODEX')));
+    ok('realish keeps the part that does not exist yet', realish(path.join(fakeHome, '.CODEX', 'not', 'YET')) === path.join(onDisk, 'not', 'YET'));
+  }
+  ok('overlap: a folder and what lies inside it, in both directions; neighbours do not', overlap('/a/b', '/a/b/c') && overlap('/a/b/c', '/a/b') && overlap('/a/b', '/a/b') && !overlap('/a/b', '/a/bc') && !overlap('/a/bc', '/a/b'));
+  ok('overlap: names of folders that do not exist yet compare without case or form of Unicode', overlap('/a/NEW/x', '/a/new') && overlap('/a/new', '/a/NEW/x') && overlap('/a/\u0439/x', '/a/\u0438\u0306'));
+  // commit.stateDir: the same overlap as the state of a run. The text names the root: this folder may also lie in /tmp or the
+  // TMPDIR, which refuse it on their own; the task folder comes first in the check.
+  const caCommit = (dir, stateDir) => { try { mk('codex', [Object.assign(task({}), { dir })], { cfg: { commit: { stateDir } } }); return ''; } catch (e) { return e.message; } };
+  const rawDir = path.join(TMP, 'commit-root');
+  fs.mkdirSync(rawDir);
+  if (fs.existsSync(path.join(TMP, 'COMMIT-ROOT'))) {
+    const r5 = caCommit(rawDir, path.join(TMP, 'COMMIT-ROOT', 'state'));
+    ok('commit.stateDir inside the task folder by another case of its name -> refused, naming the task folder', r5.includes(`overlaps ${realish(rawDir)}`), r5);
+  }
+  const r6 = caCommit(path.join(TMP, 'not-yet-root'), path.join(TMP, 'NOT-YET-ROOT', 'state'));
+  ok('commit.stateDir inside a task folder that does not exist yet, by another case -> refused, naming the task folder', r6.includes(`overlaps ${realish(path.join(TMP, 'not-yet-root'))}`), r6);
   const ck = spawnSync(process.execPath, [SCRIPT, 'check', '--host', 'codex', '--bin', FAKE, '--home', path.join(fakeHome, '.codex')], { encoding: 'utf8', env: Object.assign({}, process.env, { HOME: fakeHome }), cwd: TMP });
   ok('the personal ~/.codex in role-exec.js check -> not ok, the problem names it', ck.status === 1 && /~\/\.codex|personal/.test(ck.stdout), ck.stdout.slice(0, 400));
 

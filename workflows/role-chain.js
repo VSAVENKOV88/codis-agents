@@ -207,6 +207,26 @@ const REVIEW_SCHEMA = { type: 'object', properties: {
 // failed check (ok=false or no result) is repeated once by the default model (label <label>#retry; config roleModels.wait
 // or roleModel when set) and the second
 // answer decides: the script gives the same answer again, so a real violation or real leftovers still stop the task.
+// Service steps as data (owner 2026-11-06, answer 1, translated: "a step must be a structured description of the
+// operation; without exec the present behaviour of the Workflow stays"). Each service step is built once as {kind, label, phase, effect, argv,
+// schema, noJson, wait?, stdoutField?, stampAt?, agent?}. Without the global exec (the Workflow runtime has none) the
+// script gives step.agent - the prompt and options of a cheap service agent - to agent(), as before. With exec (the
+// conductor, scripts/chain-run.js) it gives the step itself to exec(step), which runs argv as a process (no shell), takes
+// its JSON (or its trimmed output as the field stdoutField), checks it against schema and answers noJson with every
+// "$error" replaced by the error text when there is no answer; a step with wait runs wait.argv until its JSON says done.
+// The command line of the prompt is rendered from the same words (cmdLine), so prompt and argv never part: a word of
+// the command itself (program, script, subcommand, flag) is lit() and printed bare when it is a plain shell word; every
+// value is quoted by sq().
+// effect is the class of the step for the restart of a conductor (p-codex-B1-b): none - reads only (sha, diff, merge,
+// env); idempotent - a repeat is safe, its process may still live (left, post: they remove only the task's leftovers);
+// reuse - a detached step with an id of its own (run: wait-step.js; the selection and the train).
+const EXEC = typeof exec === 'function' ? exec : null
+const lit = (w) => ({ lit: String(w) })
+const PLAIN_WORD = /^[A-Za-z0-9_@%+=:,./-]+$/
+const argvOf = (ws) => ws.map((w) => (w && typeof w === 'object' ? w.lit : String(w)))
+const cmdLine = (ws) => ws.map((w) => (w && typeof w === 'object' && PLAIN_WORD.test(w.lit) ? w.lit : sq(w && typeof w === 'object' ? w.lit : w))).join(' ')
+const svc = (step) => (EXEC ? EXEC(step) : agent(step.agent.prompt, step.agent.opts))
+const node = (script) => [lit('node'), lit(`${SCRIPTS}/${script}`)]
 const checkOpts = (label, phase, schema, retry) => Object.assign({ label: retry ? `${label}#retry` : label, phase, schema, effort: 'low', agentType: 'general-purpose' },
   retry ? modelOf('wait') : { model: 'haiku' })
 async function checkTwice(t, what, passed, run) {
@@ -226,10 +246,14 @@ async function checkTwice(t, what, passed, run) {
 const FULL_SHA = /^([0-9a-f]{40}|[0-9a-f]{64})$/
 const ABBREV_SHA = /^[0-9a-fA-F]{4,64}$/
 const SHA_SCHEMA = { type: 'object', properties: { sha: { type: 'string' }, error: { type: 'string' } }, required: ['sha'] }
-const sha1 = (t, role, phase, h, retry) => agent(`Run one command and return what it prints as the schema field sha (change nothing, analyse nothing):
-git -C ${sq(t.wt)} rev-parse --verify -q ${sq(`${h}^{commit}`)}
-If it prints nothing or fails - sha = '', error = the error text or "no such commit".`,
-  checkOpts(`sha:${t.key}:${role}`, phase, SHA_SCHEMA, retry))
+const sha1 = (t, role, phase, h, retry) => {
+  const ws = [lit('git'), lit('-C'), t.wt, lit('rev-parse'), lit('--verify'), lit('-q'), `${h}^{commit}`]
+  const opts = checkOpts(`sha:${t.key}:${role}`, phase, SHA_SCHEMA, retry)
+  return svc({ kind: 'sha', label: opts.label, phase, effect: 'none', argv: argvOf(ws), schema: SHA_SCHEMA, stdoutField: 'sha', noJson: { sha: '', error: '$error' },
+    agent: { prompt: `Run one command and return what it prints as the schema field sha (change nothing, analyse nothing):
+${cmdLine(ws)}
+If it prints nothing or fails - sha = '', error = the error text or "no such commit".`, opts } })
+}
 async function fullHead(t, role, phase, h) {
   if (typeof h !== 'string' || FULL_SHA.test(h) || !ABBREV_SHA.test(h)) return h
   const good = (r) => !!(r && FULL_SHA.test(r.sha || '') && r.sha.startsWith(h.toLowerCase()))
@@ -243,11 +267,15 @@ async function fullHead(t, role, phase, h) {
 // every task stops before any agent (chain()), since the tester post-check could not tell a guard from product code.
 const TESTER_WRITABLE_MISSING = Array.isArray(CFG.testerWritable) && CFG.testerWritable.length ? ''
   : 'testerWritable is not set: the paths the tester may change (its guards and fixtures, as regular expressions, e.g. ["(^|/)tests/test_[^/]*\\.py$", "(^|/)tests/fixtures/"]) - set testerWritable in the project config (.claude/codis-agents.json); there is no default'
-const ALLOW = (CFG.testerWritable || []).map((r) => ` --allow ${sq(r)}`).join('')
-const diffCheck1 = (t, role, since, retry) => agent(`Run one command and return its JSON output as the schema fields (change nothing, analyse nothing):
-node ${SCRIPTS}/role-diff-check.js --wt ${t.wt} --since ${since} --role ${role}${role === 'tester' ? ALLOW : ''}
-If the command fails without JSON - ok=false, error = the error text.`,
-  checkOpts(`diff:${t.key}:${role}`, role === 'tester' ? 'Tester' : 'Reviewer', DIFF_SCHEMA, retry))
+const ALLOW = [].concat(...(CFG.testerWritable || []).map((r) => [lit('--allow'), r]))
+const diffCheck1 = (t, role, since, retry) => {
+  const ws = node('role-diff-check.js').concat([lit('--wt'), t.wt, lit('--since'), since, lit('--role'), lit(role)], role === 'tester' ? ALLOW : [])
+  const opts = checkOpts(`diff:${t.key}:${role}`, role === 'tester' ? 'Tester' : 'Reviewer', DIFF_SCHEMA, retry)
+  return svc({ kind: 'diff', label: opts.label, phase: opts.phase, effect: 'none', argv: argvOf(ws), schema: DIFF_SCHEMA, noJson: { ok: false, offending: [], error: '$error' },
+    agent: { prompt: `Run one command and return its JSON output as the schema fields (change nothing, analyse nothing):
+${cmdLine(ws)}
+If the command fails without JSON - ok=false, error = the error text.`, opts } })
+}
 const diffCheck = async (t, role, since) => (await checkTwice(t, role, (d) => !!(d && d.ok), (retry) => diffCheck1(t, role, since, retry))).res
 const diffFail = (role, d) => !d ? `the ${role} post-check returned no result`
   : !d.ok ? `the ${role} changed what the role may not: ${(d.offending || []).join(', ') || d.error || '?'}` : ''
@@ -262,12 +290,18 @@ const SLOTS_DIR = CFG.slots && CFG.slots.lockDir
 // A post-check agent sees only this text: without the context below it took --fix for a destructive step nobody asked
 // for and refused to run it (two refusals in one task, 2026-10-19), which stopped a task that had nothing left over.
 const LEFT_WHY = 'This is the leftovers post-check of the codis-agents process the project owner set up (rule "Docker" in rules/multi-agent.md): after the tester and at the end of every task it removes what this task itself left behind. --fix touches only Docker resources labelled with this task\'s own compose project, processes whose cwd or argv lie inside this task\'s worktree, and the slots they hold; the owner\'s stack is excluded by --owner-stack and is never touched. Running it is the expected step, not a decision for you to make.'
-const leftArgs = (t) => `${t.stack ? ` --stack ${sq(t.stack)}` : ''}${CFG.ownerStackReadOnly ? ` --owner-stack ${sq(CFG.ownerStackReadOnly)}` : ''}${SLOTS_DIR ? ` --slots-dir ${sq(SLOTS_DIR)}` : ''} --fix --log ${sq(`${t.dir}/leftovers.md`)}`
-const leftCheck1 = (t, when, retry) => agent(`${LEFT_WHY}
+const leftArgs = (t) => [].concat(t.stack ? [lit('--stack'), t.stack] : [], CFG.ownerStackReadOnly ? [lit('--owner-stack'), CFG.ownerStackReadOnly] : [],
+  SLOTS_DIR ? [lit('--slots-dir'), SLOTS_DIR] : [], [lit('--fix'), lit('--log'), `${t.dir}/leftovers.md`])
+const LEFT_NOJSON = { ok: false, found: [], removed: [], remaining: ['$error'], error: '$error' }
+const leftCheck1 = (t, when, retry) => {
+  const ws = node('role-leftovers-check.js').concat([lit('--wt'), t.wt], leftArgs(t))
+  const opts = checkOpts(`left:${t.key}:${when}`, when === 'tester' ? 'Tester' : 'Reviewer', LEFT_SCHEMA, retry)
+  return svc({ kind: 'left', label: opts.label, phase: opts.phase, effect: 'idempotent', argv: argvOf(ws), schema: LEFT_SCHEMA, noJson: LEFT_NOJSON,
+    agent: { prompt: `${LEFT_WHY}
 Run one command and return its JSON output as the schema fields (change nothing else, analyse nothing):
-node ${SCRIPTS}/role-leftovers-check.js --wt ${t.wt}${leftArgs(t)}
-If the command fails without JSON - ok=false, error = the error text, remaining = [the error text].`,
-  checkOpts(`left:${t.key}:${when}`, when === 'tester' ? 'Tester' : 'Reviewer', LEFT_SCHEMA, retry))
+${cmdLine(ws)}
+If the command fails without JSON - ok=false, error = the error text, remaining = [the error text].`, opts } })
+}
 const leftPassed = (l) => !!(l && l.ok && !(l.remaining || []).length)
 // What a failed first attempt reports as removed was removed (--fix ran before the failure), so it is kept as well.
 const keepRemoved = (first, res) => {
@@ -285,11 +319,16 @@ const leftCheck = async (t, when) => {
 const POST_SCHEMA = { type: 'object', properties: {
   ok: { type: 'boolean' }, diff: DIFF_SCHEMA, left: LEFT_SCHEMA, error: { type: 'string' },
 }, required: ['diff', 'left'] }
-const postCheck1 = (t, since, retry) => agent(`${LEFT_WHY} The same command first runs the git post-check of the tester (role-diff-check.js: what the tester changed since the programmer's HEAD).
+const postCheck1 = (t, since, retry) => {
+  const ws = node('role-post-check.js').concat([lit('--wt'), t.wt, lit('--since'), since, lit('--role'), lit('tester')], ALLOW, leftArgs(t))
+  const opts = checkOpts(`post:${t.key}:tester`, 'Tester', POST_SCHEMA, retry)
+  return svc({ kind: 'post', label: opts.label, phase: 'Tester', effect: 'idempotent', argv: argvOf(ws), schema: POST_SCHEMA,
+    noJson: { ok: false, error: '$error', diff: { ok: false, offending: [], error: '$error' }, left: LEFT_NOJSON },
+    agent: { prompt: `${LEFT_WHY} The same command first runs the git post-check of the tester (role-diff-check.js: what the tester changed since the programmer's HEAD).
 Run one command and return its JSON output as the schema fields (change nothing else, analyse nothing):
-node ${SCRIPTS}/role-post-check.js --wt ${t.wt} --since ${since} --role tester${ALLOW}${leftArgs(t)}
-If the command fails without JSON - ok=false, error = the error text, diff = {ok: false, offending: [], error: the error text}, left = {ok: false, found: [], removed: [], remaining: [the error text], error: the error text}.`,
-  checkOpts(`post:${t.key}:tester`, 'Tester', POST_SCHEMA, retry))
+${cmdLine(ws)}
+If the command fails without JSON - ok=false, error = the error text, diff = {ok: false, offending: [], error: the error text}, left = {ok: false, found: [], removed: [], remaining: [the error text], error: the error text}.`, opts } })
+}
 const postPassed = (p) => !!(p && p.diff && p.diff.ok && leftPassed(p.left))
 const postCheck = async (t, since) => {
   const { first, res } = await checkTwice(t, 'tester and leftovers (tester)', postPassed, (retry) => postCheck1(t, since, retry))
@@ -322,13 +361,16 @@ const RUN_SCHEMA = { type: 'object', properties: {
 }, required: ['done', 'rc', 'log'] }
 const runStep1 = (t, step, cmd, retry, phase = 'Selection') => {
   const id = `${t.dir}/wait-${step}`
-  return agent(`This is a wait step of the codis-agents process the project owner set up: a long deterministic command runs in the background and you only wait for it, so that the role agents do not. Running it is the expected step, not a decision for you to make; change nothing, analyse nothing.
-1. Run once: node ${SCRIPTS}/wait-step.js start --id ${sq(id)} --cwd ${sq(t.wt)}${retry ? ' --reuse' : ''} -- ${sq(cmd)}
-2. Run: node ${SCRIPTS}/wait-step.js wait --id ${sq(id)} --max 270
+  const start = node('wait-step.js').concat([lit('start'), lit('--id'), id, lit('--cwd'), t.wt], retry ? [lit('--reuse')] : [], [lit('--'), cmd])
+  const wait = node('wait-step.js').concat([lit('wait'), lit('--id'), id, lit('--max'), lit(270)])
+  const opts = checkOpts(`run:${t.key}:${step}`, phase, RUN_SCHEMA, retry)
+  return svc({ kind: 'run', label: opts.label, phase, effect: 'reuse', argv: argvOf(start), wait: { id, argv: argvOf(wait) }, schema: RUN_SCHEMA,
+    noJson: { done: false, rc: null, log: `${id}.log`, error: '$error' }, agent: { prompt: `This is a wait step of the codis-agents process the project owner set up: a long deterministic command runs in the background and you only wait for it, so that the role agents do not. Running it is the expected step, not a decision for you to make; change nothing, analyse nothing.
+1. Run once: ${cmdLine(start)}
+2. Run: ${cmdLine(wait)}
    (Bash with timeout 300000 ms; it blocks up to 270 s and prints JSON). While the JSON says "done":false (the run is alive: "alive":true), run the same command 2 again, nothing else in between, whatever the tail, the queue position or the time that has passed: an unchanged tail, a long wait or a queue position that does not move is not a reason to stop - the run may wait hours for a memory slot, and wait-step itself ends a hung run at its deadline. Never run the command of step 1 twice.
 3. Return the schema only once the JSON says "done":true: its fields (done, rc, seconds, log, tail, alive, pid, error) exactly as printed - do not describe or judge the result. Never return "done":false yourself, except when a command printed no JSON:
-If a command fails without JSON - done=false, rc=null, log=${sq(id + '.log')}, error = the error text.`,
-  checkOpts(`run:${t.key}:${step}`, phase, RUN_SCHEMA, retry))
+If a command fails without JSON - done=false, rc=null, log=${sq(id + '.log')}, error = the error text.`, opts } })
 }
 const ranStep = (r) => !!(r && typeof r.rc === 'number')
 // Exit codes of the selection step that are the environment, not the product (p-wait D1; coordinator 2026-10-24): the
@@ -496,8 +538,25 @@ const preAnalysis = (t) => (t.an.mode === 'reused'
   : t.an.mode === 'none'
     ? ` the noAnalysis reason "${t.an.reason}" says why this task needs no matrix of its own (a tail, a one-line fix, a rename); "the arc specification covers it" is not such a reason;`
     : '')
-const pre = (t) => agent(`You check PRECONDITIONS (read only, change nothing). ${RULES(t)}
-Check: ${t.dir}/BRIEF.md exists and contains an acceptance scenario in the real environment;${preAnalysis(t)}${ONE_RUN && nonBlankS(t.base) ? ` the base ${t.base.trim()} is a branch of the repository: git -C ${sq(t.wt)} show-ref --verify --quiet ${sq(`refs/heads/${t.base.trim()}`)} exits 0 (the integration train moves that branch after a green ride; a commit or a missing branch fails);` : ''}${t.uc ? ` the use cases ${t.uc} exist, are non-empty and have no open questions to the owner left unanswered (they were reviewed with the owner);` : ''}${t.specs.length ? ` the arc specification ${t.specs.join(', ')} exists;` : ''} ${t.wt} exists and is on branch ${t.branch}; there are no uncommitted changes (except untracked build output or probes); the brief has no unanswered questions to the owner on which acceptance depends; the environment has room: run node ${SCRIPTS}/env-check.js --path ${sq(t.wt)} --path ${sq(t.dir)} --worktree ${sq(t.wt)} --min-disk-gb ${ENV.minFreeDiskGB} --min-swap-mb ${ENV.swapMinMB} (free disk and swap headroom; the worktree is not the main working copy of its repository) and copy its problems. ok=false if any of this fails.`,
+// The environment check of the preconditions (owner 2026-11-06, answer 3, translated: "the conductor checks the
+// preconditions; the role gets a structured result with the time of the check and its scope; a success of the check on
+// the host does not mean that the same capabilities are available inside the role's sandbox"). Under the Workflow the pre agent runs env-check.js itself; with
+// exec the conductor runs it first as the step env (its time stamped into checkedAt) and the pre prompt carries the
+// result with its scope instead of the command. A check that printed no JSON (exit 64, not started) stops the task
+// before pre: an unknown room is never passed on as checked.
+const ENV_SCHEMA = { type: 'object', properties: {
+  ok: { type: 'boolean' }, problems: { type: 'array', items: { type: 'string' } }, notes: { type: 'array', items: { type: 'string' } },
+  checkedAt: { type: 'string' }, error: { type: 'string' },
+}, required: ['ok', 'problems'] }
+const ENV_SCOPE = 'the host of the conductor, outside the sandbox of the role'
+const envWords = (t) => node('env-check.js').concat([lit('--path'), t.wt, lit('--path'), t.dir, lit('--worktree'), t.wt, lit('--min-disk-gb'), lit(ENV.minFreeDiskGB), lit('--min-swap-mb'), lit(ENV.swapMinMB)])
+const envStep = (t) => ({ kind: 'env', label: `env:${t.key}`, phase: 'Preconditions', effect: 'none', argv: argvOf(envWords(t)), schema: ENV_SCHEMA, stampAt: 'checkedAt',
+  noJson: { ok: false, problems: [], notes: [], error: '$error' } })
+const envLine = (t, env) => (env
+  ? ` the environment has room: the conductor ran ${cmdLine(envWords(t))} before you, on ${ENV_SCOPE}; its result: ${JSON.stringify({ ok: env.ok, problems: env.problems || [], notes: env.notes || [], checkedAt: env.checkedAt || null, scope: ENV_SCOPE, paths: [t.wt, t.dir], worktree: t.wt, floors: { minFreeDiskGB: ENV.minFreeDiskGB, swapMinMB: ENV.swapMinMB } })} - copy its problems and do not run it again; a success on the host does not mean the same room or capabilities inside the sandbox of a role.`
+  : ` the environment has room: run ${cmdLine(envWords(t))} (free disk and swap headroom; the worktree is not the main working copy of its repository) and copy its problems.`)
+const pre = (t, env) => agent(`You check PRECONDITIONS (read only, change nothing). ${RULES(t)}
+Check: ${t.dir}/BRIEF.md exists and contains an acceptance scenario in the real environment;${preAnalysis(t)}${ONE_RUN && nonBlankS(t.base) ? ` the base ${t.base.trim()} is a branch of the repository: git -C ${sq(t.wt)} show-ref --verify --quiet ${sq(`refs/heads/${t.base.trim()}`)} exits 0 (the integration train moves that branch after a green ride; a commit or a missing branch fails);` : ''}${t.uc ? ` the use cases ${t.uc} exist, are non-empty and have no open questions to the owner left unanswered (they were reviewed with the owner);` : ''}${t.specs.length ? ` the arc specification ${t.specs.join(', ')} exists;` : ''} ${t.wt} exists and is on branch ${t.branch}; there are no uncommitted changes (except untracked build output or probes); the brief has no unanswered questions to the owner on which acceptance depends;${envLine(t, env)} ok=false if any of this fails.`,
   Object.assign({ label: `pre:${t.key}`, phase: 'Preconditions', schema: PRE_SCHEMA, effort: 'low', agentType: 'general-purpose' }, modelOf('preconditions')))
 
 // The mechanism step (p-mechanism, owner 2026-11-01: "yes to the step 'challenge the mechanism'"; diagnosis mechanism-gap):
@@ -790,8 +849,19 @@ async function chain(t0) {
   const p0 = pr.prior
   const st = { head: '', leftovers: [], reds: p0.testerReds || 0, priorReds: p0.testerReds || 0, trainReds: p0.trainReds || 0,
     rejections: p0.rejections || 0, analyst: p0.analyst || '', mechanism: p0.mechanism ? PRIOR_MECH : '' }
+  // The conductor reads the counters of this task through the getter when it journals a step (scripts/chain-run.js); under
+  // the Workflow runtime there is no checkpoint.
+  if (typeof checkpoint === 'function') checkpoint(t.key, () => ({ counts: countsOf(st), head: st.head }))
   if (priorLine(p0)) log(`${t.title}: prior runs of the task - ${priorLine(p0)} (the counters start from them)`)
-  const pc = await pre(t)
+  let env = null
+  if (EXEC) {
+    env = await svc(envStep(t))
+    if (!env || env.error) {
+      const e = `the environment check could not run (${cmdLine(envWords(t))}): ${env ? env.error : 'no result'}`
+      return withAn(stop(t, `preconditions: ${e}`, { problems: [e], questions: [] }))
+    }
+  }
+  const pc = await pre(t, env)
   if (!pc) return withAn(stop(t, 'the precondition check returned no result'))
   if (!pc.ok || pc.blockingQuestions.length) return withAn(stop(t, 'preconditions', { problems: pc.problems, questions: pc.blockingQuestions }))
   const r = await work(t, st)
@@ -935,11 +1005,15 @@ const GUARD_GLOBS = Array.isArray(CFG.guardFiles) ? CFG.guardFiles.filter((g) =>
 const MERGE_SCHEMA = { type: 'object', properties: {
   mergeOnly: { type: 'boolean' }, reason: { type: 'string' }, files: { type: 'array', items: { type: 'string' } }, error: { type: 'string' },
 }, required: ['mergeOnly'] }
-const mergeCmd = (t, before, head) => `node ${SCRIPTS}/merge-only.js ${sq(before)} ${sq(head)} --base ${sq(String(t.base).trim())} --wt ${sq(t.wt)}${MERGE_GLOBS.map((g) => ` --files ${sq(g)}`).join('')}${GUARD_GLOBS.map((g) => ` --guards ${sq(g)}`).join('')}`
-const mergeOnly1 = (t, n, before, head, retry) => agent(`Run one command and return its JSON output as the schema fields (change nothing, analyse nothing):
-${mergeCmd(t, before, head)}
-Exit 0, 1 and 2 all print JSON: return its fields as printed. If it prints no JSON - mergeOnly=false, error = the error text.`,
-  checkOpts(`merge:${t.key}:${n}`, 'Train', MERGE_SCHEMA, retry))
+const mergeCmd = (t, before, head) => node('merge-only.js').concat([before, head, lit('--base'), String(t.base).trim(), lit('--wt'), t.wt], ...MERGE_GLOBS.map((g) => [lit('--files'), g]), ...GUARD_GLOBS.map((g) => [lit('--guards'), g]))
+const mergeOnly1 = (t, n, before, head, retry) => {
+  const ws = mergeCmd(t, before, head)
+  const opts = checkOpts(`merge:${t.key}:${n}`, 'Train', MERGE_SCHEMA, retry)
+  return svc({ kind: 'merge', label: opts.label, phase: 'Train', effect: 'none', argv: argvOf(ws), schema: MERGE_SCHEMA, noJson: { mergeOnly: false, error: '$error' },
+    agent: { prompt: `Run one command and return its JSON output as the schema fields (change nothing, analyse nothing):
+${cmdLine(ws)}
+Exit 0, 1 and 2 all print JSON: return its fields as printed. If it prints no JSON - mergeOnly=false, error = the error text.`, opts } })
+}
 const mergeAnswered = (r) => !!(r && typeof r.mergeOnly === 'boolean' && !r.error)
 async function mergeOnlyStep(t, n, before, head) {
   const { res } = await checkTwice(t, `merge-only check of ${before}..${head}`, mergeAnswered, (retry) => mergeOnly1(t, n, before, head, retry))

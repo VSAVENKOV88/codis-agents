@@ -7,11 +7,23 @@
 // createAgent(cfg) checks the config; each call is prepared here (the task from the label, the role from the kind of the
 // label, the body of the role, model and effort, the strict schema, the argv of the host), its prompt is saved in a call
 // folder of its own, the plan is run by the launcher, and the answer is checked against the original schema. The
-// launcher is the real process of the host CLI (spawnRole: no shell, its own process group, the prompt on stdin, the
-// JSONL stream parsed line by line, the outcome by the fields of the terminal event, the exit code and the signal, the
-// ceiling of 3 h on the monotonic clock, SIGTERM/SIGINT/SIGHUP of the adapter passed to every live group); cfg.launch
-// replaces it (tests, chain-cost). One line of <task dir>/calls.jsonl per call, whatever its outcome (never written through a
+// launcher is the real process of the host CLI (spawnRole: the launch gate, then the CLI in its own process group, the
+// prompt on stdin, the JSONL stream parsed line by line, the outcome by the fields of the terminal event, the exit code
+// and the signal, the ceiling of 3 h on the monotonic clock, SIGTERM/SIGINT/SIGHUP of the adapter passed to every live
+// group); cfg.launch replaces it (tests, chain-cost). One line of <task dir>/calls.jsonl per call, whatever its outcome (never written through a
 // link, FIFO or hard link the role left in place of the file: appendRecord).
+// The launch gate (GATE): the process starts as /bin/sh that waits for one line "go" on stdin and then execs the CLI, so
+// its pid, process group and start time are the CLI's own, and the CLI does no work before the line comes. With
+// cfg.onLaunch the adapter reads the group and the start time (ps) and calls onLaunch({label, key, stepId, callDir, host,
+// pid, pgid, lstart}) synchronously before "go": a registration that fails (it throws, ps gives nothing) closes stdin, the
+// gate exits 70 without starting the CLI, and the call ends as not-registered. A launcher of the caller (cfg.launch) calls
+// onLaunch({..., substitute: true, pid: null}) before it runs. There is no timer in the gate: a direct wait on the
+// stdin of claude -p would end after 3 s (experiment E2 of the analysis).
+// Hooks of a caller that runs the adapter (scripts/chain-run.js): cfg.beforeLaunch(plan) runs after a call passed every
+// static refusal and before its launch; it resolves null to launch, or {outcome, error} to end the call with that
+// outcome and no process (the hook check of a codex role). cfg.onRecord(rec) gets the record of every call before it is
+// appended to calls.jsonl, also when the file refuses it. cfg.preconditionsByConductor lets pre run on codex: the
+// conductor ran env-check.js on the host and the prompt carries its result, so pre needs no ps or sysctl of its own.
 // With cfg.commit a prog or test call on codex gets the commit channel (scripts/commit-service.js): a box in its call
 // folder, the answers in commit.stateDir, CODIS_COMMIT_BOX and CODIS_COMMIT_ANSWERS in its environment, the service
 // open while the launcher runs and until a check it runs is stopped (its hooks run in codex sandbox with the rights of
@@ -49,6 +61,9 @@ const SIGNALS = ['SIGTERM', 'SIGINT', 'SIGHUP'];
 // claude 2.1.318 lists them in its tools (experiment X0 E1c); MCP servers are off by --strict-mcp-config.
 const CLAUDE_DISALLOWED = ['Task', 'CronCreate', 'CronDelete', 'CronList', 'ScheduleWakeup', 'RemoteTrigger', 'PushNotification'];
 const NOTES_MAX = 50;
+// argv of the gate: sh -c GATE gate <bin> <argv...>; 70 stdin ended before the line, 71 another line. The shell reads
+// stdin byte by byte, so the prompt behind the line stays for the CLI.
+const GATE = 'IFS= read -r go || exit 70; [ "$go" = go ] || exit 71; exec "$@"';
 const DESCENDANTS_NOTE = 'descendants outside the process group are not tracked';
 const ROLE_FILES = ['analyst', 'programmer', 'tester', 'reviewer', 'security-reviewer'];
 // The role is the kind of the label (role-chain.js labels are "<kind>:<task key>..."), not the agentType: agentType only
@@ -60,10 +75,11 @@ const KINDS = {
 // The kinds of label that get the commit channel (cfg.commit): the roles that commit code or guards.
 const COMMIT_KINDS = new Set(['prog', 'test']);
 const COMMIT_CLIENT = path.join(__dirname, 'commit-req.js');
-// Refusals of the codex host by the kind of the label; the claude host runs every kind.
-const CODEX_REFUSED = (kind) => (KINDS[kind] === 'service'
-  ? `service step "${kind}" on codex: the conductor runs it as a child process (part B)`
-  : kind === 'pre' ? 'the preconditions run on the coordinator\'s host, outside the codex sandbox (slots and swap need ps and sysctl; the conductor in part B)'
+// Refusals of the codex host by the kind of the label ('' when the kind runs); the claude host runs every kind. pre runs
+// only when the conductor checked the environment itself (preByConductor: cfg.preconditionsByConductor).
+const CODEX_REFUSED = (kind, preByConductor) => (KINDS[kind] === 'service'
+  ? `service step "${kind}" on codex: the conductor runs it as a child process (scripts/chain-run.js exec)`
+  : kind === 'pre' && !preByConductor ? 'the preconditions run on the coordinator\'s host, outside the codex sandbox (slots and swap need ps and sysctl): run the chain through scripts/chain-run.js, which checks the environment itself'
     : kind === 'prog' || kind === 'test' ? `the ${KINDS[kind]} on codex waits for part A2 (the sandbox for code writes and the wait for heavy commands)` : '');
 
 const types = (n) => [].concat(n && n.type !== undefined ? n.type : []);
@@ -179,14 +195,16 @@ function codexEnv(base, home, auth, key) {
 }
 
 // The personal ~/.codex of the user is never the run home of the chains (owner decision 6: a separate home with its own
-// login); compared by realpath, so a link to it is the same home.
-const real = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
-// realpath of the longest existing prefix plus the rest: a folder that does not exist yet compares like the real one
+// login); compared by the real path, so a link to it or another case of its name is the same home. realpathSync.native,
+// because the JS realpathSync keeps the case it was given: on a case-insensitive disk two spellings of one folder would
+// compare as two folders.
+const real = (p) => { try { return fs.realpathSync.native(p); } catch { return path.resolve(p); } };
+// The real path of the longest existing prefix plus the rest: a folder that does not exist yet compares like the real one
 const realish = (p) => {
   const abs = path.resolve(p);
   let head = abs, rest = '';
   for (;;) {
-    try { return path.join(fs.realpathSync(head), rest); } catch { /* go up */ }
+    try { return path.join(fs.realpathSync.native(head), rest); } catch { /* go up */ }
     const up = path.dirname(head);
     if (up === head) return abs;
     rest = path.join(path.basename(head), rest);
@@ -194,6 +212,11 @@ const realish = (p) => {
   }
 };
 const inside = (a, b) => a === b || a.startsWith(b.endsWith(path.sep) ? b : b + path.sep);
+// Two real paths where one lies in the other. The part of a path that does not exist yet has no name on disk to compare,
+// and a disk may ignore case and the form of Unicode, so both are ignored here: on a case-sensitive disk two folders that
+// differ only so are refused too, which costs a rename, while a missed overlap puts the state in a role's reach.
+const foldName = (p) => p.normalize('NFC').toLowerCase();
+const overlap = (a, b) => { const x = foldName(a), y = foldName(b); return inside(x, y) || inside(y, x); };
 const isPersonalCodex = (home) => real(home) === real(path.join(os.homedir(), '.codex'));
 const personalNo = (home) => `codex.home ${home} is the personal ~/.codex: the chains run in a separate home with its own login (CODEX_HOME=<home> codex login)`;
 
@@ -234,8 +257,15 @@ const byStatus = (s, schemaCode) => (s.status === 400 && schemaCode && s.code ==
   : s.status === 429 ? 'rate-limited' : s.status === 401 || s.status === 403 ? 'auth' : 'crashed');
 const addUsage = (a, b) => { const o = Object.assign({}, a); for (const [k, v] of Object.entries(b)) o[k] = (o[k] || 0) + (Number(v) || 0); return o; };
 
+// The group and the start time of a process (ps in the C locale: lstart depends on the locale), or null.
+function procOf(pid) {
+  const p = spawnSync('ps', ['-o', 'pgid=,lstart=', '-p', String(pid)], { encoding: 'utf8', env: Object.assign({}, process.env, { LC_ALL: 'C' }) });
+  const m = p.status === 0 ? /^\s*(\d+)\s+(.+?)\s*$/.exec(String(p.stdout)) : null;
+  return m ? { pgid: +m[1], lstart: m[2] } : null;
+}
+
 // The process of one call: plan {host, bin, argv, stdin, env, cwd, callDir, home?, auth?, keyFile?}; o {ceilingMs,
-// graceMs}. Resolves {outcome?, error?, output?, rc, signal, pid, usage, costUSD, notes, sessionId, cliVersion,
+// graceMs, onLaunch?}. Resolves {outcome?, error?, output?, rc, signal, pid, usage, costUSD, notes, sessionId, cliVersion,
 // credentialExpiresAt}; an outcome is set for everything but a run whose answer settle() still checks. Never rejects.
 function spawnRole(plan, o) {
   return new Promise((resolve) => {
@@ -244,7 +274,7 @@ function spawnRole(plan, o) {
     const st = { turns: 0, usage: null, failed: null, errors: [], result: null, sessionId: null, cliVersion: null, line: 0, limited: null };
     const events = fs.createWriteStream(path.join(plan.callDir, 'events.jsonl'));
     const errlog = fs.createWriteStream(path.join(plan.callDir, 'stderr.log'));
-    let child = null, tail = '', why = null, exited = null, graceT = null, finished = false, spawnErr = null, heldOpen = false;
+    let child = null, tail = '', why = null, exited = null, graceT = null, finished = false, spawnErr = null, heldOpen = false, notRegistered = null;
     const kill = (sig) => { try { process.kill(-child.pid, sig); } catch { /* the group is gone */ } };
     const stop = (reason) => {
       if (why || exited) return;
@@ -291,7 +321,8 @@ function spawnRole(plan, o) {
       const r = { pid: (child && child.pid) || null, rc: exited ? exited.rc : null, signal: exited ? exited.sig : null, notes,
         sessionId: st.sessionId, cliVersion: st.cliVersion, usage: null, costUSD: null, credentialExpiresAt: null };
       if (heldOpen) note('stdout stayed open after the exit until the ceiling (held by a process outside the group)');
-      if (spawnErr) return Object.assign(r, { outcome: 'crashed', error: `spawn ${plan.bin}: ${spawnErr.code || spawnErr.message}` });
+      if (spawnErr) return Object.assign(r, { outcome: 'crashed', error: `spawn of the gate for ${plan.bin}: ${spawnErr.code || spawnErr.message}` });
+      if (notRegistered) return Object.assign(r, { outcome: 'not-registered', error: `the launch could not be registered, the CLI did not start: ${notRegistered}` });
       const stderrTail = tail.trim() ? `; stderr: ${tail.trim().slice(-300)}` : '';
       if (plan.host === 'codex') {
         r.usage = st.usage;
@@ -357,12 +388,21 @@ function spawnRole(plan, o) {
     };
 
     try {
-      child = spawn(plan.bin, plan.argv, { cwd: plan.cwd, env: plan.env, detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
+      child = spawn('/bin/sh', ['-c', GATE, 'gate', plan.bin].concat(plan.argv), { cwd: plan.cwd, env: plan.env, detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
     } catch (e) { spawnErr = e; finish(); return; }
     enter(stop);
     child.on('error', (e) => { if (!child.pid) { spawnErr = e; finish(); } else note(`process error: ${e.message}`); });
     child.stdin.on('error', (e) => note(`stdin: ${e.code || e.message}`));
-    child.stdin.end(plan.stdin);
+    if (o.onLaunch && child.pid) {
+      try {
+        const p = procOf(child.pid);
+        if (!p) throw new Error(`ps gives no process group and start time of pid ${child.pid}`);
+        o.onLaunch({ label: plan.label, key: plan.key, stepId: plan.stepId, callDir: plan.callDir, host: plan.host, pid: child.pid, pgid: p.pgid, lstart: p.lstart });
+      } catch (e) { notRegistered = e.message; }
+    }
+    // The gate reads the line before the CLI exists; without it stdin ends and the gate exits.
+    if (notRegistered) child.stdin.end();
+    else child.stdin.end(`go\n${plan.stdin}`);
     const dec = new StringDecoder('utf8');
     let buf = '';
     child.stdout.on('data', (d) => {
@@ -386,9 +426,11 @@ function createAgent(cfg) {
   if (c.host !== 'codex' && c.host !== 'claude') no(`unknown host ${JSON.stringify(c.host)} (codex or claude)`);
   if (typeof c.callsDir !== 'string' || !c.callsDir) no('callsDir is required (the record of a call whose task is unknown)');
   if (c.launch !== undefined && typeof c.launch !== 'function') no('launch must be a function (without it the adapter runs the host CLI)');
+  for (const k of ['beforeLaunch', 'onRecord', 'onLaunch']) if (c[k] !== undefined && typeof c[k] !== 'function') no(`${k} must be a function`);
+  if (c.preconditionsByConductor !== undefined && typeof c.preconditionsByConductor !== 'boolean') no('preconditionsByConductor must be a boolean');
   const posMs = (v, d, name) => (v === undefined ? d : Number.isFinite(v) && v > 0 ? v : no(`${name} must be a positive number of ms`));
   const ceilingMs = posMs(c.ceilingMs, CEILING_MS, 'ceilingMs'), graceMs = posMs(c.killGraceMs, KILL_GRACE_MS, 'killGraceMs');
-  const launch = c.launch || ((plan) => spawnRole(plan, { ceilingMs, graceMs }));
+  const launch = c.launch || ((plan) => spawnRole(plan, { ceilingMs, graceMs, onLaunch: c.onLaunch }));
   if (typeof c.pluginRoot !== 'string' || !c.pluginRoot) no('pluginRoot is required');
   const tasks = c.tasks && typeof c.tasks === 'object' ? c.tasks : no('tasks is required');
   for (const [k, t] of Object.entries(tasks)) {
@@ -419,7 +461,7 @@ function createAgent(cfg) {
     const roleTmp = (c.env || process.env).TMPDIR;
     const roots = [].concat(...Object.values(tasks).map((t) => [t.dir, t.wt]), ['/tmp'], roleTmp ? [roleTmp] : []).map(realish);
     for (const r of roots) {
-      if (inside(sd, r) || inside(r, sd)) no(`commit.stateDir ${cm.stateDir} overlaps ${r}, a folder a role writes: the adapter's answers and journal must be out of the role's reach`);
+      if (overlap(sd, r)) no(`commit.stateDir ${cm.stateDir} overlaps ${r}, a folder a role writes: the adapter's answers and journal must be out of the role's reach`);
     }
   }
 
@@ -438,7 +480,8 @@ function createAgent(cfg) {
     const channel = !!cm && COMMIT_KINDS.has(lb.kind);
     // prog and test on the real codex CLI wait for the sandbox profile of code writes (part A2a-3); a launcher of the
     // caller with the commit channel runs them (the acceptance of the channel under codex sandbox)
-    if (c.host === 'codex' && CODEX_REFUSED(lb.kind) && !(channel && c.launch)) return refuse(CODEX_REFUSED(lb.kind));
+    const refusal = CODEX_REFUSED(lb.kind, c.preconditionsByConductor === true);
+    if (c.host === 'codex' && refusal && !(channel && c.launch)) return refuse(refusal);
     if (channel && (typeof t.branch !== 'string' || !t.branch)) return refuse(`task ${lb.key} has no branch: the commit channel needs tasks[k].branch`);
     const at = o.agentType;
     let bodyRole = null;
@@ -452,7 +495,7 @@ function createAgent(cfg) {
     if (roleFile && !fs.existsSync(roleFile)) return refuse(`no role file agents/${bodyRole}.md in ${c.pluginRoot}`);
     const probs = schemaProblems(o.schema);
     if (probs.length) return refuse(`schema: ${probs.join('; ')}`);
-    const plan = Object.assign(base, { host: c.host, kind: lb.kind, phase: o.phase, schema: o.schema, cwd: t.dir, channel });
+    const plan = Object.assign(base, { host: c.host, kind: lb.kind, phase: o.phase, schema: o.schema, cwd: t.dir, channel, stepId: o.stepId });
     if (c.host === 'codex') {
       const alias = o.model === undefined ? 'default' : o.model;
       const slug = cx.models && own(cx.models, alias) ? cx.models[alias] : null;
@@ -516,6 +559,12 @@ function createAgent(cfg) {
         if (plan.strictSchema) fs.writeFileSync(path.join(plan.callDir, 'schema.json'), JSON.stringify(plan.strictSchema, null, 1) + '\n');
         plan.argv = plan.argv(plan.callDir);
       } catch (e) { fin = { outcome: 'crashed', error: `the call folder: ${e.message}` }; }
+      if (!fin && c.beforeLaunch) {
+        try {
+          const g = await c.beforeLaunch(plan);
+          if (g) fin = { outcome: String(g.outcome || 'crashed'), error: g.error || null };
+        } catch (e) { fin = { outcome: 'crashed', error: `beforeLaunch threw: ${e.message}` }; }
+      }
       if (!fin && plan.channel) {
         // the box in the call folder (a new one per call: a request of an earlier call is never read), the answers in
         // the adapter's state folder; the service lives exactly as long as the role's process
@@ -531,6 +580,11 @@ function createAgent(cfg) {
           plan.commit = { box: svc.box, answers: svc.answers, client: COMMIT_CLIENT };
           plan.env = Object.assign({}, plan.env, { CODIS_COMMIT_BOX: svc.box, CODIS_COMMIT_ANSWERS: svc.answers });
         } catch (e) { fin = { outcome: 'crashed', error: `the commit channel: ${e.message}` }; }
+      }
+      if (!fin && c.launch && c.onLaunch) {
+        try { c.onLaunch({ label: plan.label, key: plan.key, stepId: plan.stepId, callDir: plan.callDir, host: plan.host, pid: null, pgid: null, lstart: null, substitute: true }); } catch (e) {
+          fin = { outcome: 'not-registered', error: `the launch could not be registered, the launcher was not run: ${e.message}` };
+        }
       }
       if (!fin) {
         try { res = await launch(plan); fin = settle(plan, res); } catch (e) { fin = { outcome: 'crashed', error: `the launcher threw: ${e.message}` }; }
@@ -552,7 +606,9 @@ function createAgent(cfg) {
       notes: Array.isArray(r.notes) ? r.notes : [], sessionId: r.sessionId || null, credentialExpiresAt: r.credentialExpiresAt || null,
       callDir: plan.callDir || null,
     };
+    if (opts && opts.stepId) rec.stepId = opts.stepId;
     if (commitSum) rec.commit = Object.assign({ box: svc.box, answers: svc.answers }, commitSum);
+    if (c.onRecord) { try { c.onRecord(rec); } catch (e) { log(`role-exec: ${rec.label}: onRecord threw: ${e.message}`); } }
     try {
       const dir = plan.t ? plan.t.dir : c.callsDir;
       fs.mkdirSync(dir, { recursive: true });
@@ -679,4 +735,4 @@ if (require.main === module) {
   process.exit(r.ok ? 0 : 1);
 }
 
-module.exports = { createAgent, spawnRole, CEILING_MS, KILL_GRACE_MS, CLAUDE_DISALLOWED, strict, unstrict, validate, schemaProblems, parseLabel, check, KINDS, KEYWORDS, DEFAULT_CODEX_MODELS, CATALOG_FILE };
+module.exports = { realish, inside, overlap, procOf, createAgent, spawnRole, CODEX_REFUSED, CEILING_MS, KILL_GRACE_MS, CLAUDE_DISALLOWED, strict, unstrict, validate, schemaProblems, parseLabel, check, KINDS, KEYWORDS, DEFAULT_CODEX_MODELS, CATALOG_FILE };

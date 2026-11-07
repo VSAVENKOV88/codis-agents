@@ -1,0 +1,66 @@
+#!/usr/bin/env node
+'use strict';
+// A fake claude CLI for tests/chain-run.test.js: the conductor runs it through the role adapter as a real process.
+// It calls no model. --version prints a version (FAKE_CLI_VERSION_RC makes it fail). A call reads the prompt from stdin,
+// picks its answer from $FAKE_CLI_DIR/answers.json by a key - the role of --agent (codis-agents:programmer -> programmer),
+// or "gp:" and the sorted property names of --json-schema for a general-purpose call - and prints a stream-json result.
+// answers.json: {"<key>": [answer, ...], "default": {"<key>": answer}}; the n-th call of a key takes the n-th answer, then
+// the default; "<key>@<name>" first, when it exists, for a call whose cwd (the task folder) has that base name. An answer is the structured output, or {"$sleep": s, "then": answer} (sleeps first), {"$error": text} (a
+// result event with is_error), {"$exit": n} (exits n without a result). Every call appends to $FAKE_CLI_DIR/trace.jsonl
+// one line when it starts ({ev: "start", key, pid, cwd, ms, argv, prompt}) and one when it ends ({ev: "end", key, pid, ms}).
+const fs = require('fs');
+const path = require('path');
+
+const argv = process.argv.slice(2);
+if (argv[0] === '--version') {
+  if (process.env.FAKE_CLI_VERSION_RC) { process.stderr.write('fake claude: version refused\n'); process.exit(+process.env.FAKE_CLI_VERSION_RC); }
+  process.stdout.write('2.1.318 (Claude Code)\n');
+  process.exit(0);
+}
+const dir = process.env.FAKE_CLI_DIR;
+if (!dir) { process.stderr.write('fake claude: FAKE_CLI_DIR is not set\n'); process.exit(2); }
+const flag = (k) => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : null; };
+let schema = {};
+try { schema = JSON.parse(flag('--json-schema') || '{}'); } catch { /* an empty key */ }
+const agent = flag('--agent');
+const key = agent ? agent.replace(/^.*:/, '') : 'gp:' + Object.keys(schema.properties || {}).sort().join(',');
+const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+const sleepMs = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+// The n-th answer of the key, under a lock directory: two calls at once (review and sec) never take the same one.
+function take() {
+  const lock = path.join(dir, 'answers.lock');
+  for (;;) { try { fs.mkdirSync(lock); break; } catch { sleepMs(5); } }
+  try {
+    const answers = JSON.parse(fs.readFileSync(path.join(dir, 'answers.json'), 'utf8'));
+    const sf = path.join(dir, 'answers.state.json');
+    let st = {};
+    try { st = JSON.parse(fs.readFileSync(sf, 'utf8')); } catch { /* the first call */ }
+    const k = own(answers, `${key}@${path.basename(process.cwd())}`) ? `${key}@${path.basename(process.cwd())}` : key;
+    const n = st[k] || 0;
+    st[k] = n + 1;
+    fs.writeFileSync(sf, JSON.stringify(st));
+    const list = answers[k] || [];
+    return n < list.length ? list[n] : (answers.default || {})[k];
+  } finally { fs.rmdirSync(lock); }
+}
+const trace = (o) => fs.appendFileSync(path.join(dir, 'trace.jsonl'), JSON.stringify(Object.assign({ key, pid: process.pid, ms: Date.now() }, o)) + '\n');
+const out = (o) => process.stdout.write(JSON.stringify(o) + '\n');
+
+let prompt = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (d) => { prompt += d; });
+process.stdin.on('end', () => {
+  trace({ ev: 'start', cwd: process.cwd(), argv, prompt });
+  let a = take();
+  const finish = () => {
+    if (a === undefined) { process.stderr.write(`fake claude: no answer for ${key}\n`); trace({ ev: 'end' }); process.exit(3); }
+    out({ type: 'system', subtype: 'init', session_id: `fake-${process.pid}`, claude_code_version: '2.1.318', tools: [] });
+    if (a && a.$exit !== undefined) { trace({ ev: 'end' }); process.exit(a.$exit); }
+    if (a && a.$error !== undefined) out({ type: 'result', subtype: 'error_during_execution', is_error: true, result: String(a.$error), session_id: `fake-${process.pid}` });
+    else out({ type: 'result', subtype: 'success', is_error: false, structured_output: a, session_id: `fake-${process.pid}`, usage: { input_tokens: 1, output_tokens: 1 }, total_cost_usd: 0 });
+    trace({ ev: 'end' });
+    process.exit(0);
+  };
+  if (a && a.$sleep !== undefined) { const s = a.$sleep; a = a.then; setTimeout(finish, s * 1000); } else finish();
+});

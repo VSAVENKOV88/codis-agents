@@ -95,7 +95,7 @@ const rideHead = (x, i = 0) => { const m = /--head '([^']*)'/.exec(unq((steps(x,
     JSON.stringify((steps(x, /^sha:/)[0] || {}).opts));
   ok('F2. ride gets the full sha, and the result path is by the full sha',
     rideHead(x) === FULL && x.r.train && x.r.train.result === `/s/train/result/x-${FULL}.json`, `${rideHead(x)} ${JSON.stringify(x.r.train)}`);
-  ok('F2. the reviewer post-check starts from the full sha', unq((steps(x, /^diff:x:reviewer/)[0] || { prompt: '' }).prompt).includes(`--since ${FULL}`),
+  ok('F2. the reviewer post-check starts from the full sha', unq((steps(x, /^diff:x:reviewer/)[0] || { prompt: '' }).prompt).includes(`--since '${FULL}'`),
     (steps(x, /^diff:x:reviewer/)[0] || { prompt: '' }).prompt);
   // uppercase hex is an abbreviation too (git takes hex digits in either case); the train takes lowercase only
   x = await run({ pre: [PRE], prog: [prog('3FB1D6DD')], review: [D], train: [ride(0)] }, L, { '3FB1D6DD': FULL });
@@ -106,7 +106,7 @@ const rideHead = (x, i = 0) => { const m = /--head '([^']*)'/.exec(unq((steps(x,
   x = await run({ pre: [PRE], prog: [prog(FULL)], test: [TST], review: [D], train: [ride(0)] }, T, { c0ffee00: FULL2 });
   ok('F2. full mode, the tester\'s short head "c0ffee00" -> resolved after its post-check, ride gets the full sha',
     x.r.status === 'done' && steps(x, /^sha:/).length === 1 && rideHead(x) === FULL2, `${x.full} ${rideHead(x)}`);
-  ok('F2. the tester\'s post-check still starts from the programmer\'s head', unq((steps(x, /^post:x:tester/)[0] || { prompt: '' }).prompt).includes(`--since ${FULL}`),
+  ok('F2. the tester\'s post-check still starts from the programmer\'s head', unq((steps(x, /^post:x:tester/)[0] || { prompt: '' }).prompt).includes(`--since '${FULL}'`),
     (steps(x, /^post:x:tester/)[0] || { prompt: '' }).prompt);
 
   // ---- F3: a head that does not resolve is kept as given, never emptied; train.js refuses it ----

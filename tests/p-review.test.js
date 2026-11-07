@@ -76,7 +76,7 @@ const of = (x, role) => x.prompts.filter((p) => p.role === role);
   ok('P3-1. security: the reviewer and the security reviewer both start before either finishes',
     firstEnd === 2 && x.events.slice(0, 2).sort().join() === 'start:review,start:sec', x.events.join(' '));
   ok('P3-2. security: one reviewer post-check after both, from the tester HEAD; done',
-    x.r.status === 'done' && /review>sec>diff:x:reviewer>left:x:end$/.test(x.full) && of(x, 'diff').length === 1 && / --since T --role reviewer/.test(of(x, 'diff')[0].prompt), x.full);
+    x.r.status === 'done' && /review>sec>diff:x:reviewer>left:x:end$/.test(x.full) && of(x, 'diff').length === 1 && / --since 'T' --role reviewer/.test(of(x, 'diff')[0].prompt), x.full);
   ok('P3-2. the merged verdict names both summaries', x.r.status === 'done', JSON.stringify(x.r));
   x = await run({ pre: [PRE], prog: [PROG, PROG], test: [GREEN, GREEN], review: [REJ, D], sec: [D, D] }, TS);
   ok('P3-3. the reviewer rejects while the security reviewer is done -> rejected: a fix round, the tester, a second review of both',
@@ -101,7 +101,7 @@ const of = (x, role) => x.prompts.filter((p) => p.role === role);
     x.full === 'pre>prog>test>post:x:tester>review>diff:x:reviewer>left:x:end', x.full);
   const pp = of(x, 'post')[0] || { prompt: '', opts: { schema: { properties: {} } } };
   ok('P2-2. the combined command: role-post-check.js with the diff arguments (since, role, allow) and the leftovers ones (stack, owner stack, slots, --fix, log)',
-    pp.prompt.includes('node /p/scripts/role-post-check.js --wt /w --since P --role tester') && pp.prompt.includes("--allow '-run\\.js$'")
+    pp.prompt.includes("node /p/scripts/role-post-check.js --wt '/w' --since 'P' --role tester") && pp.prompt.includes("--allow '-run\\.js$'")
       && pp.prompt.includes("--stack 'k-test'") && pp.prompt.includes("--owner-stack 'own'") && pp.prompt.includes("--slots-dir '/slots'")
       && pp.prompt.includes('--fix') && pp.prompt.includes("--log '/d/leftovers.md'"), pp.prompt);
   ok('P2-2. the leftovers context stays in the prompt (what --fix touches, the owner stack never)', /--fix touches only Docker resources labelled with this task's own compose project/.test(pp.prompt) && /never touched/.test(pp.prompt), pp.prompt);
