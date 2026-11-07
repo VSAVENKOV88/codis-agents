@@ -4,7 +4,7 @@ Every version of the codis-agents plugin, newest first. What the plugin does now
 [README.md](README.md); its [Technical reference](README.md#technical-reference) is the current state of every rule,
 key and script, and this file says when and why each one changed. Versions before 0.4.14 are in the git history.
 
-## 0.4.34 - 2026-11-07
+## 0.4.35 - 2026-11-07
 
 - **The re-check, the untracked files, the paths of a request and the limits of the walk** (p-codex A2a-2b; owner
   2026-11-06: answers 1, 2, 5, G7; owner 2026-11-07 on the walk). A check that changes a named path or the message
@@ -30,6 +30,23 @@ key and script, and this file says when and why each one changed. Versions befor
   no status (a failed write after `update-ref` was a refusal of a commit whose branch had moved). The same for the answer itself and the result line: a request has one result, an answer that cannot be written comes on a later poll or from the journal for the same id, a line of the journal written in part is cut back, and a result line that cannot be written refuses the rest of the call and is settled at the next start by `intent-commit`; new `tests/commit-answer-fail.test.js` (a real full disk image). A file name that starts with `:` is no pathspec to `git check-ignore`: it is classed as
   `git status` classes it. New `tests/commit-recheck.test.js`; the cells of
   2a that refused a changed snapshot and the link path now expect the re-check and the link entry.
+- **Plugin security: the cheap path first, and the boundary of its guarantees** (owner 2026-11-07, translated: "for any task
+  about the security of the plugin, always look for another path that closes most of the likelihood of the risk and
+  costs less"). New rule in `rules/multi-agent.md`; README says that the roles are trusted participants that can make
+  mistakes and that the sandbox is no protection from a hostile agent.
+
+## 0.4.34 - 2026-11-07
+
+- **`agents-md.js` counts the budget of `project_doc_max_bytes`** (p-codex D3-1b; owner 2026-11-06, answer 1: the limit
+  is on the sum of the root and the nested files, and answer 18: connecting ends with a green check). Codex silently
+  cuts the `AGENTS.md` files it reads from the root down to its working directory at one limit for the whole chain;
+  `check` and `write` now add up the chain of every generated file and name each with its bytes and the limit. The
+  limit comes from the top level of the root `.codex/config.toml` by a strict scan of its structure, 32768 without it.
+  In the sum: `AGENTS.override.md` in place of the `AGENTS.md` beside it, foreign files, a file git ignores on the way,
+  generated files by the bytes `write` would write. A chain over the limit is exit 1: `write` on a connected project
+  still writes the files, `write --enable` writes nothing and sets no key. Red with the line: a value Codex would not
+  take, `= 0`, a config the scan cannot read, a nested config with the key, `project_doc_fallback_filenames` in a
+  project config. A file off every way to a generated file is named, not counted. Measured on codex 0.166.0.
 
 ## 0.4.33 - 2026-11-06
 
