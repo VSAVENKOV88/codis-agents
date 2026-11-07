@@ -412,7 +412,8 @@ function createAgent(cfg) {
   // both). The claude host gets the channel in part A2c.
   const cm = c.commit === undefined || c.commit === null ? null : c.commit;
   if (cm) {
-    if (typeof cm !== 'object') no('commit must be an object {stateDir, git?, gitVersions?, author?, codexVersions?}');
+    if (typeof cm !== 'object') no('commit must be an object {stateDir, git?, gitVersions?, author?, codexVersions?, walkMaxEntries?, walkTimeoutMs?, walkMaxResultBytes?, walkMaxIgnoreBytes?, walkMaxReadBytes?}');
+    for (const k of ['walkMaxEntries', 'walkTimeoutMs', 'walkMaxResultBytes', 'walkMaxIgnoreBytes', 'walkMaxReadBytes']) if (cm[k] !== undefined && !(Number.isFinite(cm[k]) && cm[k] > 0)) no(`commit.${k} must be a positive number, got ${JSON.stringify(cm[k])}`);
     if (c.host !== 'codex') no('commit on the claude host: the commit channel of claude -p comes with part A2c');
     if (typeof cm.stateDir !== 'string' || !path.isAbsolute(cm.stateDir)) no(`commit.stateDir is required and absolute, got ${JSON.stringify(cm.stateDir)}`);
     const sd = realish(cm.stateDir);
@@ -525,7 +526,8 @@ function createAgent(cfg) {
           svc = openCommitService({ task: plan.key, callId: path.basename(plan.callDir), wt: plan.t.wt, branch: plan.t.branch,
             box: path.join(plan.callDir, 'commit'), stateDir: cm.stateDir, git: cm.git, gitVersions: cm.gitVersions, author: cm.author,
             userEnv: c.env || process.env, inject: cm.inject, log, codex: cx.bin, codexVersions: cm.codexVersions, network: plan.kind === 'test',
-            tdir: plan.t.dir, npmCache: path.join(plan.callDir, 'npm-cache'), killGraceMs: graceMs });
+            tdir: plan.t.dir, npmCache: path.join(plan.callDir, 'npm-cache'), killGraceMs: graceMs, walkMaxEntries: cm.walkMaxEntries, walkTimeoutMs: cm.walkTimeoutMs,
+            walkMaxResultBytes: cm.walkMaxResultBytes, walkMaxIgnoreBytes: cm.walkMaxIgnoreBytes, walkMaxReadBytes: cm.walkMaxReadBytes });
           svcStop = () => svc.cancel();
           enter(svcStop);
           plan.commit = { box: svc.box, answers: svc.answers, client: COMMIT_CLIENT };

@@ -369,6 +369,18 @@ const withPreload = (p, env) => (spec) => Object.assign({}, spec, { args: ['--re
       && !kindsOf(b).some((k) => /f\.dat/.test(k)), J(b));
     await s.close();
   }
+  // the attributes of H0 decide inside the sandbox: an untracked .gitattributes of the role has no say
+  {
+    const f = fixture({ hooks: { 'pre-commit': '' }, files: { '.gitattributes': '*.dat filter=x\n', 'sub/s.dat': 'blob\n' } });
+    git(f.repo, ['config', 'filter.x.clean', filterScript(f)]);
+    fs.writeFileSync(f.w('sub/.gitattributes'), '*.dat -filter\n');
+    const s = service(f);
+    fs.writeFileSync(f.w('sub/s.dat'), 'BLOB\n');
+    fs.writeFileSync(f.w('a.txt'), 'x\n');
+    const a = await answer(s, ask(s, ['a.txt']));
+    ok('CK2-12 an untracked .gitattributes of the role does not change the compare: the attributes of H0 hold inside the sandbox', a && a.status === 'committed', J(a));
+    await s.close();
+  }
   // ---- CK2-12b: a named path with a conversion
   for (const [name, attr] of [['text', 'a.txt text\n'], ['eol', 'a.txt eol=lf\n'], ['filter', 'a.txt filter=x\n'], ['ident', 'a.txt ident\n'], ['working-tree-encoding', 'a.txt working-tree-encoding=UTF-16\n']]) {
     const f = fixture({ hooks: { 'pre-commit': '' } });
@@ -845,6 +857,15 @@ agent('x',{label:'prog:K#1',schema:{type:'object',properties:{status:{type:'stri
       fs.writeFileSync(f.w('t.log'), 'edited\n');
       const b = await answer(s, ask(s, ['t.log']));
       ok(`PA2-05 ${tag}: a tracked ignored path -> committed`, b && b.status === 'committed', J(b));
+      await s.close();
+    }
+    {
+      const f = fixture(Object.assign({}, opts, { global: '[core]\n\texcludesFile = ~/my-ignore\n' }));
+      fs.writeFileSync(path.join(f.home, 'my-ignore'), '*.xx\n');
+      const s = service(f);
+      fs.writeFileSync(f.w('a.xx'), 'a\n');
+      const a = await answer(s, ask(s, ['a.xx']));
+      ok(`PA2-05 ${tag}: core.excludesFile with ~ of the user's config counts (git config --path) -> refused "ignored"`, a && a.status === 'refused' && /ignored/.test(a.why), J(a));
       await s.close();
     }
     {

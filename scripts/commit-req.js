@@ -11,7 +11,9 @@
 // is written whole into a temporary file of the box and published by a rename (the adapter ignores temporary files);
 // the id is 32 random hex digits. The client then waits for the answer at most --max seconds (default and ceiling 270:
 // the longest single wait, not an interval) and prints one JSON line: {id, status: committed | nothing | refused |
-// cancelled, sha?, why?, paths?, indexSync?} or {id, status: "pending"} when no answer came in time - then
+// cancelled, sha?, why?, paths?, indexSync?, and with hooks of a check: checks, environment, rechecked, changed,
+// untrackedInputs, ignoredChanged, walkNotes - each list its first 200 entries with a <name>Count, changesFile the whole
+// lists} or {id, status: "pending"} when no answer came in time - then
 // "commit-req.js wait --id <id>" waits again. A pending request stays queued; the adapter answers it in order.
 // Exit: 0 committed or nothing, 1 refused or cancelled, 2 usage, 3 pending, 4 the channel is closed.
 const fs = require('fs');

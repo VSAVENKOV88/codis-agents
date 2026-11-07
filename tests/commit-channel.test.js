@@ -273,8 +273,8 @@ const markScript = (f, name) => `#!/bin/sh\necho ${name} >> '${f.marks}'\ncat >/
     fs.symlinkSync(path.join(f.d, 'outside', 'id_rsa'), path.join(f.wt, 'key'));
     const pid4 = put(s.box, req(['key']));
     const a4 = await answer(s, pid4);
-    ok('a path that is itself a symlink -> refused in A2a-1 (a link entry is part A2a-2); the target is not read',
-      a4 && a4.status === 'refused' && /symbolic link/.test(a4.why) && git(f.wt, ['cat-file', '-e', blob]).rc !== 0, JSON.stringify(a4));
+    ok('a path that is itself a symlink -> a link entry: committed with mode 120000 and the text of the link; the target is not read',
+      a4 && a4.status === 'committed' && /^120000 /.test(git(f.wt, ['ls-tree', 'task', 'key']).out) && git(f.wt, ['cat-file', '-e', blob]).rc !== 0, JSON.stringify(a4));
     spawnSync('mkfifo', [path.join(f.wt, 'pipe')]);
     const pf = put(s.box, req(['pipe']));
     const t = Date.now();

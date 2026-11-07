@@ -32,19 +32,29 @@
 // value wins over include.path). GIT_WORK_TREE is an empty folder of the adapter: no command of the commit reads the
 // role's worktree. The bytes of a named file are read by Node with the same O_NOFOLLOW_ANY open.
 //
-// The checks (part A2a-2a; owner 2026-11-06, answers 4-6 and G7): the hooks of a check (pre-commit,
+// The checks (owner 2026-11-06, answers 1 to 6 and G7; owner 2026-11-07 on the walk): the hooks of a check (pre-commit,
 // prepare-commit-msg, commit-msg) are taken from the folder the user's git would use - the last core.hooksPath (a
 // relative one from the worktree root, ~ from the user's HOME), else <common git dir>/hooks; a hook.* key is refused.
-// Without such hooks the request is committed as above and nothing of the worktree outside it is looked at. With
-// them, before any hook:
-// - a conversion of the repository (an attribute text, eol, filter, crlf, ident or working-tree-encoding by
-//   check-attr --cached on the index of the request, core.autocrlf true or input, core.eol) is refused: the compare in
-//   Node below reads raw bytes, and a compare through git's conversion comes with A2a-2b;
-// - G7: every tracked path of the recorded tip H0 outside the request is compared by Node (lstat and an
-//   O_NOFOLLOW_ANY read, the bytes hashed as a blob; no git command reads the worktree) and the real index against
-//   H0 (diff-index --cached, no renames: both sides of a rename are named); any difference refuses the request with
-//   the whole list (modified, deleted, typechange, mode, staged). A gitlink outside the request is not compared.
-// Each hook then runs as `codex sandbox` with a profile of the role's rights - write to the worktree, the task folder
+// Without such hooks the request is committed as above and nothing of the worktree outside it is looked at.
+// On both paths the named paths are checked against the recorded tip H0 and the file system: a path inside a gitlink or
+// under a tracked file is refused, so is another spelling of a tracked entry (the same dev and inode, and one name in
+// the listing of the folder: a hard link has two names and is another path), and an untracked ignored path.
+// With hooks, before any hook:
+// - U0, the walk of the worktree (scripts/commit-walk.js, a process of its own under limits; any limit refuses and the
+//   hooks do not run): every non-folder entry outside the tracked paths and the request, with (type, dev, ino, size,
+//   mode, mtime, ctime) - any write changes ctime - and its class by the ignore rules (a mirror of every .gitignore and
+//   git check-ignore, no git command reads the worktree). untrackedInputs lists those not ignored and every untracked
+//   .gitignore, whose rules could hide the rest.
+// - G7: every tracked path of H0 outside the request is compared by Node (an O_NOFOLLOW_ANY read, the bytes hashed as
+//   a blob) and the real index against H0 (diff-index --cached); any difference refuses the request with the whole
+//   list (modified, deleted, typechange, mode, staged). A deleted path whose blob equals an untracked file (not
+//   empty, same size, same kind) is named renamed, with every such file; an ignored one is only a note on deleted. A
+//   gitlink outside the request is not compared. A path with raw bytes different from its blob and a conversion by the
+//   attributes of H0 (check-attr --source=H0) or core.autocrlf is hashed through git's conversion inside the sandbox,
+//   so a filter of the repository never runs outside it; codex is verified and probed before that first launch, and
+//   the keys of the user's config that conversion reads go there as -c arguments, not through the environment.
+// - A named path with a conversion is refused with its path: the commit stores the bytes Node read (--no-filters).
+// Each hook runs as `codex sandbox` with a profile of the role's rights - write to the worktree, the task folder
 // and a message folder of the adapter (owner c4), read only <wt>/.git and <wt>/.codex, the network of the role given
 // explicitly - in a process group of its own (spawn, never spawnSync: the adapter's loop goes on), cwd the worktree,
 // GIT_INDEX_FILE the private index (outside every root: a hook cannot change it), an environment built from a white
@@ -52,17 +62,21 @@
 // roots, so a tool that keeps its state there, such as the slot directory of heavy.sh, fails -, the role's TMPDIR,
 // LANG, LC_ALL, npm_config_cache of the call, which must resolve inside the worktree or the task folder and never
 // adds a root of its own), its output into a file of the answers. The end of a hook is the exit of
-// its leader; the rest of its group is killed then. Before the first hook of a call, once: codex of a verified version
+// its leader; the rest of its group is killed then. Before the first launch of a call, once: codex of a verified version
 // (VERIFIED_CODEX_VERSIONS) and a probe of the sandbox with the same command (a write outside the roots refused, the
 // npm cache writable, the network as the role's, CODEX_SANDBOX=seatbelt and no variable outside the white list);
-// anything else refuses with "no safe check path" and nothing runs outside the sandbox. After the hooks: the tree of
-// the private index, the git dir, HEAD and the tip are as recorded, the tracked paths outside the request and the
-// real index are compared with H0 again, and the named paths and the message file (read back with O_NOFOLLOW_ANY)
-// are as the request left them; any difference refuses. A check that changed the snapshot is refused until the
-// re-check of part A2a-2b. Nothing is rolled back or added after a refusal: the worktree stays as the check left it.
-// The commit gets the tree and the message the hooks passed; the message goes through git stripspace before the
-// hooks, as git commit -F writes it. Untracked and ignored files of the worktree, and any file outside it, can
-// influence a check and are not part of the commit (README, Known gaps).
+// anything else refuses with "no safe check path" and nothing runs outside the sandbox.
+// After the hooks of a pass: the tree of the private index, the git dir, HEAD and the tip are as recorded, the tracked
+// paths outside the request and the real index are compared with H0 again, and the walk is compared with the walk
+// before the pass, each path classed by the ignore rules before the pass (a hook cannot hide its writes with a new
+// .gitignore, and a changed untracked .gitignore is a change whatever its class). Any of that refuses; changes of
+// ignored files are only listed (ignoredChanged). A named path or the message that changed (the message compared after
+// git stripspace) gives one re-check (owner answer 1): a new snapshot, and the hooks again on it; a tree equal to the
+// parent's is "nothing"; a second change refuses "the check is not stable". An empty message after a pass refuses.
+// Nothing is rolled back or added after a refusal: the worktree stays as the check left it. The commit gets the tree
+// and the message of the last pass. Lists in an answer are cut to the first LIST_SHOWN entries with a count, the whole
+// lists go to <id>.changes.json in the answers, and the journal holds only the counts. Untracked and ignored files of
+// the worktree, and any file outside it, can influence a check and are not part of the commit (README, Known gaps).
 //
 // The journal of the task (<stateDir>/<task>/commits.jsonl, owner B 2026-11-06 answers 12, 13): one writer (a lock
 // with the pid), version 1, an event number per line, every line written and fsynced before the action it announces:
@@ -79,6 +93,8 @@ const { spawn, spawnSync } = require('child_process');
 
 const O_NOFOLLOW_ANY = 0x20000000; // macOS <sys/fcntl.h>: no symbolic link in any component of the path
 const READ_FLAGS = fs.constants.O_RDONLY | fs.constants.O_NONBLOCK | O_NOFOLLOW_ANY;
+// the same open of a named path that may itself be a link: the link opens as itself (measured on macOS: fstat says link)
+const READ_ENTRY_FLAGS = READ_FLAGS | (fs.constants.O_SYMLINK || 0);
 const MAX_REQUEST_BYTES = 64 * 1024;
 const MAX_FILE_BYTES = 256 * 1024 * 1024;
 const MAX_PATHS = 1000;
@@ -97,6 +113,18 @@ const TAIL_CHARS = 4000;
 // the variables codex sandbox 0.166.0 adds to the white list of the adapter (experiment E-A4)
 const CODEX_ADDED = ['CODEX_MANAGED_BY_NPM', 'CODEX_MANAGED_PACKAGE_ROOT', 'CODEX_SANDBOX', 'CODEX_SANDBOX_NETWORK_DISABLED', 'PWD', 'OLDPWD', 'SHLVL', '_', '__CF_USER_TEXT_ENCODING'];
 const CONVERSION_ATTRS = ['text', 'eol', 'filter', 'crlf', 'ident', 'working-tree-encoding'];
+// The keys of the user's config that git's conversion reads: a check has an empty home, so they go as -c arguments.
+const CONVERSION_CONFIG = '^(filter\\.|core\\.(autocrlf|eol|safecrlf|attributesfile)$)';
+const WALKER = path.join(__dirname, 'commit-walk.js');
+// The limits of one walk process (owner 2026-11-07: 200 000 entries visited, 15 s; commit.walk* keys). Measured on the
+// owner's worktree (48 250 entries, 1.3 s, RSS 163 MB): 231 bytes of answer per file, so 200 000 files fit into the
+// volume of results, and 4 KiB of ignore files; the volumes bound what a role can make the walk hold, the heap
+// stops a walk they miss.
+const WALK_LIMITS = { entries: 200000, timeoutMs: 15000, resultBytes: 64 * 1024 * 1024, ignoreBytes: 16 * 1024 * 1024, readBytes: 1024 * 1024 * 1024 };
+const WALK_HEAP_MB = 1024;
+const LIST_SHOWN = 200;
+const LIST_KEYS = ['changed', 'untrackedInputs', 'ignoredChanged', 'walkNotes'];
+const isIgnoreFile = (p) => /(^|\/)\.gitignore$/i.test(p);
 // The probe of the sandbox, run inside it: argv canary, npm cache, port of the adapter's listener; one JSON line.
 const PROBE_JS = "const fs=require('fs'),net=require('net');const [canary,cache,port]=process.argv.slice(1);const o={};"
   + "try{fs.writeFileSync(canary,'x');o.canary='written';}catch(e){o.canary=e.code||'error';}"
@@ -104,6 +132,7 @@ const PROBE_JS = "const fs=require('fs'),net=require('net');const [canary,cache,
   + "o.sandbox=process.env.CODEX_SANDBOX||null;o.names=Object.keys(process.env);"
   + "const out=()=>process.stdout.write(JSON.stringify(o)+'\\n');"
   + "const s=net.connect(+port,'127.0.0.1');s.on('connect',()=>{o.net='connected';s.destroy();out();});s.on('error',(e)=>{o.net=e.code||'error';out();});";
+const HASH_BATCH = 200; // paths of one launch of a hash inside the sandbox
 const SAFE_PATH = '/usr/bin:/bin:/usr/sbin:/sbin';
 const ZERO = '0'.repeat(40);
 const NAME_RE = /^([0-9a-f]{32})\.json$/;
@@ -141,6 +170,26 @@ function readNoFollow(file, max) {
   } catch (e) {
     return { code: e.code || 'EREAD', error: `cannot read (${e.code || e.message})` };
   } finally { fs.closeSync(fd); }
+}
+
+// A named path: {bytes, st} of a regular file or {link, st} of a symbolic link (its text, never its target), else
+// {error, code}. A link in a parent fails the open; the link read by path is compared with the one opened.
+function readEntry(file, max) {
+  let fd;
+  try { fd = fs.openSync(file, READ_ENTRY_FLAGS); } catch (e) {
+    if (e.code === 'ELOOP') return { code: 'ELOOP', error: 'a component of the path is a symbolic link' };
+    if (e.code === 'ENOENT' || e.code === 'ENOTDIR') return { code: 'ENOENT', error: 'missing' };
+    return { code: e.code || 'EOPEN', error: `cannot open (${e.code || e.message})` };
+  }
+  let st;
+  try { st = fs.fstatSync(fd); } finally { fs.closeSync(fd); }
+  if (!st.isSymbolicLink()) return readNoFollow(file, max);
+  try {
+    const link = fs.readlinkSync(file, 'buffer');
+    const again = fs.lstatSync(file);
+    if (!again.isSymbolicLink() || again.ino !== st.ino || again.dev !== st.dev) return { code: 'RACE', error: 'replaced while it was read' };
+    return { link, st };
+  } catch (e) { return { code: e.code || 'EREAD', error: `cannot read (${e.code || e.message})` }; }
 }
 
 // The reason a path of a request is refused, or null. Relative to the worktree root, no "." or ".." component, no
@@ -195,7 +244,8 @@ const which = (bin, envPath) => {
 // codex?, codexVersions?, network?, tdir?, npmCache?, killGraceMs?} - codex: the binary (a name looked up in the
 // PATH of userEnv, default "codex"); network: the network of the role, given to its checks; tdir: the task folder,
 // a write root of the role and of its checks; npmCache: the npm cache of the call (default <folder of the box>/npm-cache),
-// which must resolve inside the worktree or the task folder when a check runs (else the request is refused).
+// which must resolve inside the worktree or the task folder when a check runs (else the request is refused);
+// walkMaxEntries, walkTimeoutMs, walkMaxResultBytes, walkMaxIgnoreBytes, walkMaxReadBytes: the limits of a walk process.
 // Returns {box, answers, notes(), cancel(), close()}. Requests run one at a time; cancel() stops a running check
 // (SIGTERM to its group, SIGKILL after killGraceMs) and starts no new one; close() ends the call: it cancels the
 // running check, waits for it, cancels the requests still queued or in the box, and resolves to the summary
@@ -214,6 +264,12 @@ function openCommitService(o) {
   const network = o.network === true;
   const codexVersions = Array.isArray(o.codexVersions) ? o.codexVersions : VERIFIED_CODEX_VERSIONS;
   for (const k of ['tdir', 'npmCache']) if (o[k] !== undefined && (typeof o[k] !== 'string' || !path.isAbsolute(o[k]))) bad(`${k} must be an absolute path`);
+  const walkLimits = Object.assign({}, WALK_LIMITS);
+  for (const [k, l] of [['walkMaxEntries', 'entries'], ['walkTimeoutMs', 'timeoutMs'], ['walkMaxResultBytes', 'resultBytes'], ['walkMaxIgnoreBytes', 'ignoreBytes'], ['walkMaxReadBytes', 'readBytes']]) {
+    if (o[k] === undefined) continue;
+    if (!Number.isFinite(o[k]) || o[k] <= 0) bad(`${k} must be a positive number`);
+    walkLimits[l] = o[k];
+  }
   const notes = [];
   const note = (m) => { if (notes.length < NOTES_MAX) notes.push(m); else if (notes.length === NOTES_MAX) notes.push('later notes dropped'); log(`commit-service ${o.task}/${o.callId}: ${m}`); };
   const once = new Set();
@@ -233,6 +289,7 @@ function openCommitService(o) {
   const checkHomes = path.join(callDir, 'check-home');
   const msgRoot = path.join(callDir, 'msg');
   const probeDir = path.join(callDir, 'probe');
+  const walkRoot = path.join(callDir, 'walk');
   for (const d of [answers, hooksOff, gitHome, emptyWt]) fs.mkdirSync(d, { recursive: true, mode: 0o700 });
   for (const n of fs.readdirSync(hooksOff)) fs.rmSync(path.join(hooksOff, n), { recursive: true, force: true });
   for (const n of fs.readdirSync(emptyWt)) fs.rmSync(path.join(emptyWt, n), { recursive: true, force: true });
@@ -406,13 +463,29 @@ function openCommitService(o) {
   };
   const publicOf = (r) => {
     const a = { status: r.status };
-    for (const k of ['sha', 'why', 'paths', 'indexSync', 'changed', 'checks', 'environment']) if (r[k] !== undefined) a[k] = r[k];
+    for (const k of ['sha', 'why', 'paths', 'indexSync', 'rechecked', 'changesFile', 'checks', 'environment']) if (r[k] !== undefined) a[k] = r[k];
+    for (const k of LIST_KEYS) for (const n of [k, `${k}Count`]) if (r[n] !== undefined) a[n] = r[n];
     return a;
   };
   const local = new Map(); // id -> result, for the calls that may not write the journal
   const finish = (id, hash, res) => {
     const r = Object.assign({ status: res.status }, res);
-    if (writer && !broken) append(Object.assign({ ev: 'result', id, hash }, r));
+    // a long list: the first entries and a count in the answer, the whole of it in a file of the adapter
+    const whole = {};
+    let cut = false;
+    for (const k of LIST_KEYS) {
+      if (!Array.isArray(r[k])) continue;
+      whole[k] = r[k];
+      r[`${k}Count`] = r[k].length;
+      if (r[k].length > LIST_SHOWN) { cut = true; r[k] = r[k].slice(0, LIST_SHOWN); }
+    }
+    if (cut) {
+      r.changesFile = path.join(answers, `${id}.changes.json`);
+      fs.writeFileSync(r.changesFile, JSON.stringify(whole) + '\n', { mode: 0o644 });
+    }
+    const line = Object.assign({}, r);
+    for (const k of LIST_KEYS) delete line[k];
+    if (writer && !broken) append(Object.assign({ ev: 'result', id, hash }, line));
     else local.set(id, Object.assign({ hash }, r));
     if (r.status === 'committed') sum.commits.push({ id, sha: r.sha, paths: r.paths });
     else if (r.status === 'refused') sum.refused.push({ id, why: r.why });
@@ -458,67 +531,355 @@ function openCommitService(o) {
     return { dir, hooks };
   };
 
+  // ---- the tree of the recorded tip and the named paths against it
+  let treeCache = null;
+  // {map: path -> {mode, type, oid}, kids: folder -> names} of a commit, or {error}
+  const treeOf = (h0) => {
+    if (treeCache && treeCache.h0 === h0) return treeCache;
+    const ls = g(['ls-tree', '-r', '-t', '-z', '--full-tree', h0]);
+    if (ls.rc !== 0) return { error: `ls-tree: ${errText(ls)}` };
+    const map = new Map(), kids = new Map();
+    for (const rec of ls.out.split('\0').filter(Boolean)) {
+      const m = /^(\d+) (\w+) ([0-9a-f]+)\t([\s\S]*)$/.exec(rec);
+      if (!m) continue;
+      map.set(m[4], { mode: m[1], type: m[2], oid: m[3] });
+      const cut = m[4].lastIndexOf('/');
+      const dir = cut < 0 ? '' : m[4].slice(0, cut);
+      if (!kids.has(dir)) kids.set(dir, []);
+      kids.get(dir).push(m[4].slice(cut + 1));
+    }
+    return (treeCache = { h0, map, kids });
+  };
+  // The reason a named path may not be committed against the tree: a parent that is a gitlink or a tracked file (the
+  // commit would drop it from the tree), or another spelling of a tracked entry. The spelling is by the file system,
+  // not by folding names: the same dev and inode as a tracked entry of the folder and only one of the two names in the
+  // listing of the folder (a hard link has both).
+  const namedProblem = (paths, tree) => {
+    const inodes = new Map();
+    const inodesOf = (dir) => {
+      if (inodes.has(dir)) return inodes.get(dir);
+      const m = new Map();
+      for (const n of tree.kids.get(dir) || []) {
+        try { const st = fs.lstatSync(path.join(wtReal, dir, n)); m.set(`${st.dev}:${st.ino}`, n); } catch { /* not in the worktree */ }
+      }
+      inodes.set(dir, m);
+      return m;
+    };
+    for (const p of paths) {
+      const parts = p.split('/');
+      for (let i = 1; i < parts.length; i++) {
+        const anc = parts.slice(0, i).join('/');
+        const e = tree.map.get(anc);
+        if (e && e.type === 'commit') return `${q(p)}: inside the submodule ${anc}`;
+        if (e && e.type === 'blob') return `${q(p)}: its parent ${q(anc)} is a tracked file in HEAD`;
+      }
+      let dir = '';
+      for (const name of parts) {
+        const spelled = dir ? `${dir}/${name}` : name;
+        if (tree.map.has(spelled)) { dir = spelled; continue; }
+        let st;
+        try { st = fs.lstatSync(path.join(wtReal, spelled)); } catch { break; }
+        const twin = inodesOf(dir).get(`${st.dev}:${st.ino}`);
+        if (twin) {
+          let listed = [];
+          try { listed = fs.readdirSync(path.join(wtReal, dir)); } catch { /* as one name */ }
+          if (!(listed.includes(name) && listed.includes(twin))) return `${q(p)}: the worktree entry is tracked as ${q(dir ? `${dir}/${twin}` : twin)}`;
+        }
+        break;
+      }
+    }
+    return null;
+  };
+
+  // ---- the walk: a process of its own, removed by a signal; the adapter's loop never waits on a file call of the worktree
+  let walkN = 0;
+  const excludesFile = () => {
+    const v = userConfig(['--path', '--get', 'core.excludesFile']).out.trim();
+    if (v) return v;
+    const xdg = userEnv.XDG_CONFIG_HOME || path.join(userEnv.HOME || '/nonexistent', '.config');
+    return path.join(xdg, 'git', 'ignore');
+  };
+  // {ok, ...the answer of commit-walk.js} | {limit, visited} | {problem, visited} | {failed} | {cancelled}
+  const walkRun = (id, job) => new Promise((resolve) => {
+    if (cancelling) { resolve({ cancelled: true }); return; }
+    const dir = path.join(walkRoot, id, String(++walkN));
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const gitEnv = Object.assign(baseEnv(), { GIT_DIR: gitDir, GIT_WORK_TREE: emptyWt });
+    delete gitEnv.GIT_LITERAL_PATHSPECS; // check-ignore refuses the literal magic
+    const progress = path.join(dir, 'progress');
+    const jobFile = path.join(dir, 'job.json');
+    fs.writeFileSync(jobFile, JSON.stringify(Object.assign({ wt: wtReal, git: gitBin, gitArgs: SAFE_C.concat(['-c', `core.excludesFile=${excludesFile()}`]), gitEnv, emptyWt, progress, limits: walkLimits }, job)), { mode: 0o600 });
+    let spec = { kind: 'walk', bin: process.execPath, args: [`--max-old-space-size=${WALK_HEAP_MB}`, WALKER, jobFile], env: { PATH: SAFE_PATH, HOME: gitHome, LANG: 'C', LC_ALL: 'C' }, cwd: emptyWt };
+    if (inject.walkLaunch) spec = inject.walkLaunch(spec) || spec;
+    const outFile = path.join(dir, 'out.json'), errFile = path.join(dir, 'err.log');
+    const out = fs.openSync(outFile, 'w', 0o600), err = fs.openSync(errFile, 'w', 0o600);
+    let child;
+    try { child = spawn(spec.bin, spec.args, { cwd: spec.cwd, env: spec.env, detached: true, stdio: ['ignore', out, err] }); } catch (e) {
+      fs.closeSync(out); fs.closeSync(err);
+      resolve({ failed: e.code || e.message });
+      return;
+    }
+    fs.closeSync(out); fs.closeSync(err);
+    const r = { pgid: child.pid, done: false };
+    const visited = () => { try { return parseInt(fs.readFileSync(progress, 'utf8'), 10) || 0; } catch { return 0; } };
+    const end = (v) => { if (r.done) return; r.done = true; clearTimeout(timer); if (running === r) running = null; resolve(v); };
+    // a walk holds nothing: SIGKILL at once. The promise does not wait for its exit, a call stuck in the kernel keeps
+    // the process only until that call returns.
+    const remove = () => { if (r.pgid) killGroup(r.pgid, 'SIGKILL'); child.unref(); };
+    const timer = setTimeout(() => { remove(); end({ limit: 'timeout', visited: visited() }); }, walkLimits.timeoutMs);
+    r.cancel = () => { remove(); end({ cancelled: true }); };
+    running = r;
+    child.on('error', (e) => end({ failed: e.code || e.message }));
+    child.on('exit', (rc, signal) => {
+      if (r.done) return;
+      if (r.pgid) killGroup(r.pgid, 'SIGKILL');
+      if (rc !== 0 || signal) { end({ failed: `${signal ? `signal ${signal}` : `rc ${rc}`}: ${tailOf(errFile).slice(-300)}`, visited: visited() }); return; }
+      const f = readNoFollow(outFile, walkLimits.resultBytes * 2 + 1024 * 1024);
+      if (f.error) { end({ failed: `its output: ${f.error}`, visited: visited() }); return; }
+      try { end(JSON.parse(f.bytes.toString('utf8'))); } catch { end({ failed: 'its output is not JSON', visited: visited() }); }
+    });
+    if (cancelling) r.cancel();
+  });
+  const walkWhy = (w) => {
+    if (w.problem && w.problem.kind === 'gitignore') return w.problem.text;
+    const L = walkLimits;
+    const text = w.limit ? { entries: `the worktree has more than ${L.entries} entries`, timeout: `the walk took longer than ${L.timeoutMs} ms`, results: `results above ${L.resultBytes} bytes`,
+      ignore: `ignore files above ${L.ignoreBytes} bytes in total`, read: `files to hash above ${L.readBytes} bytes` }[w.limit] || w.limit
+      : w.problem ? w.problem.text : `the walk process failed (${w.failed})`;
+    return `no safe check path: ${text}; walked ${w.visited || 0} entries, the walk did not finish`;
+  };
+  let mirrorN = 0;
+  // The walk of the worktree against the tip h0; previous: the walk before, whose ignore rules class the changes.
+  const fullWalk = async (id, named, h0, previous) => {
+    const mirror = path.join(walkRoot, id, `m${++mirrorN}`);
+    const w = await walkRun(id, { mode: 'walk', named: [...named], h0, mirror, previous: previous ? previous.mirror : null });
+    if (!w.ok) return w;
+    if (!Array.isArray(w.files)) return { failed: 'its output has no files' };
+    w.mirror = mirror;
+    w.map = new Map(w.files.map((f) => [f.p, f]));
+    return w;
+  };
+  const inputsOf = (u) => u.files.filter((f) => !f.i || isIgnoreFile(f.p)).map((f) => f.p).sort();
+  // The difference of two walks: {changed, ignored}. A new or changed path is classed by the rules before the pass, a
+  // removed one by its own walk; a .gitignore outside the request is a change whatever its class.
+  const untrackedDiff = (before, after) => {
+    const changed = [], ignored = [];
+    const sort = (hidden, p, kind) => { if (hidden && !isIgnoreFile(p)) ignored.push(p); else changed.push({ path: p, kind }); };
+    for (const f of after.files) {
+      const b = before.map.get(f.p);
+      if (!b || b.k !== f.k) sort(f.c, f.p, b ? 'modified' : 'created');
+    }
+    for (const b of before.files) if (!after.map.has(b.p)) sort(b.i, b.p, 'deleted');
+    return { changed, ignored };
+  };
+
   // ---- the compare in Node (no git command reads the worktree)
   let objFormat = null;
-  const blobId = (bytes) => {
+  const objectFormat = () => {
     if (!objFormat) objFormat = g(['rev-parse', '--show-object-format']).out.trim() === 'sha256' ? 'sha256' : 'sha1';
-    return crypto.createHash(objFormat).update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
+    return objFormat;
   };
+  const blobId = (bytes) => crypto.createHash(objectFormat()).update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
   // the state of one worktree path against a blob of mode m: null when equal, else the kinds that differ
   const pathDiff = (p, mode, oid) => {
-    const full = path.join(wtReal, p);
-    if (mode === '120000') {
-      let st;
-      try { st = fs.lstatSync(full); } catch { return ['deleted']; }
-      if (!st.isSymbolicLink()) return ['typechange'];
-      return blobId(Buffer.from(fs.readlinkSync(full))) === oid ? null : ['modified'];
-    }
-    const f = readNoFollow(full, MAX_FILE_BYTES);
+    const f = readEntry(path.join(wtReal, p), MAX_FILE_BYTES);
     if (f.code === 'ENOENT') return mode === '0' ? null : ['deleted'];
     if (mode === '0') return ['created'];
     if (f.code === 'ELOOP' || f.code === 'NOTFILE') return ['typechange'];
     if (f.error) return [`unreadable (${f.error})`];
+    if (f.link) return mode !== '120000' ? ['typechange'] : blobId(f.link) === oid ? null : ['modified'];
+    if (mode === '120000') return ['typechange'];
     const kinds = [];
     if (blobId(f.bytes) !== oid) kinds.push('modified');
     if ((f.st.mode & 0o100 ? '100755' : '100644') !== mode) kinds.push('mode');
     return kinds.length ? kinds : null;
   };
-  // G7: tracked paths of h0 outside the request that differ in the worktree, and every entry of the real index that
-  // differs from h0; {list} or {error}
-  const outsideChanges = (named, h0) => {
-    const ls = g(['ls-tree', '-r', '-z', '--full-tree', h0]);
-    if (ls.rc !== 0) return { error: `ls-tree: ${errText(ls)}` };
-    const list = [];
-    for (const rec of ls.out.split('\0').filter(Boolean)) {
-      const m = /^(\d+) (\w+) ([0-9a-f]+)\t([\s\S]*)$/.exec(rec);
-      if (!m || m[2] !== 'blob' || named.has(m[4])) continue;
-      for (const kind of pathDiff(m[4], m[1], m[3]) || []) list.push({ path: m[4], kind });
+  const userGitEnv = () => {
+    const env = { PATH: SAFE_PATH, LANG: 'C', LC_ALL: 'C', GIT_DIR: gitDir, GIT_WORK_TREE: emptyWt, GIT_INDEX_FILE: privIndex, GIT_NO_LAZY_FETCH: '1' };
+    for (const [k, v] of Object.entries(userEnv)) if (USER_CONFIG_KEYS.test(k) && typeof v === 'string') env[k] = v;
+    return env;
+  };
+  // path -> {attribute: value}, or {error}. source: a commit (its .gitattributes), or null for the private index.
+  const attrsOf = (paths, source) => {
+    const res = new Map();
+    if (!paths.length) return res;
+    const ca = run(['-c', 'core.fsmonitor=false', '-c', `core.hooksPath=${hooksOff}`, 'check-attr'].concat(source ? [`--source=${source}`] : ['--cached'], ['-z', '--stdin'], CONVERSION_ATTRS),
+      { env: userGitEnv(), input: Buffer.from(paths.join('\0') + '\0', 'utf8'), noSafe: true });
+    if (ca.rc !== 0) return { error: `check-attr: ${errText(ca)}` };
+    const t = ca.out.split('\0');
+    for (let i = 0; i + 2 < t.length; i += 3) {
+      if (!res.has(t[i])) res.set(t[i], {});
+      res.get(t[i])[t[i + 1]] = t[i + 2];
     }
+    return res;
+  };
+  // What converts a path with these attributes (gitattributes(5): autocrlf applies unless text or crlf is unset), or
+  // null. core.eol alone converts nothing: it applies to paths that have the text attribute.
+  const conversionIn = (attrs) => {
+    for (const a of CONVERSION_ATTRS) if (attrs[a] && attrs[a] !== 'unspecified' && attrs[a] !== 'unset') return `the attribute ${a}=${attrs[a]}`;
+    const ac = userConfig(['--get', 'core.autocrlf']).out.trim().toLowerCase();
+    if (ac && !['false', 'no', 'off', '0'].includes(ac) && attrs.text !== 'unset' && attrs.crlf !== 'unset') return `core.autocrlf ${ac}`;
+    return null;
+  };
+  // the keys of the user's config that conversion reads, as -c arguments of a command inside the sandbox
+  const conversionArgs = () => {
+    const c = userConfig(['--null', '--get-regexp', CONVERSION_CONFIG]);
+    const args = [];
+    let attrFile = false;
+    for (const rec of c.out.split('\0').filter(Boolean)) {
+      const nl = rec.indexOf('\n');
+      const key = nl < 0 ? rec : rec.slice(0, nl);
+      let val = nl < 0 ? null : rec.slice(nl + 1);
+      if (key === 'core.attributesfile' && val !== null) {
+        attrFile = true;
+        if (val === '~' || val.startsWith('~/')) val = path.join(userEnv.HOME || '/nonexistent', val.slice(1));
+      }
+      args.push('-c', val === null ? key : `${key}=${val}`);
+    }
+    if (!attrFile) {
+      const def = path.join(userEnv.XDG_CONFIG_HOME || path.join(userEnv.HOME || '/nonexistent', '.config'), 'git', 'attributes');
+      if (exists(def)) args.push('-c', `core.attributesFile=${def}`);
+    }
+    return args;
+  };
+  // Blob ids through git's conversion, inside the sandbox, with the attributes of h0 (a .gitattributes the role put in
+  // the worktree has no say): {ids: Map} | {error} | {cancelled}. The paths go after "--": hash-object on a closed stdin
+  // answers nothing with rc 0 (measured); stdout apart from stderr, so a filter cannot print an id into the answer.
+  const hashInSandbox = async (id, paths, h0) => {
+    const nc = cacheOutside();
+    if (nc) return { error: `no safe check path: ${nc}` };
+    const rd = await sandboxReady();
+    if (rd.cancelled || cancelling) return { cancelled: true };
+    if (rd.error) return { error: `no safe check path: ${rd.error}` };
+    const dir = path.join(walkRoot, id);
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const ids = new Map();
+    const conv = conversionArgs();
+    for (let i = 0; i < paths.length; i += HASH_BATCH) {
+      const batch = paths.slice(i, i + HASH_BATCH);
+      const home = newHome(`${id}-hash`);
+      const log = path.join(dir, `hash-${i}.out`), errLog = path.join(dir, `hash-${i}.err`);
+      const res = await launchCheck('hash', [gitBin, `--attr-source=${h0}`, '-c', 'core.fsmonitor=false'].concat(conv, ['hash-object', '--'], batch), { home, log, errLog, profile: profileOf(null) });
+      fs.rmSync(home, { recursive: true, force: true });
+      if (res.cancelled || cancelling) return { cancelled: true };
+      if (res.error) return { error: `no safe check path: the hash of a path with a conversion could not be launched (${res.error})` };
+      if (res.rc !== 0 || res.signal) return { error: `no safe check path: the hash of a path with a conversion failed (${res.signal || `rc ${res.rc}`}): ${tailOf(errLog).slice(-300)}` };
+      const f = readNoFollow(log, 1024 * 1024);
+      const got = f.bytes ? f.bytes.toString('utf8').split('\n').filter(Boolean) : [];
+      if (got.length !== batch.length || !got.every((x) => /^([0-9a-f]{40}|[0-9a-f]{64})$/.test(x))) return { error: `no safe check path: the hash of a path with a conversion gave no answer (rc 0, ${got.length} of ${batch.length} ids)` };
+      batch.forEach((p, k) => ids.set(p, got[k]));
+    }
+    return { ids };
+  };
+  // Replaces each deleted entry of the list whose blob equals an untracked file by renamed pairs, one per such file: no
+  // first candidate is chosen. An empty blob has no pair (it equals every empty file); a file the ignore rules hide
+  // is only a note on deleted.
+  const pairRenames = async (id, list, tree, u, named) => {
+    const gone = list.filter((c) => c.kind === 'deleted');
+    if (!gone.length) return { list };
+    const oids = gone.map((c) => tree.map.get(c.path).oid);
+    const bc = g(['cat-file', '--batch-check=%(objectname) %(objectsize)'], { input: Buffer.from(oids.join('\n') + '\n') });
+    if (bc.rc !== 0) return { error: `cat-file: ${errText(bc)}` };
+    const sizes = new Set();
+    for (const l of bc.out.split('\n')) { const n = +l.split(' ')[1]; if (n > 0) sizes.add(n); }
+    const cands = u.files.filter((f) => sizes.has(f.s) && (f.t === 'f' || f.t === 'l')).map((f) => ({ p: f.p, t: f.t, i: f.i }));
+    for (const p of named) {
+      if (tree.map.has(p)) continue;
+      try { const st = fs.lstatSync(path.join(wtReal, p)); if (sizes.has(st.size) && (st.isFile() || st.isSymbolicLink())) cands.push({ p, t: st.isFile() ? 'f' : 'l', i: false }); } catch { /* missing */ }
+    }
+    if (!cands.length) return { list };
+    const w = await walkRun(id, { mode: 'hash', paths: cands.map((c) => c.p), objFormat: objectFormat() });
+    if (w.cancelled) return { cancelled: true };
+    if (!w.ok) return { error: walkWhy(w) };
+    const out = [];
+    for (const c of list) {
+      if (c.kind !== 'deleted') { out.push(c); continue; }
+      const e = tree.map.get(c.path);
+      const same = cands.filter((x) => w.ids[x.p] === e.oid && (x.t === 'l') === (e.mode === '120000'));
+      const plain = same.filter((x) => !x.i);
+      if (plain.length) { for (const x of plain) out.push({ kind: 'renamed', from: c.path, path: x.p }); continue; }
+      out.push(same.length ? Object.assign({}, c, { note: `the same content at the ignored path ${same.map((x) => x.p).join(', ')}` }) : c);
+    }
+    return { list: out };
+  };
+  // G7: tracked paths of h0 outside the request that differ in the worktree, renames against the walk u, and every
+  // entry of the real index that differs from h0; {list} | {error} | {cancelled}
+  const outsideChanges = async (id, named, h0, u) => {
+    const tree = treeOf(h0);
+    if (tree.error) return tree;
+    let list = [];
+    const raw = [];
+    for (const [p, e] of tree.map) {
+      if (e.type !== 'blob' || named.has(p)) continue;
+      for (const kind of pathDiff(p, e.mode, e.oid) || []) {
+        if (kind === 'modified' && e.mode !== '120000') raw.push(p);
+        list.push({ path: p, kind });
+      }
+    }
+    if (raw.length) {
+      const attrs = attrsOf(raw, h0);
+      if (attrs.error) return attrs;
+      const conv = raw.filter((p) => conversionIn(attrs.get(p) || {}));
+      if (conv.length) {
+        const h = await hashInSandbox(id, conv, h0);
+        if (h.cancelled || h.error) return h;
+        const same = new Set(conv.filter((p) => h.ids.get(p) === tree.map.get(p).oid));
+        list = list.filter((c) => !(c.kind === 'modified' && same.has(c.path)));
+      }
+    }
+    const paired = await pairRenames(id, list, tree, u, named);
+    if (paired.error || paired.cancelled) return paired;
+    list = paired.list;
     const ix = g(['diff-index', '--cached', '--name-status', '-z', '--no-renames', h0, '--'], { index: path.join(gitDir, 'index') });
     if (ix.rc !== 0) return { error: `the index of the worktree cannot be compared with HEAD: ${errText(ix)}` };
     const t = ix.out.split('\0');
     for (let i = 0; i + 1 < t.length; i += 2) if (t[i]) list.push({ path: t[i + 1], kind: 'staged', status: t[i] });
     return { list };
   };
-  const listText = (list) => list.slice(0, 20).map((c) => `${c.kind}${c.status ? ` ${c.status}` : ''}${c.path ? ` ${c.path}` : ''}`).join(', ')
+  const listText = (list) => list.slice(0, 20).map((c) => (c.from ? `renamed ${c.from} -> ${c.path}` : `${c.kind}${c.status ? ` ${c.status}` : ''}${c.path ? ` ${c.path}` : ''}`)).join(', ')
     + (list.length > 20 ? `, and ${list.length - 20} more` : '');
-  // a conversion of the repository (attributes of the index of the request, core.autocrlf, core.eol), or null
-  const conversionProblem = () => {
-    const ac = userConfig(['--get', 'core.autocrlf']).out.trim().toLowerCase();
-    if (ac === 'true' || ac === 'input') return `core.autocrlf ${ac}`;
-    const eol = userConfig(['--get', 'core.eol']).out.trim();
-    if (eol) return `core.eol ${eol}`;
-    const files = g(['ls-files', '-z']);
-    if (files.rc !== 0) return `ls-files: ${errText(files)}`;
-    if (!files.out) return null;
-    const env = { PATH: SAFE_PATH, LANG: 'C', LC_ALL: 'C', GIT_DIR: gitDir, GIT_WORK_TREE: emptyWt, GIT_INDEX_FILE: privIndex, GIT_NO_LAZY_FETCH: '1' };
-    for (const [k, v] of Object.entries(userEnv)) if (USER_CONFIG_KEYS.test(k) && typeof v === 'string') env[k] = v;
-    const ca = run(['-c', 'core.fsmonitor=false', '-c', `core.hooksPath=${hooksOff}`, 'check-attr', '--cached', '-z', '--stdin'].concat(CONVERSION_ATTRS),
-      { env, input: Buffer.from(files.out, 'utf8'), noSafe: true });
-    if (ca.rc !== 0) return `check-attr: ${errText(ca)}`;
-    const t = ca.out.split('\0');
-    for (let i = 0; i + 2 < t.length; i += 3) if (t[i + 2] !== 'unspecified' && t[i + 2] !== 'unset') return `the attribute ${t[i + 1]}=${t[i + 2]} of ${q(t[i])}`;
+  // A named file with a conversion, by the attributes of H0 and of the snapshot (a .gitattributes named in the same
+  // request counts), or null: the commit stores the bytes Node read, and git add would store others.
+  const namedConversion = (entries, h0) => {
+    const files = entries.filter((e) => e.mode !== '0' && e.mode !== '120000').map((e) => e.path);
+    for (const source of [h0, null]) {
+      const attrs = attrsOf(files, source);
+      if (attrs.error) return attrs.error;
+      for (const p of files) {
+        const c = conversionIn(attrs.get(p) || {});
+        if (c) return `a named path with a conversion is refused: ${q(p)}: ${c}`;
+      }
+    }
     return null;
+  };
+  // The snapshot of the named paths on the parent: the blobs written, the private index, its tree. {entries, tree} or {why}.
+  const takeSnapshot = (id, r, parent, tree) => {
+    const np = namedProblem(r.paths, tree);
+    if (np) return { why: np };
+    const entries = [];
+    for (const p of r.paths) {
+      const h = tree.map.get(p);
+      if (h && h.type !== 'blob') return { why: `${q(p)}: a ${h.type === 'commit' ? 'submodule' : 'folder'} in HEAD (name its files)` };
+      const f = readEntry(path.join(wtReal, p), MAX_FILE_BYTES);
+      if (f.code === 'ENOENT') {
+        if (!h) return { why: `${q(p)}: not tracked and missing` };
+        entries.push({ mode: '0', blob: ZERO, path: p });
+        continue;
+      }
+      if (f.error) return { why: `${q(p)}: ${f.error}` };
+      const b = g(['hash-object', '-w', '--stdin', '--no-filters'], { input: f.link || f.bytes });
+      if (b.rc !== 0) return { why: `hash-object ${q(p)}: ${errText(b)}` };
+      entries.push({ mode: f.link ? '120000' : f.st.mode & 0o100 ? '100755' : '100644', blob: b.out.trim(), path: p });
+    }
+    if (inject.afterSnapshot) inject.afterSnapshot({ id, entries });
+    fs.rmSync(privIndex, { force: true });
+    const rt = g(['read-tree', parent]);
+    if (rt.rc !== 0) return { why: `read-tree: ${errText(rt)}` };
+    const ui = g(['update-index', '-z', '--index-info'], { input: indexLines(entries) });
+    if (ui.rc !== 0) return { why: `update-index: ${errText(ui)}` };
+    const wtree = g(['write-tree']);
+    if (wtree.rc !== 0) return { why: `write-tree: ${errText(wtree)}` };
+    return { entries, tree: wtree.out.trim() };
   };
 
   // ---- the process of a check: codex sandbox in a group of its own, never spawnSync
@@ -573,20 +934,21 @@ function openCommitService(o) {
   const killGroup = (pgid, sig) => { try { process.kill(-pgid, sig); } catch { /* the group is gone */ } };
   let running = null; // the run of the check in progress
   let cancelling = false;
-  // one launch: {rc, signal, error?, cancelled?}; output into the file log
+  // one launch: {rc, signal, error?, cancelled?}; output into the file log (stderr into errLog when given)
   const launchCheck = (kind, inner, x) => new Promise((resolve) => {
     let spec = { kind, bin: codexBin, args: ['sandbox', '-c', `default_permissions=${JSON.stringify(CHECK_PROFILE)}`, '-c', x.profile.text, '-P', CHECK_PROFILE, '-C', wtReal, '--'].concat(inner),
       inner, env: checkEnv(x.home), cwd: wtReal };
     if (inject.checkLaunch) spec = inject.checkLaunch(spec) || spec;
-    let out;
-    try { out = fs.openSync(x.log, 'w', 0o644); } catch (e) { resolve({ rc: null, signal: null, error: `the log ${x.log}: ${e.code || e.message}` }); return; }
+    let out, err;
+    try { out = fs.openSync(x.log, 'w', 0o644); err = x.errLog ? fs.openSync(x.errLog, 'w', 0o644) : out; } catch (e) { resolve({ rc: null, signal: null, error: `the log ${x.log}: ${e.code || e.message}` }); return; }
+    const closeLogs = () => { fs.closeSync(out); if (err !== out) fs.closeSync(err); };
     let child;
-    try { child = spawn(spec.bin, spec.args, { cwd: spec.cwd, env: spec.env, detached: true, stdio: ['ignore', out, out] }); } catch (e) {
-      fs.closeSync(out);
+    try { child = spawn(spec.bin, spec.args, { cwd: spec.cwd, env: spec.env, detached: true, stdio: ['ignore', out, err] }); } catch (e) {
+      closeLogs();
       resolve({ rc: null, signal: null, error: e.code || e.message });
       return;
     }
-    fs.closeSync(out); // the child holds its own copy
+    closeLogs(); // the child holds its own copies
     const r = { pgid: child.pid, cancelled: false, graceT: null, graced: false, exit: null, done: false };
     const end = (v) => { if (r.done) return; r.done = true; clearTimeout(r.graceT); if (running === r) running = null; resolve(v); };
     r.cancel = () => {
@@ -668,67 +1030,98 @@ function openCommitService(o) {
     return (ready = p);
   };
 
-  // The hooks of one request on the snapshot (entries, the message after stripspace, the tree of the private index):
-  // {checks} when they passed and nothing moved, {why, changed?, checks} when refused, {cancelled, checks}.
-  const runChecks = async (id, r, entries, message, hk, tree, h0) => {
-    const checks = [];
-    const fail = (why, changed) => ({ why, changed, checks });
-    if (cancelling) return { cancelled: true, checks };
+  // The passes of the hooks on the snapshot first {entries, tree, message}: at most two (owner answer 1). st collects what
+  // the answer reports. {snap} when the last pass changed nothing, {nothing} when a new snapshot equals the parent,
+  // {why, changed?} when refused, {cancelled}. A hook that fails ends the request without a compare: its changes stay
+  // visible in the worktree.
+  const runChecks = async (id, r, first, hk, h0, ptree, u0, st) => {
+    const fail = (why, changed) => ({ why, changed });
+    if (cancelling) return { cancelled: true };
     const nc = cacheOutside();
     if (nc) return fail(`no safe check path: ${nc}`);
     const rd = await sandboxReady();
-    if (rd.cancelled || cancelling) return { cancelled: true, checks };
+    if (rd.cancelled || cancelling) return { cancelled: true };
     if (rd.error) return fail(`no safe check path: ${rd.error}`);
-    const msgDir = path.join(msgRoot, `${id}-1`);
-    fs.rmSync(msgDir, { recursive: true, force: true });
-    fs.mkdirSync(msgDir, { recursive: true, mode: 0o700 });
-    const msgFile = path.join(msgDir, 'COMMIT_EDITMSG');
-    fs.writeFileSync(msgFile, message);
-    const profile = profileOf(msgDir);
-    for (const h of hk.hooks) {
-      const home = newHome(`${id}-1`);
-      const log = path.join(answers, `${id}.1.${h}.log`);
-      const inner = [gitBin, '-c', `core.hooksPath=${hk.dir}`, 'hook', 'run', '--ignore-missing', h]
-        .concat(h === 'pre-commit' ? [] : ['--', msgFile].concat(h === 'prepare-commit-msg' ? ['message'] : []));
-      const t0 = Date.now();
-      const res = await launchCheck('hook', inner, { home, log, profile });
-      const ms = Date.now() - t0;
-      fs.rmSync(home, { recursive: true, force: true });
-      checks.push({ hook: h, pass: 1, rc: res.rc, signal: res.signal || null, ms, log, tail: tailOf(log),
-        launch: { codex: codexBin, profile: profile.text, network: profile.network, writeRoots: profile.roots, home } });
-      if (res.cancelled || cancelling) return { cancelled: true, checks };
-      if (res.error) return fail(`no safe check path: ${h} could not be launched under codex sandbox (${res.error})`);
-      // codex sandbox gives a hook killed by a signal as its exit code (137, 143): named as it comes
-      if (res.rc !== 0 || res.signal) return fail(`${h} failed (${res.signal ? `signal ${res.signal}` : `rc ${res.rc}`})`);
+    const named = new Set(r.paths);
+    let snap = first, u = u0;
+    for (let pass = 1; ; pass++) {
+      const msgDir = path.join(msgRoot, `${id}-${pass}`);
+      st.msgDir = msgDir;
+      fs.rmSync(msgDir, { recursive: true, force: true });
+      fs.mkdirSync(msgDir, { recursive: true, mode: 0o700 });
+      const msgFile = path.join(msgDir, 'COMMIT_EDITMSG');
+      fs.writeFileSync(msgFile, snap.message);
+      const profile = profileOf(msgDir);
+      for (const h of hk.hooks) {
+        const home = newHome(`${id}-${pass}`);
+        const log = path.join(answers, `${id}.${pass}.${h}.log`);
+        const inner = [gitBin, '-c', `core.hooksPath=${hk.dir}`, 'hook', 'run', '--ignore-missing', h]
+          .concat(h === 'pre-commit' ? [] : ['--', msgFile].concat(h === 'prepare-commit-msg' ? ['message'] : []));
+        const t0 = Date.now();
+        const res = await launchCheck('hook', inner, { home, log, profile });
+        const ms = Date.now() - t0;
+        fs.rmSync(home, { recursive: true, force: true });
+        st.checks.push({ hook: h, pass, rc: res.rc, signal: res.signal || null, ms, log, tail: tailOf(log),
+          launch: { codex: codexBin, profile: profile.text, network: profile.network, writeRoots: profile.roots, home } });
+        if (res.cancelled || cancelling) return { cancelled: true };
+        if (res.error) return fail(`no safe check path: ${h} could not be launched under codex sandbox (${res.error})`);
+        // codex sandbox gives a hook killed by a signal as its exit code (137, 143): named as it comes
+        if (res.rc !== 0 || res.signal) return fail(`${h} failed (${res.signal ? `signal ${res.signal}` : `rc ${res.rc}`})`);
+      }
+      if (inject.afterChecks) inject.afterChecks({ id, privIndex });
+      // the compare after the pass, against what was recorded before it
+      const wt2 = g(['write-tree']);
+      if (wt2.rc !== 0 || wt2.out.trim() !== snap.tree) return fail('index changes are an adapter operation: the tree of the private index changed during the check');
+      const d = discover();
+      if (d.error || d.gitDir !== gitDir) return fail(`the git dir of the worktree changed during the check (${d.error || d.gitDir})`);
+      const hd = g(['symbolic-ref', '-q', 'HEAD']);
+      if (hd.rc !== 0 || hd.out.trim() !== ref) return fail(`HEAD of the worktree is not ${ref} (${hd.rc === 0 ? hd.out.trim() : 'detached'}) after the check`);
+      const tip = tipNow();
+      if (tip !== h0) return fail(`HEAD changed during the operation (recorded ${h0}): the branch is at ${tip}`);
+      const cur = await fullWalk(id, named, h0, u);
+      if (cur.cancelled) return { cancelled: true };
+      if (!cur.ok) return fail(walkWhy(cur));
+      st.walkNotes = cur.notes;
+      const out = await outsideChanges(id, named, h0, cur);
+      if (out.cancelled) return { cancelled: true };
+      if (out.error) return fail(out.error);
+      const un = untrackedDiff(u, cur);
+      for (const p of un.ignored) st.ignored.add(p);
+      const targets = new Set(out.list.filter((c) => c.kind === 'renamed').map((c) => c.path));
+      const outside = out.list.concat(un.changed.filter((c) => !(c.kind === 'created' && targets.has(c.path))));
+      if (outside.length) {
+        const staged = outside.some((c) => c.kind === 'staged');
+        return fail(`${staged ? 'the index of the worktree differs from HEAD; ' : ''}changed outside the request during the check (by the check or the role): ${listText(outside)}`, outside);
+      }
+      const changes = [];
+      for (const e of snap.entries) for (const kind of pathDiff(e.path, e.mode, e.blob) || []) changes.push({ path: e.path, kind });
+      const mm = readNoFollow(msgFile, MAX_REQUEST_BYTES);
+      if (mm.error) return fail(`the message file after the check: ${mm.error}`);
+      const ss = run(['stripspace'], { env: baseEnv(), input: mm.bytes });
+      if (ss.rc !== 0) return fail(`stripspace: ${errText(ss)}`);
+      const msg = Buffer.from(ss.out, 'utf8');
+      if (!msg.length) return fail('the message is empty after the check');
+      if (!msg.equals(snap.message)) changes.push({ kind: 'message' });
+      if (!changes.length) return { snap };
+      if (pass === 2) return fail(`the check is not stable: the second pass changed the snapshot again: ${listText(changes)}`, changes);
+      st.rechecked = true;
+      st.changed = changes;
+      const tree = treeOf(h0);
+      if (tree.error) return fail(tree.error);
+      const next = takeSnapshot(id, r, h0, tree);
+      if (next.why) return fail(next.why);
+      const conv = namedConversion(next.entries, h0);
+      if (conv) return fail(conv);
+      if (next.tree === ptree) return { nothing: true };
+      snap = Object.assign(next, { message: msg });
+      u = cur;
     }
-    if (inject.afterChecks) inject.afterChecks({ id, privIndex });
-    // the compare after the checks, against what was recorded before them
-    const wt2 = g(['write-tree']);
-    if (wt2.rc !== 0 || wt2.out.trim() !== tree) return fail('index changes are an adapter operation: the tree of the private index changed during the check');
-    const d = discover();
-    if (d.error || d.gitDir !== gitDir) return fail(`the git dir of the worktree changed during the check (${d.error || d.gitDir})`);
-    const hd = g(['symbolic-ref', '-q', 'HEAD']);
-    if (hd.rc !== 0 || hd.out.trim() !== ref) return fail(`HEAD of the worktree is not ${ref} (${hd.rc === 0 ? hd.out.trim() : 'detached'}) after the check`);
-    const tip = tipNow();
-    if (tip !== h0) return fail(`HEAD changed during the operation (recorded ${h0}): the branch is at ${tip}`);
-    const out = outsideChanges(new Set(r.paths), h0);
-    if (out.error) return fail(out.error);
-    if (out.list.length) {
-      const staged = out.list.some((c) => c.kind === 'staged');
-      return fail(`${staged ? 'the index of the worktree differs from HEAD; ' : ''}changed outside the request during the check (by the check or the role): ${listText(out.list)}`, out.list);
-    }
-    const snap = [];
-    for (const e of entries) for (const kind of pathDiff(e.path, e.mode, e.blob) || []) snap.push({ path: e.path, kind });
-    const mm = readNoFollow(msgFile, MAX_REQUEST_BYTES);
-    if (mm.error) return fail(`the message file after the check: ${mm.error}`);
-    if (!mm.bytes.equals(message)) snap.push({ kind: 'message' });
-    if (snap.length) return fail(`the check changed the snapshot; re-check comes with A2a-2b: ${listText(snap)}`, snap);
-    return { checks };
   };
 
   const processRequest = async (id, hash, r) => {
     let intentCommit = null;
     const done = (res) => finish(id, hash, res);
+    const cancelled = (extra) => done(Object.assign({ status: 'cancelled', why: 'the call ended during the check' }, extra));
     try {
       const hk = checkHooks();
       if (hk.error) return done({ status: 'refused', why: `no safe check path: ${hk.error}` });
@@ -736,62 +1129,57 @@ function openCommitService(o) {
       const pre = preflight(!checking);
       if (pre) return done({ status: 'refused', why: pre });
       const parent = expected;
+      const named = new Set(r.paths);
+      const tree = treeOf(parent);
+      if (tree.error) return done({ status: 'refused', why: tree.error });
+      const np = namedProblem(r.paths, tree);
+      if (np) return done({ status: 'refused', why: np });
+      // an untracked named path that the ignore rules hide: git add would refuse it too (no walk of the worktree here)
+      const fresh = r.paths.filter((p) => !tree.map.has(p) && exists(path.join(wtReal, p)));
+      if (fresh.length) {
+        const w = await walkRun(id, { mode: 'named', named: fresh, mirror: path.join(walkRoot, id, 'named') });
+        if (w.cancelled) return cancelled();
+        if (!w.ok) return done({ status: 'refused', why: walkWhy(w) });
+        if ((w.ignored || []).length) return done({ status: 'refused', why: `${q(w.ignored[0])}: ignored (name it with git add -f semantics is not supported)` });
+      }
+      let u0 = null, inputs = {};
       if (checking) {
-        const out = outsideChanges(new Set(r.paths), parent);
+        u0 = await fullWalk(id, named, parent, null);
+        if (u0.cancelled) return cancelled();
+        if (!u0.ok) return done({ status: 'refused', why: walkWhy(u0) });
+        inputs = { untrackedInputs: inputsOf(u0), walkNotes: u0.notes };
+        const out = await outsideChanges(id, named, parent, u0);
+        if (out.cancelled) return cancelled();
         if (out.error) return done({ status: 'refused', why: out.error });
-        if (out.list.length) return done({ status: 'refused', why: `tracked changes outside the request: ${listText(out.list)}`, changed: out.list, checks: [] });
+        if (out.list.length) return done(Object.assign({ status: 'refused', why: `tracked changes outside the request: ${listText(out.list)}`, changed: out.list, checks: [] }, inputs));
       }
-      const head = new Map();
-      const ls = g(['ls-tree', '-z', parent, '--'].concat(r.paths));
-      if (ls.rc !== 0) return done({ status: 'refused', why: `ls-tree: ${errText(ls)}` });
-      for (const rec of ls.out.split('\0').filter(Boolean)) {
-        const m = /^(\d+) (\w+) ([0-9a-f]+)\t([\s\S]*)$/.exec(rec);
-        if (m) head.set(m[4], { mode: m[1], type: m[2] });
-      }
-      const entries = [];
-      for (const p of r.paths) {
-        const h = head.get(p);
-        if (h && h.type !== 'blob') return done({ status: 'refused', why: `${q(p)}: a ${h.type === 'commit' ? 'submodule' : 'folder'} in HEAD (name its files)` });
-        const f = readNoFollow(path.join(wtReal, p), MAX_FILE_BYTES);
-        if (f.code === 'ENOENT') {
-          if (!h) return done({ status: 'refused', why: `${q(p)}: not tracked and missing` });
-          entries.push({ mode: '0', blob: ZERO, path: p });
-          continue;
-        }
-        if (f.error) return done({ status: 'refused', why: `${q(p)}: ${f.error}` });
-        const b = g(['hash-object', '-w', '--stdin', '--no-filters'], { input: f.bytes });
-        if (b.rc !== 0) return done({ status: 'refused', why: `hash-object ${q(p)}: ${errText(b)}` });
-        entries.push({ mode: f.st.mode & 0o100 ? '100755' : '100644', blob: b.out.trim(), path: p });
-      }
-      if (inject.afterSnapshot) inject.afterSnapshot({ id, entries });
-      fs.rmSync(privIndex, { force: true });
-      const rt = g(['read-tree', parent]);
-      if (rt.rc !== 0) return done({ status: 'refused', why: `read-tree: ${errText(rt)}` });
-      const ui = g(['update-index', '-z', '--index-info'], { input: indexLines(entries) });
-      if (ui.rc !== 0) return done({ status: 'refused', why: `update-index: ${errText(ui)}` });
-      const wtree = g(['write-tree']);
-      if (wtree.rc !== 0) return done({ status: 'refused', why: `write-tree: ${errText(wtree)}` });
-      const tree = wtree.out.trim();
+      const first = takeSnapshot(id, r, parent, tree);
+      if (first.why) return done({ status: 'refused', why: first.why });
+      let { entries, tree: treeId } = first;
       const ptree = g(['rev-parse', `${parent}^{tree}`]).out.trim();
-      if (tree === ptree) return done({ status: 'nothing' });
+      if (treeId === ptree) return done({ status: 'nothing' });
       let message = Buffer.from(r.message, 'utf8');
       let extra = {};
       if (checking) {
-        const conv = conversionProblem();
-        if (conv) return done({ status: 'refused', why: `conversion not supported until A2a-2b: ${conv}` });
+        const conv = namedConversion(entries, parent);
+        if (conv) return done({ status: 'refused', why: conv });
         const ss = run(['stripspace'], { env: baseEnv(), input: message });
         if (ss.rc !== 0) return done({ status: 'refused', why: `stripspace: ${errText(ss)}` });
         message = Buffer.from(ss.out, 'utf8');
-        const res = await runChecks(id, r, entries, message, hk, tree, parent);
-        extra = { checks: res.checks, environment: { writeRoots: roleRoots().concat([path.join(msgRoot, `${id}-1`)]), network, reads: 'the whole disk except the denials of the profile',
-          untracked: 'not part of the commit' } };
+        const st = { checks: [], changed: null, rechecked: false, ignored: new Set(), msgDir: null, walkNotes: null };
+        const res = await runChecks(id, r, Object.assign(first, { message }), hk, parent, ptree, u0, st);
+        extra = Object.assign({ checks: st.checks, rechecked: st.rechecked,
+          environment: { writeRoots: roleRoots().concat(st.msgDir ? [st.msgDir] : []), network, reads: 'the whole disk except profile denials', untracked: 'not part of the commit' } },
+        inputs, st.walkNotes ? { walkNotes: st.walkNotes } : {}, st.ignored.size ? { ignoredChanged: [...st.ignored].sort() } : {}, st.changed ? { changed: st.changed } : {});
         if (res.cancelled) return done(Object.assign({ status: 'cancelled', why: 'the call ended during the check' }, extra));
-        if (res.why) return done(Object.assign({ status: 'refused', why: res.why }, res.changed ? { changed: res.changed } : {}, extra));
+        if (res.why) return done(Object.assign({ status: 'refused', why: res.why }, extra, res.changed ? { changed: res.changed } : {}));
+        if (res.nothing) return done(Object.assign({ status: 'nothing' }, extra));
+        ({ entries, tree: treeId, message } = res.snap);
         if (inject.afterFinalCompare) inject.afterFinalCompare({ id });
       }
       // from here to the result nothing awaits: a call that ends now waits for the result (close)
-      append({ ev: 'intent', id, hash, paths: r.paths, parent, tree, ref, entries });
-      const ct = g(['commit-tree', '--no-gpg-sign', tree, '-p', parent, '-F', '-'], { input: message });
+      append({ ev: 'intent', id, hash, paths: r.paths, parent, tree: treeId, ref, entries });
+      const ct = g(['commit-tree', '--no-gpg-sign', treeId, '-p', parent, '-F', '-'], { input: message });
       if (ct.rc !== 0) return done(Object.assign({ status: 'refused', why: `commit-tree: ${errText(ct)}` }, extra));
       const sha = ct.out.trim();
       append({ ev: 'intent-commit', id, sha, old: parent });
@@ -816,6 +1204,8 @@ function openCommitService(o) {
         if (tip === intentCommit.sha) { expected = tip; return done({ status: 'committed', sha: tip, paths: r.paths, indexSync: 'failed' }); }
       }
       return done({ status: 'refused', why: `internal error: ${String(e && e.message).slice(0, 300)}` });
+    } finally {
+      try { fs.rmSync(path.join(walkRoot, id), { recursive: true, force: true }); } catch { /* the walk folders of a call are only clutter */ }
     }
   };
 

@@ -4,6 +4,26 @@ Every version of the codis-agents plugin, newest first. What the plugin does now
 [README.md](README.md); its [Technical reference](README.md#technical-reference) is the current state of every rule,
 key and script, and this file says when and why each one changed. Versions before 0.4.14 are in the git history.
 
+## 0.4.34 - 2026-11-07
+
+- **The re-check, the untracked files, the paths of a request and the limits of the walk** (p-codex A2a-2b; owner
+  2026-11-06: answers 1, 2, 5, G7; owner 2026-11-07 on the walk). A check that changes a named path or the message
+  now gets one re-check: a new snapshot and the hooks again (`rechecked`, `changed`), a second change refuses
+  `the check is not stable`, a tree equal to the parent's is `nothing`, an empty message refuses; the message is
+  compared after `git stripspace`. New `scripts/commit-walk.js`, a process of its own under limits
+  (`commit.walkMaxEntries` 200 000, `commit.walkTimeoutMs` 15 s, `walkMaxResultBytes`, `walkMaxIgnoreBytes`,
+  `walkMaxReadBytes`; any limit, a crash or a folder replaced during the walk refuses `no safe check path` with
+  "walked N entries, the walk did not finish"; the end of the call and SIGTERM remove it): untracked files created,
+  changed or removed by a check refuse, classed by the ignore rules before the pass, so a hook cannot hide its writes
+  with a `.gitignore`; ignored ones are listed (`ignoredChanged`); `untrackedInputs` names the inputs of a check.
+  Renames are paired (`renamed`, `from`). A compare through a conversion runs inside the sandbox, after the probe,
+  with the attributes of the tip and the user's conversion keys as `-c`; a named path with a conversion is refused
+  with its path (`core.eol` alone is no longer refused: it converts nothing). Named paths: a link is committed as a
+  link entry; a path inside a gitlink, under a tracked file, another spelling of a tracked entry (by dev and inode) and
+  an untracked ignored path are refused, on the path without hooks too. Lists in an answer are cut to 200 entries
+  with counts and `changesFile`; the journal holds only the counts. New `tests/commit-recheck.test.js`; the cells of
+  2a that refused a changed snapshot and the link path now expect the re-check and the link entry.
+
 ## 0.4.33 - 2026-11-06
 
 - **The checks of a commit run inside the role's sandbox** (p-codex A2a-2a; owner 2026-11-06: answers 4 to 6 of the
