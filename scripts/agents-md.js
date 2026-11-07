@@ -405,9 +405,12 @@ function enabledConfig(file, raw) {
   return next;
 }
 
+const TOML_NAMED_ESCAPES = { b: '\b', t: '\t', n: '\n', f: '\f', r: '\r', e: '\x1b', '"': '"', '\\': '\\' };
+
 // The statements of a TOML text: [{kind: 'table', path, line} | {kind: 'key', path, line, raw, top}]; raw is the value
 // as written, top says it is before the first table header. It reads the structure the top level depends on (strings,
-// arrays, inline tables, comments), not the types of scalars. Throws {tomlLine, message} where the structure breaks.
+// arrays, inline tables, comments, the escapes of one-line strings), not the types of scalars; a key comes back decoded.
+// Throws {tomlLine, message} where the structure breaks.
 function tomlStatements(text) {
   const out = [];
   let i = 0, line = 1, top = true;
@@ -427,6 +430,14 @@ function tomlStatements(text) {
     if (text[i] === '\r' && text[i + 1] === '\n') i++;
     if (i < text.length && text[i] !== '\n') bad('expected the end of the line');
   };
+  // The escapes of a TOML basic string, the set codex-cli 0.166.0 accepts (measured): a key spelled with them is the same
+  // key for Codex, and any other escape, or a code that is no Unicode scalar value, makes it refuse the file.
+  const basicString = (raw) => raw.replace(/\\(?:x([0-9a-fA-F]{2})|u([0-9a-fA-F]{4})|U([0-9a-fA-F]{8})|([btnfre"\\])|)/g, (seq, x, u, U, named) => {
+    if (named) return TOML_NAMED_ESCAPES[named];
+    const code = parseInt(x || u || U, 16);
+    if (Number.isNaN(code) || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)) bad('a string has an escape TOML does not define');
+    return String.fromCodePoint(code);
+  });
   const oneLine = (q) => {
     let j = i + 1;
     for (;; j++) {
@@ -436,8 +447,7 @@ function tomlStatements(text) {
     }
     const raw = text.slice(i + 1, j);
     i = j + 1;
-    if (q !== '"') return raw;
-    try { return JSON.parse(`"${raw}"`); } catch { return raw; }
+    return q === '"' ? basicString(raw) : raw;
   };
   const bare = /[A-Za-z0-9_-]+/y;
   const key = () => {
