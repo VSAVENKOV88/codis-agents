@@ -3,7 +3,8 @@
 // tests/commit-recheck.test.js with its own tally: names of files that git check-ignore would read as pathspec magic
 // (a file is classed by its own name, as git status does, so a hook cannot hide a write under a name; answer 2, G2),
 // the path lists of an answer stay within the first 200 entries whatever field holds them, the notes of one answer
-// sharing them, and the whole lists stay in a file of the adapter (G11), the rules of the ignore
+// sharing them, and the whole lists stay in a file of the adapter (G11), that file and the memory of the adapter stay
+// bounded when deleted files and copies multiply (G1, G8), tracked names and rename pairs of such names, the rules of the ignore
 // classes (a rule written into a named .gitignore in the same pass, .git/info/exclude), the owner's numbers of the walk
 // (200 000 entries, 15 s), the keys of the limits through createAgent. Real git repositories in a temporary folder, the
 // real codex sandbox without a model.
@@ -144,6 +145,103 @@ const write = (f, n, body) => { fs.mkdirSync(path.dirname(f.w(n)), { recursive: 
       a && a.status === 'committed' && inputs.includes(':(top)d/seen.txt') && inputs.includes(':(top)d/.gitignore') && !inputs.includes(':(top)d/hidden.txt'), J(a));
     await s.close();
   }
+  // ---- every file is classed as git status classes it, whatever its name says to another git command. The same file
+  // can be spelled NFD on the disk and NFC by git status (core.precomposeunicode), so the lists are compared in NFC.
+  const NASTY = ['*', '?', '[a]', 'x*.log', 'y[a].log', 'back\\slash', 'new\nline', ' lead', 'trail ', '#c', '!n', '"q"', "'s'", '-dash', '--stdin', ':/x', ':!z', ':^z',
+    ':(top)a', ':(glob)g', ':(exclude)e', ':(icase)i', ':(attr:x)y', ':(literal)l', ':(top)build/x', 'd/:(top)y', 'build/:(top)z', ':(top)d2/w', 'é-nfd.txt', '..foo', '...',
+    'tab\tname', ':(top)x.log', 'a:b', 'ctl\x01x', 'build2/up.txt'];
+  const statusOf = (f) => {
+    const p = spawnSync(GIT, ['status', '--porcelain', '-z', '--untracked-files=all', '--ignored=traditional'], { cwd: f.wt, encoding: 'utf8', env: SETUP_ENV });
+    const of = (tag) => p.stdout.split('\0').filter((e) => e.startsWith(`${tag} `)).map((e) => e.slice(3).normalize('NFC')).filter((e) => e !== 'n.txt').sort();
+    return { untracked: of('??'), ignored: of('!!') };
+  };
+  const same = (a, b) => JSON.stringify(a.map((x) => x.normalize('NFC')).sort()) === JSON.stringify(b);
+  const ignoreRules = (f) => { // BUILD2/ in another case: the rules read with the core.ignorecase of the repository
+    write(f, '.gitignore', 'build/\n*.log\nBUILD2/\n');
+    git(f.wt, ['add', '.gitignore']);
+    git(f.wt, ['commit', '-q', '-m', 'rules']);
+    f.h0 = f.tip();
+  };
+  {
+    const f = fixture('true');
+    ignoreRules(f);
+    for (const n of NASTY) write(f, n, 'input\n');
+    write(f, 'n.txt', 'n\n');
+    const s = service(f);
+    const a = await answer(s, ask(s, ['n.txt']));
+    const st = statusOf(f);
+    ok('T13 names of every kind before a check: untrackedInputs is what git status calls untracked, and nothing it ignores',
+      a && a.status === 'committed' && a.untrackedInputsCount === st.untracked.length && same(a.untrackedInputs || [], st.untracked) && st.ignored.some((x) => x.includes(':(top)')), J({ a, st }));
+    await s.close();
+  }
+  {
+    const gen = path.join(BASE, 'gen-nasty.js');
+    fs.writeFileSync(gen, `const fs=require('fs'),path=require('path');for(const n of ${JSON.stringify(NASTY)}){fs.mkdirSync(path.dirname(n),{recursive:true});fs.writeFileSync(n,'h\\n');}`);
+    const f = fixture(`"${process.execPath}" "${gen}"`);
+    ignoreRules(f);
+    write(f, 'n.txt', 'n\n');
+    const s = service(f);
+    const a = await answer(s, ask(s, ['n.txt']));
+    const st = statusOf(f);
+    ok('T14 a hook wrote names of every kind: each one git status calls untracked is in changed, each one it ignores in ignoredChanged, no commit',
+      a && a.status === 'refused' && f.tip() === f.h0 && same(pathsOf(a), st.untracked) && same(a.ignoredChanged || [], st.ignored), J({ a, st }));
+    await s.close();
+  }
+  {
+    const names = [':(top)a.txt', ':(exclude)z', ':', ':!z', ':(glob)*', '*', '[a]', 'dir/:(top)x', ':(top)dir/y'];
+    const f = fixture('true');
+    for (const n of names) write(f, n, `v0 ${n}\n`);
+    git(f.wt, ['add', '--'].concat(names.map((n) => `:(literal)${n}`)));
+    git(f.wt, ['commit', '-q', '-m', 'names']);
+    const count = () => git(f.wt, ['ls-tree', '-r', '--name-only', 'task']).out.split('\n').length;
+    const before = count();
+    const s = service(f);
+    for (const n of names) {
+      write(f, n, `v1 ${n}\n`);
+      write(f, 'n.txt', `${n}\n`);
+      const tip = f.tip();
+      const a = await answer(s, ask(s, ['n.txt']));
+      ok(`T15 tracked ${n}, changed and not named -> refused with its path`, a && a.status === 'refused' && pathsOf(a).includes(n) && f.tip() === tip, J(a));
+      const b = await answer(s, ask(s, [n]));
+      ok(`T15 tracked ${n} named -> committed under that name alone`, b && b.status === 'committed' && git(f.wt, ['cat-file', '-p', `task:${n}`]).out === `v1 ${n}` && count() === before, J(b));
+      fs.rmSync(f.w('n.txt'));
+    }
+    await s.close();
+  }
+  {
+    const f = fixture('true');
+    write(f, ':(top)r1', 'the bytes of the pair\n');
+    git(f.wt, ['add', '--', ':(literal):(top)r1']);
+    git(f.wt, ['commit', '-q', '-m', 'r']);
+    fs.renameSync(f.w(':(top)r1'), f.w(':(glob)r2'));
+    write(f, 'n.txt', 'n\n');
+    const s = service(f);
+    const a = await answer(s, ask(s, ['n.txt']));
+    ok('T16 a rename between such names -> refused, the pair named', a && a.status === 'refused' && (a.changed || []).some((c) => c.kind === 'renamed' && c.from === ':(top)r1' && c.path === ':(glob)r2'), J(a));
+    await s.close();
+  }
+  {
+    const f = fixture('true');
+    for (let i = 0; i < 260; i++) write(f, `t/f${i}.txt`, `b${i}\n`);
+    git(f.wt, ['add', 't']);
+    git(f.wt, ['commit', '-q', '-m', 't']);
+    for (let i = 0; i < 260; i++) {
+      for (let k = 0; k < 3; k++) write(f, `build/c${i}-${k}.txt`, `b${i}\n`);
+      fs.rmSync(f.w(`t/f${i}.txt`));
+    }
+    write(f, 'n.txt', 'n\n');
+    const s = service(f);
+    const id = ask(s, ['n.txt']);
+    const a = await answer(s, id, 120000);
+    const text = fs.readFileSync(path.join(s.answers, `${id}.json`), 'utf8');
+    const whole = a && a.changesFile ? readJson(a.changesFile) : null;
+    const copies = (t) => (t.match(/build\/c\d+-\d/g) || []).length;
+    const journal = fs.readFileSync(path.join(f.state, 'K', 'commits.jsonl'), 'utf8');
+    ok('T17 260 deleted files with 3 ignored copies each: 200 entries, 200 paths in their notes, the whole of both in the file, no internal field, none in the journal',
+      a && a.changed.length === 200 && a.changedCount === 260 && copies(text) === 200 && whole.changed.length === 260 && copies(JSON.stringify(whole.changed)) === 780
+        && !text.includes('ignoredCopies') && !JSON.stringify(whole).includes('ignoredCopies') && copies(journal) === 0, J({ count: a && a.changedCount, shown: copies(text), file: a && a.changesFile, journal: copies(journal) }));
+    await s.close();
+  }
   // ---- G11: the paths of an answer are cut in every field
   {
     const f = fixture('true');
@@ -227,6 +325,37 @@ const write = (f, n, body) => { fs.mkdirSync(path.dirname(f.w(n)), { recursive: 
       a && a.status === 'refused' && a.changed.length === 200 && a.changedCount === 300 && pairs === 300 && a.changesFile.startsWith(f.state + path.sep), J({ count: a && a.changedCount, file: a && a.changesFile, pairs }));
     await s.close();
   }
+  // ---- every deleted file pairs with every copy (G8), so the lists grow as a product of what the walk's limits bound
+  // one by one; what the adapter holds and writes for one request stays bounded (G1: the volume of accumulated results;
+  // the default walk limit on results is 64 MiB). 8000 x 8000 ignored copies ended the adapter with an out of memory.
+  const product = async (tag, D, C, dir) => {
+    const f = fixture('true');
+    const long = 'L'.repeat(150);
+    fs.mkdirSync(f.w('t'));
+    for (let i = 0; i < D; i++) fs.writeFileSync(f.w(`t/f${i}.txt`), 'same\n');
+    git(f.wt, ['add', 't']);
+    git(f.wt, ['commit', '-q', '-m', 't']);
+    fs.mkdirSync(f.w(`${dir}/${long}`), { recursive: true });
+    for (let i = 0; i < C; i++) fs.writeFileSync(f.w(`${dir}/${long}/c${i}.txt`), 'same\n');
+    fs.rmSync(f.w('t'), { recursive: true });
+    write(f, 'n.txt', 'n\n');
+    const s = service(f);
+    const tip = f.tip();
+    const a = await answer(s, ask(s, ['n.txt']), 120000);
+    const bytes = a && a.changesFile ? fs.statSync(a.changesFile).size : 0;
+    ok(`T18 ${tag}: ${D} deleted x ${C} copies -> refused for its reason, no internal error, the file of the lists within 64 MiB`,
+      a && a.status === 'refused' && f.tip() === tip && !/internal error/.test(a.why || '') && bytes <= 64 * 1024 * 1024, J({ why: a && (a.why || '').slice(0, 200), bytes }));
+    fs.rmSync(f.w('n.txt'));
+    git(f.wt, ['checkout', '-q', 'task', '--', 't']);
+    fs.rmSync(f.w(dir), { recursive: true });
+    write(f, 'after.txt', 'after\n');
+    const b = await answer(s, ask(s, ['after.txt']));
+    ok(`T18 ${tag}: the adapter goes on: the next request is committed`, b && b.status === 'committed', J(b));
+    await s.close();
+  };
+  await product('ignored copies', 1500, 1500, 'build');
+  await product('copies', 1500, 1500, 'plain');
+  await product('ignored copies, a string longer than node holds', 3000, 3000, 'build');
   // ---- the classes
   {
     const f = fixture("printf 'evil.txt\\n' >> .gitignore; echo evil > evil.txt");
