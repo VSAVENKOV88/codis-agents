@@ -18,6 +18,9 @@ const DIFFERS = {
     + 'error, so the task stops as "the tester changed what the role may not: the output does not pass the schema of the step" instead of "returned no result"',
   'post-check without a result -> stop (not a silent ok)': 'the same for {diff: null, left}: diff is a required object of POST_SCHEMA, exec answers the '
     + 'noJson object of the step with the schema error, and the task stops on it - still stopped before the review, with another text',
+  'B1-b2a under the Workflow a field stepDir is ignored: the wait step and the selection copy stay in the task folder': 'a cell of the Workflow '
+    + 'alone: with exec (the conductor runtime) the field stepDir is the steps folder of the run, so the wait step lives there and starts with --once '
+    + '(p-codex-B1-b2a); the conductor itself gives stepDir and parseTasks refuses it from a tasks file (tests/chain-run-reconcile.test.js X2)',
 };
 
 const runIn = (env) => {
