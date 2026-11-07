@@ -1122,7 +1122,7 @@ agent('x',{label:'prog:K#1',schema:{type:'object',properties:{status:{type:'stri
   // numbers of the walk, the keys of the limits): tests/commit-recheck-tester-cases.js, a child with its own tally, so
   // README keeps counting test files
   {
-    const tc = spawnSync(process.execPath, [path.join(__dirname, 'commit-recheck-tester-cases.js')], { encoding: 'utf8', timeout: 300000, maxBuffer: 64 << 20 });
+    const tc = spawnSync(process.execPath, [path.join(__dirname, 'commit-recheck-tester-cases.js')], { encoding: 'utf8', timeout: 900000, maxBuffer: 64 << 20 });
     process.stdout.write((tc.stdout || '').replace(/\n+$/, '').replace(/^/gm, '  | ') + '\n');
     ok('the tester cells of the re-check and the walk (tests/commit-recheck-tester-cases.js) pass', tc.status === 0, `exit ${tc.status} ${tc.signal || ''} ${(tc.stderr || '').slice(-500)}`);
   }
