@@ -119,7 +119,7 @@
       },
       "description": "The project's shared stand: one Docker stack that tasks take in turn by ticket (scripts/stand.sh) instead of building their own. The plugin only calls these commands, with zsh in stand.cwd (repoDir without it); what they do is the project's."
     },
-    "agentsMd": { "type": "boolean", "default": false, "description": "AGENTS.md for Codex generated from CLAUDE.md with its @imports expanded (scripts/agents-md.js). true - connected: the root AGENTS.md must exist and be what agents-md.js write generates now (agents-md.js check is red when it is missing, stale, edited by hand or foreign); false or left out - not used, and a generated AGENTS.md left in the project is red. agents-md.js write --enable writes the file and sets this key in one step." },
+    "agentsMd": { "type": "boolean", "default": false, "description": "AGENTS.md for Codex generated from each tracked CLAUDE.md with its @imports expanded (scripts/agents-md.js). true - connected: every expected AGENTS.md must exist and be what agents-md.js write generates now, and each chain of them must fit project_doc_max_bytes of .codex/config.toml, 32768 without it (agents-md.js check is red when one is missing, stale, edited by hand or foreign, or a chain is over the limit); false or left out - not used, and a generated AGENTS.md left in the project is red. agents-md.js write --enable writes the files and sets the key in one step, or changes nothing." },
     "remoteRun": {
       "type": "object", "additionalProperties": false,
       "properties": {
