@@ -542,7 +542,6 @@ function codexConfig(root, rel_) {
   const refuse = (l) => { r.unusable = true; r.problems.push(l); };
   let text;
   try { text = decode(buf, rel_); } catch (e) { refuse(e.lines[0]); return r; }
-  if (text[0] === '\uFEFF') text = text.slice(1);
   let list;
   try { list = tomlStatements(text); } catch (e) {
     if (e.tomlLine === undefined) throw e;
