@@ -735,6 +735,26 @@ agent('x',{label:'prog:K#1',schema:{type:'object',properties:{status:{type:'stri
       && ['shut', 'ro/two'].every((p) => (a.walkNotes || []).some((n) => n.startsWith(`${p}:`))), J(a));
     await s.close();
   }
+  {
+    const f = fixture({ hooks: { 'pre-commit': 'chmod 755 hid; echo evil >> hid/old; chmod 000 hid' } });
+    fs.mkdirSync(f.w('hid'));
+    fs.writeFileSync(f.w('hid/old'), 'o');
+    fs.chmodSync(f.w('hid'), 0);
+    const s = service(f);
+    fs.writeFileSync(f.w('a.txt'), 'x\n');
+    const a = await answer(s, ask(s, ['a.txt']));
+    ok('CK2-13d a file inside rewritten, the folder listing the same (only its ctime moves) -> refused, modified', a && a.status === 'refused' && has1(a, 'modified hid') && f.tip() === f.h0, J(a));
+    await s.close();
+  }
+  {
+    const f = fixture({ hooks: { 'pre-commit': '' } });
+    for (let i = 0; i < 10; i++) { fs.mkdirSync(f.w(`d${i}`)); fs.chmodSync(f.w(`d${i}`), 0); }
+    const s = service(f, { walkMaxResultBytes: 1500 });
+    fs.writeFileSync(f.w('a.txt'), 'x\n');
+    const a = await answer(s, ask(s, ['a.txt']));
+    ok('CK2-13d the entries of such folders count in the volume of results -> refused, the hooks did not run', a && a.status === 'refused' && /no safe check path: results/.test(a.why) && f.marks().length === 0, J(a));
+    await s.close();
+  }
   // ---- CK2-13b: the bytes read for hashes, before and after the hooks
   {
     const f = fixture({ hooks: { 'pre-commit': '' } });
