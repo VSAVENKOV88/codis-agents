@@ -110,11 +110,12 @@ function disk(name) {
 // one failure of a write to the journal, by what the line says; the wrap stays until restored
 const real = { writeSync: fs.writeSync, fsyncSync: fs.fsyncSync, ftruncateSync: fs.ftruncateSync };
 const enospc = () => Object.assign(new Error('ENOSPC: no space left on device, write'), { code: 'ENOSPC' });
-function failResultLine(mode) {
+function failResultLine(mode, ev) {
   if (fs.writeSync !== real.writeSync) return;
+  const mark = `"ev":"${ev || 'result'}"`;
   let hit = false;
   fs.writeSync = function writeSync(fd, data, ...rest) {
-    if (typeof data !== 'string' || !data.includes('"ev":"result"')) return real.writeSync.call(fs, fd, data, ...rest);
+    if (typeof data !== 'string' || !data.includes(mark)) return real.writeSync.call(fs, fd, data, ...rest);
     hit = true;
     if (mode === 'throw') throw enospc();
     if (mode === 'short' || mode === 'short-no-truncate') return real.writeSync.call(fs, fd, data.slice(0, 20));
@@ -188,6 +189,22 @@ const restore = () => { Object.assign(fs, real); };
       a && a.status === 'committed' && a.sha === f.tip() && /ENOSPC/.test(a.changesFileError || '') && !a.changesFile && a.ignoredChangedCount === 201 && res.length === 1 && res[0].status === 'committed', J({ a: a && { status: a.status, why: a.why, e: a.changesFileError, n: a.ignoredChangedCount }, res: res.map((e) => e.status) }));
     await s.close();
     v.close();
+  }
+  {
+    // a write that fails at the rename, after the temporary file is made
+    const f = fixture();
+    const s = service(f);
+    f.write('a.txt', 'v1\n');
+    const id = newId();
+    fs.mkdirSync(path.join(s.answers, `${id}.json`));
+    askAs(s, id, ['a.txt']);
+    await until(() => f.events(id, 'result').length > 0);
+    await sleep(300);
+    ok('LF-10 a folder at the place of the answer: no temporary file stays', fs.readdirSync(s.answers).join() === `${id}.json`, J(fs.readdirSync(s.answers)));
+    fs.rmSync(path.join(s.answers, `${id}.json`), { recursive: true });
+    const a = await answer(s, id);
+    ok('LF-10 the folder removed: committed with the sha', a && a.status === 'committed' && a.sha === f.tip(), J(a));
+    await s.close();
   }
   // ---- LF-11: the write of the result line itself fails
   for (const mode of ['throw', 'short', 'fsync', 'short-no-truncate']) {
@@ -267,6 +284,52 @@ const restore = () => { Object.assign(fs, real); };
     const third = await answer(s3, askAs(s3, id, ['a.txt']));
     ok('LF-11 the write works again: the start after that records the result, one line', third && third.sha === a.sha && f.events(id, 'result').length === 1, J(third));
     await s3.close();
+  }
+  {
+    // an intent line torn, its cut failing: the journal must not take another line after it
+    const f = fixture();
+    const s = service(f);
+    failResultLine('short-no-truncate', 'intent');
+    f.write('a.txt', 'v1\n');
+    const a = await answer(s, ask(s, ['a.txt']));
+    restore();
+    ok('LF-11 a torn intent line that cannot be cut: refused, the branch stays', a && a.status === 'refused' && f.tip() === f.h0, J(a));
+    f.write('b.txt', 'v1\n');
+    const a2 = await answer(s, ask(s, ['b.txt']));
+    ok('LF-11 a torn line stays: the next request of the call is refused and names the journal, nothing is appended after it', a2 && a2.status === 'refused' && /journal/.test(a2.why || '') && f.tip() === f.h0 && !f.journal().endsWith('\n'), J({ a2, tail: f.journal().slice(-40) }));
+    await s.close();
+    const notes = [];
+    const s2 = service(f, { log: (m) => notes.push(m) });
+    const a3 = await answer(s2, ask(s2, ['a.txt']));
+    ok('LF-11 the next start cuts the torn line off, names it, and commits', a3 && a3.status === 'committed' && notes.some((n) => n.includes('torn')) && !notes.some((n) => n.includes('damaged')), J({ a3, notes }));
+    await s2.close();
+  }
+  {
+    // the tip is neither the intent's sha nor its old value, and the line that says so cannot be written
+    const f = fixture();
+    armed = true;
+    const s = service(f, { inject: { afterUpdateRef: armOnce('throw') } });
+    f.write('a.txt', 'v1\n');
+    await answer(s, ask(s, ['a.txt']));
+    restore();
+    await s.close();
+    fs.writeFileSync(path.join(f.wt, 'c.txt'), 'outside\n');
+    git(f.wt, ['add', 'c.txt']);
+    git(f.wt, ['commit', '-q', '-m', 'outside']);
+    failResultLine('throw', 'undetermined');
+    let s2 = null, thrown = null;
+    try { s2 = service(f); } catch (e) { thrown = e; }
+    ok('LF-11 the line of an undetermined step cannot be written: the service opens and refuses by that reason', !thrown && s2, String(thrown));
+    if (s2) {
+      f.write('b.txt', 'v1\n');
+      const a = await answer(s2, ask(s2, ['b.txt']));
+      ok('LF-11 undetermined without its line: requests are refused, naming it', a && a.status === 'refused' && /undetermined/.test(a.why || ''), J(a));
+      await s2.close();
+    }
+    restore();
+    const s3 = service(f);
+    await s3.close();
+    ok('LF-11 undetermined: the next start writes its line', f.events(null, 'undetermined').length === 1, J(f.events(null, 'undetermined')));
   }
   {
     // a step that throws after the branch moved and before the result
