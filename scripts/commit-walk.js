@@ -85,14 +85,17 @@ function copyIgnore(rel, name) {
   }
 }
 
-// The paths git check-ignore finds ignored by the rules of a mirror.
+// The paths git check-ignore finds ignored by the rules of a mirror. check-ignore reads its input as pathspecs and
+// refuses the literal magic, so a name that starts with ":" would be parsed as magic (":(top)build/x" is classed as
+// build/x, ":(glob)y" fails); every path goes with the prefix "./", which leaves the name as it is, and git echoes the
+// input, so the answer loses the prefix again.
 function ignoredBy(mirror, paths) {
   if (!paths.length) return new Set();
   fs.mkdirSync(mirror, { recursive: true });
-  const p = gitRun(['check-ignore', '--no-index', '-z', '--stdin'], Buffer.from(paths.join('\0') + '\0'), { cwd: mirror, env: Object.assign({}, job.gitEnv, { GIT_WORK_TREE: mirror }) });
+  const p = gitRun(['check-ignore', '--no-index', '-z', '--stdin'], Buffer.from(paths.map((x) => `./${x}\0`).join('')), { cwd: mirror, env: Object.assign({}, job.gitEnv, { GIT_WORK_TREE: mirror }) });
   if (p.error && p.error.code === 'ETIMEDOUT') limit('timeout');
   if (p.status !== 0 && p.status !== 1) stop('walk', `git check-ignore failed (rc ${p.status}): ${String(p.stderr || p.error || '').slice(0, 300)}`);
-  return new Set(p.stdout.toString('utf8').split('\0').filter(Boolean));
+  return new Set(p.stdout.toString('utf8').split('\0').filter(Boolean).map((x) => x.slice(2)));
 }
 
 function trackedOf() {

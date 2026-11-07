@@ -74,8 +74,9 @@
 // git stripspace) gives one re-check (owner answer 1): a new snapshot, and the hooks again on it; a tree equal to the
 // parent's is "nothing"; a second change refuses "the check is not stable". An empty message after a pass refuses.
 // Nothing is rolled back or added after a refusal: the worktree stays as the check left it. The commit gets the tree
-// and the message of the last pass. Lists in an answer are cut to the first LIST_SHOWN entries with a count, the whole
-// lists go to <id>.changes.json in the answers, and the journal holds only the counts. Untracked and ignored files of
+// and the message of the last pass. Lists in an answer are cut to the first LIST_SHOWN entries with a count, and the
+// notes of those entries to LIST_SHOWN paths in all; the whole lists go to <id>.changes.json in the answers, and the
+// journal holds only the counts. Untracked and ignored files of
 // the worktree, and any file outside it, can influence a check and are not part of the commit (README, Known gaps).
 //
 // The journal of the task (<stateDir>/<task>/commits.jsonl, owner B 2026-11-06 answers 12, 13): one writer (a lock
@@ -123,6 +124,21 @@ const WALKER = path.join(__dirname, 'commit-walk.js');
 const WALK_LIMITS = { entries: 200000, timeoutMs: 15000, resultBytes: 64 * 1024 * 1024, ignoreBytes: 16 * 1024 * 1024, readBytes: 1024 * 1024 * 1024 };
 const WALK_HEAP_MB = 1024;
 const LIST_SHOWN = 200;
+// The entries of a list of changes with the ignored copies of a deleted file as a note. The notes share an allowance of
+// paths, so the size of an answer does not grow with the number of copies.
+const withCopyNotes = (list, allowance) => {
+  let room = allowance;
+  return list.map(({ ignoredCopies: copies, ...c }) => {
+    if (!copies) return c;
+    const n = Math.min(copies.length, room);
+    room -= n;
+    const shown = copies.slice(0, n).join(', ');
+    const note = n === copies.length ? `the same content at the ignored path ${shown}`
+      : n ? `the same content at the ignored path ${shown} and ${copies.length - n} more (the whole list in changesFile)`
+        : `the same content at ${copies.length} ignored paths (the whole list in changesFile)`;
+    return Object.assign(c, { note });
+  });
+};
 const LIST_KEYS = ['changed', 'untrackedInputs', 'ignoredChanged', 'walkNotes'];
 const isIgnoreFile = (p) => /(^|\/)\.gitignore$/i.test(p);
 // The probe of the sandbox, run inside it: argv canary, npm cache, port of the adapter's listener; one JSON line.
@@ -470,7 +486,10 @@ function openCommitService(o) {
   const local = new Map(); // id -> result, for the calls that may not write the journal
   const finish = (id, hash, res) => {
     const r = Object.assign({ status: res.status }, res);
-    // a long list: the first entries and a count in the answer, the whole of it in a file of the adapter
+    // a long list: the first entries and a count in the answer, the whole of it in a file of the adapter; the same for
+    // the paths in the notes of the entries shown
+    const raw = r.changed;
+    if (Array.isArray(raw)) r.changed = withCopyNotes(raw, Infinity);
     const whole = {};
     let cut = false;
     for (const k of LIST_KEYS) {
@@ -478,6 +497,11 @@ function openCommitService(o) {
       whole[k] = r[k];
       r[`${k}Count`] = r[k].length;
       if (r[k].length > LIST_SHOWN) { cut = true; r[k] = r[k].slice(0, LIST_SHOWN); }
+    }
+    if (Array.isArray(raw)) {
+      const first = raw.slice(0, LIST_SHOWN);
+      r.changed = withCopyNotes(first, LIST_SHOWN);
+      if (first.reduce((n, c) => n + (c.ignoredCopies ? c.ignoredCopies.length : 0), 0) > LIST_SHOWN) cut = true;
     }
     if (cut) {
       r.changesFile = path.join(answers, `${id}.changes.json`);
@@ -798,7 +822,7 @@ function openCommitService(o) {
       const same = cands.filter((x) => w.ids[x.p] === e.oid && (x.t === 'l') === (e.mode === '120000'));
       const plain = same.filter((x) => !x.i);
       if (plain.length) { for (const x of plain) out.push({ kind: 'renamed', from: c.path, path: x.p }); continue; }
-      out.push(same.length ? Object.assign({}, c, { note: `the same content at the ignored path ${same.map((x) => x.p).join(', ')}` }) : c);
+      out.push(same.length ? Object.assign({}, c, { ignoredCopies: same.map((x) => x.p) }) : c);
     }
     return { list: out };
   };
