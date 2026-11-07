@@ -163,19 +163,19 @@ async function answer(s, id, ms) {
     await s.close();
   }
 
-  // ---- T5: the check sets the x bit of a named path -> the snapshot changed (mode)
+  // ---- T5: the check sets the x bit of a named path -> the snapshot changed (mode): one re-check, the commit has it
   {
     const f = fixture({ 'pre-commit': 'chmod +x a.txt' });
     const s = service(f);
     fs.writeFileSync(path.join(f.wt, 'a.txt'), 'w\n');
     const a = await answer(s, ask(s, ['a.txt']));
-    ok('T5 pre-commit set the x bit of the named a.txt -> refused "the check changed the snapshot" with mode a.txt, the tip stays',
-      a && a.status === 'refused' && /the check changed the snapshot/.test(a.why) && (a.changed || []).some((c) => c.path === 'a.txt' && c.kind === 'mode') && f.tip() === f.h0, J(a));
+    ok('T5 pre-commit set the x bit of the named a.txt -> a re-check with changed mode a.txt, committed 100755',
+      a && a.status === 'committed' && a.rechecked === true && (a.changed || []).some((c) => c.path === 'a.txt' && c.kind === 'mode') && /^100755 /.test(git(f.wt, ['ls-tree', 'task', 'a.txt']).out), J(a));
     await s.close();
   }
 
   // ---- T6: a request that deletes a tracked path, with hooks: committed as a deletion; a check that recreates it
-  // changes the snapshot
+  // changes the snapshot: one re-check, the commit holds the recreated file
   {
     const f = fixture({ 'pre-commit': '' });
     const s = service(f);
@@ -190,8 +190,8 @@ async function answer(s, id, ms) {
     const s = service(f);
     fs.rmSync(path.join(f.wt, 'gone.txt'));
     const a = await answer(s, ask(s, ['gone.txt']));
-    ok('T6 the check recreated the deleted gone.txt -> refused "the check changed the snapshot" with gone.txt, the tip stays, gone.txt as the hook left it',
-      a && a.status === 'refused' && /the check changed the snapshot/.test(a.why) && (a.changed || []).some((c) => c.path === 'gone.txt') && f.tip() === f.h0
+    ok('T6 the check recreated the deleted gone.txt -> a re-check with changed created gone.txt; its content equals nothing removed, so the commit has the new bytes',
+      a && a.status === 'committed' && a.rechecked === true && (a.changed || []).some((c) => c.path === 'gone.txt' && c.kind === 'created') && git(f.wt, ['show', 'task:gone.txt']).out === 'back'
       && rd(path.join(f.wt, 'gone.txt')) === 'back\n', J(a));
     await s.close();
   }
@@ -291,10 +291,10 @@ async function answer(s, id, ms) {
     fs.writeFileSync(path.join(f.tdir, 'hold'), '');
     const s = service(f, { box: path.join(callDir, 'commit'), pollMs: 200 });
     fs.writeFileSync(path.join(f.wt, 'n1.txt'), 'one\n');
+    fs.writeFileSync(path.join(f.wt, 'n2.txt'), 'two\n');
     const id1 = ask(s, ['n1.txt']);
     const t0 = Date.now();
     while (!f.mark('pre-commit') && Date.now() - t0 < 15000) await sleep(50);
-    fs.writeFileSync(path.join(f.wt, 'n2.txt'), 'two\n');
     const id2 = ask(s, ['n2.txt']);
     await sleep(1500);
     fs.renameSync(calls, calls + '.orig');
@@ -321,10 +321,10 @@ async function answer(s, id, ms) {
     fs.writeFileSync(path.join(f.tdir, 'hold'), '');
     const s = service(f, { box: path.join(callDir, 'commit'), pollMs: 200 });
     fs.writeFileSync(path.join(f.wt, 'n1.txt'), 'one\n');
+    fs.writeFileSync(path.join(f.wt, 'n2.txt'), 'two\n');
     const id1 = ask(s, ['n1.txt']);
     const t0 = Date.now();
     while (!f.mark('pre-commit') && Date.now() - t0 < 15000) await sleep(50);
-    fs.writeFileSync(path.join(f.wt, 'n2.txt'), 'two\n');
     const id2 = ask(s, ['n2.txt']);
     await sleep(1500);
     fs.renameSync(callDir, callDir + '.orig');

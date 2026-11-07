@@ -5,8 +5,9 @@
 // with the rights of the role, asynchronously in a process group of their own, in an environment built from a white
 // list, and commits exactly the snapshot they passed on. Real git repositories in a temporary folder, the real codex
 // sandbox without a model, a throwaway home per check. Cells of the analysis p-codex-A2 section 7: MA-01..11 and
-// MA-04b (the check process), EV-01..14 and EV-08b (its environment), CK2-01, -02, -03a, -05a, -06, -10, -11 (the
-// check and its changes), G7-01..04 (tracked changes outside the request). Every hook writes a mark
+// MA-04b (the check process), EV-01..14 and EV-08b (its environment), CK2-01, -02, -06, -10, -11 (the check and its
+// changes), G7-01..04 (tracked changes outside the request); the re-check, the walk and the paths of a request are in
+// tests/commit-recheck.test.js. Every hook writes a mark
 // (<task folder>/marks/<hook>-<n>.json: CODEX_SANDBOX, the names of its variables, cwd, GIT_INDEX_FILE, its node), and
 // every canary of a write is outside /tmp, the TMPDIR of the check and its roots. Skipped without macOS, codex or git.
 const fs = require('fs');
@@ -134,7 +135,7 @@ async function answer(s, id, ms) {
   for (;;) { const a = readAnswer(s, id); if (a || Date.now() > end) return a; await sleep(25); }
 }
 const J = (x) => String(JSON.stringify(x)).slice(0, 1500);
-const kindsOf = (a) => ((a && a.changed) || []).map((c) => `${c.kind}${c.status ? ' ' + c.status : ''} ${c.path || ''}`.trim()).sort();
+const kindsOf = (a) => ((a && a.changed) || []).map((c) => `${c.kind}${c.status ? ' ' + c.status : ''}${c.from ? ' ' + c.from + ' ->' : ''} ${c.path || ''}`.trim()).sort();
 // the variables a check may see: the white list of the adapter and what codex sandbox adds itself (E-A4)
 const ALLOWED = new Set(['PATH', 'HOME', 'CODEX_HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'GIT_INDEX_FILE', 'npm_config_cache', 'CODEX_MANAGED_BY_NPM',
   'CODEX_MANAGED_PACKAGE_ROOT', 'CODEX_SANDBOX', 'CODEX_SANDBOX_NETWORK_DISABLED', 'PWD', 'SHLVL', 'OLDPWD', '_', '__CF_USER_TEXT_ENCODING',
@@ -162,11 +163,10 @@ const underAny = (p, roots) => roots.some((r) => p === r || p.startsWith(r + pat
     await s.close();
   }
 
-  // ---- 2a boundary (coordinator G2, run 3): a conversion of the repository is refused before any hook
+  // ---- a named path with a conversion of the repository is refused before any hook: the commit stores raw bytes
   for (const [name, setup, re] of [
     ['a tracked .gitattributes with a filter', (f) => { fs.writeFileSync(path.join(f.wt, '.gitattributes'), '*.txt filter=x\n'); git(f.wt, ['add', '.gitattributes']); git(f.wt, ['commit', '-q', '-m', 'attrs']); }, /filter=x/],
     ['core.autocrlf true in the user\'s config', (f) => fs.appendFileSync(path.join(f.home, '.gitconfig'), '[core]\n\tautocrlf = true\n'), /core\.autocrlf true/],
-    ['core.eol in the repository config', (f) => git(f.repo, ['config', 'core.eol', 'crlf']), /core\.eol crlf/],
   ]) {
     const f = fixture({ hooks: { 'pre-commit': '' } });
     setup(f);
@@ -174,7 +174,7 @@ const underAny = (p, roots) => roots.some((r) => p === r || p.startsWith(r + pat
     const s = service(f);
     fs.writeFileSync(path.join(f.wt, 'a.txt'), 'x\n');
     const a = await answer(s, ask(s, ['a.txt']));
-    ok(`2a: ${name} -> refused "conversion not supported until A2a-2b" before any hook`, a && a.status === 'refused' && /conversion not supported until A2a-2b/.test(a.why)
+    ok(`${name} -> a named path refused "with a conversion" before any hook`, a && a.status === 'refused' && /a named path with a conversion is refused: "a\.txt"/.test(a.why)
       && re.test(a.why) && f.marks().length === 0 && f.tip() === f.h0, J(a));
     await s.close();
   }
@@ -252,15 +252,15 @@ const underAny = (p, roots) => roots.some((r) => p === r || p.startsWith(r + pat
     await s.close();
   }
 
-  // ---- CK2-03a, CK2-05a, CK2-11: a check that changes the snapshot or the message file
+  // ---- CK2-11 and a check that changes the snapshot or the message at every pass (the stable ones: commit-recheck)
   {
     const f = fixture({ hooks: { 'pre-commit': 'echo generated >> gen.txt' } });
     const s = service(f);
     fs.writeFileSync(path.join(f.wt, 'gen.txt'), 'role\n');
     const a = await answer(s, ask(s, ['gen.txt']));
-    ok('CK2-03a pre-commit rewrote the named gen.txt -> refused "the check changed the snapshot", changed [gen.txt], the tip stays, gen.txt as the hook left it',
-      a && a.status === 'refused' && /the check changed the snapshot/.test(a.why) && kindsOf(a).some((k) => / gen\.txt$/.test(k)) && f.tip() === f.h0
-      && fs.readFileSync(path.join(f.wt, 'gen.txt'), 'utf8') === 'role\ngenerated\n', J(a));
+    ok('pre-commit appends to the named gen.txt at every pass -> refused "the check is not stable", changed [gen.txt], the tip stays, gen.txt as the second pass left it',
+      a && a.status === 'refused' && /the check is not stable/.test(a.why) && kindsOf(a).some((k) => / gen\.txt$/.test(k)) && f.tip() === f.h0
+      && fs.readFileSync(path.join(f.wt, 'gen.txt'), 'utf8') === 'role\ngenerated\ngenerated\n', J(a));
     await s.close();
   }
   {
@@ -269,9 +269,9 @@ const underAny = (p, roots) => roots.some((r) => p === r || p.startsWith(r + pat
     fs.writeFileSync(path.join(f.wt, 'a.txt'), 'x\n');
     const a = await answer(s, ask(s, ['a.txt'], 'the message'));
     const m = f.mark('prepare-commit-msg');
-    ok('CK2-05a prepare-commit-msg got the message file and "message"', m && m.args.length === 2 && m.args[1] === 'message' && /COMMIT_EDITMSG$/.test(m.args[0]), J(m && m.args));
-    ok('CK2-05a prepare-commit-msg changed the message -> refused "the check changed the snapshot", changed [message], the tip stays',
-      a && a.status === 'refused' && /the check changed the snapshot/.test(a.why) && kindsOf(a).includes('message') && f.tip() === f.h0, J(a));
+    ok('prepare-commit-msg got the message file and "message"', m && m.args.length === 2 && m.args[1] === 'message' && /COMMIT_EDITMSG$/.test(m.args[0]), J(m && m.args));
+    ok('prepare-commit-msg changes the message at every pass -> refused "the check is not stable", changed [message], the tip stays',
+      a && a.status === 'refused' && /the check is not stable/.test(a.why) && kindsOf(a).includes('message') && f.tip() === f.h0, J(a));
     await s.close();
   }
   for (const [name, body, re] of [
@@ -332,8 +332,8 @@ const underAny = (p, roots) => roots.some((r) => p === r || p.startsWith(r + pat
     fs.writeFileSync(path.join(f.wt, 'sub', 'c.txt'), 'named\n');
     const s = service(f);
     const a = await answer(s, ask(s, ['sub/c.txt']));
-    const want = ['deleted b.txt', 'deleted r1.txt', 'mode m.txt', 'modified a.txt', 'staged A e.txt', 'staged A r2.txt', 'staged D r1.txt', 'typechange l.txt'];
-    ok('G7-02 one refusal with the full list: modified, deleted, typechange, mode, staged additions and both sides of a rename in the index',
+    const want = ['deleted b.txt', 'renamed r1.txt -> r2.txt', 'mode m.txt', 'modified a.txt', 'staged A e.txt', 'staged A r2.txt', 'staged D r1.txt', 'typechange l.txt'];
+    ok('G7-02 one refusal with the full list: modified, deleted, typechange, mode, staged additions, both sides of a rename in the index and the renamed pair of the worktree',
       a && a.status === 'refused' && /tracked changes outside the request/.test(a.why) && want.every((k) => kindsOf(a).includes(k)) && f.marks().length === 0, J({ got: kindsOf(a), why: a && a.why }));
     ok('G7-02 nothing rolled back or hidden: the index and the worktree as the role left them', git(f.wt, ['diff', '--cached', '--no-renames', '--name-only']).out.split('\n').sort().join() === 'e.txt,r1.txt,r2.txt'
       && fs.lstatSync(path.join(f.wt, 'l.txt')).isSymbolicLink());
@@ -482,7 +482,8 @@ const underAny = (p, roots) => roots.some((r) => p === r || p.startsWith(r + pat
 
   // ---- EV-11: the hook cannot change the private index; a changed tree is refused
   {
-    const f = fixture({ hooks: { 'pre-commit': 'echo zz > zz.txt\ngit add zz.txt 2> "$T/add.err"; echo $? > "$T/add.rc"\ngit update-index --cacheinfo 100644,e69de29bb2d1d6434b8b29ae775ad8c2e48c5391,b.txt; echo $? > "$T/ui.rc"' } });
+    const f = fixture({ hooks: { 'pre-commit': 'git add zz.txt 2> "$T/add.err"; echo $? > "$T/add.rc"\ngit update-index --cacheinfo 100644,e69de29bb2d1d6434b8b29ae775ad8c2e48c5391,b.txt; echo $? > "$T/ui.rc"' } });
+    fs.writeFileSync(path.join(f.wt, 'zz.txt'), 'zz\n');
     const s = service(f);
     fs.writeFileSync(path.join(f.wt, 'a.txt'), 'x\n');
     const a = await answer(s, ask(s, ['a.txt']));
@@ -606,10 +607,10 @@ const underAny = (p, roots) => roots.some((r) => p === r || p.startsWith(r + pat
     const s = service(f, { pollMs: 200 });
     const callDir = path.dirname(s.box);
     fs.writeFileSync(path.join(f.wt, 'n1.txt'), 'one\n');
+    fs.writeFileSync(path.join(f.wt, 'n2.txt'), 'two\n'); // before the first check: a write during it is a change outside its request
     const id1 = ask(s, ['n1.txt']);
     const t0 = Date.now();
     while (!f.mark('pre-commit') && Date.now() - t0 < 15000) await sleep(50);
-    fs.writeFileSync(path.join(f.wt, 'n2.txt'), 'two\n');   // untracked: no change outside the first request
     const id2 = ask(s, ['n2.txt']);
     await sleep(1500);
     fs.renameSync(callDir, callDir + '.orig');

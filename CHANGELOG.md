@@ -4,6 +4,50 @@ Every version of the codis-agents plugin, newest first. What the plugin does now
 [README.md](README.md); its [Technical reference](README.md#technical-reference) is the current state of every rule,
 key and script, and this file says when and why each one changed. Versions before 0.4.14 are in the git history.
 
+## 0.4.35 - 2026-11-07
+
+- **The re-check, the untracked files, the paths of a request and the limits of the walk** (p-codex A2a-2b; owner
+  2026-11-06: answers 1, 2, 5, G7; owner 2026-11-07 on the walk). A check that changes a named path or the message
+  now gets one re-check: a new snapshot and the hooks again (`rechecked`, `changed`), a second change refuses
+  `the check is not stable`, a tree equal to the parent's is `nothing`, an empty message refuses; the message is
+  compared after `git stripspace`. New `scripts/commit-walk.js`, a process of its own under limits
+  (`commit.walkMaxEntries` 200 000, `commit.walkTimeoutMs` 15 s, `walkMaxResultBytes`, `walkMaxIgnoreBytes`,
+  `walkMaxReadBytes`; any limit, a crash or a folder replaced during the walk refuses `no safe check path` with
+  "walked N entries, the walk did not finish"; the end of the call and SIGTERM remove it): untracked files created,
+  changed or removed by a check refuse, classed by the ignore rules before the pass, so a hook cannot hide its writes
+  with a `.gitignore`; ignored ones are listed (`ignoredChanged`); `untrackedInputs` names the inputs of a check.
+  A folder the walk cannot look into is a note and an entry of its own: a change of it, a chmod included, refuses with
+  its path whatever the ignore rules say, so a hook cannot hide a write by taking the rights away.
+  Renames are paired (`renamed`, `from`). A compare through a conversion runs inside the sandbox, after the probe,
+  with the attributes of the tip and the user's conversion keys as `-c`; a named path with a conversion is refused
+  with its path (`core.eol` alone is no longer refused: it converts nothing). Named paths: a link is committed as a
+  link entry; a path inside a gitlink, under a tracked file, another spelling of a tracked entry (by dev and inode) and
+  an untracked ignored path are refused, on the path without hooks too. Lists in an answer are cut to 200 entries
+  with counts and `changesFile`, the notes on ignored copies of a deleted file to 200 paths in all; the journal holds
+  only the counts. The JSON of the rename pairs (every deleted file with every copy) and of the whole lists is bounded
+  by `commit.walkMaxResultBytes`: pairs above it refuse `no safe check path` before they are built, so the adapter holds no
+  product of two lists; lists above it, or a file that cannot be written, give `changesFileError` and no file, and change
+  no status (a failed write after `update-ref` was a refusal of a commit whose branch had moved). The same for the answer itself and the result line: a request has one result, an answer that cannot be written comes on a later poll or from the journal for the same id, a line of the journal written in part is cut back, and a result line that cannot be written refuses the rest of the call and is settled at the next start by `intent-commit`; new `tests/commit-answer-fail.test.js` (a real full disk image). A file name that starts with `:` is no pathspec to `git check-ignore`: it is classed as
+  `git status` classes it. New `tests/commit-recheck.test.js`; the cells of
+  2a that refused a changed snapshot and the link path now expect the re-check and the link entry.
+- **Plugin security: the cheap path first, and the boundary of its guarantees** (owner 2026-11-07, translated: "for any task
+  about the security of the plugin, always look for another path that closes most of the likelihood of the risk and
+  costs less"). New rule in `rules/multi-agent.md`; README says that the roles are trusted participants that can make
+  mistakes and that the sandbox is no protection from a hostile agent.
+
+## 0.4.34 - 2026-11-07
+
+- **`agents-md.js` counts the budget of `project_doc_max_bytes`** (p-codex D3-1b; owner 2026-11-06, answer 1: the limit
+  is on the sum of the root and the nested files, and answer 18: connecting ends with a green check). Codex silently
+  cuts the `AGENTS.md` files it reads from the root down to its working directory at one limit for the whole chain;
+  `check` and `write` now add up the chain of every generated file and name each with its bytes and the limit. The
+  limit comes from the top level of the root `.codex/config.toml` by a strict scan of its structure, 32768 without it.
+  In the sum: `AGENTS.override.md` in place of the `AGENTS.md` beside it, foreign files, a file git ignores on the way,
+  generated files by the bytes `write` would write. A chain over the limit is exit 1: `write` on a connected project
+  still writes the files, `write --enable` writes nothing and sets no key. Red with the line: a value Codex would not
+  take, `= 0`, a config the scan cannot read, a nested config with the key, `project_doc_fallback_filenames` in a
+  project config. A file off every way to a generated file is named, not counted. Measured on codex 0.166.0.
+
 ## 0.4.33 - 2026-11-06
 
 - **The checks of a commit run inside the role's sandbox** (p-codex A2a-2a; owner 2026-11-06: answers 4 to 6 of the
