@@ -27,7 +27,16 @@ ok('knobs found in slots.zsh (swap threshold, extra-slot thresholds, counts, loc
 // The tests that run heavy.sh / medium.sh / guards-all.sh / stand.sh or source slots.zsh.
 const SLOT_TESTS = ['p-wait-cells.test.js', 'train-attr-sections.test.js', 'slots-check.test.sh', 'slots-linux.test.sh', 'slots-linux-edges.test.sh', 'slots-fifo.test.sh', 'slots-journal.test.sh', 'slots-locks.test.sh', 'stand.test.js', 'stand-config.test.js', 'stand-cwd-edges.test.js', 'guards-result.test.js', 'guards-remote.test.js', 'fixtures/guards-remote-tester/checks-run.js', 'known-red.test.js', 'known-red-edges.test.js', 'quarantine.test.js', 'quarantine-remote.test.js', 'quarantine-remote-tester.test.js', 'quarantine-attach.test.js', 'p-train-a2.test.js', 'p-train-a2-tester.test.js', 'train-attribution.test.js', 'train-attribution-tester.test.js', 'fixtures/slots-u1a/checks.zsh', 'runner-neutral.test.sh', 'runner-neutral-edges.test.sh', 'runner-neutral-globs.test.sh', 'guards-all-config.test.js', 'slots-select.test.sh', 'runq-a.test.js', 'slots-select-tester.test.sh', 'runq-a-tester.test.js', 'noghost-a.test.js', 'noghost-a-tester.test.js', 'noghost-b.test.js', 'noghost-b-tester.test.js', 'slots-priority.test.sh', 'slots-priority-tester.test.sh', 'train-priority.test.js', 'p-tester-select-tester.test.js', 'slots-runner-share.test.sh', 'slots-runner-share-tester.test.sh', 'runner-share-remote-tester.test.js'];
 const runsSlots = /\$H\/(heavy|medium|guards-all|stand)\.sh|source[^\n]*slots\.zsh|['"](heavy|medium|guards-all|stand)\.sh['"]/;
-const others = fs.readdirSync(__dirname).filter((f) => /\.test\.(js|sh)$/.test(f) && f !== path.basename(__filename) && !SLOT_TESTS.includes(f))
+// Tests that run the slot scripts only inside a check of a commit under codex sandbox: the environment of a check is
+// built from a white list (scripts/commit-service.js, cell EV-01), so no knob from outside reaches slots.zsh, and the
+// slot scripts refuse there with code 77 before any reading of the machine (the slot directory is not a write root).
+const CHECK_ONLY = ['commit-checks.test.js'];
+for (const f of CHECK_ONLY) {
+  const src = fs.readFileSync(path.join(__dirname, f), 'utf8');
+  ok(`${f}: runs the slot scripts only inside a check (opens the commit service, expects the refusal rc 77)`,
+    /openCommitService/.test(src) && /rc 77/.test(src) && !/source[^\n]*slots\.zsh|\$H\//.test(src));
+}
+const others = fs.readdirSync(__dirname).filter((f) => /\.test\.(js|sh)$/.test(f) && f !== path.basename(__filename) && !SLOT_TESTS.includes(f) && !CHECK_ONLY.includes(f))
   .filter((f) => runsSlots.test(fs.readFileSync(path.join(__dirname, f), 'utf8')));
 ok('every test that runs the slot scripts is in the list', others.length === 0, others.join(' '));
 

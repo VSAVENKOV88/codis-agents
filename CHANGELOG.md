@@ -4,6 +4,31 @@ Every version of the codis-agents plugin, newest first. What the plugin does now
 [README.md](README.md); its [Technical reference](README.md#technical-reference) is the current state of every rule,
 key and script, and this file says when and why each one changed. Versions before 0.4.14 are in the git history.
 
+## 0.4.33 - 2026-11-06
+
+- **The checks of a commit run inside the role's sandbox** (p-codex A2a-2a; owner 2026-11-06: answers 4 to 6 of the
+  digest of wave 10, the answer to G7, c4). A repository with hooks of a check (`pre-commit`, `prepare-commit-msg`,
+  `commit-msg`) is no longer refused with `no safe check path`: `scripts/commit-service.js` runs its hooks - from the
+  folder the user's git would use - under `codex sandbox` with the rights of the role (write to the worktree, the task
+  folder and a message folder of the adapter; the npm cache of the call must resolve inside the worktree or the task
+  folder and adds no root of its own, so a call folder swapped for a link refuses the request; `.git` and `.codex` of the worktree read
+  only; the role's network, only the tester's on), asynchronously in a process group of their own, in an environment
+  built from a white list (no key, token, `NODE_OPTIONS` or `GIT_*` of the adapter; a new empty home per launch).
+  Once per call codex of a verified version (0.166.0) and a probe of the sandbox. Before the hooks, tracked changes
+  outside the request and the staged entries of the real index refuse with the whole list (G7); after them the
+  private index, the git dir, HEAD, the tip, the tracked paths and the index are compared again, and the snapshot
+  must be unchanged (a check that changes it is refused until the re-check of A2a-2b; a conversion is refused too).
+  The commit gets exactly the tree and message the checks passed; the answer carries `checks` (rc, the tail of the
+  output, the log file, the record of the launch), `changed` and `environment`. `close()` is a Promise: it cancels a
+  running check (SIGTERM to its group, SIGKILL after `killGraceMs`) and waits for it; `role-exec.js` passes the role's
+  network, task folder, npm cache and grace, and keeps its signal handlers on while a check is stopped, so a second
+  signal does not orphan it. `heavy.sh` and `medium.sh` inside a check refuse at once with code 77 (`slots.zsh`: a
+  slot directory, `admit.lock`, `queue/` or `queue.lock` that cannot be created or opened for writing is refused like
+  an unwritable lock, not retried forever), so the hook fails and the request is refused with its output. Known gaps:
+  untracked inputs, setsid, Docker inside a check. New
+  `tests/commit-checks.test.js` under the real `codex sandbox` without a model; the A2a-1 tests await `close()` and
+  OC-12 now expects the hooks to run in the sandbox. README "What's inside" counts recounted.
+
 ## 0.4.32 - 2026-11-06
 
 - **The commit channel of the role adapter and a safe outside commit** (p-codex A2a-1; owner 2026-11-06: answers 3

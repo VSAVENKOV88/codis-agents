@@ -7,8 +7,8 @@
 // to a file outside, a FIFO request, a request naming an answer path, the same id with other content, the box swapped
 // for a symlink and back, a write into the adapter's answers, a direct git commit. Two repositories: a clone of this
 // plugin, and a copy whose config is hostile (hooks of every kind, fsmonitor, a clean filter, signing with
-// gpg.program, include.path, a promisor remote with ext::) - nothing of it may run, and a control file outside the
-// worktree stays as it was. Skipped without macOS or codex.
+// gpg.program, include.path, a promisor remote with ext::) - nothing of it may run outside the sandbox (its hooks of a
+// check run inside codex sandbox, part A2a-2a), and a control file outside the worktree stays as it was. Skipped without macOS or codex.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -162,12 +162,13 @@ async function runRole(f, file, file2, tag) {
   ok('hostile config: the requests commit and nothing of the config ran (hooks, fsmonitor, filter, gpg, include, ext::)',
     r2.s.j && r2.s.j.first.j.status === 'committed' && r2.s.j.second.j.status === 'committed' && marks() === '', JSON.stringify({ first: r2.s.j && r2.s.j.first, marks: marks(), err: r2.s.err }));
   ok('hostile config: the control file outside the worktree is unchanged', sha256(fs.readFileSync(h.control)) === h.control0);
-  // ---- the hostile copy with hooks of a check: refused "no safe check path"
+  // ---- the hostile copy with hooks of a check: they run inside codex sandbox only (A2a-2a), the rest of the config never
   const k = repo('hooked', { checkHooks: true });
   const r3 = await runRole(k, 'README.md', 'CHANGELOG.md', 'hooked');
   const km = fs.existsSync(k.marks) ? fs.readFileSync(k.marks, 'utf8') : '';
-  ok('hooks of a check in the repository -> refused "no safe check path", the branch stays, no hook ran',
-    r3.s.j && r3.s.j.first.j.status === 'refused' && /no safe check path/.test(r3.s.j.first.j.why) && git(k.wt, ['rev-parse', 'task']).out === r3.t0 && km === '',
+  const hooks = (x) => (x && x.j && x.j.checks ? x.j.checks.map((c) => `${c.hook}:${c.rc}`).join() : '');
+  ok('hooks of a check in the repository -> the requests commit after pre-commit, prepare-commit-msg and commit-msg ran in the sandbox; no mark outside the roots',
+    r3.s.j && r3.s.j.first.j.status === 'committed' && r3.s.j.second.j.status === 'committed' && hooks(r3.s.j.first) === 'pre-commit:0,prepare-commit-msg:0,commit-msg:0' && km === '',
     JSON.stringify({ first: r3.s.j && r3.s.j.first, km }));
   ok('hooks of a check: the control file outside the worktree is unchanged', sha256(fs.readFileSync(k.control)) === k.control0);
   done();

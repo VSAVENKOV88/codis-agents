@@ -14,7 +14,8 @@
 // link, FIFO or hard link the role left in place of the file: appendRecord).
 // With cfg.commit a prog or test call on codex gets the commit channel (scripts/commit-service.js): a box in its call
 // folder, the answers in commit.stateDir, CODIS_COMMIT_BOX and CODIS_COMMIT_ANSWERS in its environment, the service
-// open exactly while the launcher runs; the record carries its summary.
+// open while the launcher runs and until a check it runs is stopped (its hooks run in codex sandbox with the rights of
+// the role); the record carries its summary.
 //
 // usage: node role-exec.js check --host codex [--bin <codex>] --home <run home> [--auth chatgpt|apiKeyFile]
 //          [--key-file <file>] [--model <slug>] [--effort <level>] [--versions <a,b>]
@@ -411,7 +412,7 @@ function createAgent(cfg) {
   // both). The claude host gets the channel in part A2c.
   const cm = c.commit === undefined || c.commit === null ? null : c.commit;
   if (cm) {
-    if (typeof cm !== 'object') no('commit must be an object {stateDir, git?, gitVersions?, author?}');
+    if (typeof cm !== 'object') no('commit must be an object {stateDir, git?, gitVersions?, author?, codexVersions?}');
     if (c.host !== 'codex') no('commit on the claude host: the commit channel of claude -p comes with part A2c');
     if (typeof cm.stateDir !== 'string' || !path.isAbsolute(cm.stateDir)) no(`commit.stateDir is required and absolute, got ${JSON.stringify(cm.stateDir)}`);
     const sd = realish(cm.stateDir);
@@ -500,7 +501,7 @@ function createAgent(cfg) {
   return async function agent(prompt, opts) {
     const started = new Date();
     const t0 = process.hrtime.bigint();
-    let plan, fin, res = null, svc = null, commitSum = null;
+    let plan, fin, res = null, svc = null, commitSum = null, svcStop = null;
     try { plan = prepare(prompt, opts); } catch (e) { plan = { label: opts && opts.label, refused: `internal error: ${e.message}` }; }
     if (plan.refused) fin = { outcome: 'refused', error: plan.refused };
     else if (stopping) fin = { outcome: 'signalled', error: `the adapter got ${stopping}: no new call starts` };
@@ -519,9 +520,14 @@ function createAgent(cfg) {
         // the box in the call folder (a new one per call: a request of an earlier call is never read), the answers in
         // the adapter's state folder; the service lives exactly as long as the role's process
         try {
+          // the checks of a commit run in codex sandbox with the rights of the role: its write roots, its network (only
+          // the tester has one), an npm cache of the call (owner answers 4-6); stopping them is a live stop of the adapter
           svc = openCommitService({ task: plan.key, callId: path.basename(plan.callDir), wt: plan.t.wt, branch: plan.t.branch,
             box: path.join(plan.callDir, 'commit'), stateDir: cm.stateDir, git: cm.git, gitVersions: cm.gitVersions, author: cm.author,
-            userEnv: c.env || process.env, inject: cm.inject, log });
+            userEnv: c.env || process.env, inject: cm.inject, log, codex: cx.bin, codexVersions: cm.codexVersions, network: plan.kind === 'test',
+            tdir: plan.t.dir, npmCache: path.join(plan.callDir, 'npm-cache'), killGraceMs: graceMs });
+          svcStop = () => svc.cancel();
+          enter(svcStop);
           plan.commit = { box: svc.box, answers: svc.answers, client: COMMIT_CLIENT };
           plan.env = Object.assign({}, plan.env, { CODIS_COMMIT_BOX: svc.box, CODIS_COMMIT_ANSWERS: svc.answers });
         } catch (e) { fin = { outcome: 'crashed', error: `the commit channel: ${e.message}` }; }
@@ -529,7 +535,9 @@ function createAgent(cfg) {
       if (!fin) {
         try { res = await launch(plan); fin = settle(plan, res); } catch (e) { fin = { outcome: 'crashed', error: `the launcher threw: ${e.message}` }; }
       }
-      if (svc) { try { commitSum = svc.close(); } catch (e) { commitSum = { error: e.message }; } }
+      // close() waits for a running check: SIGTERM to its group, SIGKILL after killGraceMs; the signal handlers stay
+      // on until then (svcStop is live), so a second signal does not kill the adapter with the check orphaned
+      if (svc) { try { commitSum = await svc.close(); } catch (e) { commitSum = { error: e.message }; } }
     }
     const ended = new Date();
     const r = res && typeof res === 'object' ? res : {};
@@ -551,6 +559,7 @@ function createAgent(cfg) {
       appendRecord(path.join(fs.realpathSync(dir), 'calls.jsonl'), JSON.stringify(rec) + '\n');
     } catch (e) { log(`role-exec: ${rec.label}: the record of the call could not be written: ${e.message}`); }
     if (fin.outcome !== 'ok') log(`role-exec: ${rec.label} ${fin.outcome}: ${rec.error || ''}`);
+    if (svcStop) leave(svcStop); // after the record: a signal that came meanwhile ends the adapter only now
     return fin.outcome === 'ok' ? fin.value : null;
   };
 }
