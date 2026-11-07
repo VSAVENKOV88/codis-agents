@@ -891,5 +891,13 @@ agent('x',{label:'prog:K#1',schema:{type:'object',properties:{status:{type:'stri
       await s.close();
     }
   }
+  // ---- the tester's cells (names of files that look like pathspec magic, the paths of a note, the classes, the owner's
+  // numbers of the walk, the keys of the limits): tests/commit-recheck-tester-cases.js, a child with its own tally, so
+  // README keeps counting test files
+  {
+    const tc = spawnSync(process.execPath, [path.join(__dirname, 'commit-recheck-tester-cases.js')], { encoding: 'utf8', timeout: 300000, maxBuffer: 64 << 20 });
+    process.stdout.write((tc.stdout || '').replace(/\n+$/, '').replace(/^/gm, '  | ') + '\n');
+    ok('the tester cells of the re-check and the walk (tests/commit-recheck-tester-cases.js) pass', tc.status === 0, `exit ${tc.status} ${tc.signal || ''} ${(tc.stderr || '').slice(-500)}`);
+  }
   done();
 })().catch((e) => { ok('the test ran to the end', false, e && e.stack); done(); });
