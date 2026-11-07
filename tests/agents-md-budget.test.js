@@ -433,6 +433,109 @@ const markerBytes = (src) => Buffer.byteLength(`<!-- codis-agents agents-md v1; 
   ok('B18. an edited orphan stays on disk, so it counts', ce.status === 1 && /a\/AGENTS\.md was edited by hand/.test(ce.stderr) && redLines(ce).length === 1, show(ce));
 }
 
+// Tester: the cells the budget guards above leave open. Every expectation about Codex here rests on codex-cli 0.166.0
+// prompt-input runs in a throwaway CODEX_HOME.
+{
+  // Bytes, not characters: two bytes each, under the limit by characters and over it by bytes.
+  const two = (n) => 'я'.repeat(n) + '\n';
+  const gen = project({ 'CLAUDE.md': two(19000), [CFG]: `${KEY} = 30000\n` });
+  const cg = check(gen);
+  ok('T1. a generated file counts in bytes, not characters', cg.status === 1 && cg.stderr.includes(`chain .: ${38001 + markerBytes('CLAUDE.md')} bytes > 30000`), show(cg));
+  const foreign = project({ 'CLAUDE.md': 'r\n', 'a/AGENTS.md': two(19000), 'a/b/CLAUDE.md': 's\n', [CFG]: `${KEY} = 30000\n` });
+  const cf = check(foreign);
+  ok('T1. a foreign file counts in bytes, not characters', cf.status === 1 && cf.stderr.includes('a/AGENTS.md 38001'), show(cf));
+}
+{
+  // A key spelled with an escape is the same key for Codex: measured, the cut at 500 happens. Either the scan reads it
+  // or it refuses it; a green check under the default limit is the silent cut this budget exists to prevent.
+  for (const [label, name] of [['\\U escape', 'project_doc\\U0000005Fmax_bytes'], ['\\x escape', 'project_doc\\x5fmax_bytes']]) {
+    const d = project({ 'CLAUDE.md': fill(1000), [CFG]: `"${name}" = 500\n` });
+    write(d);
+    const c = check(d);
+    ok(`T2. the limit key spelled with a ${label}: never green under the default limit`, c.status === 1 && (c.stderr.includes('> 500') || c.stderr.includes(`${CFG}:1`)), show(c));
+  }
+  const fb = project({ 'CLAUDE.md': 'r\n', [CFG]: `"project_doc\\U0000005Ffallback_filenames" = ["TEAM.md"]\n` });
+  write(fb);
+  ok('T2. the fallback key spelled with a \\U escape: red (Codex reads the files it names, measured)', check(fb).status === 1 && check(fb).stderr.includes(`${CFG}:1`), show(check(fb)));
+}
+{
+  const d = project({ 'CLAUDE.md': fill(40000), [CFG]: `${L131}[foo]\n${KEY} = 5\n` });
+  write(d);
+  const c = check(d);
+  ok('T3. a top-level key and the same name in a table: the top-level one holds, no duplicate (Codex whole, measured)', c.status === 0 && c.stdout.includes('/131072 bytes'), show(c));
+}
+{
+  for (const [label, text] of [['an unusable value', `${KEY} = "x"\n`], ['the fallback key', `${FB} = ["TEAM.md"]\n`], ['a broken file', 'not toml\n']]) {
+    const d = project({ 'CLAUDE.md': 'r\n', [CFG]: text }, { connected: false });
+    const f = path.join(d, '.claude/codis-agents.json');
+    const before = fs.readFileSync(f, 'utf8');
+    const w = write(d, ['--enable']);
+    ok(`T4. --enable with ${label} in the config: exit 1, nothing written, no key, blocked named`, w.status === 1 && !has(d, 'AGENTS.md') && fs.readFileSync(f, 'utf8') === before && /--enable blocked/.test(w.stderr), show(w));
+  }
+}
+{
+  const d = project({ 'CLAUDE.md': fill(40000), 'sub/CLAUDE.md': 's\n', [CFG]: L131 });
+  const w = write(path.join(d, 'sub'));
+  ok('T5. --root in a subdirectory: the config and the chains of the top level', w.status === 0 && w.stdout.includes('/131072 bytes') && w.stdout.includes('chain sub:') && has(d, 'AGENTS.md'), show(w));
+}
+if (process.getuid && process.getuid() !== 0) {
+  const d = project({ 'CLAUDE.md': 'r\n', [CFG]: L131 });
+  fs.chmodSync(path.join(d, CFG), 0);
+  const c = check(d);
+  fs.chmodSync(path.join(d, CFG), 0o644);
+  ok('T6. a config it cannot read: exit 1 with its path, not an exception', c.status === 1 && c.stderr.includes(`${CFG}: cannot read`), show(c));
+}
+{
+  const d = project({ 'CLAUDE.md': 'r\n', '.codex': 'a file\n' });
+  write(d);
+  const c = check(d);
+  ok('T7. .codex is a file: no config, the default limit (Codex whole, measured)', c.status === 0 && c.stdout.includes('/32768 bytes'), show(c));
+}
+{
+  const d = project({ 'CLAUDE.md': 'r\n', 'a/b/CLAUDE.md': 's\n', '.gitignore': '.codex/\n', 'a/.codex/config.toml': `${KEY} = 25000\n` }, { untracked: ['a/.codex/config.toml'] });
+  const c = check(d);
+  ok('T8. an ignored config with the key in a directory between the root and a generated file: red', c.status === 1 && c.stderr.includes('a/.codex/config.toml:1'), show(c));
+}
+{
+  const d = project({ 'CLAUDE.md': 'see \x40missing.md\n', 'sub/CLAUDE.md': fill(40000) });
+  const c = check(d);
+  ok('T9. a parent that failed to generate: its failure is the answer, no chain added up without it', c.status === 1 && /broken import/.test(c.stderr) && !redLines(c).length, show(c));
+}
+{
+  const only = project({ 'CLAUDE.md': 'r\n', 'sub/CLAUDE.md': 's\n' });
+  write(only);
+  fs.writeFileSync(path.join(only, 'sub/CLAUDE.md'), 'see \x40~/no-such-file-of-the-budget-guard.md\n');
+  const c = check(only);
+  ok('T10. an import not on this machine and a fitting chain: 69 stays', c.status === 69, show(c));
+  const over = project({ 'CLAUDE.md': fill(40000), 'sub/CLAUDE.md': 'see \x40~/no-such-file-of-the-budget-guard.md\n' });
+  const co = check(over);
+  ok('T10. with a chain over the limit: 1, both named', co.status === 1 && /not on this machine/.test(co.stderr) && redLines(co).length === 1, show(co));
+  const badCfg = project({ 'CLAUDE.md': 'r\n', 'sub/CLAUDE.md': 'see \x40~/no-such-file-of-the-budget-guard.md\n', [CFG]: `${KEY} = "x"\n` });
+  ok('T10. with a config it cannot use: 1', check(badCfg).status === 1, show(check(badCfg)));
+}
+{
+  const d = project({ 'CLAUDE.md': fill(50), 'other/AGENTS.md': fill(20000), 'other/x/AGENTS.md': fill(20000) });
+  write(d);
+  const c = check(d);
+  const root = size(d, 'AGENTS.md');
+  ok('T11. off the way, nested: each names what Codex reads down to it, over the limit said only where it is', c.status === 0
+    && new RegExp(`note: other/AGENTS\\.md is on no way.*reads ${root + 20000}/32768 bytes\\n`).test(c.stdout)
+    && new RegExp(`note: other/x/AGENTS\\.md is on no way.*reads ${root + 40000}/32768 bytes \\(over the limit`).test(c.stdout), show(c));
+}
+{
+  const d = project({ 'CLAUDE.md': fill(20000) });
+  write(d);
+  fs.appendFileSync(path.join(d, 'AGENTS.md'), 'hand\n');
+  fs.writeFileSync(path.join(d, 'CLAUDE.md'), fill(40000));
+  const w = write(d, ['--discard-edits']);
+  ok('T12. --discard-edits over the limit: c5, the file is the generated one and exit 1', w.status === 1 && size(d, 'AGENTS.md') === 40000 + markerBytes('CLAUDE.md') && !/nothing written/.test(w.out), show(w));
+}
+{
+  const d = project({ 'CLAUDE.md': fill(40000), 'sub/CLAUDE.md': 's\n' });
+  const c = check(d);
+  ok('T13. check over the limit writes nothing', c.status === 1 && !has(d, 'AGENTS.md') && !has(d, 'sub/AGENTS.md'), show(c));
+}
+
 // G-P, G-16: the docs say what the code does.
 {
   const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
