@@ -4,7 +4,7 @@
 // its own, `status` watches its run folder, the conductor runs workflows/role-chain.js with the role adapter on fake
 // claude and codex CLIs in PATH (tests/fixtures/chain-run/bin; no model is called), and the lock of a task refuses a
 // second conductor and the restart after a conductor died. Cells R1-R15, L1-L5, A1, A4, P1, P2, P5 of the analysis,
-// with G1 (a dead conductor's lock: undetermined, refused, kept), G2 (the session by ps stat and pgid) and G5 (the task
+// with G1 (a dead conductor's lock: undetermined by the reconciliation of its journal, refused, kept), G2 (the session by ps stat and pgid) and G5 (the task
 // table of the adapter, refusals before the run folder). Every process a check starts is killed in the end, and none
 // with the temporary folder in its command line may remain. Since p-codex-B1-c the service steps are commands the
 // conductor runs itself (exec): every task gets a real git worktree at one commit, and the fake roles answer with that
@@ -209,16 +209,14 @@ function cleanup() {
       starts(fd).map((e) => e.key).join('>'));
     ok('G1 the lock stays as it was', lock1 && fs.existsSync(lockF) && fs.readFileSync(lockF, 'utf8') === lock1);
     ok('G1 the role of the dead conductor is still alive (named, not killed)', role && alive(role.pid));
-    const mark = readJson(path.join(s.j.runDir, 'undetermined.json')) || {};
-    ok('G1 the run folder of the dead conductor carries the mark "undetermined": runId, the reason, the calls started without a record',
-      mark.runId === s.j.runId && mark.tasks && mark.tasks.d1 && /undetermined/.test(mark.tasks.d1.reason) && (mark.tasks.d1.unrecordedCalls || []).includes(cd), JSON.stringify(mark));
+    ok('G1 no mark file is written: the refusal comes from the journal of the dead run (p-codex-B1-b2a)', !fs.existsSync(path.join(s.j.runDir, 'undetermined.json')) && !fs.existsSync(path.join(s2.j.runDir, 'undetermined.json')));
     if (role) { try { process.kill(-role.pid, 'SIGKILL'); } catch { /* gone */ } }
     fs.unlinkSync(lockF);
     const s3 = start([task('d1')], fd);
     const st3 = s3.j ? finished(s3.j) : { j: null };
     const r3 = st3.j && st3.j.results && st3.j.results[0];
-    ok('G1 the lock removed by hand (a technical cleanup) does not lift the refusal: the mark still stops the task, no role',
-      r3 && r3.status === 'stopped' && /undetermined/.test(r3.why) && r3.why.includes(path.join(s.j.runDir, 'undetermined.json')) && starts(fd).length === 2,
+    ok('G1 the lock removed by hand (a technical cleanup) does not lift the refusal: the open step of the dead run still stops the task, no role',
+      r3 && r3.status === 'stopped' && /undetermined/.test(r3.why) && r3.why.includes(s.j.runId) && /prog:d1#1/.test(r3.why) && starts(fd).length === 2,
       JSON.stringify(r3) + ' ' + starts(fd).map((e) => e.key).join('>'));
     ok('G1 the refusing run takes no lock of its own', !fs.existsSync(lockF));
     // The lock removed before any restart saw it: the run folder of the dead conductor still names the task as running.
@@ -231,9 +229,8 @@ function cleanup() {
     fs.unlinkSync(lockOf('d2'));
     const s4 = start([task('d2')], fd);
     const r4 = s4.j ? (finished(s4.j).j || {}).results : null;
-    ok('G1 a lock removed before any restart: the dead run still names the task as running -> undetermined, refused, marked, no role',
-      r4 && r4[0].status === 'stopped' && /undetermined/.test(r4[0].why) && starts(fd).length === 2
-        && ((readJson(path.join(s.j.runDir, 'undetermined.json')) || { tasks: {} }).tasks.d2 || null) !== null, JSON.stringify(r4) + ' ' + starts(fd).map((e) => e.key).join('>'));
+    ok('G1 a lock removed before any restart: the dead run still has the launched role without a result -> undetermined, refused, no role',
+      r4 && r4[0].status === 'stopped' && /undetermined/.test(r4[0].why) && /prog:d2#1/.test(r4[0].why) && starts(fd).length === 2, JSON.stringify(r4) + ' ' + starts(fd).map((e) => e.key).join('>'));
 
     // ---- L4: the pid of the lock is alive, but another process (another start time)
     fs.mkdirSync(path.join(SHARED, 'l4'), { recursive: true });

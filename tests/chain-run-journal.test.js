@@ -419,13 +419,13 @@ const cleanup = () => {
       s = start([task('x2')], fd);
       const whyX2 = (s.j && s.j.tasks && s.j.tasks.x2) || '';
       ok('D1 ... the refusal of a restart says the records cannot be read, not "started without a line"', /undetermined/.test(whyX2) && /calls\.jsonl cannot be read/.test(whyX2) && !/calls started without a line/.test(whyX2), whyX2);
-      const runsX2 = fs.readdirSync(path.join(SHARED, 'runs')).filter((n) => !n.startsWith('.')).map((n) => CJ.readJsonSafe(path.join(SHARED, 'runs', n, 'undetermined.json'))).filter((m) => m && m.tasks && m.tasks.x2);
-      ok('D1 ... and its mark keeps the cause', runsX2.length === 1 && /calls\.jsonl/.test(runsX2[0].tasks.x2.unrecordedCallsError || ''), JSON.stringify(runsX2));
+      const runsX2 = fs.readdirSync(path.join(SHARED, 'runs')).filter((n) => !n.startsWith('.') && fs.existsSync(path.join(SHARED, 'runs', n, 'undetermined.json')));
+      ok('D1 ... and no mark file is written: the next start computes the refusal again (p-codex-B1-b2a)', !runsX2.length, JSON.stringify(runsX2));
       if (s.j) until(() => fs.existsSync(path.join(s.j.runDir, 'results.json')), 20000);
       fs.unlinkSync(path.join(SHARED, 'runs', '.locks', 'x2.lock'));
       s = start([task('x2')], fake({}));
       const whyAgain = (s.j && s.j.tasks && s.j.tasks.x2) || '';
-      ok('D1 ... the same in the refusal by a mark, once the lock was removed by hand', /undetermined/.test(whyAgain) && /calls\.jsonl cannot be read/.test(whyAgain) && !/calls started without a line/.test(whyAgain), whyAgain);
+      ok('D1 ... the same in the refusal of the reconciliation, once the lock was removed by hand', /undetermined/.test(whyAgain) && /calls\.jsonl cannot be read/.test(whyAgain) && !/calls started without a line/.test(whyAgain), whyAgain);
       if (s.j) until(() => fs.existsSync(path.join(s.j.runDir, 'results.json')), 20000);
 
       const lockDir = path.join(SHARED, 'runs', '.locks');
@@ -471,7 +471,7 @@ const cleanup = () => {
       const whyL2 = (s.j && s.j.tasks && s.j.tasks.l2) || '';
       if (s.j) until(() => fs.existsSync(path.join(s.j.runDir, 'results.json')), 20000);
       ok('L2 a dead holder, two names: undetermined with its pid and run named, not "pid ?"', /^undetermined/.test(whyL2) && whyL2.includes(`pid ${dead}`) && whyL2.includes('gone-run') && !/pid \?/.test(whyL2), whyL2);
-      ok('L2 ... the mark is there, the lock stays', !!s.j && fs.existsSync(path.join(s.j.runDir, 'undetermined.json')) && fs.existsSync(lockOf('l2')) && !starts(fd).length);
+      ok('L2 ... no mark file, the lock stays, no role', !!s.j && !fs.existsSync(path.join(s.j.runDir, 'undetermined.json')) && fs.existsSync(lockOf('l2')) && !starts(fd).length);
 
       // L5: the holder removes the lock between EEXIST and the read
       fs.writeFileSync(lockOf('l5'), JSON.stringify({ pid: process.pid, lstart: lstartMe, runId: 'other' }));

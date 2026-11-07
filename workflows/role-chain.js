@@ -78,8 +78,13 @@ const ROLE_MODELS = CFG.roleModels || {}
 const modelOf = (key) => { const m = ROLE_MODELS[key] || CFG.roleModel; return m ? { model: m } : {} }
 const abs = (p) => (p.startsWith('/') ? p : `${CFG.worktreeRoot}/${p}`)
 const specsOf = (t) => (t.spec === undefined ? [] : [].concat(t.spec))
+// sdir: the folder of the files of the task's service steps (wait steps, the copy of a selection log, leftovers.md, the
+// train's copies of its logs). Under the conductor (exec) it is the task field stepDir, <runDir>/steps/<key>/, outside
+// the write roots of the roles and new for every run (scripts/chain-run.js); the tasks file cannot set it. Without exec
+// (the Workflow) it is the task folder, as before.
 const TASKS = TASKS_IN.map((t) => Object.assign({}, t, {
   dir: t.dir || `${CFG.sharedDir}/${t.key}`, wt: abs(t.wt), gdir: t.gdir || t.wt, specs: specsOf(t),
+  sdir: typeof exec === 'function' && typeof t.stepDir === 'string' && t.stepDir ? t.stepDir : (t.dir || `${CFG.sharedDir}/${t.key}`),
 }))
 // Environment floors of the preconditions: config.js json gives preconditions {minFreeDiskGB, swapMinMB} from the machine
 // file (the defaults are explained in scripts/env-check.js); a config resolved before the machine file has minSwapGB.
@@ -281,7 +286,7 @@ const diffFail = (role, d) => !d ? `the ${role} post-check returned no result`
   : !d.ok ? `the ${role} changed what the role may not: ${(d.offending || []).join(', ') || d.error || '?'}` : ''
 
 // Leftovers post-check: Docker resources of the task's stack (by label), processes in its worktree, the slots they hold.
-// --fix removes only those; what was removed goes into the task result and <dir>/leftovers.md, what remains stops it.
+// --fix removes only those; what was removed goes into the task result and <sdir>/leftovers.md, what remains stops it.
 const LEFT_SCHEMA = { type: 'object', properties: {
   ok: { type: 'boolean' }, found: { type: 'array', items: { type: 'string' } }, removed: { type: 'array', items: { type: 'string' } },
   remaining: { type: 'array', items: { type: 'string' } }, error: { type: 'string' },
@@ -291,7 +296,7 @@ const SLOTS_DIR = CFG.slots && CFG.slots.lockDir
 // for and refused to run it (two refusals in one task, 2026-10-19), which stopped a task that had nothing left over.
 const LEFT_WHY = 'This is the leftovers post-check of the codis-agents process the project owner set up (rule "Docker" in rules/multi-agent.md): after the tester and at the end of every task it removes what this task itself left behind. --fix touches only Docker resources labelled with this task\'s own compose project, processes whose cwd or argv lie inside this task\'s worktree, and the slots they hold; the owner\'s stack is excluded by --owner-stack and is never touched. Running it is the expected step, not a decision for you to make.'
 const leftArgs = (t) => [].concat(t.stack ? [lit('--stack'), t.stack] : [], CFG.ownerStackReadOnly ? [lit('--owner-stack'), CFG.ownerStackReadOnly] : [],
-  SLOTS_DIR ? [lit('--slots-dir'), SLOTS_DIR] : [], [lit('--fix'), lit('--log'), `${t.dir}/leftovers.md`])
+  SLOTS_DIR ? [lit('--slots-dir'), SLOTS_DIR] : [], [lit('--fix'), lit('--log'), `${t.sdir}/leftovers.md`])
 const LEFT_NOJSON = { ok: false, found: [], removed: [], remaining: ['$error'], error: '$error' }
 const leftCheck1 = (t, when, retry) => {
   const ws = node('role-leftovers-check.js').concat([lit('--wt'), t.wt], leftArgs(t))
@@ -359,9 +364,11 @@ const RUN_SCHEMA = { type: 'object', properties: {
   done: { type: 'boolean' }, rc: { type: ['number', 'null'] }, seconds: { type: 'number' }, log: { type: 'string' },
   tail: { type: 'string' }, alive: { type: 'boolean' }, pid: { type: 'number' }, error: { type: 'string' },
 }, required: ['done', 'rc', 'log'] }
+// In the steps folder of a run (sdir is not the task folder) an id names one step: --once refuses a second start of it,
+// and the retry of the same step passes --reuse.
 const runStep1 = (t, step, cmd, retry, phase = 'Selection') => {
-  const id = `${t.dir}/wait-${step}`
-  const start = node('wait-step.js').concat([lit('start'), lit('--id'), id, lit('--cwd'), t.wt], retry ? [lit('--reuse')] : [], [lit('--'), cmd])
+  const id = `${t.sdir}/wait-${step}`
+  const start = node('wait-step.js').concat([lit('start'), lit('--id'), id, lit('--cwd'), t.wt], retry ? [lit('--reuse')] : [], t.sdir !== t.dir ? [lit('--once')] : [], [lit('--'), cmd])
   const wait = node('wait-step.js').concat([lit('wait'), lit('--id'), id, lit('--max'), lit(270)])
   const opts = checkOpts(`run:${t.key}:${step}`, phase, RUN_SCHEMA, retry)
   return svc({ kind: 'run', label: opts.label, phase, effect: 'reuse', argv: argvOf(start), wait: { id, argv: argvOf(wait) }, schema: RUN_SCHEMA,
@@ -399,7 +406,7 @@ const runFail = (step, r) => (!r ? `the wait step ${step} returned no result`
 // selection overwrites it. It is never the log of a full run (guards-<name>.txt): the selection has its own file.
 const selectStep = async (t, n) => {
   const step = `select-${n}`
-  const copy = `${t.dir}/wait-${step}.guards.txt`
+  const copy = `${t.sdir}/wait-${step}.guards.txt`
   const r = await runStep(t, step, `${selectRun(t)}; rc=$?; cp ${sq(`${CFG.sharedDir}/guards-${gname(t)}.select.txt`)} ${sq(copy)} 2>/dev/null; exit $rc`)
   const f = runFail(step, r)
   return f ? { fail: f } : Object.assign({}, r, { guards: copy })
@@ -1020,7 +1027,7 @@ async function mergeOnlyStep(t, n, before, head) {
   return mergeAnswered(res) && res.mergeOnly === true ? res : null
 }
 const resultOf = (t, head) => `${CFG.sharedDir}/train/result/${t.key}-${head}.json`
-const rideCmd = (t, head) => `${CFG.configPath ? `CODIS_AGENTS_CONFIG=${sq(CFG.configPath)} ` : ''}node ${SCRIPTS}/train.js ride --task ${sq(t.key)} --branch ${sq(t.branch)} --head ${sq(head)} --base ${sq(String(t.base).trim())} --dir ${sq(t.dir)}`
+const rideCmd = (t, head) => `${CFG.configPath ? `CODIS_AGENTS_CONFIG=${sq(CFG.configPath)} ` : ''}node ${SCRIPTS}/train.js ride --task ${sq(t.key)} --branch ${sq(t.branch)} --head ${sq(head)} --base ${sq(String(t.base).trim())} --dir ${sq(t.sdir)}`
 const fixTail = (t) => (INNER
   ? 'Commit on the branch (a red guard first when none covers it, mutations after the commit); do not run the selection or a full run yourself: the workflow runs the selection on your new HEAD, then the second review of the diff, then the train again. If there is nothing to fix on the branch (a known or a stale guard), explain it in prog.md and commit nothing: the coordinator decides.'
   : t.light
@@ -1055,7 +1062,7 @@ async function trainTester(t, st, n, v, res, before, extra) {
 }
 const trainTask = (t, v, res) => {
   const base = String(t.base).trim()
-  if (v === 'red') return `The integration train came back red for your branch (verdict red): read the result ${res} - its train log (log), the attribution log (attribution) and the guards red on the arc head ${base} + your branch alone (guards); copies of the logs are in ${t.dir}. Fix the red on the branch. ${fixTail(t)}`
+  if (v === 'red') return `The integration train came back red for your branch (verdict red): read the result ${res} - its train log (log), the attribution log (attribution) and the guards red on the arc head ${base} + your branch alone (guards); copies of the logs are in ${t.sdir}. Fix the red on the branch. ${fixTail(t)}`
   if (v === 'conflict') return `The integration train excluded your branch: merging it into the train conflicts (verdict conflict; the files are in ${res}, field files). Your fix: merge the head of the arc branch ${base} into your branch ${t.branch} and resolve the conflict, then check the guards of those files. ${fixTail(t)}${MERGE_GLOBS.length ? ` When every file you resolve matches mergeOnlyFiles (${MERGE_GLOBS.join(', ')}), commit the merge alone - one merge commit, no other edits and no other commits: the workflow then skips the selection (scripts/merge-only.js) and goes to the second review and the train.` : ''}`
   return `The integration train found a seam (verdict seam): your branch is green alone on the arc head but red together with its partner, named in ${res} (partner, partnerBranch; the guards in guards; partnerResult is the partner's own result - it arrived first and rode before you). Your fix: merge the head of the arc branch ${base} into your branch ${t.branch} (it holds the partner once partnerResult is green) and fix the seam with it on that head. ${fixTail(t)}`
 }

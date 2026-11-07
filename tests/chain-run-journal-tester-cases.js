@@ -418,29 +418,30 @@ process.stdin.on('end', () => {
     }
 
     // ---- a task folder that is itself a link (the field dir), the conductor dead in the middle of a role
+    // (its own key: the attack cell above left a damaged journal of 'dl', which refuses every later start of 'dl')
     {
       const realT = path.join(W, 'dir-real'), linkT = path.join(W, 'dir-link');
       fs.mkdirSync(realT);
       fs.symlinkSync(realT, linkT);
       const fdT = fake({ programmer: [{ $sleep: 120, then: PROG }] });
-      const sT = start([task('dl', { dir: linkT })], fdT);
+      const sT = start([task('dk', { dir: linkT })], fdT);
       until(() => starts(fdT, 'programmer')[0]);
       process.kill(sT.j.pid, 'SIGKILL');
       until(() => !CRM.lstartOf(sT.j.pid), 5000);
       const stT = status(sT.j.runDir);
-      const tT = stT.j && stT.j.tasks && stT.j.tasks.dl;
+      const tT = stT.j && stT.j.tasks && stT.j.tasks.dk;
       const unrecT = (tT && tT.unrecordedCalls) || [];
-      ok('S23 the field dir is a link: the role in the air is the only unrecorded call, the recorded pre is not named', unrecT.length === 1 && /prog_dl_1-/.test(unrecT[0]), JSON.stringify(tT));
+      ok('S23 the field dir is a link: the role in the air is the only unrecorded call, the recorded pre is not named', unrecT.length === 1 && /prog_dk_1-/.test(unrecT[0]), JSON.stringify(tT));
       const openT = tT && tT.open && tT.open[0];
       ok('... and its open step says its record is not there yet', !!openT && /the adapter's record: none/.test(openT.text), JSON.stringify(openT));
 
       // ---- the same dead run, its snapshot put ahead: status names the damage and falls back to the log
-      const snapT = path.join(sT.j.runDir, 'journal', 'dl', 'run-state.json');
+      const snapT = path.join(sT.j.runDir, 'journal', 'dk', 'run-state.json');
       const snapJ = JSON.parse(fs.readFileSync(snapT, 'utf8'));
       const ahead = JSON.stringify(Object.assign({}, snapJ, { seq: snapJ.seq + 5 }));
       fs.writeFileSync(snapT, ahead);
       const stA = status(sT.j.runDir);
-      const tA = stA.j && stA.j.tasks && stA.j.tasks.dl;
+      const tA = stA.j && stA.j.tasks && stA.j.tasks.dk;
       ok('S13 through status: a snapshot ahead of the journal is named, the open role still comes from the log, the snapshot is kept', !!tA && /ahead of the journal/.test(tA.journal.error || '') && tA.open.length === 1 && !tA.open[0].text && fs.readFileSync(snapT, 'utf8') === ahead, JSON.stringify(tA));
       for (const e of traceOf(fdT)) if (e.ev === 'start') { try { process.kill(-e.pid, 'SIGKILL'); } catch { /* gone */ } }
     }

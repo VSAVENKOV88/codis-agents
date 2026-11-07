@@ -56,24 +56,44 @@
 // task keys, argv, plugin version), log.txt (the conductor's lines: "agent <label> started" and "agent <label> ok|null
 // <s> s" for every role call, "exec <label> started" and "exec <label> ok|no-json|null <s> s" for every service step -
 // status names an open one with its start -, the hook checks, the script's log and phases, its own stderr),
-// tasks/<key>.json (running while the conductor holds the task, ended with its result), results.json ({runId, exitCode,
-// results}: one result per task as the Workflow gives it, with the field adapter when a call did not end ok).
+// tasks/<key>.json (the record of a task registered in this run: running while the conductor holds it, ended with its
+// result; reconcile: what the reconciliation found), steps/<key>/ (the files of the task's service steps: the wait steps
+// wait-<step>.{json,log,rc}, the copy of a selection log, leftovers.md, the train's copies of its logs; the script gets
+// the folder as the task field stepDir, which a tasks file cannot set), results.json ({runId, exitCode, results}: one
+// result per task as the Workflow gives it, with the field adapter when a call did not end ok).
 //
 // All of it lies outside the write roots of the roles (owner 2026-11-07): no service file in a task folder, a role cannot
 // rename the folder or its parents, and a service file is read and written with no link followed and without blocking.
+// A new run never meets the step files of an earlier one: each run has its own steps folder, and inside a run a wait
+// step id is started once (wait-step.js --once; its retry passes --reuse).
 //
-// The lock of a task, <sharedDir>/runs/.locks/<key>.lock: {pid, lstart, runId, runDir}, created whole by a hard link (two
-// conductors never both take it); it is one name per task, so that conductors of different runs meet at it. The identity of
-// a process is its pid with its start time (`LC_ALL=C ps -o lstart=`), so a pid that now belongs to another process is not
-// the holder. A lock held by a live conductor stops the task here ("another conductor runs it"). A lock whose conductor is
-// not alive, or a dead run whose tasks/<key>.json still says running, is an undetermined state (owner 2026-11-06, answer
-// 12: refuse a restart while the state is undetermined): the task stops before any role, the lock stays, and the run
-// folder of the dead conductor (or this run's folder when that one is gone) gets the mark undetermined.json {runId, tasks:
-// {<key>: {reason, unrecordedCalls, unrecordedCallsError?}}}. Any mark that names the task refuses every later start, also
-// after the lock was removed by hand - removing it is only a technical cleanup after checking the processes.
-// A lock read after a failed link gives one of three answers (CJ.readLock): its data, and the liveness of its holder
-// decides; no file, the holder released it, so the link is tried again; or it cannot be read (a link, a FIFO, garbage), an
-// undetermined state with nothing named. Two names on a lock are legal: between link and unlink of its taker.
+// Liveness has three answers (liveness): alive - the process with that pid started at the recorded time (`LC_ALL=C ps -o
+// lstart=`), or its process group still has members, which are named; gone - neither; unknown - ps does not answer while
+// a process with that pid exists, or a pid or start time that cannot name a process. unknown stops this start and
+// writes nothing, so the next start asks again.
+//
+// The lock of a task, <sharedDir>/runs/.locks/<key>.lock: {pid, lstart, runId, takenAt}, created whole by a hard link (two
+// conductors never both take it); one name per task, so conductors of different runs meet at it. It only excludes: the
+// truth is the journal. Per task the order is lock -> reconciliation of every earlier run of the task -> registration
+// (journal/<key>/, steps/<key>/, then tasks/<key>.json) -> steps (acquireTask). A lock held by a live conductor stops the
+// task ("another conductor runs it"); a lock that cannot be read, or whose pid, start time or runId cannot name a run
+// (runId by KEY_RE; its runDir field is never used), stops it and stays; unknown liveness stops it. A dead holder: the
+// lock is read again (its holder may have released it in between), then taken over under the token
+// <key>.lock.takeover (a hard link too): under it the lock is read once more, the reconciliation runs - a run named by the
+// dead lock that has no folder refuses - and only then this conductor's lock is renamed onto the dead one; a refusal
+// leaves the dead lock as it was. A token whose holder is alive means another conductor is taking over; a token that
+// cannot be read or whose holder is dead stays and refuses, a technical cleanup by hand.
+//
+// The reconciliation (reconcile) reads every run folder but its own and returns data, the text is built apart. A run
+// folder without a record of the task (a start that lost the lock, or a run of other tasks) does not count. A record
+// that cannot be read, a run.json that cannot be read, a damaged journal or snapshot ahead of it, or no journal while
+// the record says running refuses; a conductor alive with the task running refuses (its lock may have been removed by
+// hand). Open steps by their class of effect: none never blocks; never blocks once its process was launched (a gate that
+// never opened does not); idempotent and reuse block while their process is alive or unknown, and an idempotent step
+// without a launch (its pid unknown) blocks; a reuse step without a launch reads the meta of its wait step in the steps
+// folder of that run. A verdict the journal shows as not used by the chain (unaccounted, or a result after the end) and
+// an intent with no known effect refuse. No mark file is written: removing a lock by hand lifts nothing, the refusal is
+// computed again from the run folders at every start. calls.jsonl and the call folders of a task folder are only named.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -83,21 +103,60 @@ const CJ = require('./chain-journal.js');
 
 const ROOT = path.join(__dirname, '..');
 const MAX_WAIT = 270;
-const MARK = 'undetermined.json';
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 const USAGE = 'usage: chain-run.js start --host claude|codex --tasks <file> [--owner <file>] [--config <file>] [--bin <cli>] [--codex-home <dir>] [--codex-auth chatgpt|apiKeyFile] [--codex-key-file <file>]\n'
   + '       chain-run.js status <run-id|run folder> [--wait <s>] [--config <file>]';
 
 const readJson = CJ.readJsonSafe;
 const writeJsonAtomic = CJ.writeAtomic;
-// The start time of a process as ps prints it in the C locale, or null when there is no such process.
+// The start time of a process as ps prints it in the C locale, or null when there is no such process (or ps fails).
 function lstartOf(pid) {
-  if (!Number.isInteger(pid) || pid <= 0) return null;
+  if (!Number.isInteger(pid) || pid <= 1) return null;
   const p = spawnSync('ps', ['-o', 'lstart=', '-p', String(pid)], { encoding: 'utf8', env: Object.assign({}, process.env, { LC_ALL: 'C' }) });
   const s = p.status === 0 ? String(p.stdout).trim() : '';
   return s || null;
 }
-const aliveAs = (pid, lstart) => !!lstart && lstartOf(pid) === lstart;
+const normL = (v) => (typeof v === 'string' && v.trim() ? v.trim().replace(/\s+/g, ' ') : null);
+// Every process as {pid, pgid, lstart, command}, or null when ps does not answer.
+function psTable() {
+  const p = spawnSync('ps', ['-A', '-o', 'pid=,pgid=,lstart=,command='], { encoding: 'utf8', env: Object.assign({}, process.env, { LC_ALL: 'C' }), maxBuffer: 64 * 1024 * 1024 });
+  if (p.status !== 0 || p.error) return null;
+  const rows = [];
+  for (const l of String(p.stdout).split('\n')) {
+    const m = /^\s*(\d+)\s+(\d+)\s+(\S+\s+\S+\s+\d+\s+\S+\s+\d+)\s?(.*)$/.exec(l);
+    if (m) rows.push({ pid: +m[1], pgid: +m[2], lstart: normL(m[3]), command: m[4].slice(0, 200) });
+  }
+  return rows;
+}
+// kill(pid, 0) as an answer: true exists, false no such process, null cannot tell. Only for an integer above 1 or below -1.
+function exists(pid) {
+  try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM' ? true : e.code === 'ESRCH' ? false : null; }
+}
+// Whether a recorded process lives: {state: alive|gone|unknown, members?, why?} (the header of this file). pgid: the
+// group the process led, when it was recorded.
+function liveness(p) {
+  const pid = p && p.pid, lstart = normL(p && p.lstart);
+  const pgid = p && Number.isInteger(p.pgid) && p.pgid > 1 ? p.pgid : null;
+  if (!Number.isInteger(pid) || pid <= 1) return { state: 'unknown', why: `no process can be named by pid ${JSON.stringify(pid)}` };
+  const there = exists(pid);
+  const table = psTable();
+  if (!table) {
+    if (there === false) {
+      const g = pgid ? exists(-pgid) : false;
+      if (g === false) return { state: 'gone' };
+      if (g === true) return { state: 'alive', members: [], why: `its group ${pgid} has members (ps did not answer to name them)` };
+    }
+    return { state: 'unknown', why: `ps does not answer and pid ${pid} ${there ? 'exists' : 'cannot be checked'}` };
+  }
+  const row = table.find((r) => r.pid === pid);
+  const members = pgid ? table.filter((r) => r.pgid === pgid) : [];
+  if (row && lstart && row.lstart === lstart) return { state: 'alive', members: members.length ? members : [row] };
+  if (members.length) return { state: 'alive', members, why: `its group ${pgid} has members` };
+  if (row && !lstart) return { state: 'unknown', why: `pid ${pid} exists and no start time was recorded, so whose process it is cannot be told` };
+  return { state: 'gone' };
+}
+const liveText = (v) => (v.state === 'alive' ? `alive${(v.members || []).length ? ` (group: ${v.members.slice(0, 8).map((m) => `${m.pid} ${m.command || ''}`.trim()).join('; ')})` : ''}`
+  : v.state === 'gone' ? 'gone' : `unknown: ${v.why}`);
 const isPlain = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 const labelKey = (label) => (/^[a-z]+:([^:#]+)/.exec(String(label)) || [])[1] || null;
 
@@ -125,6 +184,7 @@ function parseTasks(text) {
     // one name on a case-insensitive disk
     if (keys.has(t.key.toLowerCase())) return { error: `two tasks have the key ${t.key}` };
     keys.add(t.key.toLowerCase());
+    if (Object.prototype.hasOwnProperty.call(t, 'stepDir')) return { error: `task ${t.key}: the field stepDir is the conductor's (the steps folder of a run), a tasks file cannot set it` };
     for (const [k, x] of Object.entries(t)) {
       const fine = typeof x === 'string' || typeof x === 'boolean' || (Array.isArray(x) && x.every((y) => typeof y === 'string'))
         || (isPlain(x) && Object.values(x).every((y) => ['string', 'number', 'boolean'].includes(typeof y)));
@@ -317,15 +377,16 @@ async function stepExec(steps, step, o) {
   if (lost) throw lost;
   return v;
 }
-// An open step as one text (status, and later the refusal of a restart): the run, the step, the time and the HEAD of its
-// intent, its process and whether it lives (pid with its start time), that no result is recorded, the HEAD now with the
-// commits since, the call folder and the adapter's record of it. ctx: {runId, wt, dir}.
-function openStepText(step, ctx) {
+// An open step as one text (status and the refusal of a restart): the run, the step, the time and the HEAD of its
+// intent, its process and its liveness (live: the answer of liveness, else it is asked here), that no result is
+// recorded, the HEAD now with the commits since, the call folder and the adapter's record of it. ctx: {runId, wt, dir}.
+function openStepText(step, ctx, live) {
   const l = step.launch;
   let proc;
   if (l && l.substitute) proc = 'a substitute launcher, no process';
-  else if (l && l.reused) proc = `an ended run reused, pid ${l.pid}`;
-  else if (l) proc = `pid ${l.pid}, group ${l.pgid === null || l.pgid === undefined ? 'of the conductor' : l.pgid}, started ${l.lstart || 'unknown'}: ${aliveAs(l.pid, l.lstart) ? 'alive' : 'gone'}`;
+  else if (l && l.reused) proc = `an ended run reused, pid ${l.pid}, rc ${l.rc}`;
+  else if (l) proc = `pid ${l.pid}, group ${l.pgid === null || l.pgid === undefined ? 'of the conductor' : l.pgid}, started ${l.lstart || 'unknown'}: ${liveText(live || liveness(l))}`;
+  else if (live) proc = `no launch recorded; the meta of its wait step: ${liveText(live)}`;
   else if (step.gated) proc = 'no launch recorded: the gate never opened, the role did not start';
   else proc = 'no launch recorded: pid unknown, the step may have started';
   const wait = step.waitId ? `; wait step ${step.waitId}` : '';
@@ -405,49 +466,174 @@ function unrecordedCalls(dir) {
 const unrecordedText = (u) => (u.error ? `${u.error}, so nothing is known about the end of the calls ${u.calls.join(', ') || '(none)'}`
   : `calls started without a line in calls.jsonl: ${u.calls.join(', ') || 'none'}`);
 
-// ---- the lock of a task
+// ---- the lock of a task (the header of this file)
 const lockFileOf = (runsDir, key) => path.join(runsDir, '.locks', `${key}.lock`);
+const stepDirOf = (runDir, key) => path.join(runDir, 'steps', key);
+const RUN_ID_RE = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
+const lockData = (me) => ({ pid: me.pid, lstart: me.lstart, runId: me.runId, takenAt: new Date().toISOString() });
+// What keeps a lock from naming a run, or null.
+function lockProblem(d) {
+  if (!isPlain(d)) return 'holds no lock';
+  if (!Number.isInteger(d.pid) || d.pid <= 1) return `names no process (pid ${JSON.stringify(d.pid)})`;
+  if (!normL(d.lstart)) return `names no start time of pid ${d.pid}`;
+  if (typeof d.runId !== 'string' || !RUN_ID_RE.test(d.runId)) return `names no run (runId ${JSON.stringify(d.runId)})`;
+  return null;
+}
+const sameLock = (a, b) => ['pid', 'lstart', 'runId', 'takenAt'].every((k) => JSON.stringify(a[k]) === JSON.stringify(b[k]));
+// One link of the lock: {ok}, or {held: its data ({} when unreadable), unreadable?, live: liveness of the holder, alive}.
 function takeLock(file, me) {
   try { fs.mkdirSync(path.dirname(file)); } catch (e) { if (e.code !== 'EEXIST') throw e; }
   if (!fs.lstatSync(path.dirname(file)).isDirectory()) throw new Error(`${path.dirname(file)} is not a folder`);
   const tmp = `${file}.${me.runId}.${process.pid}.new`;
-  writeJsonAtomic(tmp, { pid: me.pid, lstart: me.lstart, runId: me.runId, runDir: me.runDir, takenAt: new Date().toISOString() });
+  writeJsonAtomic(tmp, lockData(me));
   try {
     const r = CJ.linkLock(tmp, file);
-    return r.ok ? { ok: true } : { held: r.data || {}, alive: !!r.data && aliveAs(r.data.pid, r.data.lstart) };
+    if (r.ok) return { ok: true };
+    if (!r.data) return { held: {}, unreadable: r.unreadable, live: { state: 'unknown', why: 'the lock cannot be read' }, alive: false };
+    const live = lockProblem(r.data) ? { state: 'unknown', why: `the lock ${lockProblem(r.data)}` } : liveness({ pid: r.data.pid, lstart: r.data.lstart });
+    return { held: r.data, live, alive: live.state === 'alive' };
   } finally { try { fs.unlinkSync(tmp); } catch { /* gone */ } }
 }
 function releaseLock(file, me) {
   const { data } = CJ.readLock(file);
   if (data && data.runId === me.runId && data.pid === me.pid) fs.unlinkSync(file);
 }
-
-// ---- undetermined runs
-function markUndetermined(runDir, runId, key, reason, unrecorded, by) {
-  const file = path.join(runDir, MARK);
-  const m = readJson(file) || { runId, tasks: {} };
-  if (!isPlain(m.tasks)) m.tasks = {};
-  if (!m.tasks[key]) m.tasks[key] = Object.assign({ reason, unrecordedCalls: unrecorded.calls, markedAt: new Date().toISOString(), markedBy: by }, unrecorded.error ? { unrecordedCallsError: unrecorded.error } : {});
-  writeJsonAtomic(file, m);
-  return file;
+// The refusal text of a reconciliation: undetermined, every reason, the notes, and what the task folder's calls say.
+function refusalText(rc, ctx) {
+  const u = ctx && ctx.dir ? unrecordedCalls(ctx.dir) : null;
+  return `undetermined: ${rc.reasons.map((r) => (r.runId && !r.why.startsWith(`run ${r.runId},`) ? `run ${r.runId}: ${r.why}` : r.why)).join('; ')}${rc.notes.length ? `; also: ${rc.notes.join('; ')}` : ''}${u ? `; ${unrecordedText(u)}` : ''}`;
 }
-// What earlier runs say about a task: [{runDir, runId, mark}] - a mark that names it, or a dead conductor whose
-// tasks/<key>.json still says running.
-function undeterminedOf(runs, key, ownRunId) {
-  let ids = [];
-  try { ids = fs.readdirSync(runs).filter((n) => !n.startsWith('.')); } catch { return []; }
-  const out = [];
-  for (const id of ids.sort()) {
-    if (id === ownRunId) continue;
-    const rd = path.join(runs, id);
-    const m = readJson(path.join(rd, MARK));
-    if (m && isPlain(m.tasks) && m.tasks[key]) { out.push({ runDir: rd, runId: id, mark: path.join(rd, MARK) }); continue; }
-    const st = readJson(path.join(rd, 'tasks', `${key}.json`));
-    if (!st || st.state !== 'running') continue;
-    const run = readJson(path.join(rd, 'run.json'));
-    if (!run || !aliveAs(run.pid, run.lstart)) out.push({ runDir: rd, runId: id, mark: null });
+// The takeover of a dead lock under its token: {ok, rc} | {why} | {retry} (the lock moved: take it again).
+function takeover(file, dead, me, check) {
+  const tok = `${file}.takeover`;
+  const tmp = `${tok}.${me.runId}.${process.pid}.new`;
+  writeJsonAtomic(tmp, lockData(me));
+  let t;
+  try { t = CJ.linkLock(tmp, tok); } finally { try { fs.unlinkSync(tmp); } catch { /* gone */ } }
+  if (!t.ok) {
+    if (!t.data) return { why: `undetermined: the takeover token ${tok} cannot be read (${t.unreadable}); it stays - remove it by hand after checking the processes` };
+    const lv = lockProblem(t.data) ? { state: 'gone' } : liveness({ pid: t.data.pid, lstart: t.data.lstart });
+    if (lv.state === 'alive') return { why: `another conductor runs it: pid ${t.data.pid}, run ${t.data.runId} is taking over the dead lock (${tok})` };
+    return { why: `undetermined: the takeover token ${tok} of conductor run ${t.data.runId || '?'} (pid ${t.data.pid || '?'}) is ${lv.state === 'unknown' ? `of unknown liveness (${lv.why})` : 'not alive'}; it stays - remove it by hand after checking the processes` };
   }
-  return out;
+  try {
+    const cur = CJ.readLock(file);
+    if (!cur.data || !sameLock(cur.data, dead)) return { retry: true };
+    // The run a dead lock names must have its folder: without it what that conductor did cannot be read (lockProblem
+    // already refused a runId that is no plain name).
+    const deadDir = path.join(path.dirname(path.dirname(file)), dead.runId);
+    let isDir = false;
+    try { isDir = fs.lstatSync(deadDir).isDirectory(); } catch { /* gone */ }
+    if (!isDir) return { why: `undetermined: the dead lock ${file} names conductor run ${dead.runId} (pid ${dead.pid}, started ${dead.lstart}), whose folder ${deadDir} is gone, so what it did cannot be read; the lock stays` };
+    const rc = check(dead);
+    if (rc.reasons.length) return { why: rc.text };
+    const own = `${file}.${me.runId}.${process.pid}.own`;
+    writeJsonAtomic(own, lockData(me));
+    fs.renameSync(own, file);
+    return { ok: true, rc, took: dead };
+  } finally {
+    const mine = CJ.readLock(tok);
+    if (mine.data && mine.data.runId === me.runId && mine.data.pid === me.pid) { try { fs.unlinkSync(tok); } catch { /* gone */ } }
+  }
+}
+// Lock -> reconciliation of the task: {ok, rc} with the lock held, or {why} with nothing of this conductor left at the lock.
+// check(deadLock | null) -> {reasons, notes, text}: the reconciliation, run while the lock (or its token) is held.
+function acquireTask(runsDir, key, me, check) {
+  const file = lockFileOf(runsDir, key);
+  const checked = (dead) => { const rc = check(dead); return Object.assign({ text: rc.reasons.length ? rc.text || refusalText(rc) : null }, rc); };
+  for (;;) {
+    const l = takeLock(file, me);
+    if (l.ok) {
+      const rc = checked(null);
+      if (rc.reasons.length) { releaseLock(file, me); return { why: rc.text }; }
+      return { ok: true, rc };
+    }
+    const h = l.held;
+    if (l.unreadable) return { why: `undetermined: the lock ${file} cannot be read (${l.unreadable}), so it names no conductor (pid ?); it stays` };
+    const bad = lockProblem(h);
+    if (bad) return { why: `undetermined: the lock ${file} ${bad}, pid ${h.pid === undefined ? '?' : h.pid}; it stays and nothing is written by what it names` };
+    if (l.live.state === 'alive') return { why: `another conductor runs it: pid ${h.pid}, run ${h.runId}` };
+    if (l.live.state === 'unknown') return { why: `undetermined: cannot tell whether conductor run ${h.runId} (pid ${h.pid}) holding the lock ${file} lives - ${l.live.why}; nothing written, the next start asks again` };
+    const again = CJ.readLock(file);
+    if (again.gone || !again.data || !sameLock(again.data, h)) continue;
+    const t = takeover(file, h, me, checked);
+    if (t.retry) continue;
+    return t;
+  }
+}
+
+// ---- the reconciliation (the header of this file)
+const EFFECTS = new Set(['never', 'none', 'idempotent', 'reuse']);
+// {data} | {none} | {unreadable}: a service file read with no link followed and without blocking.
+function read3(file) {
+  let text;
+  try { text = CJ.readText(file); } catch (e) { return e.code === 'ENOENT' ? { none: true } : { unreadable: e.message }; }
+  try { return { data: JSON.parse(text) }; } catch (e) { return { unreadable: `${file} does not parse: ${e.message}` }; }
+}
+// An open step of run folder rd: {block, text}.
+function openStepVerdict(step, rd, key, ctx) {
+  const eff = step.effect;
+  const l = step.launch;
+  if (!EFFECTS.has(eff)) return { block: true, text: `step ${step.n} ${step.label} has no known class of effect (${JSON.stringify(eff)}), so what a repeat would do is not known` };
+  let live = null;
+  if (l && (l.substitute || l.reused)) live = { state: 'gone' };
+  else if (l) live = liveness(l);
+  else if (eff === 'reuse') {
+    const sd = path.join(rd, 'steps', key);
+    if (typeof step.waitId !== 'string' || path.dirname(step.waitId) !== sd) return { block: true, text: `${openStepText(step, ctx, null)}; its wait step ${step.waitId || '?'} lies outside the steps folder ${sd} of its run, so its process is not known` };
+    const m = read3(`${step.waitId}.json`);
+    if (!m.data) return { block: true, text: `${openStepText(step, ctx, null)}; the meta of its wait step ${m.none ? 'is not there' : `cannot be read (${m.unreadable})`}, so whether it started is not known` };
+    live = liveness({ pid: m.data.pid, lstart: m.data.lstart, pgid: m.data.pid });
+  }
+  const t = openStepText(step, ctx, live);
+  if (eff === 'none') return { block: false, text: t };
+  if (eff === 'never') return l || !step.gated ? { block: true, text: t } : { block: false, text: t };
+  if (!live) return { block: true, text: `${t}; its process is not known` };
+  return { block: live.state !== 'gone', text: t };
+}
+// Every earlier run of task key, but ownRunId: {reasons: [{runId, runDir, why}], notes: [text]}. ctx: {wt, dir} of the
+// task, for the texts.
+function reconcile(runsDir, key, ownRunId, ctx) {
+  const reasons = [], notes = [];
+  let ids;
+  try { ids = fs.readdirSync(runsDir).filter((n) => !n.startsWith('.')).sort(); } catch (e) {
+    return { reasons: [{ why: `the runs folder ${runsDir} cannot be read: ${e.message}` }], notes };
+  }
+  for (const id of ids) {
+    if (id === ownRunId) continue;
+    const rd = path.join(runsDir, id);
+    const R = (why) => reasons.push({ runId: id, runDir: rd, why });
+    let st;
+    try { st = fs.lstatSync(rd); } catch (e) { if (e.code !== 'ENOENT') R(`${rd} cannot be read: ${e.message}`); continue; }
+    if (!st.isDirectory()) { notes.push(`${rd} is not a run folder`); continue; }
+    const rec = read3(path.join(rd, 'tasks', `${key}.json`));
+    if (rec.none) continue;
+    if (!rec.data || !isPlain(rec.data) || !['running', 'ended'].includes(rec.data.state)) { R(`tasks/${key}.json cannot be read (${rec.unreadable || 'no state'}), see ${path.join(rd, 'run.json')}`); continue; }
+    const running = rec.data.state === 'running';
+    const run = read3(path.join(rd, 'run.json'));
+    if (!run.data || !isPlain(run.data)) { R(`run.json cannot be read (${run.unreadable || 'not there'}) while the task is registered in it`); continue; }
+    const c = { runId: id, wt: ctx && ctx.wt, dir: ctx && ctx.dir };
+    if (running) {
+      const cl = liveness({ pid: run.data.pid, lstart: run.data.lstart });
+      if (cl.state === 'alive') { R(`another conductor runs it: pid ${run.data.pid}, run ${id}, and its task is running (the lock of the task was removed by hand?)`); continue; }
+      if (cl.state === 'unknown') { R(`cannot tell whether conductor run ${id} (pid ${run.data.pid}) with the task running lives - ${cl.why}`); continue; }
+    }
+    const jr = CJ.readJournal(rd, key);
+    if (jr.error) { R(`${jr.error}; see ${path.join(rd, 'run.json')}`); continue; }
+    if (jr.none) {
+      if (running) R(`no journal of the task while tasks/${key}.json says running; see ${path.join(rd, 'run.json')}`);
+      else notes.push(`run ${id}: the task ended without a journal (a run of an older version)`);
+      continue;
+    }
+    for (const tn of jr.torn) notes.push(`run ${id}: a torn tail of ${tn.bytes} bytes in ${tn.file} (no record)`);
+    for (const step of Object.values(jr.state.open)) {
+      const v = openStepVerdict(step, rd, key, c);
+      if (v.block) R(`${v.text}; see ${path.join(rd, 'run.json')}`); else notes.push(v.text);
+    }
+    for (const v of jr.state.unaccounted || []) R(`the verdict of step ${v.n} ${v.label} is recorded (${v.outcome}: ${v.value}), but its use by the chain is not proven: no later step that carries a verdict and no end follow it`);
+    for (const v of jr.state.afterEnd || []) R(`the verdict of step ${v.n} ${v.label} came after its end (${v.outcome}: ${v.value}): the chain did not take it`);
+  }
+  return { reasons, notes };
 }
 
 const stopped = (key, why) => ({ task: key, status: 'stopped', why });
@@ -617,6 +803,7 @@ async function conduct(runDirArg) {
   const journals = {};
   const blocked = {};
   const held = new Set();
+  const found = {};
   const block = (key, why) => { blocked[key] = stopped(key, why); note(`[${key}] stopped before any role: ${why}`); };
   for (const t of args.tasks) {
     const dir = table[t.key].dir;
@@ -624,35 +811,30 @@ async function conduct(runDirArg) {
     if (!me.lstart) { block(t.key, 'the conductor cannot read its own start time (ps -o lstart): the lock of the task cannot name it'); continue; }
     try {
       fs.mkdirSync(dir, { recursive: true });
-      const l = takeLock(lockFile, me);
-      if (l.held) {
-        const h = l.held;
-        if (l.alive) { block(t.key, `another conductor runs it: pid ${h.pid}, run ${h.runId} (${h.runDir})`); continue; }
-        const unrecorded = unrecordedCalls(dir);
-        const where = h.runDir && fs.existsSync(h.runDir) ? h.runDir : runDir;
-        const reason = `undetermined: the lock ${lockFile} names conductor run ${h.runId || '?'} (pid ${h.pid || '?'}, started ${h.lstart || '?'}), which is not alive (or its pid now belongs to another process)`;
-        const mark = markUndetermined(where, h.runId || req.runId, t.key, reason, unrecorded, req.runId);
-        block(t.key, `${reason}; see ${h.runDir ? path.join(h.runDir, 'run.json') : 'no run folder'}; ${unrecordedText(unrecorded)} (a role of that run may still be alive). The lock stays, and the mark ${mark} refuses every start of this task; removing the lock by hand is only a technical cleanup after checking the processes`);
-        continue;
-      }
+      const ctx = { wt: table[t.key].wt, dir };
+      const got = acquireTask(runsDir, t.key, me, () => {
+        const rc = reconcile(runsDir, t.key, req.runId, ctx);
+        return Object.assign(rc, { text: rc.reasons.length ? refusalText(rc, ctx) : null });
+      });
+      if (!got.ok) { block(t.key, got.why); continue; }
       held.add(t.key);
-      const und = undeterminedOf(runsDir, t.key, req.runId);
-      if (und.length) {
-        releaseLock(lockFile, me);
-        held.delete(t.key);
-        const unrecorded = unrecordedCalls(dir);
-        const marks = und.map((u) => u.mark || markUndetermined(u.runDir, u.runId, t.key,
-          `undetermined: conductor run ${u.runId} is not alive and its ${path.join('tasks', `${t.key}.json`)} still says running`, unrecorded, req.runId));
-        block(t.key, `undetermined: an earlier run of this task did not end - ${und.map((u) => path.join(u.runDir, 'run.json')).join(', ')}; ${unrecordedText(unrecorded)}. The mark ${marks.join(', ')} refuses every start of this task`);
-        continue;
-      }
-      try { journals[t.key] = CJ.openJournal(runDir, req.runId, t.key); } catch (e) {
+      found[t.key] = { notes: got.rc.notes };
+      if (got.took) note(`[${t.key}] took over the lock of dead conductor run ${got.took.runId} (pid ${got.took.pid})`);
+      for (const n of got.rc.notes) note(`[${t.key}] reconcile: ${n}`);
+      // The registration: the journal and the steps folder, then the record that makes the task part of this run.
+      try {
+        journals[t.key] = CJ.openJournal(runDir, req.runId, t.key);
+        for (const d of [path.join(runDir, 'steps'), stepDirOf(runDir, t.key)]) {
+          try { fs.mkdirSync(d, { mode: 0o755 }); } catch (e) { if (e.code !== 'EEXIST') throw e; }
+          if (!fs.lstatSync(d).isDirectory()) throw new Error(`${d} is not a folder`);
+        }
+      } catch (e) {
         releaseLock(lockFile, me);
         held.delete(t.key);
         block(t.key, `journal/run-state not written: ${e.message}`);
         continue;
       }
-      writeJsonAtomic(path.join(stateDir, `${t.key}.json`), { state: 'running', since: new Date().toISOString() });
+      writeJsonAtomic(path.join(stateDir, `${t.key}.json`), { state: 'running', since: new Date().toISOString(), reconcile: found[t.key] });
     } catch (e) {
       if (held.has(t.key)) { try { releaseLock(lockFile, me); } catch { /* below */ } held.delete(t.key); }
       block(t.key, `the lock of the task could not be taken: ${e.message}`);
@@ -669,7 +851,7 @@ async function conduct(runDirArg) {
   const endTask = (key, r) => {
     if (!held.has(key)) return;
     try { steps.finish(key, r); } catch (e) { note(`[${key}] ${e.message}`); }
-    try { writeJsonAtomic(path.join(stateDir, `${key}.json`), { state: 'ended', endedAt: new Date().toISOString(), result: r || null }); } catch (e) { note(`[${key}] tasks/${key}.json could not be written: ${e.message}`); }
+    try { writeJsonAtomic(path.join(stateDir, `${key}.json`), { state: 'ended', endedAt: new Date().toISOString(), result: r || null, reconcile: found[key] }); } catch (e) { note(`[${key}] tasks/${key}.json could not be written: ${e.message}`); }
     try { releaseLock(lockFileOf(runsDir, key), me); } catch (e) { note(`[${key}] the lock could not be removed: ${e.message}`); }
     held.delete(key);
     note(`[${key}] ended: ${r ? r.status : 'no result'}`);
@@ -688,7 +870,7 @@ async function conduct(runDirArg) {
       note(why);
       for (const t of runnable) { byKey[t.key] = stopped(t.key, why); endTask(t.key, byKey[t.key]); }
     } else {
-      const x = await runScript({ host: req.host, args: Object.assign({}, args, { tasks: runnable }), adapter: req.adapter, callsDir: runDir,
+      const x = await runScript({ host: req.host, args: Object.assign({}, args, { tasks: runnable.map((t) => Object.assign({}, t, { stepDir: stepDirOf(runDir, t.key) })) }), adapter: req.adapter, callsDir: runDir,
         steps, note, log: (m) => note(`log ${m}`), onTaskEnd: endTask });
       threw = x.threw;
       runnable.forEach((t, i) => { byKey[t.key] = x.results[i] || stopped(t.key, 'the chain gave no result'); });
@@ -743,7 +925,8 @@ function snapshot(runDir) {
   const done = res();
   if (done) return { state: 'finished', runId: done.runId, exitCode: done.exitCode, results: done.results };
   const run = readJson(path.join(runDir, 'run.json'));
-  const live = !!run && aliveAs(run.pid, run.lstart);
+  // unknown counts as running: a conductor that cannot be told dead is not declared dead.
+  const live = !!run && liveness({ pid: run.pid, lstart: run.lstart }).state !== 'gone';
   const again = live ? null : res();
   if (again) return { state: 'finished', runId: again.runId, exitCode: again.exitCode, results: again.results };
   const ls = logState(runDir);
@@ -767,7 +950,7 @@ function snapshot(runDir) {
   }
   const base = { runId: req.runId || path.basename(runDir), pid: run ? run.pid : null, startedAt: run ? run.startedAt : null, phase: ls.phase, tasks };
   return live ? Object.assign({ state: 'running' }, base)
-    : Object.assign({ state: 'dead', note: 'the conductor is gone without results.json: its locks stay, and a restart of its running tasks is refused as undetermined' }, base);
+    : Object.assign({ state: 'dead', note: 'the conductor is gone without results.json: its locks stay, and a start of its tasks is refused while the reconciliation finds an open step of a live or unknown process, a launched role without a result, a verdict whose use is not proven or damage' }, base);
 }
 function status(argv) {
   const id = argv[0];
@@ -801,4 +984,4 @@ if (require.main === module) {
   else usage(`unknown command ${JSON.stringify(cmd)}`);
 }
 
-module.exports = { makeSteps, stepExec, openStepText, stateRootProblem, runScript, makePipeline, taskTable, parseTasks, lstartOf, unrecordedCalls, takeLock, releaseLock, execStep, hookGate, adapterCfg, logState, CAUSE_KNOWN, MAX_WAIT };
+module.exports = { makeSteps, stepExec, openStepText, stateRootProblem, runScript, makePipeline, taskTable, parseTasks, lstartOf, liveness, reconcile, acquireTask, unrecordedCalls, takeLock, releaseLock, execStep, hookGate, adapterCfg, logState, CAUSE_KNOWN, MAX_WAIT };

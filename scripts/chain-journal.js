@@ -12,6 +12,10 @@
 //   result   its end: outcome, value, rc, signal, error, callDir, seconds
 //   settled  stepIds, counts, head: the counters of the script after it took those results
 //   end      the task is over: status, counts (open steps stay open: end closes nothing)
+// A step of effect never (a role) or reuse (a wait step: the selection, the train) carries a verdict. The fold keeps the
+// results of such steps that nothing has used yet: the chain takes a verdict into its counters before it writes the intent
+// of its next such step, so a verdict is used once an intent of another never or reuse step, or the end, follows its
+// result (unaccounted until then). A result written after the end is kept apart (afterEnd): the chain no longer took it.
 //
 // Rules of the state (owner 2026-11-06, answer 12; 2026-11-07, the place of the journal):
 // - a line is written and fsynced before the event may have an effect, and the snapshot only after its line;
@@ -124,7 +128,8 @@ function takeWriter(runDir, me) {
 
 // ---- the fold
 // seen: every stepId with an intent. Not enumerable, so it stays out of the snapshot, which names only what a reader shows.
-const emptyState = () => Object.defineProperty({ open: {}, last: null, counts: null, head: null, ended: null, unsettled: [], steps: 0 }, 'seen', { value: new Set() });
+const emptyState = () => Object.defineProperty({ open: {}, last: null, counts: null, head: null, ended: null, unsettled: [], unaccounted: [], afterEnd: [], steps: 0 }, 'seen', { value: new Set() });
+const VERDICT_EFFECTS = new Set(['never', 'reuse']);
 // Why a line cannot follow the ones before it, or null. A step has one intent and one launch: a repeat would erase the
 // launch, and a step that started would read as one that never did.
 function damageOf(s, e) {
@@ -149,6 +154,7 @@ function apply(s, e) {
   if (e.counts) s.counts = e.counts;
   if (typeof e.head === 'string') s.head = e.head;
   if (e.type === 'intent') {
+    if (VERDICT_EFFECTS.has(e.effect)) s.unaccounted = [];
     s.seen.add(e.stepId);
     s.open[e.stepId] = { stepId: e.stepId, n: e.n, label: e.label, kind: e.kind, stepKind: e.stepKind, effect: e.effect, gated: e.gated, phase: e.phase, waitId: e.waitId, at: e.at, gitHead: e.gitHead, launch: null };
     s.steps++;
@@ -156,13 +162,20 @@ function apply(s, e) {
     const { pid, pgid, lstart, callDir, gated, substitute, started, attached, reused, rc } = e;
     s.open[e.stepId].launch = { pid, pgid, lstart, callDir, gated, substitute, started, attached, reused, rc, at: e.at };
   } else if (e.type === 'result') {
-    s.last = { stepId: e.stepId, label: s.open[e.stepId].label, outcome: e.outcome, at: e.at };
+    const o = s.open[e.stepId];
+    if (VERDICT_EFFECTS.has(o.effect)) {
+      let value;
+      try { value = JSON.stringify(e.value); } catch { value = '?'; }
+      (s.ended ? s.afterEnd : s.unaccounted).push({ stepId: e.stepId, n: o.n, label: o.label, effect: o.effect, outcome: e.outcome, value: value === undefined ? null : value.slice(0, 400), at: e.at });
+    }
+    s.last = { stepId: e.stepId, label: o.label, outcome: e.outcome, at: e.at };
     delete s.open[e.stepId];
     s.unsettled.push(e.stepId);
   } else if (e.type === 'settled') {
     s.unsettled = s.unsettled.filter((x) => !e.stepIds.includes(x));
   } else if (e.type === 'end') {
     s.ended = { status: e.status, at: e.at, counts: e.counts };
+    s.unaccounted = [];
   }
 }
 
@@ -319,4 +332,4 @@ function openJournal(runDir, runId, key, o) {
   return { append, dir, get seq() { return seq; }, get state() { return state; } };
 }
 
-module.exports = { VERSION, KEY_RE, openJournal, readJournal, readText, readJsonSafe, readLock, linkLock, appendLine, writeAtomic, takeWriter };
+module.exports = { VERSION, KEY_RE, VERDICT_EFFECTS, openJournal, readJournal, readText, readJsonSafe, readLock, linkLock, appendLine, writeAtomic, takeWriter };

@@ -848,7 +848,10 @@ review findings.
   nothing in the worktree (their reports live in `sharedDir`).
 - **Leftovers**: after the tester and at the end of the task, `role-leftovers-check.js --fix` removes what the task left
   running - containers, networks, volumes and images labelled with its compose project (`stack`), processes whose cwd
-  or argv lies in its worktree, the memory slots they hold - and names them in the result and in `<task>/leftovers.md`.
+  or argv lies in its worktree, the memory slots they hold - and names them in the result and in `leftovers.md` of the
+  task folder, or under the conductor (`scripts/chain-run.js`) of the steps folder of its run,
+  `<sharedDir>/runs/<runId>/steps/<task>/`, where the wait steps of the selection and the train and the train's copies
+  of its logs live as well.
   It never touches the owner's stack (`ownerStackReadOnly`) or another task; what it cannot remove stops the task.
   After the tester both checks run as one command, `role-post-check.js` (one JSON `{ok, diff, left}`), so a tester
   round costs one service agent instead of two; at the end of the task only the leftovers check runs.
@@ -982,6 +985,11 @@ fallback to another slot directory: a second directory would be a second queue t
   bills above 1.25x, while the claude formula stays the one of the transcripts. A ChatGPT subscription reports cache
   writes as 0 and an API key does not, so the same work costs more IE by key. The 2 x median flag uses the one
   `medianTaskIE` for both hosts until there are accepted codex tasks to measure their own.
+- The conductor `scripts/chain-run.js` keeps the files of the service steps in the steps folder of its run, outside the
+  write roots of the roles: that a codex role cannot write `<sharedDir>/runs/` is checked on macOS with Codex 0.166
+  only (Linux needs its own check), and a role of the claude host has no sandbox at all. A refused start (an open step,
+  a verdict whose use is not proven, damage) has no way out yet but the coordinator's hand: the command `resolve` comes
+  in part B1-b2b. Children a role moves into a session of their own are not seen by the reconciliation.
 - The role adapter `scripts/role-exec.js` (p-codex, parts A1a and A1b) runs one role on a host CLI, but no conductor
   uses it yet (part B): the chain still runs on the Workflow `agent()`; on codex only the roles that write a report
   alone (analyst, reviewers) are accepted, and they cannot take memory slots: inside the codex sandbox `heavy.sh` and
