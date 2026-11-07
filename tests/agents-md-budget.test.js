@@ -292,6 +292,7 @@ const markerBytes = (src) => Buffer.byteLength(`<!-- codis-agents agents-md v1; 
   const h = path.join(TMP, 'home-budget');
   put(h, { '.codex/AGENTS.md': fill(30000), '.codex/config.toml': `${KEY} = 200000\n`, 'AGENTS.md': fill(30000) });
   const d = project({ 'CLAUDE.md': fill(20000) });
+  write(d, [], h);
   const c = check(d, h);
   ok('B8. a personal AGENTS.md of 30 KB beside 20 KB of the project under 32768: green, the same sum as with an empty home', c.status === 0 && c.stdout.includes(`chain .: ${20000 + markerBytes('CLAUDE.md')}/32768 bytes`), show(c));
   const big = project({ 'CLAUDE.md': fill(40000) });
@@ -300,6 +301,7 @@ const markerBytes = (src) => Buffer.byteLength(`<!-- codis-agents agents-md v1; 
   const h2 = path.join(TMP, 'home-budget2');
   put(h2, { '.codex/config.toml': `${KEY} = 100\n` });
   const p = project({ 'CLAUDE.md': fill(40000), [CFG]: L131 });
+  write(p, [], h2);
   const cp = check(p, h2);
   ok('B9. a limit of 100 in the personal home, 131072 in the project: the project wins', cp.status === 0 && cp.stdout.includes('/131072 bytes'), show(cp));
 }
@@ -433,12 +435,12 @@ const markerBytes = (src) => Buffer.byteLength(`<!-- codis-agents agents-md v1; 
   const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
   const row = readme.split('\n').find((l) => l.startsWith('| `scripts/agents-md.js`')) || '';
   ok('G-P. README: the row of agents-md names the budget and the project fallback key as red', row.includes(KEY) && row.includes('.codex/config.toml') && /project_doc_fallback_filenames` in a project config/.test(row), row.slice(-300));
-  ok('G-16. README: the personal fallback key is the only one left out', /Personal `\$CODEX_HOME\/AGENTS\.override\.md`.*not checked/.test(row) && !/Personal[^.]*project_doc_fallback_filenames/.test(row), row.slice(-300));
+  ok('G-16. README: only the fallback key of the home is left out', /`project_doc_fallback_filenames` in the home are not checked/.test(row), row.slice(-300));
   const schema = JSON.parse(fs.readFileSync(path.join(ROOT, 'schemas/codis-agents.schema.json'), 'utf8'));
   const d = schema.properties.agentsMd.description;
   ok('G-16. schema: agentsMd no longer speaks of the root AGENTS.md alone, and names the budget', !/root AGENTS\.md/.test(d) && d.includes(KEY), d);
-  const src = fs.readFileSync(SCRIPT, 'utf8');
-  ok('G-16. the header of the script says write writes over the budget', /over the limit/.test(src.slice(0, 6000)) && /write .*still writes|writes the files and exits 1/.test(src.slice(0, 6000)), '');
+  const head = fs.readFileSync(SCRIPT, 'utf8').split('const fs =')[0];
+  ok('G-16. the header of the script says write writes over the budget', /over the limit/.test(head) && /writes the files and exits 1/.test(head), '');
 }
 
 done();

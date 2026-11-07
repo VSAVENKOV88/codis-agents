@@ -4,6 +4,19 @@ Every version of the codis-agents plugin, newest first. What the plugin does now
 [README.md](README.md); its [Technical reference](README.md#technical-reference) is the current state of every rule,
 key and script, and this file says when and why each one changed. Versions before 0.4.14 are in the git history.
 
+## 0.4.34 - 2026-11-07
+
+- **`agents-md.js` counts the budget of `project_doc_max_bytes`** (p-codex D3-1b; owner 2026-11-06, answer 1: the limit
+  is on the sum of the root and the nested files, and answer 18: connecting ends with a green check). Codex silently
+  cuts the `AGENTS.md` files it reads from the root down to its working directory at one limit for the whole chain;
+  `check` and `write` now add up the chain of every generated file and name each with its bytes and the limit. The
+  limit comes from the top level of the root `.codex/config.toml` by a strict scan of its structure, 32768 without it.
+  In the sum: `AGENTS.override.md` in place of the `AGENTS.md` beside it, foreign files, a file git ignores on the way,
+  generated files by the bytes `write` would write. A chain over the limit is exit 1: `write` on a connected project
+  still writes the files, `write --enable` writes nothing and sets no key. Red with the line: a value Codex would not
+  take, `= 0`, a config the scan cannot read, a nested config with the key, `project_doc_fallback_filenames` in a
+  project config. A file off every way to a generated file is named, not counted. Measured on codex 0.166.0.
+
 ## 0.4.33 - 2026-11-06
 
 - **The checks of a commit run inside the role's sandbox** (p-codex A2a-2a; owner 2026-11-06: answers 4 to 6 of the
