@@ -334,9 +334,11 @@ const text = (c) => c.reasons.map((r) => r.why).join(' | ') + ' || ' + c.notes.j
     {
       let fd = fake({ programmer: [PROG], tester: [GREEN], reviewer: [DONE] });
       let s = start([task('g1')], fd);
-      let r = resultOf(s);
       const sd = s.j && path.join(s.j.runDir, 'steps', 'g1');
-      ok('X2 the conductor makes <runDir>/steps/<key>/ for a held task, a folder, no link', r && r.status === 'done' && !!sd && fs.lstatSync(sd).isDirectory(), JSON.stringify(r));
+      // checked at once: "ready" comes after the registration, before any step could make the folder itself
+      const made = !!sd && (() => { try { return fs.lstatSync(sd).isDirectory(); } catch { return false; } })();
+      let r = resultOf(s);
+      ok('X2 the conductor makes <runDir>/steps/<key>/ for a held task when it registers it, a folder, no link', r && r.status === 'done' && made, JSON.stringify(r));
       const rec = CJ.readJsonSafe(path.join(s.j.runDir, 'tasks', 'g1.json')) || {};
       ok('C6 the record of a task carries what the reconciliation found', Array.isArray((rec.reconcile || {}).notes), JSON.stringify(rec));
 

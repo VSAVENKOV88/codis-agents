@@ -41,6 +41,16 @@ for (const [name, pid] of [['pid 1', 1], ['pid 0', 0], ['a negative pid', -7], [
   ok(`X3 ${name}: no .rc is written for it`, !fs.existsSync(`${id}.rc`));
 }
 
+// ---- X3: pid 1 with its own true start time (a meta that would match): still no group signal - kill(-1) is all processes
+{
+  const id = path.join(W, 'x3-pid1-lstart');
+  fs.writeFileSync(`${id}.json`, JSON.stringify({ pid: 1, lstart: lstartOf(1), started: 1, cmd: 'x', cwd: W }));
+  fs.writeFileSync(KLOG, '');
+  const r = json(ws('wait', '--id', id, '--max', '2', '--deadline', '1'));
+  ok('X3 pid 1 with the start time of pid 1: no signal of any group, done with rc null and an error', !!r && r.done === true && r.rc === null && !!r.error && !signals().length,
+    JSON.stringify(r) + ' ' + JSON.stringify(kills()));
+}
+
 // ---- X6: a live pid that started at another time (a pid reused by another process)
 {
   const victim = spawn('sleep', ['60'], { detached: true, stdio: 'ignore' });
