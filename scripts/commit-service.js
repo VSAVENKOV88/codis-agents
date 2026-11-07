@@ -79,7 +79,9 @@
 // journal holds only the counts. The JSON of the rename pairs and of the whole lists is bounded by the volume of results
 // (commit.walkMaxResultBytes): pairs above it refuse "no safe check path" before they are built; lists above it, or a
 // file that cannot be written, leave no file and a changesFileError in the answer, and change no status: the status is
-// decided by the step that got it, so a request whose branch moved is always committed. Untracked and ignored files of
+// decided by the step that got it, and a request has one result, so a request whose branch moved is always committed.
+// An answer that cannot be written (a full disk) waits for the poll of the box, which writes it from the result while
+// the request lies there, and the same id in a later call gets it from the journal. Untracked and ignored files of
 // the worktree, and any file outside it, can influence a check and are not part of the commit (README, Known gaps).
 //
 // The journal of the task (<stateDir>/<task>/commits.jsonl, owner B 2026-11-06 answers 12, 13): one writer (a lock
@@ -88,7 +90,10 @@
 // torn last line is cut off, kept beside the journal and named in the notes, and its step is not taken as done; a
 // damaged line inside refuses every request. On open, an intent without a result is settled by the tip of the branch:
 // the intended sha -> committed; the old tip or no sha yet -> refused "interrupted"; anything else -> undetermined,
-// and every request of the task is refused until the coordinator resolves it.
+// and every request of the task is refused until the coordinator resolves it. A line that cannot be written whole is
+// cut back, so the journal keeps ending on a whole line. A result line that cannot be written leaves its status in the
+// memory of the call, where the same id still gets it; if the request has an intent, the rest of the call is refused,
+// because a later commit would move the tip past that intent and the next open could not settle it.
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -397,6 +402,8 @@ function openCommitService(o) {
   const token = crypto.randomBytes(8).toString('hex');
   let writer = false, jfd = null, lastN = 0;
   const ids = new Map(); // id -> {hash, result?, intent?, intentCommit?}
+  const local = new Map(); // id -> result, when the journal may not or cannot take it
+  const journalFailed = (e) => `the journal ${jFile} cannot be written (${e.code || e.message}): requests are refused until the next call, which settles this one from the journal`;
   if (!broken) {
     for (let i = 0; i < 2 && !writer; i++) {
       try {
@@ -442,8 +449,16 @@ function openCommitService(o) {
   const append = (ev) => {
     if (!jfd) throw new Error('the journal is not open');
     const line = JSON.stringify(Object.assign({ v: JOURNAL_VERSION, n: lastN + 1, ts: new Date().toISOString(), call: o.callId }, ev)) + '\n';
-    fs.writeSync(jfd, line);
-    fs.fsyncSync(jfd);
+    const size = fs.fstatSync(jfd).size;
+    try {
+      // a write on a full disk may take part of the line without an error
+      if (fs.writeSync(jfd, line) !== Buffer.byteLength(line)) throw Object.assign(new Error('ENOSPC: the line was written in part'), { code: 'ENOSPC' });
+      fs.fsyncSync(jfd);
+    } catch (e) {
+      // a later line after a torn one would damage the journal inside; a torn last line is what an open cuts off
+      try { fs.ftruncateSync(jfd, size); } catch { breakWith(journalFailed(e)); }
+      throw e;
+    }
     lastN++;
     const s = ids.get(ev.id) || {};
     if (ev.ev === 'intent') { s.hash = ev.hash; s.intent = ev; }
@@ -460,19 +475,26 @@ function openCommitService(o) {
   // recovery of an intent without a result (the adapter died between the steps)
   if (writer && !broken) {
     const tip = tipNow();
+    const settle = (id, res) => {
+      try { append(Object.assign({ ev: 'result', id }, res)); } catch (e) {
+        local.set(id, res);
+        breakWith(journalFailed(e));
+      }
+    };
     for (const [id, s] of ids) {
       if (s.undetermined) { breakWith(`the commit step of request ${id} is undetermined (the tip ${s.undetermined.tip} is neither ${s.undetermined.sha} nor ${s.undetermined.old}): only the coordinator's resolve clears it`); continue; }
       if (!s.intent || s.result) continue;
       const ic = s.intentCommit;
       if (ic && tip === ic.sha) {
         const why = syncRealIndex(s.intent.entries || []);
-        append({ ev: 'result', id, hash: s.hash, status: 'committed', sha: ic.sha, paths: s.intent.paths, recovered: true, indexSync: why ? 'failed' : 'ok' });
+        settle(id, { hash: s.hash, status: 'committed', sha: ic.sha, paths: s.intent.paths, recovered: true, indexSync: why ? 'failed' : 'ok' });
         note(`request ${id}: the adapter died after update-ref; the tip is its commit ${ic.sha}: committed${why ? `, the index sync failed: ${why}` : ''}`);
       } else if (!ic || tip === ic.old) {
-        append({ ev: 'result', id, hash: s.hash, status: 'refused', why: 'interrupted: the adapter died before the branch moved; nothing was committed', recovered: true });
+        settle(id, { hash: s.hash, status: 'refused', why: 'interrupted: the adapter died before the branch moved; nothing was committed', recovered: true });
         note(`request ${id}: interrupted before the branch moved: refused`);
       } else {
-        append({ ev: 'undetermined', id, sha: ic.sha, old: ic.old, tip });
+        // without this line the next open finds the same tip and writes it then
+        try { append({ ev: 'undetermined', id, sha: ic.sha, old: ic.old, tip }); } catch { /* the refusal below stands */ }
         breakWith(`the commit step of request ${id} is undetermined (the tip ${tip} is neither ${ic.sha} nor ${ic.old}): only the coordinator's resolve clears it`);
       }
     }
@@ -481,10 +503,16 @@ function openCommitService(o) {
   if (!broken && !expected) breakWith(`branch ${o.branch} does not exist in the worktree's repository`);
 
   // ---- requests
+  // Nothing is thrown: the status is decided already, and handle() writes the answer again while the file is missing.
   const writeAnswer = (id, res) => {
     const tmp = path.join(answers, `.${id}.${process.pid}.tmp`);
-    fs.writeFileSync(tmp, JSON.stringify(Object.assign({ id }, res)) + '\n', { mode: 0o644 });
-    fs.renameSync(tmp, path.join(answers, `${id}.json`));
+    try {
+      fs.writeFileSync(tmp, JSON.stringify(Object.assign({ id }, res)) + '\n', { mode: 0o644 });
+      fs.renameSync(tmp, path.join(answers, `${id}.json`));
+    } catch (e) {
+      try { fs.rmSync(tmp, { force: true }); } catch { /* only clutter of the adapter */ }
+      noteOnce(`answer:${id}`, `request ${id}: the answer ${res.status} could not be written yet (${e.code || e.message}): it is written on a later poll of the box`);
+    }
   };
   const publicOf = (r) => {
     const a = { status: r.status };
@@ -492,7 +520,6 @@ function openCommitService(o) {
     for (const k of LIST_KEYS) for (const n of [k, `${k}Count`]) if (r[n] !== undefined) a[n] = r[n];
     return a;
   };
-  const local = new Map(); // id -> result, for the calls that may not write the journal
   // The whole lists in a file of the adapter, at most walkLimits.resultBytes of entries (a string of that size stays below
   // the limit of a string in Node). Published by a rename, so no partial file carries the name. Nothing is thrown: the
   // status of the result is decided already.
@@ -538,8 +565,14 @@ function openCommitService(o) {
     if (cut) Object.assign(r, writeWhole(id, whole));
     const line = Object.assign({}, r);
     for (const k of LIST_KEYS) delete line[k];
-    if (writer && !broken) append(Object.assign({ ev: 'result', id, hash }, line));
-    else local.set(id, Object.assign({ hash }, r));
+    if (writer && !broken) {
+      try { append(Object.assign({ ev: 'result', id, hash }, line)); } catch (e) {
+        local.set(id, Object.assign({ hash }, r));
+        const s = ids.get(id);
+        if (s && s.intent) breakWith(journalFailed(e));
+        else noteOnce(`result:${id}`, `request ${id}: its result ${r.status} is not in the journal (${e.code || e.message}): nothing was committed, a later call takes the id as new`);
+      }
+    } else local.set(id, Object.assign({ hash }, r));
     if (r.status === 'committed') sum.commits.push({ id, sha: r.sha, paths: r.paths });
     else if (r.status === 'refused') sum.refused.push({ id, why: r.why });
     else if (r.status === 'nothing') sum.nothing.push(id);
@@ -1268,13 +1301,12 @@ function openCommitService(o) {
       }
       if (inject.afterUpdateRef) inject.afterUpdateRef({ id, sha, old: parent });
       expected = sha;
-      intentCommit = null;
       if (inject.beforeIndexSync) inject.beforeIndexSync({ id, sha });
       const why = syncRealIndex(entries);
       if (why) note(`request ${id}: committed ${sha}, the index sync failed: ${why}`);
       return done(Object.assign({ status: 'committed', sha, paths: r.paths }, why ? { indexSync: 'failed' } : {}, extra));
     } catch (e) {
-      // a step threw after commit-tree: the tip tells whether the branch moved
+      // a step threw after commit-tree, before the result: the tip tells whether the branch moved
       if (intentCommit) {
         const tip = tipNow();
         if (tip === intentCommit.sha) { expected = tip; return done({ status: 'committed', sha: tip, paths: r.paths, indexSync: 'failed' }); }

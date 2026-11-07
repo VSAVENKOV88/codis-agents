@@ -25,7 +25,7 @@ key and script, and this file says when and why each one changed. Versions befor
   only the counts. The JSON of the rename pairs (every deleted file with every copy) and of the whole lists is bounded
   by `commit.walkMaxResultBytes`: pairs above it refuse `no safe check path` before they are built, so the adapter holds no
   product of two lists; lists above it, or a file that cannot be written, give `changesFileError` and no file, and change
-  no status (a failed write after `update-ref` was a refusal of a commit whose branch had moved). A file name that starts with `:` is no pathspec to `git check-ignore`: it is classed as
+  no status (a failed write after `update-ref` was a refusal of a commit whose branch had moved). The same for the answer itself and the result line: a request has one result, an answer that cannot be written comes on a later poll or from the journal for the same id, a line of the journal written in part is cut back, and a result line that cannot be written refuses the rest of the call and is settled at the next start by `intent-commit`; new `tests/commit-answer-fail.test.js` (a real full disk image). A file name that starts with `:` is no pathspec to `git check-ignore`: it is classed as
   `git status` classes it. New `tests/commit-recheck.test.js`; the cells of
   2a that refused a changed snapshot and the link path now expect the re-check and the link entry.
 
