@@ -246,10 +246,10 @@ codis-agents/
 ├── workflows/    role-chain.js - the chain itself, fix rounds, the analyst after a second red, the train
 ├── rules/        multi-agent.md - the process rules; 20 marked lines go into every role prompt
 ├── hooks/        hooks.json - refuses git add -A, pushes to protected branches and tags
- ├── scripts/      36 scripts: memory slots, guard runs and selection, the train, post-checks, remote runner, cost
+ ├── scripts/      37 scripts: memory slots, guard runs and selection, the train, post-checks, remote runner, cost
 ├── examples/     example project and machine configs
 ├── schemas/      their JSON schemas
-└── tests/        163 test files of the plugin itself (npm test)
+└── tests/        165 test files of the plugin itself (npm test)
 ```
 
 Every file, script and config key is described in the [Technical reference](#technical-reference).
