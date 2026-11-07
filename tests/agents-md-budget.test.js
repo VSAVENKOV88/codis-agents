@@ -500,6 +500,94 @@ const markerBytes = (src) => Buffer.byteLength(`<!-- codis-agents agents-md v1; 
   }
 }
 {
+  // Tester, round 2. Every expectation is a measured run of codex-cli 0.166.0 prompt-input, kept with the task's reports.
+  // A code that is not hexadecimal: parseInt would read its head and take the escape for a character.
+  for (const esc of ['\\x5z', '\\xg0', '\\x+5', '\\x 5', '\\u005z', '\\u+05f', '\\u 05f', '\\U0000005z', '\\U+000005F', '\\X5f', '\\a', '\\0', '\\E']) {
+    const d = project({ 'CLAUDE.md': 'r\n', [CFG]: `"a${esc}b" = 500\n` });
+    write(d);
+    const c = check(d);
+    ok(`T14. ${esc} in a key: red with its line, no crash`, c.status === 1 && c.stderr.includes(`${CFG}:1`) && c.stderr.includes('escape'), show(c));
+  }
+  // The same refusal wherever a basic string can stand, not only as a key or a scalar.
+  for (const [label, text] of [
+    ['an array', 'a = ["x\\qy"]\n'], ['an inline table value', 'a = {b = "x\\qy"}\n'], ['an inline table key', 'a = {"x\\q" = 1}\n'],
+    ['a table header', '["x\\q"]\n'], ['an array table header', '[["x\\q"]]\n'], ['a dotted key', '"x\\q".a = 1\n'], ['a value inside a table', '[t]\na = "x\\qy"\n'],
+    ['a line break after the backslash', 'a = "x\\\ny"\n'], ['a CRLF after the backslash', 'a = "x\\\r\ny"\n'], ['the end of the file after the backslash', 'a = "x\\'],
+  ]) {
+    const d = project({ 'CLAUDE.md': 'r\n', [CFG]: text });
+    write(d);
+    const c = check(d);
+    ok(`T15. a bad string in ${label}: red with its line`, c.status === 1 && c.stderr.includes(`${CFG}:`), show(c));
+  }
+  // The refusal names the line of the string, past blank lines and multi-line strings.
+  for (const [label, text, at] of [
+    ['after blank lines and a comment', '\n# c\n"a\\qb" = 1\n', 3],
+    ['after a multi-line string', 'a = """x\ny"""\n"b\\qc" = 1\n', 3],
+    ['after CRLF lines', 'a = 1\r\nb = 2\r\n"c\\qd" = 1\r\n', 3],
+  ]) {
+    const d = project({ 'CLAUDE.md': 'r\n', [CFG]: text });
+    write(d);
+    const c = check(d);
+    ok(`T16. a bad escape ${label}: line ${at}`, c.status === 1 && c.stderr.includes(`${CFG}:${at}:`), show(c));
+  }
+  // Close to the key, yet another key for Codex: a decoded character stands for itself and nothing folds or trims.
+  for (const [label, name] of [
+    ['\\t for the underscore', 'project_doc\\tmax_bytes'], ['\\n for the underscore', 'project_doc\\nmax_bytes'], ['\\b for the underscore', 'project_doc\\bmax_bytes'], ['\\f for the underscore', 'project_doc\\fmax_bytes'], ['\\r for the underscore', 'project_doc\\rmax_bytes'], ['\\e for the underscore', 'project_doc\\emax_bytes'],
+    ['the wide low line', 'project_doc\\uFF3Fmax_bytes'], ['\\x5e', 'project_doc\\x5emax_bytes'], ['a dot by its code', 'project_doc\\x2emax_bytes'], ['upper case by its code', 'PROJECT_DOC\\x5fMAX_BYTES'],
+    ['a trailing space by its code', `${KEY}\\x20`], ['a trailing NUL', `${KEY}\\u0000`], ['a backslash kept', 'project_doc\\\\x5fmax_bytes'],
+  ]) {
+    const d = project({ 'CLAUDE.md': fill(1000), [CFG]: `"${name}" = 500\n` });
+    write(d);
+    const c = check(d);
+    ok(`T17. ${label}: another key, the default limit`, c.status === 0 && c.stdout.includes('/32768 bytes'), show(c));
+  }
+  // Under a table, in a dotted tail or an inline table the escaped key does nothing, as the plain one; every full code spelling reads as the key.
+  for (const [label, text] of [
+    ['a table', `[foo]\n"project_doc\\x5fmax_bytes" = 500\n`], ['an array table', `[[foo]]\n"project_doc\\x5fmax_bytes" = 500\n`],
+    ['a dotted tail', `a."project_doc\\x5fmax_bytes" = 500\n`], ['an inline table', `a = {"project_doc\\x5fmax_bytes" = 500}\n`],
+    ['a header tail', `[a."project_doc\\x5fmax_bytes"]\nb = 500\n`], ['a comment', `# "project_doc\\x5fmax_bytes" = 500\n`], ['a multi-line string', `a = """\n"project_doc\\x5fmax_bytes" = 500\n"""\n`],
+  ]) {
+    const d = project({ 'CLAUDE.md': fill(1000), [CFG]: text });
+    write(d);
+    const c = check(d);
+    ok(`T18. the escaped key in ${label}: not the limit`, c.status === 0 && c.stdout.includes('/32768 bytes'), show(c));
+  }
+  const allCodes = [...KEY].map((ch) => `\\x${ch.charCodeAt(0).toString(16)}`).join('');
+  const every = project({ 'CLAUDE.md': fill(1000), [CFG]: `"${allCodes}" = 500\n` });
+  write(every);
+  ok('T18. the key with every character by its code: the limit holds', check(every).status === 1 && check(every).stderr.includes('bytes > 500'), show(check(every)));
+  for (const [label, text, red] of [
+    ['\\x5f', '"project_doc\\x5ffallback_filenames" = ["TEAM.md"]\n', true], ['a header', '["project_doc\\x5ffallback_filenames"]\na = 1\n', true],
+    ['an empty list', '"project_doc\\x5ffallback_filenames" = []\n', false], ['a table', '[foo]\n"project_doc\\x5ffallback_filenames" = ["TEAM.md"]\n', false], ['a literal string', `'project_doc\\x5ffallback_filenames' = ["TEAM.md"]\n`, false],
+  ]) {
+    const d = project({ 'CLAUDE.md': 'r\n', [CFG]: text });
+    write(d);
+    const c = check(d);
+    ok(`T19. the fallback key with an escape, ${label}: ${red ? 'red with its line' : 'green'}`, red ? (c.status === 1 && c.stderr.includes(`${CFG}:`) && c.stderr.includes(FB)) : c.status === 0, show(c));
+  }
+  // The modes that write, and a nested config on the way.
+  const big = fill(40000);
+  const off = (files) => project(files, { connected: false });
+  const raised = off({ 'CLAUDE.md': big, [CFG]: '"project_doc\\x5fmax_bytes" = 131072\n' });
+  const e1 = write(raised, ['--enable']);
+  ok('T20. --enable with the escaped limit above the sum: written, key set', e1.status === 0 && has(raised, 'AGENTS.md') && /"agentsMd": true/.test(fs.readFileSync(path.join(raised, '.claude/codis-agents.json'), 'utf8')), show(e1));
+  const low = off({ 'CLAUDE.md': fill(1000), [CFG]: '"project_doc\\x5fmax_bytes" = 500\n' });
+  const e2 = write(low, ['--enable']);
+  ok('T20. --enable with the escaped limit under the sum: exit 1, nothing written, no key', e2.status === 1 && !has(low, 'AGENTS.md') && !/agentsMd/.test(fs.readFileSync(path.join(low, '.claude/codis-agents.json'), 'utf8')) && e2.stderr.includes('> 500'), show(e2));
+  const broken = off({ 'CLAUDE.md': 'r\n', [CFG]: '"a\\qb" = 1\n' });
+  const e3 = write(broken, ['--enable']);
+  ok('T20. --enable with a bad escape: exit 1, nothing written, no key, its line', e3.status === 1 && !has(broken, 'AGENTS.md') && !/agentsMd/.test(fs.readFileSync(path.join(broken, '.claude/codis-agents.json'), 'utf8')) && e3.stderr.includes(`${CFG}:1`), show(e3));
+  const conn = project({ 'CLAUDE.md': fill(1000), [CFG]: '"project_doc\\x5fmax_bytes" = 500\n' });
+  const w1 = write(conn);
+  ok('T20. write on a connected project under the escaped limit: c5, written and exit 1', w1.status === 1 && has(conn, 'AGENTS.md') && w1.stderr.includes('> 500') && !/nothing written/.test(w1.stderr + w1.stdout), show(w1));
+  const conn2 = project({ 'CLAUDE.md': 'r\n', [CFG]: '"a\\qb" = 1\n' });
+  const w2 = write(conn2);
+  ok('T20. write on a connected project with a bad escape: exit 1, nothing written', w2.status === 1 && !has(conn2, 'AGENTS.md') && w2.stderr.includes(`${CFG}:1`), show(w2));
+  const nested = project({ 'CLAUDE.md': 'r\n', 'sub/CLAUDE.md': 's\n', 'sub/.codex/config.toml': 'a = "x\\qy"\n' });
+  const w3 = write(nested);
+  ok('T20. a nested config with a bad escape on the way: red with its path and line', w3.status === 1 && w3.stderr.includes('sub/.codex/config.toml:1'), show(w3));
+}
+{
   const d = project({ 'CLAUDE.md': fill(40000), [CFG]: `${L131}[foo]\n${KEY} = 5\n` });
   write(d);
   const c = check(d);
