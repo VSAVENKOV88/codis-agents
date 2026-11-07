@@ -4,7 +4,11 @@
 // judge is the message committed (git stripspace, as git commit -F), LANG and LC_ALL of the check by their pattern,
 // a request with nothing to commit launches no check, a check that changes the mode of a named path or recreates a
 // deleted one changes the snapshot, close() with a request queued behind a running check, and hooks that are not
-// executable. Real git repositories in a temporary folder, the real codex sandbox without a model.
+// executable; the slot scripts refuse a slot directory whose queue folder or queue lock cannot be opened (code 77),
+// medium.sh inside a check refuses and the queue of the call goes on, and the npm cache of a check must resolve inside
+// a root of the role (calls/ swapped for a link outside -> refused, a link inside -> no false refusal, a cache given
+// outside -> refused before codex starts, and ignored without hooks). Real git repositories in a temporary folder,
+// the real codex sandbox without a model.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -230,6 +234,130 @@ async function answer(s, id, ms) {
     ok('T8 only a non-executable hook -> no check: the A2a-1 path, codex never launched, the unnamed change does not refuse',
       a && a.status === 'committed' && s.launches.length === 0 && !f.mark('pre-commit') && !a.checks, J({ a, l: s.launches }));
     await s.close();
+  }
+
+  // ---- T9, T10: slots.zsh refuses with code 77 at once when the queue folder or the queue lock of a slot directory
+  // cannot be created or opened for writing, although admit.lock can (zsystem flock reads a failed open as "busy")
+  const MEDIUM = path.join(ROOT, 'scripts', 'medium.sh');
+  for (const [name, setup] of [
+    ['T9 the queue folder of the slot directory is a regular file', (d) => { fs.writeFileSync(path.join(d, 'queue'), ''); }],
+    ['T10 the queue lock of the slot directory is a folder', (d) => { fs.mkdirSync(path.join(d, 'queue'), { recursive: true }); fs.mkdirSync(path.join(d, 'queue.lock')); }],
+  ]) {
+    const d = path.join(BASE, `slots-${name.slice(0, 3)}`);
+    const tmp = path.join(BASE, `slots-tmp-${name.slice(0, 3)}`);
+    fs.mkdirSync(d, { recursive: true });
+    fs.mkdirSync(tmp, { recursive: true });
+    setup(d);
+    const ran = path.join(BASE, `${name.slice(0, 3)}.ran`);
+    const t0 = Date.now();
+    const p = spawnSync('/bin/zsh', [MEDIUM, 'touch', ran], { encoding: 'utf8', timeout: 20000,
+      env: { PATH: process.env.PATH, HOME: path.join(BASE, 'nohome'), TMPDIR: tmp, SLOTS_DIR: d, SLOT_MEDIUM_N: '1', SLOT_HEAVY_N: '1' } });
+    const secs = (Date.now() - t0) / 1000;
+    const err = (p.stderr || '').trim();
+    ok(`${name}: medium.sh refused with code 77 within 20 s, the command never ran`, p.status === 77 && !fs.existsSync(ran), J({ rc: p.status, sig: p.signal, secs, err: err.slice(-400) }));
+    ok(`${name}: one line on stderr naming the slot directory`, err.split('\n').length === 1 && err.includes(`${d} cannot be written`), err.slice(-400));
+  }
+
+  // ---- T11: medium.sh inside a check (the default slot folder in the empty home of the check) refuses at once, the
+  // request is refused with the hook's output, and the queue of the call goes on: the next request commits
+  {
+    const f = fixture({ 'pre-commit': `if [ -f "$T/slot" ]; then '${MEDIUM}' touch "$T/t11.ran"; rc=$?; echo "medium rc=$rc"; exit $rc; fi` });
+    fs.writeFileSync(path.join(f.tdir, 'slot'), '');
+    const s = service(f);
+    fs.writeFileSync(path.join(f.wt, 'a.txt'), 't11\n');
+    const t0 = Date.now();
+    const a1 = await answer(s, ask(s, ['a.txt']), 60000);
+    const secs = (Date.now() - t0) / 1000;
+    const log = a1 && a1.checks && a1.checks[0] ? rd(a1.checks[0].log) : '';
+    ok('T11 medium.sh in a hook: refused (pre-commit failed, rc 77) within 60 s, its command never ran, the branch did not move',
+      a1 && a1.status === 'refused' && /pre-commit failed \(rc 77\)/.test(a1.why || '') && !fs.existsSync(path.join(f.tdir, 't11.ran')) && f.tip() === f.h0, J({ secs, a1 }));
+    ok('T11 the output of the check names the refusal of the slot', /medium rc=77/.test(log) && /slot_run: refused/.test(log), log.slice(-500));
+    fs.unlinkSync(path.join(f.tdir, 'slot'));
+    const a2 = await answer(s, ask(s, ['a.txt']), 60000);
+    ok('T11 the next request of the same call commits (the queue did not stall)', a2 && a2.status === 'committed' && f.tip() !== f.h0, J(a2));
+    await s.close();
+  }
+
+  // ---- T12: the parent of the call folder (calls/, as role-exec lays it out) swapped for a link to a folder D outside
+  // the roots while a request waits: the npm cache resolves through its nearest existing folder into D -> refused, no
+  // safe check path; nothing in D; the hook of that request never ran
+  {
+    const D = path.join(BASE, 't12-victim');
+    fs.mkdirSync(D, { recursive: true });
+    const f = fixture({ 'pre-commit': `if [ -f "$T/hold" ]; then i=0; while [ ! -f "$T/go" ] && [ $i -lt 150 ]; do sleep 0.1; i=$((i+1)); done; rm -f "$T/hold"; else echo second > "$T/t12-second"; mkdir -p "$npm_config_cache" && echo pwn > "$npm_config_cache/pwn"; fi` });
+    const calls = path.join(f.tdir, 'calls');
+    const callDir = path.join(calls, 'c12');
+    fs.mkdirSync(callDir, { recursive: true });
+    fs.writeFileSync(path.join(f.tdir, 'hold'), '');
+    const s = service(f, { box: path.join(callDir, 'commit'), pollMs: 200 });
+    fs.writeFileSync(path.join(f.wt, 'n1.txt'), 'one\n');
+    const id1 = ask(s, ['n1.txt']);
+    const t0 = Date.now();
+    while (!f.mark('pre-commit') && Date.now() - t0 < 15000) await sleep(50);
+    fs.writeFileSync(path.join(f.wt, 'n2.txt'), 'two\n');
+    const id2 = ask(s, ['n2.txt']);
+    await sleep(1500);
+    fs.renameSync(calls, calls + '.orig');
+    fs.symlinkSync(D, calls);
+    fs.writeFileSync(path.join(f.tdir, 'go'), '');
+    const a1 = await answer(s, id1, 30000);
+    const a2 = await answer(s, id2, 30000);
+    ok('T12 calls/ swapped for a link outside the roots while a request waits: the first commits, the waiting one is refused (no safe check path, the npm cache)',
+      a1 && a1.status === 'committed' && a2 && a2.status === 'refused' && /no safe check path/.test(a2.why || '') && /npm cache/.test(a2.why || ''), J({ a1, a2 }));
+    ok('T12 nothing was written behind the link, the hook of the refused request never ran',
+      fs.readdirSync(D).length === 0 && !fs.existsSync(path.join(f.tdir, 't12-second')), J(fs.readdirSync(D)));
+    await s.close();
+    fs.unlinkSync(calls);
+  }
+
+  // ---- T13: the call folder swapped for a link to another folder inside the task folder: the npm cache still
+  // resolves inside a root of the role -> no false refusal, the request commits
+  {
+    const f = fixture({ 'pre-commit': `if [ -f "$T/hold" ]; then i=0; while [ ! -f "$T/go" ] && [ $i -lt 150 ]; do sleep 0.1; i=$((i+1)); done; rm -f "$T/hold"; fi` });
+    const callDir = path.join(f.tdir, 'c13');
+    const inside = path.join(f.tdir, 'elsewhere');
+    fs.mkdirSync(callDir, { recursive: true });
+    fs.mkdirSync(inside, { recursive: true });
+    fs.writeFileSync(path.join(f.tdir, 'hold'), '');
+    const s = service(f, { box: path.join(callDir, 'commit'), pollMs: 200 });
+    fs.writeFileSync(path.join(f.wt, 'n1.txt'), 'one\n');
+    const id1 = ask(s, ['n1.txt']);
+    const t0 = Date.now();
+    while (!f.mark('pre-commit') && Date.now() - t0 < 15000) await sleep(50);
+    fs.writeFileSync(path.join(f.wt, 'n2.txt'), 'two\n');
+    const id2 = ask(s, ['n2.txt']);
+    await sleep(1500);
+    fs.renameSync(callDir, callDir + '.orig');
+    fs.symlinkSync(inside, callDir);
+    fs.writeFileSync(path.join(f.tdir, 'go'), '');
+    const a1 = await answer(s, id1, 30000);
+    const a2 = await answer(s, id2, 30000);
+    ok('T13 the call folder swapped for a link inside the task folder: both requests commit (no false refusal)',
+      a1 && a1.status === 'committed' && a2 && a2.status === 'committed', J({ a1, a2 }));
+    await s.close();
+    fs.unlinkSync(callDir);
+  }
+
+  // ---- T14: an npm cache given outside the roots: with hooks of a check the request is refused before codex is
+  // launched (no probe, no hook); without hooks the A2a-1 path commits and the cache is never looked at
+  {
+    const out = path.join(BASE, 't14-outside', 'npm-cache');
+    fs.mkdirSync(path.dirname(out), { recursive: true });
+    const f = fixture({ 'pre-commit': '' });
+    const s = service(f, { npmCache: out });
+    fs.writeFileSync(path.join(f.wt, 'a.txt'), 't14\n');
+    const a = await answer(s, ask(s, ['a.txt']), 30000);
+    ok('T14 hooks and an npm cache outside the roots: refused (no safe check path, the npm cache) before any launch of codex, the hook never ran, the branch did not move',
+      a && a.status === 'refused' && /no safe check path/.test(a.why || '') && /npm cache/.test(a.why || '') && s.launches.length === 0 && !f.mark('pre-commit') && f.tip() === f.h0,
+      J({ a, l: s.launches }));
+    await s.close();
+    const g = fixture({});
+    const s2 = service(g, { npmCache: out });
+    fs.writeFileSync(path.join(g.wt, 'a.txt'), 't14b\n');
+    const b = await answer(s2, ask(s2, ['a.txt']), 30000);
+    ok('T14 no hooks and the same npm cache outside the roots: committed (A2a-1 path), codex never launched',
+      b && b.status === 'committed' && s2.launches.length === 0 && !b.checks, J({ b, l: s2.launches }));
+    await s2.close();
   }
   done();
 })().catch((e) => { ok('the tester cases ran to the end', false, e && e.stack); done(); });
