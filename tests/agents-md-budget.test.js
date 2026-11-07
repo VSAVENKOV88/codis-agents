@@ -68,7 +68,7 @@ function run(dir, args, h) {
 }
 const write = (dir, extra = [], h) => run(dir, ['write', ...extra], h);
 const check = (dir, h) => run(dir, ['check'], h);
-const size = (dir, f) => fs.statSync(path.join(dir, f)).size;
+const size = (dir, f) => { try { return fs.statSync(path.join(dir, f)).size; } catch { return -1; } };
 const has = (dir, f) => { try { fs.lstatSync(path.join(dir, f)); return true; } catch { return false; } };
 const redLines = (r) => r.stderr.split('\n').filter((l) => /^agents-md: chain /.test(l));
 const show = (r) => `exit ${r.status}: ${r.out.slice(0, 600)}`;
@@ -234,6 +234,9 @@ const markerBytes = (src) => Buffer.byteLength(`<!-- codis-agents agents-md v1; 
     const w = write(d);
     ok(`B6. write refuses too and writes nothing: ${label}`, w.status === 1 && !has(d, 'AGENTS.md') && /nothing written/.test(w.stderr), show(w));
   }
+  const unknown = project({ 'CLAUDE.md': big, [CFG]: `${KEY} = "131072"\n` });
+  const cu = check(unknown);
+  ok('B6. no limit can be told: nothing is added up against a limit the file did not ask for', cu.status === 1 && cu.stderr.includes(`${CFG}:1`) && !redLines(cu).length, show(cu));
   const zero = project({ 'CLAUDE.md': 'small\n', [CFG]: `${KEY} = 0\n` });
   const cz = check(zero);
   ok('B13. = 0: red, Codex reads no project instructions', cz.status === 1 && /Codex reads no project instructions/.test(cz.stderr) && cz.stderr.includes(`${CFG}:1`), show(cz));
