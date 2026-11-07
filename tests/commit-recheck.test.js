@@ -3,7 +3,7 @@
 // The re-check, the untracked files, the paths of a request and the limits of the walk (p-codex A2a-2b), on real git
 // repositories in a temporary folder and the real codex sandbox without a model. Cells of the analysis p-codex-A2
 // section 7 and of its check, run 4: CK2-03, -03b..e, -04, -05, -05b, -07, -07b, -07c, -08, -08b, -09, -12, -12b..e,
-// -13, -13b, -13c, EV-16, G7-02b, PA2-01..06, -03b, -04b. Marks of a hook lie in the task folder, not in the worktree:
+// -13, -13b, -13c, EV-16, G7-02b, PA2-01..06, -03b, -04b; the budget of rename pairs and the file of the whole lists: LP, LF. Marks of a hook lie in the task folder, not in the worktree:
 // a mark in the worktree would itself be a change of an untracked file. Skipped without macOS, codex or git.
 const fs = require('fs');
 const os = require('os');
@@ -890,6 +890,233 @@ agent('x',{label:'prog:K#1',schema:{type:'object',properties:{status:{type:'stri
       ok(`PA2-06 ${tag}: a .gitignore of a parent is a link -> as absent, committed`, a && a.status === 'committed', J(a));
       await s.close();
     }
+  }
+  // ---- the budget of rename pairs: every deleted file pairs with every copy (G8), so the lists grow as a product of what
+  // the walk limits one by one. Their JSON is summed before they are built; above commit.walkMaxResultBytes refuses (G1).
+  // Small limits and few files: the walk itself stays within the limit in these cells. Analysis of the round: LP, LF.
+  const NAME = 'L'.repeat(60);
+  const SAME = 'same\n';
+  const budgetWhy = /^no safe check path: the rename pairs of (\d+) deleted files and (\d+) files with the same content take (\d+) bytes, above the (\d+) of results; the walk finished, the pairs are not listed$/;
+  const tracked = (prefix, n, body) => { const o = {}; for (let i = 0; i < n; i++) o[`${prefix}${i}.txt`] = body === undefined ? SAME : body; return o; };
+  const deleteAll = (f, prefix, n) => { for (let i = 0; i < n; i++) fs.rmSync(f.w(`${prefix}${i}.txt`)); };
+  const writeCopies = (f, dir, n, body, name) => { fs.mkdirSync(f.w(dir), { recursive: true }); for (let i = 0; i < n; i++) fs.writeFileSync(f.w(`${dir}/${name || 'c'}${i}.txt`), body === undefined ? SAME : body); };
+  // a hook that deletes t/f<i>.txt and writes D copies under plain/
+  const productHook = (D) => `i=0; mkdir -p plain; while [ $i -lt ${D} ]; do rm -f t/f$i.txt; printf 'same\\n' > plain/${NAME}$i.txt; i=$((i+1)); done`;
+  const IGNORED = { '.gitignore': 'build/\n' };
+  const journalOf = (f) => rd(path.join(f.state, 'K', 'commits.jsonl')).split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  const resultOf = (f, id) => journalOf(f).filter((e) => e.ev === 'result' && e.id === id);
+  {
+    const f = fixture({ files: tracked('t/f', 30), hooks: { 'pre-commit': productHook(30) } });
+    const s = service(f, { walkMaxResultBytes: 20000 });
+    fs.writeFileSync(f.w('n.txt'), 'n\n');
+    const a = await answer(s, ask(s, ['n.txt']));
+    const m = budgetWhy.exec((a && a.why) || '');
+    ok('LP-05 a hook deleted files and wrote copies: refused with the budget after the hook, the checks named, its files stay, nothing rolled back',
+      a && a.status === 'refused' && m && m[1] === '30' && m[2] === '30' && m[4] === '20000' && (a.checks || []).length === 1 && fs.existsSync(f.w(`plain/${NAME}0.txt`)) && !fs.existsSync(f.w('t/f0.txt')) && f.tip() === f.h0 && a.changed === undefined, J(a));
+    await s.close();
+  }
+  {
+    const f = fixture({ files: tracked('t/f', 30), hooks: { 'pre-commit': `if [ -f "$T/p1" ]; then ${productHook(30)}; else touch "$T/p1"; echo one > gen.txt; fi` } });
+    const s = service(f, { walkMaxResultBytes: 20000 });
+    fs.writeFileSync(f.w('gen.txt'), 'role\n');
+    const a = await answer(s, ask(s, ['gen.txt']));
+    ok('LP-06 pass 1 rewrote a named file, pass 2 made the product: refused with the budget, rechecked, no commit',
+      a && a.status === 'refused' && budgetWhy.test(a.why || '') && a.rechecked === true && (a.checks || []).length === 2 && f.tip() === f.h0, J(a));
+    await s.close();
+  }
+  for (const [tag, L, want] of [['pairs, a limit well above', 30000, 'list'], ['pairs, a limit well below', 3000, 'refuse']]) {
+    const f = fixture({ files: tracked('t/f', 10), hooks: { 'pre-commit': '' } });
+    deleteAll(f, 't/f', 10);
+    writeCopies(f, 'plain', 10);
+    fs.writeFileSync(f.w('n.txt'), 'n\n');
+    const s = service(f, { walkMaxResultBytes: L });
+    const a = await answer(s, ask(s, ['n.txt']));
+    const pairs = ((a && a.changed) || []).filter((c) => c.kind === 'renamed').length;
+    ok(`LP-07 ${tag} (commit.walkMaxResultBytes ${L}): ${want === 'list' ? 'every pair listed' : 'refused, the number is the key'}`,
+      a && a.status === 'refused' && (want === 'list' ? pairs === 100 && a.changedCount === 100 : budgetWhy.exec(a.why || '')?.[4] === String(L)), J(a));
+    await s.close();
+  }
+  for (const [tag, L, want] of [['notes, a limit well above', 40000, 'list'], ['notes, a limit well below', 5000, 'refuse']]) {
+    const f = fixture({ files: Object.assign({}, IGNORED, tracked('t/f', 20)), hooks: { 'pre-commit': '' } });
+    deleteAll(f, 't/f', 20);
+    writeCopies(f, 'build', 20);
+    fs.writeFileSync(f.w('n.txt'), 'n\n');
+    const s = service(f, { walkMaxResultBytes: L });
+    const a = await answer(s, ask(s, ['n.txt']));
+    const whole = a && a.changesFile ? readJson(a.changesFile) : null;
+    const size = a && a.changesFile ? fs.statSync(a.changesFile).size : 0;
+    ok(`LP-07 ${tag} (commit.walkMaxResultBytes ${L}): ${want === 'list' ? 'the notes of the copies in the file, whole, within the limit' : 'the notes count in the budget: refused'}`,
+      a && a.status === 'refused' && (want === 'list' ? whole && whole.changed.length === 20 && (JSON.stringify(whole.changed).match(/build\/c\d+\.txt/g) || []).length === 400 && size <= L + 64 : budgetWhy.test(a.why || '')), J({ a, size }));
+    await s.close();
+  }
+  // two blobs: the same limit holds one and refuses both, so the budget is of the request
+  const twoBlobs = async (copiesB, dirB) => {
+    const files = Object.assign({}, IGNORED, tracked('t/a', 8, 'blob a\n'), copiesB ? tracked('t/b', copiesB, 'blob b\n') : {});
+    const f = fixture({ files, hooks: { 'pre-commit': '' } });
+    deleteAll(f, 't/a', 8);
+    writeCopies(f, 'plain', 8, 'blob a\n', 'a');
+    if (copiesB) { deleteAll(f, 't/b', copiesB); writeCopies(f, dirB, copiesB, 'blob b\n', 'b'); }
+    fs.writeFileSync(f.w('n.txt'), 'n\n');
+    const s = service(f, { walkMaxResultBytes: 5500 });
+    const a = await answer(s, ask(s, ['n.txt']));
+    await s.close();
+    return a;
+  };
+  {
+    const alone = await twoBlobs(0);
+    const both = await twoBlobs(8, 'plain');
+    ok('LP-08 two blobs: one within the limit is listed, both above it refuse: the budget is of the request, not of a group',
+      alone && alone.status === 'refused' && alone.changedCount === 64 && both && both.status === 'refused' && budgetWhy.exec(both.why || '')?.[1] === '16', J({ alone: alone && alone.why, both: both && both.why }));
+    const mixed = await twoBlobs(12, 'build');
+    ok('LP-09 a blob with pairs and a blob with ignored copies only: together above the limit -> refused: notes and pairs share the budget',
+      mixed && mixed.status === 'refused' && budgetWhy.exec(mixed.why || '')?.[1] === '20', J(mixed && mixed.why));
+  }
+  {
+    const f = fixture({ files: tracked('t/f', 300), hooks: { 'pre-commit': '' } });
+    deleteAll(f, 't/f', 300);
+    fs.writeFileSync(f.w('only.txt'), SAME);
+    fs.writeFileSync(f.w('n.txt'), 'n\n');
+    const s = service(f);
+    const a = await answer(s, ask(s, ['n.txt']));
+    const whole = a && a.changesFile ? readJson(a.changesFile) : null;
+    ok('LP-11 300 deleted files x 1 copy: all 300 pairs, the first deleted file not chosen', a && a.status === 'refused' && a.changedCount === 300 && whole && whole.changed.filter((c) => c.kind === 'renamed' && c.path === 'only.txt').length === 300, J({ a: a && a.why, n: a && a.changedCount }));
+    await s.close();
+  }
+  {
+    const f = fixture({ files: { 'lk/target.txt': 'x-target' }, hooks: { 'pre-commit': '' } });
+    fs.symlinkSync('x-target', f.w('lk/old-link'));
+    git(f.wt, ['add', 'lk/old-link']);
+    git(f.wt, ['commit', '-q', '-m', 'a link']);
+    fs.rmSync(f.w('lk/target.txt'));
+    fs.symlinkSync('x-target', f.w('lk/same-text-link'));
+    fs.rmSync(f.w('lk/old-link'));
+    fs.writeFileSync(f.w('n.txt'), 'n\n');
+    const s = service(f);
+    const a = await answer(s, ask(s, ['n.txt']));
+    const copy = (a && a.changed || []).filter((c) => c.path === 'lk/same-text-link');
+    ok('LP-12 a link whose text equals the blob of a deleted file is no pair of it, a deleted link pairs with the copy of the link: the group knows link from file',
+      a && a.status === 'refused' && copy.length === 1 && copy[0].from === 'lk/old-link' && has1(a, 'deleted lk/target.txt'), J(a));
+    await s.close();
+  }
+  {
+    const f = fixture({ files: tracked('t/f', 300), hooks: { 'pre-commit': '' } });
+    deleteAll(f, 't/f', 300);
+    const target = `${NAME}.txt`;
+    fs.writeFileSync(f.w(target), SAME);
+    const s = service(f, { walkMaxResultBytes: 20000 });
+    const a = await answer(s, ask(s, [target]));
+    const m = budgetWhy.exec((a && a.why) || '');
+    ok('LP-13 the target named in the request is a candidate of the budget: refused, before the hook', a && a.status === 'refused' && m && m[1] === '300' && m[2] === '1' && f.marks('pre-commit').length === 0, J(a));
+    await s.close();
+  }
+  {
+    const f = fixture({ files: tracked('t/f', 30, ''), hooks: { 'pre-commit': '' } });
+    deleteAll(f, 't/f', 30);
+    writeCopies(f, 'plain', 30, '');
+    fs.writeFileSync(f.w('n.txt'), 'n\n');
+    const s = service(f, { walkMaxResultBytes: 20000 });
+    const a = await answer(s, ask(s, ['n.txt']));
+    ok('LP-14 an empty blob x empty files: no pair and no refusal by the budget', a && a.status === 'refused' && /^tracked changes outside/.test(a.why) && a.changedCount === 30 && a.changed.every((c) => c.kind === 'deleted'), J(a));
+    await s.close();
+  }
+  {
+    const f = fixture({ files: tracked('t/f', 30) });
+    deleteAll(f, 't/f', 30);
+    writeCopies(f, 'plain', 30, undefined, NAME);
+    fs.writeFileSync(f.w('n.txt'), 'n\n');
+    const modes = [];
+    const s = service(f, { walkMaxResultBytes: 20000, inject: { walkLaunch: (spec) => { modes.push(readJson(spec.args[spec.args.length - 1]).mode); return spec; } } });
+    const a = await answer(s, ask(s, ['n.txt']));
+    ok('LP-15 without hooks the same product: committed, no walk of the worktree and no pairs on this path', a && a.status === 'committed' && modes.join() === 'named' && a.changed === undefined, J({ a, modes }));
+    await s.close();
+  }
+  // ---- the file of the whole lists: never above the limit, and its failure changes no status (the status is decided by
+  // the step that got it). A folder at its place makes the write fail, as a full disk does.
+  const askAs = (s, id, paths) => {
+    const tmp = path.join(s.box, `.${id}.tmp`);
+    fs.writeFileSync(tmp, JSON.stringify({ id, paths, message: 'msg' }));
+    fs.renameSync(tmp, path.join(s.box, `${id}.json`));
+    return id;
+  };
+  const blocked = (s) => { const id = newId(); fs.mkdirSync(path.join(s.answers, `${id}.changes.json`)); return id; };
+  const copies201 = 'mkdir -p build; i=0; while [ $i -lt 201 ]; do : > build/w$i.txt; i=$((i+1)); done';
+  const writeFailed = /^the whole lists could not be written: EISDIR$/;
+  {
+    const files = tracked('t/f', 300, 'v0\n');
+    const f = fixture({ files, hooks: { 'pre-commit': '' } });
+    for (const n of Object.keys(files)) fs.writeFileSync(f.w(n), 'v1\n');
+    fs.writeFileSync(f.w('n.txt'), 'n\n');
+    const s = service(f, { walkMaxResultBytes: 5000 });
+    const id = ask(s, ['n.txt']);
+    const a = await answer(s, id);
+    ok('LF-02 300 changed paths above the limit: the same refusal, the first 200 and the count, no file, changesFileError says why',
+      a && a.status === 'refused' && /^tracked changes outside the request/.test(a.why) && a.changed.length === 200 && a.changedCount === 300 && a.changesFile === undefined && !fs.existsSync(path.join(s.answers, `${id}.changes.json`)) && /^the whole lists take above 5000 bytes: not written$/.test(a.changesFileError || ''), J(a));
+    await s.close();
+  }
+  {
+    const dir = (n) => `build/${'o'.repeat(200)}${n}/${'p'.repeat(200)}`;
+    const f = fixture({ files: IGNORED, hooks: { 'pre-commit': `rm -rf build/*; mkdir -p ${dir('b')}; i=0; while [ $i -lt 101 ]; do : > ${dir('b')}$i; i=$((i+1)); done` } });
+    fs.mkdirSync(f.w(path.dirname(dir('a'))), { recursive: true });
+    for (let i = 0; i < 101; i++) { fs.mkdirSync(f.w(dir('a')), { recursive: true }); fs.writeFileSync(f.w(`${dir('a')}/x${i}`), ''); }
+    fs.writeFileSync(f.w('n.txt'), 'n\n');
+    const s = service(f, { walkMaxResultBytes: 75000 });
+    const id = ask(s, ['n.txt']);
+    const a = await answer(s, id);
+    const res = resultOf(f, id);
+    ok('LF-03 a hook replaced ignored files: ignoredChanged above the limit, each walk within it -> committed, the branch moved, 200 and the count, no file, changesFileError, the journal says committed',
+      a && a.status === 'committed' && a.sha && f.tip() === a.sha && a.ignoredChanged.length === 200 && a.ignoredChangedCount === 202 && a.changesFile === undefined && /take above 75000/.test(a.changesFileError || '') && res.length === 1 && res[0].status === 'committed', J({ a: a && { status: a.status, why: a.why, n: a.ignoredChangedCount, e: a.changesFileError }, res }));
+    await s.close();
+  }
+  {
+    const f = fixture({ files: IGNORED, hooks: { 'pre-commit': copies201 } });
+    const s = service(f);
+    fs.writeFileSync(f.w('n.txt'), 'n\n');
+    const id = blocked(s);
+    const a = await answer(s, askAs(s, id, ['n.txt']));
+    const res = resultOf(f, id);
+    ok('LF-04 the write of the file fails after the commit: committed with its sha, the journal says committed, changesFileError with the code, no internal error',
+      a && a.status === 'committed' && a.sha && f.tip() === a.sha && a.why === undefined && a.changesFile === undefined && writeFailed.test(a.changesFileError || '') && res.length === 1 && res[0].status === 'committed' && res[0].changesFileError === a.changesFileError, J({ a: a && { status: a.status, why: a.why, sha: a.sha, e: a.changesFileError }, res }));
+    // LF-08: the same id again, in this call and in a later one, gets the result of the journal
+    fs.rmSync(path.join(s.answers, `${id}.json`));
+    const again = await answer(s, id, 10000);
+    ok('LF-08 the answer read again in the call: the same result, changesFileError in place', again && again.status === 'committed' && again.sha === a.sha && again.changesFileError === a.changesFileError, J(again));
+    await s.close();
+    const s2 = service(f);
+    fs.mkdirSync(path.join(s2.answers, `${id}.changes.json`), { recursive: true });
+    const later = await answer(s2, askAs(s2, id, ['n.txt']), 10000);
+    ok('LF-08 the same id in a later call: the result from the journal, changesFileError in place, no second commit', later && later.status === 'committed' && later.sha === a.sha && later.changesFileError === a.changesFileError && f.tip() === a.sha && resultOf(f, id).length === 1, J(later));
+    await s2.close();
+  }
+  {
+    const files = tracked('t/f', 201, 'v0\n');
+    const f = fixture({ files, hooks: { 'pre-commit': '' } });
+    for (const n of Object.keys(files)) fs.writeFileSync(f.w(n), 'v1\n');
+    fs.writeFileSync(f.w('n.txt'), 'n\n');
+    const s = service(f);
+    const a = await answer(s, askAs(s, blocked(s), ['n.txt']));
+    ok('LF-05 the write fails on a refusal: the same why, 200 and the count, no internal error',
+      a && a.status === 'refused' && /^tracked changes outside the request/.test(a.why) && a.changed.length === 200 && a.changedCount === 201 && writeFailed.test(a.changesFileError || ''), J(a && { why: a.why, n: a.changedCount, e: a.changesFileError }));
+    await s.close();
+  }
+  {
+    const f = fixture({ files: IGNORED, hooks: { 'pre-commit': `printf 'gen.txt\\n' > gen.txt; ${copies201}` } });
+    const s = service(f);
+    fs.writeFileSync(f.w('gen.txt'), 'role\n');
+    const a = await answer(s, askAs(s, blocked(s), ['gen.txt']));
+    ok('LF-06 the write fails on nothing: nothing stays', a && a.status === 'nothing' && a.ignoredChangedCount === 201 && writeFailed.test(a.changesFileError || '') && f.tip() === f.h0, J(a && { status: a.status, why: a.why, e: a.changesFileError }));
+    await s.close();
+  }
+  {
+    const f = fixture({ hooks: { 'pre-commit': 'touch "$T/started"; sleep 60' } });
+    writeCopies(f, 'plain', 201);
+    fs.writeFileSync(f.w('n.txt'), 'n\n');
+    const s = service(f);
+    const id = askAs(s, blocked(s), ['n.txt']);
+    await waitFile(path.join(f.tdir, 'started'));
+    s.cancel();
+    const a = await answer(s, id);
+    ok('LF-07 the write fails on cancelled: cancelled stays', a && a.status === 'cancelled' && a.untrackedInputsCount === 201 && writeFailed.test(a.changesFileError || '') && f.tip() === f.h0, J(a && { status: a.status, why: a.why, n: a.untrackedInputsCount, e: a.changesFileError }));
+    await s.close();
   }
   // ---- the tester's cells (names of files that look like pathspec magic, the paths of a note, the classes, the owner's
   // numbers of the walk, the keys of the limits): tests/commit-recheck-tester-cases.js, a child with its own tally, so

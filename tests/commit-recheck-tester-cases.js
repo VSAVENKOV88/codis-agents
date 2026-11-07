@@ -341,10 +341,14 @@ const write = (f, n, body) => { fs.mkdirSync(path.dirname(f.w(n)), { recursive: 
     write(f, 'n.txt', 'n\n');
     const s = service(f);
     const tip = f.tip();
+    const peak0 = process.resourceUsage().maxRSS;
     const a = await answer(s, ask(s, ['n.txt']), 120000);
+    const peak = process.resourceUsage().maxRSS - peak0;
     const bytes = a && a.changesFile ? fs.statSync(a.changesFile).size : 0;
     ok(`T18 ${tag}: ${D} deleted x ${C} copies -> refused for its reason, no internal error, the file of the lists within 64 MiB`,
       a && a.status === 'refused' && f.tip() === tip && !/internal error/.test(a.why || '') && bytes <= 64 * 1024 * 1024, J({ why: a && (a.why || '').slice(0, 200), bytes }));
+    ok(`LP-01..04 ${tag}: ${D} x ${C}: the refusal names both counts and the limit, no list, before the hooks, the peak of the adapter grows by less than 300 MB`,
+      a && (a.why || '').startsWith(`no safe check path: the rename pairs of ${D} deleted files and ${C} files`) && (a.why || '').includes(`above the ${64 * 1024 * 1024} of results`) && a.changed === undefined && a.checks === undefined && peak < 300 * 1024, J({ why: a && (a.why || '').slice(0, 200), peakKiB: peak }));
     fs.rmSync(f.w('n.txt'));
     git(f.wt, ['checkout', '-q', 'task', '--', 't']);
     fs.rmSync(f.w(dir), { recursive: true });
@@ -356,6 +360,7 @@ const write = (f, n, body) => { fs.mkdirSync(path.dirname(f.w(n)), { recursive: 
   await product('ignored copies', 1500, 1500, 'build');
   await product('copies', 1500, 1500, 'plain');
   await product('ignored copies, a string longer than node holds', 3000, 3000, 'build');
+  await product('ignored copies, what ended the adapter with an out of memory', 8000, 8000, 'build');
   // ---- the classes
   {
     const f = fixture("printf 'evil.txt\\n' >> .gitignore; echo evil > evil.txt");
