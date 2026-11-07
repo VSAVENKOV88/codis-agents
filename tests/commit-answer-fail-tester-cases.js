@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 'use strict';
 // Tester cells of a failed write (p-codex A2a-2b): the real full disk reaches the result line itself, not only the answer
 // (a result line longer than the free part of the last block of the journal), a disk full before the request, every kind
