@@ -373,7 +373,7 @@ const write = (f, n, body) => { fs.mkdirSync(path.dirname(f.w(n)), { recursive: 
   };
   const budgetOf = (a) => { const m = /take (\d+) bytes, above the (\d+) of results/.exec((a && a.why) || ''); return m ? +m[1] : null; };
   const entryBytes = (list) => (list || []).reduce((n, e) => n + Buffer.byteLength(JSON.stringify(e)) + 1, 0);
-  const STRANGE = (i) => `q"b\\s\tтекст\u0001-${'x'.repeat(30)}-${i}.txt`;
+  const STRANGE = (i) => `q"b\\s\t\u0442\u0435\u043a\u0441\u0442\u0001-${'x'.repeat(30)}-${i}.txt`;
   for (const [tag, dir] of [['pairs', 'plain'], ['notes of ignored copies', 'build']]) {
     const build = () => {
       const f = fixture('true');
@@ -467,7 +467,7 @@ const write = (f, n, body) => { fs.mkdirSync(path.dirname(f.w(n)), { recursive: 
   }
   {
     // the gate counts bytes, a limit between the characters and the bytes of the list; each walk within it
-    const seg = 'я'.repeat(100);
+    const seg = '\u044f'.repeat(100);
     const deep = (x) => `build/${seg}/${seg}${x}/${seg.slice(5)}`;
     const f = fixture(`rm -rf build/*; mkdir -p '${deep('b')}'; i=0; while [ $i -lt 101 ]; do : > '${deep('b')}'/$i; i=$((i+1)); done`);
     for (let i = 0; i < 101; i++) write(f, `${deep('a')}/${i}`, '');
