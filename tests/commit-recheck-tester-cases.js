@@ -4,7 +4,8 @@
 // (a file is classed by its own name, as git status does, so a hook cannot hide a write under a name; answer 2, G2),
 // the path lists of an answer stay within the first 200 entries whatever field holds them, the notes of one answer
 // sharing them, and the whole lists stay in a file of the adapter (G11), that file and the memory of the adapter stay
-// bounded when deleted files and copies multiply (G1, G8), tracked names and rename pairs of such names, the rules of the ignore
+// bounded when deleted files and copies multiply (G1, G8), the sum of the budget on names whose JSON is longer than their
+// characters, what pairs with what, the gate of the file over all its lists and in bytes, a status that a failed answer does not change (I3), tracked names and rename pairs of such names, the rules of the ignore
 // classes (a rule written into a named .gitignore in the same pass, .git/info/exclude), the owner's numbers of the walk
 // (200 000 entries, 15 s), the keys of the limits through createAgent. Real git repositories in a temporary folder, the
 // real codex sandbox without a model.
@@ -361,6 +362,159 @@ const write = (f, n, body) => { fs.mkdirSync(path.dirname(f.w(n)), { recursive: 
   await product('copies', 1500, 1500, 'plain');
   await product('ignored copies, a string longer than node holds', 3000, 3000, 'build');
   await product('ignored copies, what ended the adapter with an out of memory', 8000, 8000, 'build');
+  // ---- the budget of the rename pairs and the gate of the file, on names whose JSON is longer than their characters
+  // (G1, G8, I1, I2): the sum the adapter refuses by is not below what it would build, and it pairs only what is equal
+  const commitFiles = (f, names, body) => {
+    for (const n of names) write(f, n, body);
+    git(f.wt, ['add', '--'].concat(names.map((n) => `./${n}`)));
+    git(f.wt, ['commit', '-q', '-m', 'tracked']);
+    for (const n of names) fs.rmSync(f.w(n));
+    write(f, 'n.txt', 'n\n');
+  };
+  const budgetOf = (a) => { const m = /take (\d+) bytes, above the (\d+) of results/.exec((a && a.why) || ''); return m ? +m[1] : null; };
+  const entryBytes = (list) => (list || []).reduce((n, e) => n + Buffer.byteLength(JSON.stringify(e)) + 1, 0);
+  const STRANGE = (i) => `q"b\\s\tтекст\u0001-${'x'.repeat(30)}-${i}.txt`;
+  for (const [tag, dir] of [['pairs', 'plain'], ['notes of ignored copies', 'build']]) {
+    const build = () => {
+      const f = fixture('true');
+      commitFiles(f, Array.from({ length: 12 }, (_, i) => `t/${STRANGE(i)}`), 'same\n');
+      for (let i = 0; i < 12; i++) write(f, `${dir}/${STRANGE(100 + i)}`, 'same\n');
+      return f;
+    };
+    let N = null;
+    {
+      const f = build();
+      const s = service(f, { walkMaxResultBytes: 6000 });
+      N = budgetOf(await answer(s, ask(s, ['n.txt'])));
+      await s.close();
+    }
+    {
+      const f = build();
+      const s = service(f, { walkMaxResultBytes: N });
+      const a = await answer(s, ask(s, ['n.txt']));
+      const real = entryBytes(a && a.changed);
+      ok(`T19 ${tag}, names with quotes, a tab, a control character and Cyrillic: with the sum the refusal names as the limit they are listed, and what is listed is not above that sum`,
+        N && a && a.status === 'refused' && a.changedCount === (dir === 'plain' ? 144 : 12) && real <= N, J({ N, real, why: a && (a.why || '').slice(0, 200) }));
+      await s.close();
+    }
+    {
+      const f = build();
+      const s = service(f, { walkMaxResultBytes: N - 1 });
+      const a = await answer(s, ask(s, ['n.txt']));
+      ok(`T19 ${tag}: one byte below that sum -> refused by the budget, no list`, a && a.status === 'refused' && budgetOf(a) === N && a.changed === undefined, J({ N, why: a && (a.why || '').slice(0, 200) }));
+      await s.close();
+    }
+  }
+  {
+    // the pairs are of equal content only: two blobs of one size, a mode that differs, a group with plain and ignored copies
+    const f = fixture('true');
+    for (const n of ['a/1', 'a/2']) write(f, n, 'aaaa\n');
+    for (const n of ['b/1', 'b/2']) write(f, n, 'bbbb\n');
+    write(f, 'e/run', 'cccc\n');
+    fs.chmodSync(f.w('e/run'), 0o755);
+    git(f.wt, ['add', 'a', 'b', 'e']);
+    git(f.wt, ['commit', '-q', '-m', 'blobs']);
+    fs.rmSync(f.w('a'), { recursive: true });
+    fs.rmSync(f.w('b'), { recursive: true });
+    fs.rmSync(f.w('e'), { recursive: true });
+    for (const n of ['ca1', 'ca2']) write(f, n, 'aaaa\n');
+    write(f, 'build/ca3', 'aaaa\n');
+    for (const n of ['cb1', 'cb2', 'cb3']) write(f, n, 'bbbb\n');
+    write(f, 'ce', 'cccc\n');
+    write(f, 'n.txt', 'n\n');
+    const s = service(f);
+    const a = await answer(s, ask(s, ['n.txt']));
+    const got = ((a && a.changed) || []).map((c) => `${c.kind} ${c.from || ''}>${c.path}${c.note ? ' note' : ''}`).sort();
+    const want = [];
+    for (const d of ['a/1', 'a/2']) for (const c of ['ca1', 'ca2']) want.push(`renamed ${d}>${c}`);
+    for (const d of ['b/1', 'b/2']) for (const c of ['cb1', 'cb2', 'cb3']) want.push(`renamed ${d}>${c}`);
+    want.push('renamed e/run>ce');
+    want.sort();
+    ok('T20 every deleted file with every copy of its own content: two blobs of one size do not mix, a plain copy outranks an ignored one, the x bit is no part of the group', a && a.status === 'refused' && J(got) === J(want), J({ got, want }));
+    await s.close();
+  }
+  {
+    // a sum over the whole lists: each list and each walk within the limit, together above it
+    const long = 'L'.repeat(150);
+    const build = () => {
+      const f = fixture(`mkdir -p build; i=0; while [ $i -lt 300 ]; do : > build/${long}$i; echo v1 > t/${long}$i; i=$((i+1)); done`);
+      const names = Array.from({ length: 300 }, (_, i) => `t/${long}${i}`);
+      for (const n of names) write(f, n, 'v0\n');
+      git(f.wt, ['add', 't']);
+      git(f.wt, ['commit', '-q', '-m', 't']);
+      write(f, 'n.txt', 'n\n');
+      return f;
+    };
+    {
+      const f = build();
+      const s = service(f, { walkMaxResultBytes: 95000 });
+      const id = ask(s, ['n.txt']);
+      const a = await answer(s, id);
+      ok('T21 two lists each within the limit, together above it -> the same refusal, no file: the gate is of all the lists of the file',
+        a && a.status === 'refused' && /^changed outside the request/.test(a.why) && a.changedCount === 300 && a.ignoredChangedCount === 300 && a.changesFile === undefined && /take above 95000/.test(a.changesFileError || '') && !fs.existsSync(path.join(s.answers, `${id}.changes.json`)), J(a && { why: a.why, c: a.changedCount, i: a.ignoredChangedCount, e: a.changesFileError, file: a.changesFile }));
+      await s.close();
+    }
+    {
+      const f = build();
+      const s = service(f, { walkMaxResultBytes: 300000 });
+      const a = await answer(s, ask(s, ['n.txt']));
+      const whole = a && a.changesFile ? readJson(a.changesFile) : null;
+      const left = fs.readdirSync(s.answers).filter((n) => n.endsWith('.tmp'));
+      ok('T21 the same lists within the limit: the file holds both whole, no error, no temporary file left beside it',
+        whole && whole.changed.length === 300 && whole.ignoredChanged.length === 300 && a.changesFileError === undefined && left.length === 0, J({ left, e: a && a.changesFileError, file: a && a.changesFile }));
+      await s.close();
+    }
+  }
+  {
+    // the gate counts bytes, a limit between the characters and the bytes of the list; each walk within it
+    const seg = 'я'.repeat(100);
+    const deep = (x) => `build/${seg}/${seg}${x}/${seg.slice(5)}`;
+    const f = fixture(`rm -rf build/*; mkdir -p '${deep('b')}'; i=0; while [ $i -lt 101 ]; do : > '${deep('b')}'/$i; i=$((i+1)); done`);
+    for (let i = 0; i < 101; i++) write(f, `${deep('a')}/${i}`, '');
+    write(f, 'n.txt', 'n\n');
+    const s = service(f, { walkMaxResultBytes: 90000 });
+    const id = ask(s, ['n.txt']);
+    const a = await answer(s, id);
+    ok('T22 Cyrillic names: the list is below the limit in characters and above it in bytes -> no file, changesFileError, committed',
+      a && a.status === 'committed' && a.ignoredChangedCount === 202 && a.changesFile === undefined && /take above 90000/.test(a.changesFileError || ''), J(a && { st: a.status, why: (a.why || '').slice(0, 200), n: a.ignoredChangedCount, e: a.changesFileError, file: a.changesFile }));
+    await s.close();
+  }
+  {
+    // the journal holds counts and short texts whatever the lists take
+    const f = fixture('true');
+    commitFiles(f, Array.from({ length: 40 }, (_, i) => `t/f${i}`), 'same\n');
+    for (let i = 0; i < 40; i++) write(f, `build/c${i}`, 'same\n');
+    const s = service(f, { walkMaxResultBytes: 8000 });
+    const id = ask(s, ['n.txt']);
+    const a = await answer(s, id);
+    const lines = fs.readFileSync(path.join(f.state, 'K', 'commits.jsonl'), 'utf8').split('\n').filter((l) => l.includes(id) && l.includes('"result"'));
+    ok('T23 a refusal by the budget: one result in the journal, a short line without a path of a copy', a && budgetOf(a) && lines.length === 1 && lines[0].length < 1000 && !lines[0].includes('build/c'), J({ lines: lines.map((l) => l.slice(0, 400)), why: a && a.why }));
+    await s.close();
+  }
+  // ---- the answer cannot be written (a full disk stops the temporary file of the answer as it stops the file of the
+  // lists): the status stays what the step decided, in the journal and in the answer once it can be written
+  for (const [tag, hook, want] of [['committed', 'true', 'committed'], ['refused', 'echo x >> a.txt', 'refused']]) {
+    const f = fixture(hook);
+    const s = service(f);
+    write(f, 'n.txt', 'n\n');
+    const id = newId();
+    fs.mkdirSync(path.join(s.answers, `${id}.json`));
+    const tmp = path.join(s.box, `.${id}.tmp`);
+    fs.writeFileSync(tmp, JSON.stringify({ id, paths: ['n.txt'], message: 'msg' }));
+    fs.renameSync(tmp, path.join(s.box, `${id}.json`));
+    const results = () => fs.readFileSync(path.join(f.state, 'K', 'commits.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)).filter((e) => e.id === id && e.ev === 'result');
+    const end = Date.now() + 15000;
+    while (!results().length && Date.now() < end) await sleep(50);
+    await sleep(1500);
+    const res = results();
+    const why0 = res.length ? res[0].why : null;
+    fs.rmSync(path.join(s.answers, `${id}.json`), { recursive: true });
+    const a = await answer(s, id, 10000);
+    const moved = f.tip() !== f.h0;
+    ok(`T24 ${tag}: the answer of a request cannot be written: one result in the journal, ${want}; the answer written later says the same${want === 'committed' ? ', with the sha of the moved branch' : ''}`,
+      res.length === 1 && res[0].status === want && a && a.status === want && a.why === why0 && moved === (want === 'committed') && !/internal error/.test((a && a.why) || ''), J({ moved, res: res.map((e) => [e.status, (e.why || '').slice(0, 140)]), a: a && { status: a.status, sha: a.sha, why: (a.why || '').slice(0, 140) } }));
+    await s.close();
+  }
   // ---- the classes
   {
     const f = fixture("printf 'evil.txt\\n' >> .gitignore; echo evil > evil.txt");
