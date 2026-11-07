@@ -16,6 +16,8 @@ key and script, and this file says when and why each one changed. Versions befor
   "walked N entries, the walk did not finish"; the end of the call and SIGTERM remove it): untracked files created,
   changed or removed by a check refuse, classed by the ignore rules before the pass, so a hook cannot hide its writes
   with a `.gitignore`; ignored ones are listed (`ignoredChanged`); `untrackedInputs` names the inputs of a check.
+  A folder the walk cannot look into is a note and an entry of its own: a change of it, a chmod included, refuses with
+  its path whatever the ignore rules say, so a hook cannot hide a write by taking the rights away.
   Renames are paired (`renamed`, `from`). A compare through a conversion runs inside the sandbox, after the probe,
   with the attributes of the tip and the user's conversion keys as `-c`; a named path with a conversion is refused
   with its path (`core.eol` alone is no longer refused: it converts nothing). Named paths: a link is committed as a

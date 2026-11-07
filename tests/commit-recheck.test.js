@@ -3,7 +3,7 @@
 // The re-check, the untracked files, the paths of a request and the limits of the walk (p-codex A2a-2b), on real git
 // repositories in a temporary folder and the real codex sandbox without a model. Cells of the analysis p-codex-A2
 // section 7 and of its check, run 4: CK2-03, -03b..e, -04, -05, -05b, -07, -07b, -07c, -08, -08b, -09, -12, -12b..e,
-// -13, -13b, -13c, EV-16, G7-02b, PA2-01..06, -03b, -04b; the budget of rename pairs and the file of the whole lists: LP, LF. Marks of a hook lie in the task folder, not in the worktree:
+// -13, -13b, -13c, -13d, EV-16, G7-02b, PA2-01..06, -03b, -04b; the budget of rename pairs and the file of the whole lists: LP, LF. Marks of a hook lie in the task folder, not in the worktree:
 // a mark in the worktree would itself be a change of an untracked file. Skipped without macOS, codex or git.
 const fs = require('fs');
 const os = require('os');

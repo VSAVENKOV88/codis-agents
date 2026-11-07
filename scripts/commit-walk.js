@@ -8,7 +8,10 @@
 // - walk: the non-folder entries of the worktree outside the tracked paths of job.h0 and outside job.named, with
 //   (type, dev, ino, size, mode, mtime, ctime) and their class by the ignore rules; every .gitignore is copied into the
 //   mirror (job.mirror), and git check-ignore answers against the mirror, so no git command reads the worktree. With
-//   job.previous (the mirror of the walk before) each file also gets its class by those rules.
+//   job.previous (the mirror of the walk before) each file also gets its class by those rules. A folder it cannot look
+//   into (no listing, or an entry of its listing without a stat) is an entry of type d, with (dev, ino, mode, mtime,
+//   ctime): any chmod or write in it changes the key. It has no class by the rules, its contents cannot be classed, so
+//   a change of it is never an ignored one.
 // - named: only the .gitignore files of the parents of job.named, and which of those paths are ignored.
 // - hash: the blob ids of job.paths (a link: of its text).
 // The worktree is an untrusted source: nothing of it is followed or executed.
@@ -112,6 +115,10 @@ function walk() {
   const files = [], notes = [];
   const stack = [''];
   const deep = (p) => stop('deep', `a path too long to walk: ${p.slice(0, 200)}`);
+  const unreadFolder = (p, st) => {
+    addResult(Buffer.byteLength(p) + 140);
+    files.push({ p, t: 'd', s: 0, k: ['d', st.dev, st.ino, st.mode, st.mtimeNs, st.ctimeNs].join(':') });
+  };
   while (stack.length) {
     const rel = stack.pop();
     const full = rel ? path.join(job.wt, rel) : job.wt;
@@ -125,10 +132,18 @@ function walk() {
       if (fd !== undefined) fs.closeSync(fd);
       if (e.code === 'ENOENT') continue;
       if (e.code === 'ENAMETOOLONG') deep(shown);
-      if (e.code === 'EACCES' || e.code === 'EPERM') { notes.push(`${shown}: not listed (${e.code}), its contents are not compared`); addResult(shown.length + 60); continue; }
+      if (e.code === 'EACCES' || e.code === 'EPERM') {
+        notes.push(`${shown}: not listed (${e.code}), its contents are not compared`);
+        addResult(shown.length + 60);
+        let shut;
+        try { shut = fs.lstatSync(full, { bigint: true }); } catch (x) { stop('walk', `${shown}: ${x.code}`); }
+        unreadFolder(shown, shut);
+        continue;
+      }
       if (e.code === 'ELOOP' || e.code === 'ENOTDIR') stop('replaced', `the folder ${shown} was replaced during the walk`);
       stop('walk', `${shown}: ${e.code}`);
     }
+    let unstated = false;
     for (;;) {
       let e;
       try { e = dir.readSync(); } catch (x) { stop('walk', `${shown}: ${x.code}`); }
@@ -145,6 +160,7 @@ function walk() {
         if (x.code === 'ENAMETOOLONG') deep(child);
         notes.push(`${child}: not read (${x.code}), not compared`);
         addResult(child.length + 60);
+        unstated = true;
         continue;
       }
       if (low === '.gitignore') copyIgnore(rel, name);
@@ -155,11 +171,12 @@ function walk() {
     }
     dir.closeSync();
     fs.closeSync(fd);
+    if (unstated) unreadFolder(shown, st);
     let after = null;
     try { after = fs.lstatSync(full, { bigint: true }); } catch { /* below */ }
     if (!after || !after.isDirectory() || after.ino !== st.ino || after.dev !== st.dev) stop('replaced', `the folder ${shown} was replaced during the walk`);
   }
-  const paths = files.map((f) => f.p);
+  const paths = files.filter((f) => f.t !== 'd').map((f) => f.p);
   const own = ignoredBy(job.mirror, paths);
   const prev = job.previous ? ignoredBy(job.previous, paths) : null;
   for (const f of files) {

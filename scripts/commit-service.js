@@ -43,8 +43,9 @@
 // - U0, the walk of the worktree (scripts/commit-walk.js, a process of its own under limits; any limit refuses and the
 //   hooks do not run): every non-folder entry outside the tracked paths and the request, with (type, dev, ino, size,
 //   mode, mtime, ctime) - any write changes ctime - and its class by the ignore rules (a mirror of every .gitignore and
-//   git check-ignore, no git command reads the worktree). untrackedInputs lists those not ignored and every untracked
-//   .gitignore, whose rules could hide the rest.
+//   git check-ignore, no git command reads the worktree), and every folder it cannot look into, with (dev, ino, mode,
+//   mtime, ctime) and no class. untrackedInputs lists the files not ignored and every untracked .gitignore, whose rules
+//   could hide the rest.
 // - G7: every tracked path of H0 outside the request is compared by Node (an O_NOFOLLOW_ANY read, the bytes hashed as
 //   a blob) and the real index against H0 (diff-index --cached); any difference refuses the request with the whole
 //   list (modified, deleted, typechange, mode, staged). A deleted path whose blob equals an untracked file (not
@@ -280,7 +281,7 @@ const which = (bin, envPath) => {
 // (SIGTERM to its group, SIGKILL after killGraceMs) and starts no new one; close() ends the call: it cancels the
 // running check, waits for it, cancels the requests still queued or in the box, and resolves to the summary
 // {commits, refused, nothing, cancelled, notes}. A request past its checks is carried through to its result first.
-// Throws only on arguments of the caller.
+// Throws on arguments of the caller and when the adapter's own folders or journal cannot be set up (a full disk).
 function openCommitService(o) {
   const bad = (m) => { throw new Error(`commit-service: ${m}`); };
   for (const k of ['task', 'callId']) if (typeof o[k] !== 'string' || !SEGMENT_RE.test(o[k]) || o[k] === '.' || o[k] === '..') bad(`${k} must be a plain name, got ${q(o[k])}`);
@@ -745,7 +746,8 @@ function openCommitService(o) {
     w.map = new Map(w.files.map((f) => [f.p, f]));
     return w;
   };
-  const inputsOf = (u) => u.files.filter((f) => !f.i || isIgnoreFile(f.p)).map((f) => f.p).sort();
+  // a folder the walk could not look into is no input: nothing of it was seen; it counts only in the difference below
+  const inputsOf = (u) => u.files.filter((f) => f.t !== 'd' && (!f.i || isIgnoreFile(f.p))).map((f) => f.p).sort();
   // The difference of two walks: {changed, ignored}. A new or changed path is classed by the rules before the pass, a
   // removed one by its own walk; a .gitignore outside the request is a change whatever its class.
   const untrackedDiff = (before, after) => {

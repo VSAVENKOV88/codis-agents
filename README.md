@@ -1000,8 +1000,10 @@ fallback to another slot directory: a second directory would be a second queue t
   not controlled: the answer lists the untracked inputs (`untrackedInputs`, without the ignored ones, which the
   rules hide, and with every untracked `.gitignore`), so this gap stays open. A `.gitignore` the role put there
   before the request hides other untracked files from that list. The walk does not enter an entry named `.git` in any
-  case, so a write into a nested repository's `.git` is not seen; a folder without rights is a note (`walkNotes`), its
-  contents are not compared. Node has no listing by descriptor: the inode of a folder is compared after its listing,
+  case, so a write into a nested repository's `.git` is not seen; a folder the walk cannot look into is a note (`walkNotes`)
+  and an entry of its own (dev, ino, mode, mtime, ctime): a change of it, a chmod included, refuses with its path even
+  under ignore rules, but its contents are not compared, so a write through a search right it already had (mode 311)
+  or a descriptor opened before the check is not seen. Node has no listing by descriptor: the inode of a folder is compared after its listing,
   and a folder replaced by a link and put back between the open and the listing goes unseen (only names and
   metadata the role can read anyway; byte reads never follow a link). A file spelled differently from its tracked
   path on a case-insensitive disk counts as untracked in the walk, which errs towards a refusal. The compare of
