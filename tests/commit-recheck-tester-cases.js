@@ -2,7 +2,8 @@
 // The tester's cells of the re-check and the walk of a commit (p-codex A2a-2b), run as a child of
 // tests/commit-recheck.test.js with its own tally: names of files that git check-ignore would read as pathspec magic
 // (a file is classed by its own name, as git status does, so a hook cannot hide a write under a name; answer 2, G2),
-// the path lists of an answer stay within the first 200 entries whatever field holds them (G11), the rules of the ignore
+// the path lists of an answer stay within the first 200 entries whatever field holds them, the notes of one answer
+// sharing them, and the whole lists stay in a file of the adapter (G11), the rules of the ignore
 // classes (a rule written into a named .gitignore in the same pass, .git/info/exclude), the owner's numbers of the walk
 // (200 000 entries, 15 s), the keys of the limits through createAgent. Real git repositories in a temporary folder, the
 // real codex sandbox without a model.
@@ -113,13 +114,34 @@ const write = (f, n, body) => { fs.mkdirSync(path.dirname(f.w(n)), { recursive: 
     ok(`T3 ${tag}: such a file named in a request is not "ignored" -> committed`, a && a.status === 'committed' && git(f.wt, ['show', `task:${HIDDEN}`]).out === 'named', J(a));
     await s.close();
   }
-  for (const name of [':(literal)x.txt', ':(glob)y', ':(exclude)z']) {
+  for (const name of [':(literal)x.txt', ':(glob)y', ':(exclude)z', ':', ':!z', ':^z']) {
     const f = fixture('true');
     write(f, name, 'input\n');
     write(f, 'n.txt', 'n\n');
     const s = service(f);
     const a = await answer(s, ask(s, ['n.txt']));
     ok(`T4 a file named ${name} git status lists is no failure of the walk -> committed, an untracked input`, a && a.status === 'committed' && (a.untrackedInputs || []).includes(name), J(a));
+    await s.close();
+  }
+  {
+    const f = fixture("mkdir -p build; echo cache > 'build/:(top)x.txt'");
+    const s = service(f);
+    write(f, 'n.txt', 'n\n');
+    const a = await answer(s, ask(s, ['n.txt']));
+    ok('T11 a file with such a name that the rules do ignore -> committed, only listed as ignored', a && a.status === 'committed' && (a.ignoredChanged || []).includes('build/:(top)x.txt'), J(a));
+    await s.close();
+  }
+  {
+    const f = fixture('true');
+    write(f, ':(top)d/.gitignore', 'hidden.txt\n');
+    write(f, ':(top)d/hidden.txt', 'h\n');
+    write(f, ':(top)d/seen.txt', 's\n');
+    write(f, 'n.txt', 'n\n');
+    const s = service(f);
+    const a = await answer(s, ask(s, ['n.txt']));
+    const inputs = (a && a.untrackedInputs) || [];
+    ok('T12 a .gitignore in a folder with such a name holds for its files: an input by git status, the file it hides is not',
+      a && a.status === 'committed' && inputs.includes(':(top)d/seen.txt') && inputs.includes(':(top)d/.gitignore') && !inputs.includes(':(top)d/hidden.txt'), J(a));
     await s.close();
   }
   // ---- G11: the paths of an answer are cut in every field
@@ -136,6 +158,59 @@ const write = (f, n, body) => { fs.mkdirSync(path.dirname(f.w(n)), { recursive: 
     const shown = (text.match(/build\/copy-\d+\.txt/g) || []).length;
     ok('T5 300 ignored copies of a deleted file: the note on deleted holds at most the first 200 paths (G11), the answer stays small',
       a && a.status === 'refused' && pathsOf(a).includes('b.txt') && shown <= 200, J({ why: a && a.why, shown, bytes: text.length }));
+    await s.close();
+  }
+  const copiesIn = (text) => (text.match(/build\/copy-[ab]?\d+\.txt/g) || []).length;
+  {
+    const f = fixture('true');
+    const blob = fs.readFileSync(f.w('b.txt'));
+    for (let i = 0; i < 300; i++) write(f, `build/copy-${i}.txt`, blob);
+    fs.rmSync(f.w('b.txt'));
+    write(f, 'n.txt', 'n\n');
+    const s = service(f);
+    const a = await answer(s, ask(s, ['n.txt']));
+    const whole = a && a.changesFile ? readJson(a.changesFile) : null;
+    const note = (whole && whole.changed[0].note) || '';
+    ok('T5b the note that was cut says how many more and where; the whole list in the file of the adapter names all 300',
+      a && /and 100 more/.test(a.changed[0].note) && /changesFile/.test(a.changed[0].note) && copiesIn(note) === 300 && a.changedCount === 1, J({ shown: a && a.changed[0].note.slice(-80), whole: copiesIn(note) }));
+    await s.close();
+  }
+  {
+    const f = fixture('true');
+    const bytes = { a: fs.readFileSync(f.w('a.txt')), b: fs.readFileSync(f.w('b.txt')) };
+    for (const k of ['a', 'b']) {
+      for (let i = 0; i < 150; i++) write(f, `build/copy-${k}${i}.txt`, bytes[k]);
+      fs.rmSync(f.w(`${k}.txt`));
+    }
+    write(f, 'n.txt', 'n\n');
+    const s = service(f);
+    const id = ask(s, ['n.txt']);
+    const a = await answer(s, id);
+    const text = fs.readFileSync(path.join(s.answers, `${id}.json`), 'utf8');
+    const whole = a && a.changesFile ? readJson(a.changesFile) : null;
+    ok('T5c the notes of two deleted files share the first 200 paths, the file names all 300',
+      a && a.changedCount === 2 && copiesIn(text) === 200 && whole && copiesIn(JSON.stringify(whole)) === 300, J({ shown: copiesIn(text), file: a && a.changesFile }));
+    await s.close();
+  }
+  {
+    const f = fixture('true');
+    const blob = fs.readFileSync(f.w('b.txt'));
+    for (let i = 0; i < 200; i++) write(f, `build/copy-${i}.txt`, blob);
+    fs.rmSync(f.w('b.txt'));
+    write(f, 'n.txt', 'n\n');
+    const s = service(f);
+    const a = await answer(s, ask(s, ['n.txt']));
+    ok('T5d exactly 200 copies: the note names all of them, nothing is cut, no file', a && copiesIn(a.changed[0].note) === 200 && a.changesFile === undefined, J({ file: a && a.changesFile }));
+    await s.close();
+  }
+  {
+    const f = fixture("rm b.txt; mkdir -p build; i=0; while [ $i -lt 300 ]; do printf 'b.txt\\n' > build/copy-$i.txt; i=$((i+1)); done");
+    const s = service(f);
+    write(f, 'n.txt', 'n\n');
+    const a = await answer(s, ask(s, ['n.txt']));
+    const inNotes = copiesIn(JSON.stringify((a && a.changed) || []));
+    ok('T5e a hook deleted the file and wrote the copies: the same limit after the check, in the note and in ignoredChanged',
+      a && a.status === 'refused' && pathsOf(a).includes('b.txt') && inNotes === 200 && a.ignoredChanged.length === 200 && a.ignoredChangedCount === 300, J({ inNotes, why: a && a.why }));
     await s.close();
   }
   {
