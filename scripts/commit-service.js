@@ -749,13 +749,14 @@ function openCommitService(o) {
   // a folder the walk could not look into is no input: nothing of it was seen; it counts only in the difference below
   const inputsOf = (u) => u.files.filter((f) => f.t !== 'd' && (!f.i || isIgnoreFile(f.p))).map((f) => f.p).sort();
   // The difference of two walks: {changed, ignored}. A new or changed path is classed by the rules before the pass, a
-  // removed one by its own walk; a .gitignore outside the request is a change whatever its class.
+  // removed one by its own walk; a .gitignore outside the request and whatever stands where a folder the walk could not
+  // look into stood are changes whatever their class.
   const untrackedDiff = (before, after) => {
     const changed = [], ignored = [];
     const sort = (hidden, p, kind) => { if (hidden && !isIgnoreFile(p)) ignored.push(p); else changed.push({ path: p, kind }); };
     for (const f of after.files) {
       const b = before.map.get(f.p);
-      if (!b || b.k !== f.k) sort(f.c, f.p, b ? 'modified' : 'created');
+      if (!b || b.k !== f.k) sort(f.c && !(b && b.t === 'd'), f.p, b ? 'modified' : 'created');
     }
     for (const b of before.files) if (!after.map.has(b.p)) sort(b.i, b.p, 'deleted');
     return { changed, ignored };
