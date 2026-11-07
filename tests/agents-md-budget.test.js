@@ -437,7 +437,7 @@ const markerBytes = (src) => Buffer.byteLength(`<!-- codis-agents agents-md v1; 
 // prompt-input runs in a throwaway CODEX_HOME.
 {
   // Bytes, not characters: two bytes each, under the limit by characters and over it by bytes.
-  const two = (n) => 'я'.repeat(n) + '\n';
+  const two = (n) => String.fromCharCode(0x44f).repeat(n) + '\n';
   const gen = project({ 'CLAUDE.md': two(19000), [CFG]: `${KEY} = 30000\n` });
   const cg = check(gen);
   ok('T1. a generated file counts in bytes, not characters', cg.status === 1 && cg.stderr.includes(`chain .: ${38001 + markerBytes('CLAUDE.md')} bytes > 30000`), show(cg));
