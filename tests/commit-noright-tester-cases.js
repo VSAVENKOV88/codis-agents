@@ -115,6 +115,37 @@ const shut = (f, n, mode, files) => {
     ok('T33b the same outside ignore rules -> refused, modified', refusedWith(a, f, 'modified hid'), J(a));
   }
   {
+    const f = fixture('chmod 755 build/hid; rm -rf build/hid; ln -s /etc build/hid');
+    const a = await one(f, () => shut(f, 'build/hid', 0, ['old']));
+    ok('T33c the same folder replaced by a link -> refused, modified, not one of the ignored changes', refusedWith(a, f, 'modified build/hid') && !(a.ignoredChanged || []).includes('build/hid'), J(a));
+  }
+  {
+    const f = fixture('if grep -q fixed n.txt; then chmod 755 build/hid; rm -rf build/hid; echo evil > build/hid; else echo fixed >> n.txt; fi');
+    const a = await one(f, () => shut(f, 'build/hid', 0, ['old']));
+    ok('T33d the second pass of the re-check replaces it by a file -> refused, modified', refusedWith(a, f, 'modified build/hid'), J(a));
+  }
+  {
+    const f = fixture('chmod 755 build/hid; rm -rf build/hid; mv b.txt build/hid');
+    const a = await one(f, () => shut(f, 'build/hid', 0));
+    ok('T33e a tracked file moved to its place -> both named, no internal error', refusedWith(a, f, 'deleted b.txt', 'modified build/hid'), J(a));
+  }
+  {
+    const f = fixture('chmod 700 build/hid; echo evil > build/hid/new; chmod 000 build/hid');
+    const a = await one(f, () => shut(f, 'build/hid', 0, ['old']));
+    ok('T33f opened and closed again by the hook under an ignored folder -> refused, modified', refusedWith(a, f, 'modified build/hid'), J(a));
+  }
+  {
+    const f = fixture('chmod 755 build/hid; echo evil > build/hid/new');
+    const a = await one(f, () => shut(f, 'build/hid', 0, ['old']));
+    ok('T33g its rights given back under an ignored folder -> refused, deleted the entry; the files now seen are ignored ones', refusedWith(a, f, 'deleted build/hid') && !kinds(a).some((k) => k.includes('build/hid/')), J(a));
+  }
+  {
+    const f = fixture('rm build/l; echo new > build/l; echo more >> build/u.dat');
+    const a = await one(f, () => { write(f, 'build/u.dat', 'u\n'); fs.symlinkSync('/etc', f.w('build/l')); });
+    const seen = (a && a.ignoredChanged) || [];
+    ok('T33h no false refusal: an ignored link replaced by a file and a rewritten ignored file stay ignored changes', a && a.status === 'committed' && seen.includes('build/l') && seen.includes('build/u.dat'), J(a));
+  }
+  {
     const f = fixture('rm u.dat; mkdir u.dat; echo evil > u.dat/evil; chmod 000 u.dat');
     const a = await one(f, () => write(f, 'u.dat', 'u\n'));
     ok('T34 an untracked file replaced by a folder without rights -> refused, modified', refusedWith(a, f, 'modified u.dat'), J(a));
