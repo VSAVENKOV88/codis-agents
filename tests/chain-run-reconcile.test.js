@@ -282,8 +282,11 @@ const text = (c) => c.reasons.map((r) => r.why).join(' | ') + ' || ' + c.notes.j
       const open0 = fs.openSync;
       let opens = 0;
       fs.openSync = (p, ...r) => { if (String(p) === lockOf('v3') && ++opens === 2) { fs.openSync = open0; fs.unlinkSync(lockOf('v3')); } return open0(p, ...r); };
-      try { a = CRM.acquireTask(RUNS, 'v3', me, pass); } finally { fs.openSync = open0; }
-      ok('V3 the holder gone between the read and ps: the lock read again is gone, taken by a link, no token', a.ok === true && CJ.readJsonSafe(lockOf('v3')).runId === 'mine' && !fs.existsSync(`${lockOf('v3')}.takeover`), JSON.stringify(a));
+      const link0 = fs.linkSync;
+      const tokens = [];
+      fs.linkSync = (from, to) => { if (String(to).endsWith('.takeover')) tokens.push(String(to)); return link0(from, to); };
+      try { a = CRM.acquireTask(RUNS, 'v3', me, pass); } finally { fs.openSync = open0; fs.linkSync = link0; }
+      ok('V3 the holder gone between the read and ps: the lock read again is gone, taken by a link, no token ever made', a.ok === true && CJ.readJsonSafe(lockOf('v3')).runId === 'mine' && !tokens.length, JSON.stringify(a) + ' ' + tokens.join());
       CRM.releaseLock(lockOf('v3'), me);
       // V2 through the lock: the holder exists and ps cannot answer -> unknown, nothing written, the next start asks again
       const fps = path.join(W, 'fake-ps');
