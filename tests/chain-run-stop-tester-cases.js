@@ -11,7 +11,9 @@
 //   T5 a SIGINT after the first SIGTERM: the exit stays 143, the second one is named ignored;
 //   T6 review and security review at once, the review ends on SIGTERM and the security review ignores it: the conductor
 //      exits only after the second role is gone (SIGKILL to its group after the pause), both calls end signalled in the
-//      journal, no role process outlives the conductor (UC-6 steps 1 and 3).
+//      journal, no role process outlives the conductor (UC-6 steps 1 and 3);
+//   T7 no stop: the review gives no answer, the security review answers later - the path without a signal keeps the
+//      product outcome "the reviewer returned no result" (exit 3), no StopError and no wait of a stop.
 // Everywhere: after the log line "stopping <SIG>" no "started" line and no intent; end is the last line of the journal.
 // No model is called (the fake claude of tests/fixtures/chain-run/bin); every process runs under
 // tests/fixtures/chain-run/kill-hook.js, a signal reaches only the pid of the conductor a test names (=<pid>) and the
@@ -197,6 +199,21 @@ const signalled = (res, sig) => res.status === 'stopped' && res.signal === sig &
       JSON.stringify(rs.map((l) => l.outcome)) + JSON.stringify(res));
     inv = invariant(A, 't6', 'SIGTERM');
     ok('T6 invariant (end is the last journal line, no result after it)', !inv, inv);
+
+    // ---- T7: no stop (analysis C11): the review gives no answer at once, the security review answers a few seconds
+    // later. The barrier of a stop must not touch this path: no StopError, no signal, the task ends with the product
+    // outcome of role-chain.js ("the reviewer returned no result") after both calls ended, the run exits 3.
+    fd = fake({ reviewer: [{ $exit: 1 }], 'security-reviewer': [{ $sleep: 3, then: DONE }] });
+    A = conduct([task('t7', { security: true })], { fd });
+    x = await A.exit;
+    res = resultOf(A, 't7');
+    const j7 = jlines(A, 't7');
+    const secI = j7.find((l) => l.type === 'intent' && /^sec/.test(l.label || '')) || {};
+    const secR = j7.find((l) => l.type === 'result' && l.stepId === secI.stepId) || {};
+    ok('T7 no stop, the review null, the security review ok: exit 3, no signal, why "the reviewer returned no result"', x.code === 3 && res.status === 'stopped' && !res.signal
+      && /the reviewer returned no result/.test(res.why || '') && !logLines(A).some((l) => / stopping /.test(l)), JSON.stringify(x) + JSON.stringify(res));
+    ok('T7 the security review ran to its answer and its result line comes before end', !!secI.stepId && !!secR.outcome && secR.outcome !== 'signalled' && j7.length > 0
+      && j7[j7.length - 1].type === 'end' && j7.indexOf(secR) < j7.length - 1, JSON.stringify(j7.map((l) => `${l.type}:${l.label || ''}:${l.outcome || ''}`)));
   } catch (e) {
     ok('the tester cells ran to their end', false, e.stack);
   } finally {
