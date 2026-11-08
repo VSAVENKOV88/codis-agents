@@ -746,7 +746,9 @@ pid only - never to its group, never to a pid of 1 or less - and waits for nothi
 On its first SIGTERM, SIGINT or SIGHUP the conductor writes `stopping <SIG>` into `log.txt` and from then on starts
 nothing: no role, service step, hook check or wait client, and no new intent in any journal. A live role gets SIGTERM
 to its group and SIGKILL after the pause of the adapter (30 s), its call ends `signalled` (the chain never reads its
-missing answer as an outcome of the task, at any role, the precondition check included); a running service step
+missing answer as an outcome of the task, at any role, the precondition check included); when two roles of a task run
+at once (review and security review) the task ends only after both calls have ended, so the conductor exits only after
+every role of a task has ended; a running service step
 without a wait (a post-check, the sha of a head) ends and its result is recorded; a running wait step (the selection,
 the train) is left open - its detached run lives on, its client is not waited for. A later signal changes nothing (the
 log names it ignored). Every task not ended gets the result `{status: "stopped", why: "signalled: <SIG> (chain-run.js
@@ -1053,7 +1055,9 @@ fallback to another slot directory: a second directory would be a second queue t
   start time and the signal a pid could be reused (microseconds), and `lstart` has a resolution of one second; a
   verdict in `untaken` whose head the tester shortened is not counted in `counts` (the coordinator corrects `prior`
   with `priorReason`); a second signal changes nothing - its escalation and the cleanup of orphans come with part B2;
-  no automatic `resume` of a stopped task.
+  no automatic `resume` of a stopped task. The wait for the roles of a task lasts the pause of the adapter (30 s), but
+  up to its ceiling (3 h) when a process outside the role's group holds the role's stdout open, as it did before the
+  stop existed.
 - The role adapter `scripts/role-exec.js` (p-codex, parts A1a and A1b) runs one role on a host CLI, but no conductor
   uses it yet (part B): the chain still runs on the Workflow `agent()`; on codex only the roles that write a report
   alone (analyst, reviewers) are accepted, and they cannot take memory slots: inside the codex sandbox `heavy.sh` and

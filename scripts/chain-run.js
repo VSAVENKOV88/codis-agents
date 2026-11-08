@@ -767,27 +767,42 @@ async function runScript(o) {
     const run = createAgent(cfg);
     const exec = (step) => stepExec(steps, step, { runner: o.exec, note });
     const checkpoint = (key, getter) => { if (steps) steps.register(key, getter); };
+    // The role calls of each task in flight (one settle promise per call). Two calls of a task run at once (review and
+    // security review, Promise.all of role-chain.js), and Promise.all gives up on the first exception: so a role call
+    // throws StopError only once no other call of its task is in flight, i.e. every role of the task has ended and its
+    // step is closed in the journal. The end of the task, its lock and the exit of the conductor then never come while
+    // a role of the task lives. A call leaves the set right after its own steps.end, before it waits for the others.
+    // Service steps (exec) never run beside a role call of their task and are not in the set.
+    const inflight = {};
+    const othersSettled = async (key) => { while (key && inflight[key] && inflight[key].size) await Promise.allSettled([...inflight[key]]); };
     const agent = async (prompt, opts) => {
-      gate();
       const label = opts && opts.label;
       // A label that names no task of the run: the adapter refuses it with no process, so it needs no intent.
       const key = steps && steps.has(labelKey(label)) ? labelKey(label) : null;
+      if (STOP.sig) { const sig = STOP.sig; await othersSettled(key); throw new StopError(sig); }
       const stepId = key ? steps.begin(key, { kind: 'agent', stepKind: String(label).split(':')[0], label, phase: opts.phase, effect: 'never', gated: true }) : undefined;
-      note(`agent ${label} started`);
-      const t0 = Date.now();
-      const v = await run(prompt, key ? Object.assign({}, opts, { stepId }) : opts);
-      const seconds = (Date.now() - t0) / 1000;
-      note(`agent ${label} ${v === null ? 'null' : 'ok'} ${seconds.toFixed(1)} s`);
-      if (key) {
-        const r = recs[stepId] || {};
-        steps.end(key, stepId, { outcome: r.outcome || null, value: v, rc: r.rc, signal: r.signal, error: r.error, callDir: r.callDir, seconds });
-        if (r.outcome === 'not-registered') throw new Error(`journal/run-state not written: ${r.error}`);
-      }
-      // A role that gives no answer while the conductor stops was interrupted by the stop: the chain gets StopError, not
-      // null, so no path of role-chain.js turns the interrupt into a product outcome ("... returned no result") before
-      // its next gate. The step is already closed in the journal with its outcome.
-      if (v === null && STOP.sig) throw new StopError(STOP.sig);
-      return v;
+      let settled;
+      const mine = new Promise((r) => { settled = r; });
+      const leave = () => { if (key) inflight[key].delete(mine); settled(); };
+      if (key) (inflight[key] = inflight[key] || new Set()).add(mine);
+      try {
+        note(`agent ${label} started`);
+        const t0 = Date.now();
+        const v = await run(prompt, key ? Object.assign({}, opts, { stepId }) : opts);
+        const seconds = (Date.now() - t0) / 1000;
+        note(`agent ${label} ${v === null ? 'null' : 'ok'} ${seconds.toFixed(1)} s`);
+        if (key) {
+          const r = recs[stepId] || {};
+          steps.end(key, stepId, { outcome: r.outcome || null, value: v, rc: r.rc, signal: r.signal, error: r.error, callDir: r.callDir, seconds });
+          leave();
+          if (r.outcome === 'not-registered') throw new Error(`journal/run-state not written: ${r.error}`);
+        }
+        // A role that gives no answer while the conductor stops was interrupted by the stop: the chain gets StopError,
+        // not null, so no path of role-chain.js turns the interrupt into a product outcome ("... returned no result")
+        // before its next gate. The step is already closed in the journal with its outcome.
+        if (v === null && STOP.sig) { const sig = STOP.sig; await othersSettled(key); throw new StopError(sig); }
+        return v;
+      } finally { leave(); }
     };
     const src = fs.readFileSync(path.join(o.pluginRoot || ROOT, 'workflows', 'role-chain.js'), 'utf8').replace(/^export const meta/m, 'const meta');
     const parallel = (fns) => Promise.all(fns.map((f) => f()));

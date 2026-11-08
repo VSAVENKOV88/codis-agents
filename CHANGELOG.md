@@ -12,7 +12,8 @@ key and script, and this file says when and why each one changed. Versions befor
   first line: no new step after the line `stopping <SIG>`, live roles get SIGTERM and SIGKILL after the pause, a running
   service step ends, a wait step is left open; every task not ended gets `stopped` with `signal`, `counts`, `head`,
   `open`, `untaken` (a role interrupted with no answer, the precondition role included, gives that result, never
-  "... returned no result"); the exit is 128+n of the first signal. The role adapter gains `stopAll` and keeps a role from
+  "... returned no result"; with review and security review at once the task ends only after both calls have ended,
+  so the conductor exits only after every role of a task has ended); the exit is 128+n of the first signal. The role adapter gains `stopAll` and keeps a role from
   starting after a signal during its hook check. README "Stopping a run": the restart table with `resolve`.
 - **resolve: the way out of a refused start of the conductor** (p-codex-B1-b2b; the owner's answer to question 4,
   2026-11-07: "A, bound"). New `scripts/chain-resolve.js`, run as `chain-run.js resolve`: one decision per step in
