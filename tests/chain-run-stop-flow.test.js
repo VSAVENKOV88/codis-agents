@@ -287,12 +287,16 @@ fs.writeFileSync(path.join(PSD, 'ps'), '#!/bin/sh\n/bin/ps "$@" | sed \'s/ /  /g
 
     // ---- C: S6 a signal when run.json is written
     fd = fake({});
-    const C = conduct([task('s6')], { fd, env: { SIGNAL_AT_RENAME: '/run\\.json$' } });
+    // the host check (fake claude --version) leaves VW6.started when it runs; VW6 exists, so it would not wait
+    const VW6 = F('version-s6');
+    touch('version-s6');
+    const C = conduct([task('s6')], { fd, env: { SIGNAL_AT_RENAME: '/run\\.json$', FAKE_CLI_VERSION_WAIT: VW6 } });
     x = await C.exit;
     let rc = byKey(results(C)).s6 || {};
     ok('S6 a signal at run.json: ready was sent, exit 143, the task stopped before any role, no intent, the lock gone', x.code === 143 && C.ready && C.ready.s6 === 'held'
       && rc.status === 'stopped' && /signalled before any role: SIGTERM/.test(rc.why || '') && rc.signal === 'SIGTERM' && JSON.stringify(rc.open) === '[]' && JSON.stringify(rc.untaken) === '[]'
       && !jlines(C, 's6').some((l) => l.type === 'intent') && lockGone(['s6']) && (results(C) || {}).exitCode === 143, JSON.stringify(x) + JSON.stringify(results(C)));
+    ok('S6 point (a): the host check did not run', !fs.existsSync(`${VW6}.started`));
 
     // ---- D: S7 stop during the host check
     const VW = F('version-wait');
