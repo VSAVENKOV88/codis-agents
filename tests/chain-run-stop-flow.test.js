@@ -435,9 +435,12 @@ fs.writeFileSync(path.join(PSD, 'ps'), '#!/bin/sh\n/bin/ps "$@" | sed \'s/ /  /g
     const gL = [starts(fd, 'reviewer')[0], starts(fd, 'security-reviewer')[0]].map((e) => e && e.pid);
     s = stopRun(L);
     x = await L.exit;
+    const exitedL = Date.now();
     rl = resultLabels(L, 'l6');
-    ok('C6 both roles end on SIGTERM: exit 143 with no SIGKILL to their groups, both calls signalled, the result of a signal', s.code === 0 && x.code === 143
-      && gL.every((g) => g && !klog().some((l) => l.pid === -g && l.sig === 'SIGKILL')) && rl.filter((l) => /^(review|sec):/.test(l.label) && l.outcome === 'signalled').length === 2
+    // the adapter sends SIGKILL to a group after its leader exits; the pause would put it 30 s after the SIGTERM
+    const pauseKill = (g) => { const t = klog().find((l) => l.pid === -g && l.sig === 'SIGTERM'), k = klog().find((l) => l.pid === -g && l.sig === 'SIGKILL'); return !t || (k && k.at - t.at >= 29900); };
+    ok('C6 both roles end on SIGTERM: exit 143 within 20 s of the stop, no SIGKILL by the pause, both calls signalled, the result of a signal', s.code === 0 && x.code === 143
+      && exitedL - stopAt(L) < 20000 && gL.every((g) => g && !pauseKill(g)) && rl.filter((l) => /^(review|sec):/.test(l.label) && l.outcome === 'signalled').length === 2
       && (byKey(results(L)).l6 || {}).signal === 'SIGTERM', JSON.stringify(x) + JSON.stringify(rl.map((l) => `${l.label}:${l.outcome}`)));
     inv = invariant(L, ['l6'], 'SIGTERM');
     ok('C6 invariant: end is the last journal line, after both results', !inv, inv);
