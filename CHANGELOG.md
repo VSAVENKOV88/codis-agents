@@ -4,7 +4,7 @@ Every version of the codis-agents plugin, newest first. What the plugin does now
 [README.md](README.md); its [Technical reference](README.md#technical-reference) is the current state of every rule,
 key and script, and this file says when and why each one changed. Versions before 0.4.14 are in the git history.
 
-## Unreleased (p-codex-B)
+## 0.4.36 - 2026-11-09
 
 - **stop: a conductor run stops on a signal** (p-codex-B1-b2b-2, UC-6). New `chain-run.js stop <run>`: SIGTERM to the
   conductor's own pid only, after its identity (the pid above 1 started at the recorded time); exit 0 sent, 2 finished,
@@ -22,6 +22,17 @@ key and script, and this file says when and why each one changed. Versions befor
   of the newest run (`resumeAt`, `head`, `prior`), `priorReason` lets a `prior` that differs pass; `resolve --list`;
   `resolve --commits` and `status --commits` for the commits journal. The chain enters in the middle under the conductor
   (`resumeAt` tester, review, train) after the post-check the chain runs before that point.
+- **The conductor's runs of a task are reconciled** (p-codex-B1-b2a). The conductor reconciles the runs of a task
+  from their journals, takes a dead lock over under a takeover token (never when the lock was released between the
+  read and `ps`), and keeps the files of service steps in the steps folder of the run; `wait-step.js` signals only its
+  own run and starts once per id with `--once`.
+- **Codex roles take the project rules only from their prompt; AGENTS.md is checked in the chain** (p-codex-D3-3).
+  Every codex role runs with `-c project_doc_max_bytes=0`, so no project `AGENTS.md` reaches it at any working
+  directory. `check` of the codex host refuses instruction files in the run home apart from the login (`AGENTS.md`,
+  `AGENTS.override.md`, any entry of `skills/` except `skills/.system` with its marker) with the path and "remove it".
+  The preconditions run `agents-md.js check` with the task's base (a red check names the update route from the base),
+  the programmer writes and commits a stale `AGENTS.md` when the task changes a `CLAUDE.md` or a file it imports, and
+  the reviewer rejects such a change without `write`; exit 69 of the check is the environment.
 
 ## 0.4.35 - 2026-11-07
 
