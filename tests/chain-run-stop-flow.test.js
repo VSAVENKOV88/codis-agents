@@ -16,7 +16,11 @@
 //   C   (S6) a signal when run.json is written; D (S7) stop during the host check; E (S12, S20) a signal at the intent
 //       of a post-check, a second one while it runs; F (S16) a signal at the red result of the tester; G (S17) at the
 //       record of the last task / at results.json; H (S18) SIGINT, SIGHUP; I (S24) results.json cannot be written;
-//   J   (S14) stop while wait-step start runs.
+//   J   (S14) stop while wait-step start runs;
+//   K-N two roles of a task at once (review and security review, analysis p-codex-B1-b2b-2 C5-C9): K the review
+//       ignores SIGTERM, the security review ends, a SIGINT and a second SIGTERM in the pause; L both end on SIGTERM;
+//       M the review answered (or failed) before the stop; N a second task at its selection ends at once while the
+//       first waits for its security review. The conductor exits only after every role of a task has ended.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -392,10 +396,106 @@ fs.writeFileSync(path.join(PSD, 'ps'), '#!/bin/sh\n/bin/ps "$@" | sed \'s/ /  /g
     const m14 = readJson(path.join(J.dir, 'steps', 's14', 'wait-select-1.json')) || {};
     touch('go-sel-w-s14');
     await until(() => !m14.pid || !alive(m14.pid), 20000);
+
+    // Two roles of a task at once (review and security review): the conductor exits only after every role of the task
+    // has ended. resultLabels: the result lines of a journal with the label of their intent; stopAt: the time of the
+    // SIGTERM that stop sent to the conductor.
+    const resultLabels = (r, key) => { const ls = jlines(r, key); const lab = Object.fromEntries(ls.filter((l) => l.type === 'intent').map((l) => [l.stepId, l.label])); return ls.filter((l) => l.type === 'result').map((l) => Object.assign({ label: lab[l.stepId] }, l)); };
+    const stopAt = (r) => (klog().find((l) => l.pid === r.pid && l.sig === 'SIGTERM') || {}).at;
+
+    // ---- K: C5 + C8 the review ignores SIGTERM, the security review ends on it (the mirror of T6); a SIGINT and a second
+    // SIGTERM in the pause of the review
+    fd = fake({ reviewer: [{ $ignoreTerm: true, $sleep: 120, then: DONE }], 'security-reviewer': [{ $sleep: 120, then: DONE }] });
+    const K = conduct([task('k5', { security: true })], { fd });
+    await until(() => starts(fd, 'reviewer').length && starts(fd, 'security-reviewer').length, 120000);
+    const revK = (starts(fd, 'reviewer')[0] || {}).pid, secK = (starts(fd, 'security-reviewer')[0] || {}).pid;
+    s = stopRun(K);
+    await until(() => logLines(K).some((l) => / stopping SIGTERM$/.test(l)), 10000);
+    await until(() => resultLabels(K, 'k5').some((l) => /^sec:/.test(l.label)), 10000);
+    try { process.kill(K.pid, 'SIGINT'); } catch { /* gone already */ }
+    const s2K = stopRun(K);
+    x = await K.exit;
+    const exitedK = Date.now();
+    const killK = klog().find((l) => l.pid === -revK && l.sig === 'SIGKILL');
+    ok('C5 the review ignores SIGTERM, the security review ends: SIGKILL to the review group >= the stop + 30 s, before the exit; no role is alive after the exit; exit 143',
+      s.code === 0 && x.code === 143 && !!killK && killK.at - stopAt(K) >= 29900 && killK.at <= exitedK && !!revK && !alive(revK) && !!secK && !alive(secK),
+      JSON.stringify({ x, revK, killK, stop: stopAt(K) }));
+    let rl = resultLabels(K, 'k5');
+    ok('C5 both role calls signalled in the journal, the task ends with the result of a signal', rl.filter((l) => /^(review|sec):/.test(l.label) && l.outcome === 'signalled').length === 2
+      && (byKey(results(K)).k5 || {}).status === 'stopped' && (byKey(results(K)).k5 || {}).signal === 'SIGTERM', JSON.stringify(rl.map((l) => `${l.label}:${l.outcome}`)) + JSON.stringify(results(K)));
+    ok('C8 a SIGINT and a second SIGTERM in the pause: named ignored, the pause not shortened, exit and results.json 143', s2K.code === 0 && (results(K) || {}).exitCode === 143
+      && logLines(K).some((l) => / signal SIGINT ignored: stopping since SIGTERM$/.test(l)) && logLines(K).some((l) => / signal SIGTERM ignored: stopping since SIGTERM$/.test(l)), logLines(K).slice(-10).join('\n'));
+    inv = invariant(K, ['k5'], 'SIGTERM');
+    ok('C5 invariant: end is the last journal line, after both results', !inv, inv);
+
+    // ---- L: C6 both roles end on SIGTERM: no SIGKILL by the pause; end after both results
+    fd = fake({ reviewer: [{ $sleep: 120, then: DONE }], 'security-reviewer': [{ $sleep: 120, then: DONE }] });
+    const L = conduct([task('l6', { security: true })], { fd });
+    await until(() => starts(fd, 'reviewer').length && starts(fd, 'security-reviewer').length, 120000);
+    const gL = [starts(fd, 'reviewer')[0], starts(fd, 'security-reviewer')[0]].map((e) => e && e.pid);
+    s = stopRun(L);
+    x = await L.exit;
+    rl = resultLabels(L, 'l6');
+    ok('C6 both roles end on SIGTERM: exit 143 with no SIGKILL to their groups, both calls signalled, the result of a signal', s.code === 0 && x.code === 143
+      && gL.every((g) => g && !klog().some((l) => l.pid === -g && l.sig === 'SIGKILL')) && rl.filter((l) => /^(review|sec):/.test(l.label) && l.outcome === 'signalled').length === 2
+      && (byKey(results(L)).l6 || {}).signal === 'SIGTERM', JSON.stringify(x) + JSON.stringify(rl.map((l) => `${l.label}:${l.outcome}`)));
+    inv = invariant(L, ['l6'], 'SIGTERM');
+    ok('C6 invariant: end is the last journal line, after both results', !inv, inv);
+
+    // ---- M: C7 the review answered before the stop, the security review runs: the stop ends the task signalled
+    fd = fake({ 'security-reviewer': [{ $sleep: 120, then: DONE }] });
+    const M = conduct([task('m7', { security: true })], { fd });
+    await until(() => starts(fd, 'security-reviewer').length && resultLabels(M, 'm7').some((l) => /^review:/.test(l.label)), 120000);
+    s = stopRun(M);
+    x = await M.exit;
+    rl = resultLabels(M, 'm7');
+    let rm = byKey(results(M)).m7 || {};
+    ok('C7 the review ok before the stop, the security review signalled: exit 143, the result of a signal (not done), open and untaken are lists', s.code === 0 && x.code === 143
+      && (rl.find((l) => /^review:/.test(l.label)) || {}).outcome === 'ok' && (rl.find((l) => /^sec:/.test(l.label)) || {}).outcome === 'signalled'
+      && rm.status === 'stopped' && rm.signal === 'SIGTERM' && Array.isArray(rm.open) && Array.isArray(rm.untaken), JSON.stringify(rl.map((l) => `${l.label}:${l.outcome}`)) + JSON.stringify(rm));
+    inv = invariant(M, ['m7'], 'SIGTERM');
+    ok('C7 invariant', !inv, inv);
+    // C7a: the review gave no answer by its own cause before the stop (no stop yet, so no StopError); the stop of the
+    // security review ends the task signalled, and the adapter field names both calls
+    fd = fake({ reviewer: [{ $exit: 1 }], 'security-reviewer': [{ $sleep: 120, then: DONE }] });
+    const M2 = conduct([task('m7a', { security: true })], { fd });
+    await until(() => starts(fd, 'security-reviewer').length && resultLabels(M2, 'm7a').some((l) => /^review:/.test(l.label)), 120000);
+    s = stopRun(M2);
+    x = await M2.exit;
+    rm = byKey(results(M2)).m7a || {};
+    ok('C7a the review failed before the stop: the result of a signal, its adapter field names the failed review and the signalled security review', x.code === 143 && rm.status === 'stopped' && rm.signal === 'SIGTERM'
+      && (rm.adapter || []).some((e) => /^review:/.test(e.label) && e.outcome !== 'signalled') && (rm.adapter || []).some((e) => /^sec:/.test(e.label) && e.outcome === 'signalled'), JSON.stringify(rm));
+
+    // ---- N: C9 two tasks: n1 at review and security review (the security review ignores SIGTERM), n2 at its selection:
+    // n2 ends at once with the result of a signal and its lock is gone while n1 waits for its security review; one
+    // results.json after both
+    touch('go-sel-w-n1');
+    fd = fake({ 'reviewer@n1': [{ $sleep: 120, then: DONE }], 'security-reviewer@n1': [{ $ignoreTerm: true, $sleep: 120, then: DONE }] });
+    const N = conduct([task('n1', { base: 'arc', security: true }), task('n2', { base: 'arc' })], { cfg: CFG_SEL, fd });
+    const selN2 = () => readJson(path.join(N.dir, 'steps', 'n2', 'wait-select-1.json'));
+    await until(() => starts(fd, 'reviewer', 'n1').length && starts(fd, 'security-reviewer', 'n1').length && selN2(), 120000);
+    const secN = (starts(fd, 'security-reviewer', 'n1')[0] || {}).pid;
+    s = stopRun(N);
+    const n2Ended = await until(() => (readJson(path.join(N.dir, 'tasks', 'n2.json')) || {}).state === 'ended' && lockGone(['n2']), 20000);
+    const n1Running = (readJson(path.join(N.dir, 'tasks', 'n1.json')) || {}).state === 'running' && alive(N.pid) && !results(N);
+    x = await N.exit;
+    const exitedN = Date.now();
+    const killN = klog().find((l) => l.pid === -secN && l.sig === 'SIGKILL');
+    rk = byKey(results(N));
+    ok('C9 n2 at its selection ends at once (record ended, lock gone) while n1 waits for its security review', !!n2Ended && n1Running, JSON.stringify({ n2: readJson(path.join(N.dir, 'tasks', 'n2.json')), n1Running }));
+    ok('C9 n1: SIGKILL to the security review >= the stop + 30 s, before the exit; it is gone after the exit; exit 143', s.code === 0 && x.code === 143 && !!killN && killN.at - stopAt(N) >= 29900
+      && killN.at <= exitedN && !!secN && !alive(secN), JSON.stringify({ x, secN, killN, stop: stopAt(N) }));
+    ok('C9 one results.json with both tasks stopped by SIGTERM, n2 open names select-1, exitCode 143', (results(N) || {}).exitCode === 143 && ['n1', 'n2'].every((k) => rk[k] && rk[k].signal === 'SIGTERM')
+      && ((rk.n2 || {}).open || []).some((o) => /select-1$/.test(o.label)), JSON.stringify(results(N)));
+    inv = invariant(N, ['n1', 'n2'], 'SIGTERM');
+    ok('C9 invariant', !inv, inv);
+    const mN2 = selN2() || {};
+    touch('go-sel-w-n2');
+    await until(() => !mN2.pid || !alive(mN2.pid), 20000);
   } catch (e) {
     ok('the test ran to its end', false, e.stack);
   } finally {
-    for (const k of ['a', 'b', 'c', 'd', 'e', 's14']) { touch(`go-sel-w-${k}`); touch(`go-train-${k}`); }
+    for (const k of ['a', 'b', 'c', 'd', 'e', 's14', 'n1', 'n2']) { touch(`go-sel-w-${k}`); touch(`go-train-${k}`); }
     touch('post-go'); touch('ws-go'); touch('version-wait');
     for (const p of pids) { try { process.kill(p, 'SIGKILL'); } catch { /* gone */ } }
     for (const l of text(ALLOW).split('\n').filter((x) => /^\d+$/.test(x))) { try { process.kill(-+l, 'SIGKILL'); } catch { /* gone */ } }
