@@ -4,6 +4,16 @@ Every version of the codis-agents plugin, newest first. What the plugin does now
 [README.md](README.md); its [Technical reference](README.md#technical-reference) is the current state of every rule,
 key and script, and this file says when and why each one changed. Versions before 0.4.14 are in the git history.
 
+## Unreleased (p-codex-B)
+
+- **resolve: the way out of a refused start of the conductor** (p-codex-B1-b2b; the owner's answer to question 4,
+  2026-11-07: "A, bound"). New `scripts/chain-resolve.js`, run as `chain-run.js resolve`: one decision per step in
+  `runs/<runId>/resolved/<task>/`, written whole under the lock of the task and bound to the basis of the journal; the
+  table of continuations with the context of the step and the threshold of the analyst; the start follows the decisions
+  of the newest run (`resumeAt`, `head`, `prior`), `priorReason` lets a `prior` that differs pass; `resolve --list`;
+  `resolve --commits` and `status --commits` for the commits journal. The chain enters in the middle under the conductor
+  (`resumeAt` tester, review, train) after the post-check the chain runs before that point.
+
 ## 0.4.35 - 2026-11-07
 
 - **The re-check, the untracked files, the paths of a request and the limits of the walk** (p-codex A2a-2b; owner

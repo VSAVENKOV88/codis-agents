@@ -46,6 +46,9 @@
 //     270 (the end of the wait means "still running", not an error); without --wait it answers at once. Ctrl+C ends
 //     only the watch (exit 130), never the run. Exit: 0 finished (results.json is there; the verdicts are in it);
 //     3 running; 4 dead (the conductor is gone without results.json); 64 unknown run or arguments.
+//   chain-run.js resolve ... | resolve --list ... | resolve --commits ...; chain-run.js status --commits <dir> --task <k>
+//     The coordinator's decisions on what a dead run left (scripts/chain-resolve.js, its header and USAGE). status
+//     prints per task its basis and its decisions; a refused start prints the basis of every run it names.
 //   chain-run.js run <run folder>
 //     The conductor itself (started by `start`; it reads <run folder>/request.json). Exit: 0 every task done; 3 a task
 //     is not done; 4 the chain script threw, or results.json could not be written; 5 the run folder already has its writer.
@@ -60,7 +63,8 @@
 // result; reconcile: what the reconciliation found), steps/<key>/ (the files of the task's service steps: the wait steps
 // wait-<step>.{json,log,rc}, the copy of a selection log, leftovers.md, the train's copies of its logs; the script gets
 // the folder as the task field stepDir, which a tasks file cannot set), results.json ({runId, exitCode, results}: one
-// result per task as the Workflow gives it, with the field adapter when a call did not end ok).
+// result per task as the Workflow gives it, with the field adapter when a call did not end ok), resolved/<key>/ (the
+// decisions of resolve, scripts/chain-resolve.js).
 //
 // All of it lies outside the write roots of the roles (owner 2026-11-07): no service file in a task folder, a role cannot
 // rename the folder or its parents, and a service file is read and written with no link followed and without blocking.
@@ -92,7 +96,10 @@
 // never opened does not); idempotent and reuse block while their process is alive or unknown, and an idempotent step
 // without a launch (its pid unknown) blocks; a reuse step without a launch reads the meta of its wait step in the steps
 // folder of that run. A verdict the journal shows as not used by the chain (unaccounted, or a result after the end) and
-// an intent with no known effect refuse. No mark file is written: removing a lock by hand lifts nothing, the refusal is
+// an intent with no known effect refuse. A decision of resolve on the step (or abort for the run) whose basis is the
+// current one closes a reason (a live conductor never); then the start must follow the decisions of the newest run of
+// the task (chain-resolve.js startCheck), and the conductor gives the task resumeSince from them, which a tasks file
+// cannot set. No mark file is written: removing a lock by hand lifts nothing, the refusal is
 // computed again from the run folders at every start. calls.jsonl and the call folders of a task folder are only named.
 const fs = require('fs');
 const os = require('os');
@@ -106,7 +113,9 @@ const ROOT = path.join(__dirname, '..');
 const MAX_WAIT = 270;
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 const USAGE = 'usage: chain-run.js start --host claude|codex --tasks <file> [--owner <file>] [--config <file>] [--bin <cli>] [--codex-home <dir>] [--codex-auth chatgpt|apiKeyFile] [--codex-key-file <file>]\n'
-  + '       chain-run.js status <run-id|run folder> [--wait <s>] [--config <file>]';
+  + '       chain-run.js status <run-id|run folder> [--wait <s>] [--config <file>]\n'
+  + '       chain-run.js resolve <run-id|run folder> --task <key> --as ran|retry|abort [--step <n>] [--verdict <v>] [--head <sha>] --basis <seq:sha256> --note <text>\n'
+  + '       chain-run.js resolve --list [--task <key>] [--config <file>]; resolve --commits ...; status --commits <dir> --task <key>';
 
 const readJson = CJ.readJsonSafe;
 const writeJsonAtomic = CJ.writeAtomic;

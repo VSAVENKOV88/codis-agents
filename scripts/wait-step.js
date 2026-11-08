@@ -10,7 +10,7 @@
 //     Starts the command detached (its own process group) with sh -c; output -> <prefix>.log, exit code -> <prefix>.rc,
 //     pid, its start time (`LC_ALL=C ps -o lstart=`, lstart) and the time in seconds -> <prefix>.json. A run of the same
 //     prefix that is still alive is attached to, never doubled: alive means its pid is a process that started at the
-//     lstart of the meta (a meta without lstart: the pid exists). A finished run is archived (<prefix>.prev.*) and started
+//     lstart of the meta (a meta without lstart, or ps not answering: the pid exists). A finished run is archived (<prefix>.prev.*) and started
 //     anew, unless --reuse: then its result is kept (the repeat of a service agent that ran the step but returned nothing
 //     must not run a 40-minute step twice). --once (the conductor's steps folder of a run, where an id names one step):
 //     a start without --reuse refuses with exit 64 when any file of the id exists, so a step name is never used twice.
