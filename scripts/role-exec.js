@@ -9,8 +9,8 @@
 // folder of its own, the plan is run by the launcher, and the answer is checked against the original schema. The
 // launcher is the real process of the host CLI (spawnRole: the launch gate, then the CLI in its own process group, the
 // prompt on stdin, the JSONL stream parsed line by line, the outcome by the fields of the terminal event, the exit code
-// and the signal, the ceiling of 3 h on the monotonic clock, SIGTERM/SIGINT/SIGHUP of the adapter passed to every live
-// group); cfg.launch replaces it (tests, chain-cost). One line of <task dir>/calls.jsonl per call, whatever its outcome (never written through a
+// and the signal, the ceiling of 3 h on the monotonic clock, SIGTERM/SIGINT/SIGHUP of the adapter, or stopAll(sig) of a
+// host with its own handlers, passed to every live group); cfg.launch replaces it (tests, chain-cost). One line of <task dir>/calls.jsonl per call, whatever its outcome (never written through a
 // link, FIFO or hard link the role left in place of the file: appendRecord).
 // The launch gate (GATE): the process starts as /bin/sh that waits for one line "go" on stdin and then execs the CLI, so
 // its pid, process group and start time are the CLI's own, and the CLI does no work before the line comes. With
@@ -228,16 +228,21 @@ function finishStop() {
   for (const s of Object.keys(handlers)) { process.removeListener(s, handlers[s]); delete handlers[s]; }
   process.exitCode = 128 + os.constants.signals[stopping];
 }
+// A signal of the adapter's handlers, or stopAll(sig) of a host that handles its own signals (scripts/chain-run.js): the
+// first one is kept, every live role and check gets stop('signalled') (a repeat changes nothing: the pause of a stop runs
+// from its first SIGTERM), and from then on no call starts.
 function gotSignal(sig) {
   if (!stopping) stopping = sig;
   for (const stop of LIVE) stop('signalled');
   if (!LIVE.size) finishStop();
 }
 // The handlers are on while a role process lives; after a signal, when the last one is gone, they are removed and
-// process.exitCode is 128+n: the host exits by itself, and no new call starts.
+// process.exitCode is 128+n: the host exits by itself, and no new call starts. A process that enters after the stop is
+// stopped at once.
 function enter(stop) {
   LIVE.add(stop);
-  if (!stopping) for (const s of SIGNALS) if (!handlers[s]) { handlers[s] = () => gotSignal(s); process.on(s, handlers[s]); }
+  if (stopping) { stop('signalled'); return; }
+  for (const s of SIGNALS) if (!handlers[s]) { handlers[s] = () => gotSignal(s); process.on(s, handlers[s]); }
 }
 function leave(stop) {
   LIVE.delete(stop);
@@ -566,6 +571,9 @@ function createAgent(cfg) {
           if (g) fin = { outcome: String(g.outcome || 'crashed'), error: g.error || null };
         } catch (e) { fin = { outcome: 'crashed', error: `beforeLaunch threw: ${e.message}` }; }
       }
+      // A signal that came while beforeLaunch ran: no await stands between here and the launch, so this one check keeps
+      // the role from starting.
+      if (!fin && stopping) fin = { outcome: 'signalled', error: `the adapter got ${stopping}: the role was not started` };
       if (!fin && plan.channel) {
         // the box in the call folder (a new one per call: a request of an earlier call is never read), the answers in
         // the adapter's state folder; the service lives exactly as long as the role's process
@@ -737,4 +745,4 @@ if (require.main === module) {
   process.exit(r.ok ? 0 : 1);
 }
 
-module.exports = { realish, inside, overlap, procOf, createAgent, spawnRole, CODEX_REFUSED, CEILING_MS, KILL_GRACE_MS, CLAUDE_DISALLOWED, strict, unstrict, validate, schemaProblems, parseLabel, check, KINDS, KEYWORDS, DEFAULT_CODEX_MODELS, CATALOG_FILE };
+module.exports = { realish, inside, overlap, procOf, createAgent, spawnRole, stopAll: gotSignal, CODEX_REFUSED, CEILING_MS, KILL_GRACE_MS, CLAUDE_DISALLOWED, strict, unstrict, validate, schemaProblems, parseLabel, check, KINDS, KEYWORDS, DEFAULT_CODEX_MODELS, CATALOG_FILE };

@@ -46,12 +46,25 @@
 //     270 (the end of the wait means "still running", not an error); without --wait it answers at once. Ctrl+C ends
 //     only the watch (exit 130), never the run. Exit: 0 finished (results.json is there; the verdicts are in it);
 //     3 running; 4 dead (the conductor is gone without results.json); 64 unknown run or arguments.
+//   chain-run.js stop <run-id|run folder> [--config <file>]
+//     Sends SIGTERM to the conductor's own pid (never its group), only when run.json names a pid above 1 whose start
+//     time (ps, spaces folded on both sides) is the recorded one; it waits for nothing (the end: status --wait). The first
+//     check that fires decides. Exit: 0 sent ({sent, pid, runId}); 2 the run is over (results.json is there: {state:
+//     finished, exitCode}); 4 the conductor is gone, also when its pid is another process now ({state: dead}); 6 the
+//     identity cannot be established - no run.json yet, not readable, a pid that is no integer above 1, no start time,
+//     ps or kill(pid, 0) not answering ({state: unknown, why}); 64 arguments or an unknown run. Ctrl+C or the hang-up of
+//     the starter's terminal never reach the conductor: stop, or kill <pid> by hand, is the way to stop a run.
 //   chain-run.js resolve ... | resolve --list ... | resolve --commits ...; chain-run.js status --commits <dir> --task <k>
 //     The coordinator's decisions on what a dead run left (scripts/chain-resolve.js, its header and USAGE). status
 //     prints per task its basis and its decisions; a refused start prints the basis of every run it names.
 //   chain-run.js run <run folder>
 //     The conductor itself (started by `start`; it reads <run folder>/request.json). Exit: 0 every task done; 3 a task
-//     is not done; 4 the chain script threw, or results.json could not be written; 5 the run folder already has its writer.
+//     is not done; 4 the chain script threw, or results.json could not be written; 5 the run folder already has its writer;
+//     128+n after its first SIGTERM, SIGINT or SIGHUP (143, 130, 129) that came before results.json, whatever the tasks
+//     reached, also when results.json could not be written. On that signal no new step starts, the live roles get SIGTERM
+//     and SIGKILL after the pause of the adapter, a running service step ends, a running wait step is left open, and every
+//     task not ended gets the result stopped (signalled: <SIG>, signal, counts, head, open, untaken); a later signal changes
+//     nothing.
 //
 // The run folder <sharedDir>/runs/<runId>/ (runId and every name in it come from the conductor; a task key is checked,
 // KEY_RE): request.json (what start was given), writer.lock (the one writer of the folder), journal/<key>/ (the journal and
@@ -105,7 +118,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
-const { createAgent, validate, realish, overlap, procOf } = require('./role-exec.js');
+const { createAgent, validate, realish, overlap, procOf, stopAll } = require('./role-exec.js');
 const CJ = require('./chain-journal.js');
 const RS = require('./chain-resolve.js');
 
@@ -114,11 +127,37 @@ const MAX_WAIT = 270;
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 const USAGE = 'usage: chain-run.js start --host claude|codex --tasks <file> [--owner <file>] [--config <file>] [--bin <cli>] [--codex-home <dir>] [--codex-auth chatgpt|apiKeyFile] [--codex-key-file <file>]\n'
   + '       chain-run.js status <run-id|run folder> [--wait <s>] [--config <file>]\n'
+  + '       chain-run.js stop <run-id|run folder> [--config <file>]\n'
   + '       chain-run.js resolve <run-id|run folder> --task <key> --as ran|retry|abort [--step <n>] [--verdict <v>] [--head <sha>] --basis <seq:sha256> --note <text>\n'
   + '       chain-run.js resolve --list [--task <key>] [--config <file>]; resolve --commits ...; status --commits <dir> --task <key>';
 
 const readJson = CJ.readJsonSafe;
 const writeJsonAtomic = CJ.writeAtomic;
+
+// ---- the stop of a run (UC-6): one per process, set by the first of SIGTERM, SIGINT, SIGHUP the conductor gets and
+// never lifted. From then on no role, service step, hook check or wait client starts (the gates throw StopError before
+// the intent of a step), a running role gets SIGTERM through the adapter, a running service step without a wait ends with
+// its result, and a running wait step is left open (its detached run lives on, its client is not awaited).
+const SIGNALS = ['SIGTERM', 'SIGINT', 'SIGHUP'];
+class StopError extends Error {
+  constructor(sig) { super(`signalled: ${sig}`); this.name = 'StopError'; this.signal = sig; }
+}
+const STOP = { sig: null };
+let wakeStop = null;
+const stopped$ = new Promise((r) => { wakeStop = r; });
+// Sets the stop once: true for the first call, false for every later one.
+function beginStop(sig) {
+  if (STOP.sig) return false;
+  STOP.sig = sig;
+  wakeStop(sig);
+  stopAll(sig);
+  return true;
+}
+const gate = () => { if (STOP.sig) throw new StopError(STOP.sig); };
+// A signal is handled only in the poll phase of the event loop: after the exit of a child, an IPC disconnect or an fs
+// callback one setImmediate runs before that phase, two always pass it (experiment of the analysis, Node 22.20).
+const settle = () => new Promise((r) => setImmediate(r)).then(() => new Promise((r) => setImmediate(r)));
+const signalCode = (sig) => 128 + os.constants.signals[sig];
 // The start time of a process as ps prints it in the C locale, or null when there is no such process (or ps fails).
 function lstartOf(pid) {
   if (!Number.isInteger(pid) || pid <= 1) return null;
@@ -266,7 +305,7 @@ function jsonOf(text) {
 
 // One service step as processes: {value} or {error}. A step with wait: argv once (its JSON says the run started,
 // attached or was reused), then wait.argv again and again until its JSON says done - each call of wait-step.js blocks at
-// most its --max, and wait-step.js ends a hung run at its own deadline. hooks.onLaunch registers the process: a step with
+// most its --max, and wait-step.js ends a hung run at its own deadline. A stop ends the wait (StopError): the run is left. hooks.onLaunch registers the process: a step with
 // wait by the answer of its start (the detached run in a group of its own; a reused run has ended, so its pid may be
 // another process by now and gets no start time), any other step right after its spawn (a child of the conductor, in the
 // conductor's group: pgid null).
@@ -285,7 +324,10 @@ async function realStep(step, hooks) {
     onLaunch({ pid: j.pid, pgid: proc ? proc.pgid : null, lstart: proc ? proc.lstart : null, started: j.started, attached: j.attached, reused: j.reused, rc: j.rc });
   }
   for (;;) {
-    const w = await runProcess(step.wait.argv, { cwd: step.cwd });
+    gate();
+    // a stop does not wait for a running client: it is left behind (it only reads, at most its --max)
+    const w = await Promise.race([runProcess(step.wait.argv, { cwd: step.cwd }), stopped$.then(() => null)]);
+    if (w === null) throw new StopError(STOP.sig);
     const wj = jsonOf(w.stdout);
     if (wj === undefined || wj === null || typeof wj !== 'object') return { error: failText(w) };
     if (wj.done === true) return { value: wj };
@@ -310,7 +352,10 @@ async function execStep(step, o) {
   const t0 = Date.now();
   let r;
   if (o && o.runner && o.onLaunch) o.onLaunch({ pid: null, pgid: null, lstart: null, substitute: true });
-  try { r = await runner(step, { onLaunch: o && o.onLaunch }); } catch (e) { r = { error: `the conductor could not run the step: ${e.message}` }; }
+  try { r = await runner(step, { onLaunch: o && o.onLaunch }); } catch (e) {
+    if (e instanceof StopError) { note(`exec ${step.label} left open: stopping ${e.signal}`); throw e; }
+    r = { error: `the conductor could not run the step: ${e.message}` };
+  }
   let v, how = 'ok';
   if (r && r.value === null && !('error' in r)) { v = null; how = 'null'; }
   else if (r && r.value !== undefined && !r.error) {
@@ -342,7 +387,7 @@ const gitHeadOf = (wt) => gitOf(wt, ['rev-parse', '--verify', '-q', 'HEAD']);
 // settled: a result waits for the script to take it. The script goes on in microtasks up to its next step, so setImmediate
 // runs after that; the next step of the task writes it first, so an intent never comes before the settled it depends on.
 function makeSteps(o) {
-  const getters = {}, pend = {};
+  const getters = {}, pend = {}, left = {};
   let n = 0;
   const write = (key, fields) => {
     try { return o.journals[key].append(fields); } catch (e) { throw new Error(`journal/run-state not written: ${e.message}`); }
@@ -368,14 +413,26 @@ function makeSteps(o) {
       (pend[key] = pend[key] || []).push(stepId);
       setImmediate(() => { try { settle(key); } catch (e) { o.note(`[${key}] ${e.message}`); } });
     },
+    // A wait step left open by a stop (no result), named in the task's stopped result.
+    abandon(key, info) { (left[key] = left[key] || []).push(info); },
+    // The fields of a task stopped by a signal: counts and head of the script's getter (those of its end line), the wait
+    // steps left open, and the verdicts recorded that the chain had not used yet (the end line clears them).
+    stopFields(key) {
+      const v = vals(key);
+      const j = o.journals[key];
+      const un = j && j.state ? j.state.unaccounted || [] : [];
+      return { counts: v.counts, head: v.head, open: (left[key] || []).slice(), untaken: un.map((u) => ({ stepId: u.stepId, label: u.label, outcome: u.outcome, value: u.value })) };
+    },
     finish(key, r) {
       settle(key);
       write(key, Object.assign({ type: 'end', status: r ? r.status : null }, vals(key), r && r.counts ? { counts: r.counts } : {}));
     },
   };
 }
-// exec(step) with its journal lines around it; without steps, the step alone (a fake runtime of a test).
+// exec(step) with its journal lines around it; without steps, the step alone (a fake runtime of a test). A stop throws
+// StopError before the intent; a wait step it leaves gets no result.
 async function stepExec(steps, step, o) {
+  gate();
   if (!steps) return execStep(step, o);
   const key = labelKey(step.label);
   if (!steps.has(key)) throw new Error(`the step ${step.label} names no task of this run: a step does not run without its intent`);
@@ -383,7 +440,11 @@ async function stepExec(steps, step, o) {
   let lost = null, how = null, seconds = null;
   // The process is already running when its registration fails: the step ends, and then the task stops.
   const onLaunch = (info) => { try { steps.launch(key, stepId, Object.assign({ gated: false }, info)); } catch (e) { lost = e; } };
-  const v = await execStep(step, Object.assign({}, o, { onLaunch, onEnd: (h, s) => { how = h; seconds = s; } }));
+  let v;
+  try { v = await execStep(step, Object.assign({}, o, { onLaunch, onEnd: (h, s) => { how = h; seconds = s; } })); } catch (e) {
+    if (e instanceof StopError) steps.abandon(key, { stepId, label: step.label, waitId: step.wait ? step.wait.id : undefined });
+    throw e;
+  }
   steps.end(key, stepId, { outcome: how, value: v, seconds });
   if (lost) throw lost;
   return v;
@@ -417,11 +478,12 @@ function openStepText(step, ctx, live) {
 // The hook check of a codex run home before a role (owner 2026-11-06, answer 5, translated: "before every Codex role; on a
 // failure the role is not started"): the beforeLaunch of the adapter. It answers null (the hook runs: launch the role) or the outcome
 // that ends the call. One check at a time per gate (one run home): an app-server of each check writes its state files into
-// that home. o: {home, bin, script? (the check; tests), note}.
+// that home; a check whose turn comes after a stop does not start. o: {home, bin, script? (the check; tests), note}.
 function hookGate(o) {
   let tail = Promise.resolve();
   const script = o.script || path.join(__dirname, 'codex-hooks-check.js');
   const check = async (plan) => {
+    if (STOP.sig) return { outcome: 'signalled', error: `the conductor got ${STOP.sig}: the hook check did not start` };
     const p = await runProcess([process.execPath, script, '--codex-home', o.home, '--cwd', plan.cwd, '--codex', o.bin]);
     const text = `${(p.stdout || '').trim()}${p.stderr && p.stderr.trim() ? ` ${p.stderr.trim()}` : ''}`.slice(-1500);
     if (o.note) o.note(`hook check ${plan.label}: ${p.signal ? p.signal : `exit ${p.rc}`}`);
@@ -650,15 +712,23 @@ function reconcile(runsDir, key, ownRunId, ctx) {
 }
 
 const stopped = (key, why) => ({ task: key, status: 'stopped', why });
+// The result of a task stopped by a signal (the README, "Stopping a run"): fields from the steps when there are any.
+const signalledResult = (key, sig, fields) => Object.assign(stopped(key, `signalled: ${sig} (chain-run.js stop or kill)`), { signal: sig }, fields || { open: [], untaken: [] });
 
 // pipeline(items, fn) of the script: every chain at once; a chain that throws gets its own stopped result with the text
-// of the exception; onTaskEnd(key, result) runs when a chain is over, whatever its end.
-function makePipeline(note, onTaskEnd) {
+// of the exception, a chain stopped by a signal (StopError) the result of signalled(key, sig); onTaskEnd(key, result)
+// runs when a chain is over, whatever its end.
+function makePipeline(note, onTaskEnd, signalled) {
   return (items, fn) => Promise.all(items.map(async (it) => {
     let r;
     try { r = await fn(it); } catch (e) {
-      note(`[${it.key}] the chain crashed: ${(e && e.stack) || e}`);
-      r = stopped(it.key, `the chain crashed: ${(e && e.message) || e}`);
+      if (e instanceof StopError) {
+        note(`[${it.key}] stopped by ${e.signal}`);
+        r = signalled ? signalled(it.key, e.signal) : stopped(it.key, `signalled: ${e.signal}`);
+      } else {
+        note(`[${it.key}] the chain crashed: ${(e && e.stack) || e}`);
+        r = stopped(it.key, `the chain crashed: ${(e && e.message) || e}`);
+      }
     }
     try { if (onTaskEnd) onTaskEnd(it.key, r); } catch (e) { note(`[${it.key}] the end of the task: ${e.message}`); }
     return r;
@@ -698,6 +768,7 @@ async function runScript(o) {
     const exec = (step) => stepExec(steps, step, { runner: o.exec, note });
     const checkpoint = (key, getter) => { if (steps) steps.register(key, getter); };
     const agent = async (prompt, opts) => {
+      gate();
       const label = opts && opts.label;
       // A label that names no task of the run: the adapter refuses it with no process, so it needs no intent.
       const key = steps && steps.has(labelKey(label)) ? labelKey(label) : null;
@@ -719,7 +790,8 @@ async function runScript(o) {
     const log = (m) => (o.log || note)(m);
     const phase = (title) => note(`phase ${title}`);
     const raw = await new AsyncFunction('agent', 'pipeline', 'parallel', 'log', 'phase', 'args', 'exec', 'checkpoint', src)(
-      agent, makePipeline(note, (k, r) => onTaskEnd(k, withAdapter(k, r))), parallel, log, phase, args, exec, checkpoint);
+      agent, makePipeline(note, (k, r) => onTaskEnd(k, withAdapter(k, r)), (k, sig) => signalledResult(k, sig, steps && steps.has(k) ? steps.stopFields(k) : null)),
+      parallel, log, phase, args, exec, checkpoint);
     const results = raw.map((r, i) => withAdapter(keys[i], r));
     keys.forEach((k, i) => onTaskEnd(k, results[i]));
     return { results, threw: null };
@@ -795,6 +867,18 @@ function start(argv) {
 
 // ---- the conductor
 async function conduct(runDirArg) {
+  // The handlers of a stop come first, before run.json names this process (stop answers 6 until then) and stay until the
+  // exit: the first signal starts the stop, a later one is only named. Lines before log.txt is known wait in early.
+  let say = null;
+  const early = [];
+  const line = (m) => (say ? say(m) : early.push(m));
+  for (const sig of SIGNALS) {
+    process.on(sig, () => {
+      if (STOP.sig) { line(`signal ${sig} ignored: stopping since ${STOP.sig}`); return; }
+      line(`stopping ${sig}`);
+      beginStop(sig);
+    });
+  }
   // The one resolution of the path: from here on every open follows no link.
   let runDir;
   try { runDir = fs.realpathSync(runDirArg); } catch (e) { process.stderr.write(`chain-run: ${e.message}\n`); process.exit(64); }
@@ -803,6 +887,8 @@ async function conduct(runDirArg) {
   const writer = CJ.takeWriter(runDir, { pid: process.pid, lstart: lstartOf(process.pid), runId: req.runId });
   if (!writer.ok) { process.stderr.write(`chain-run: the run folder ${runDir} already has its writer (pid ${writer.held.pid || '?'}): one writer per run\n`); process.exit(5); }
   const note = (m) => { try { CJ.appendLine(path.join(runDir, 'log.txt'), `${new Date().toISOString()} ${m}\n`); } catch { /* the log is best effort */ } };
+  say = note;
+  for (const m of early.splice(0)) note(m);
   const args = req.args;
   const keys = args.tasks.map((t) => t.key);
   const me = { runId: req.runId, runDir, pid: process.pid, lstart: lstartOf(process.pid) };
@@ -866,6 +952,13 @@ async function conduct(runDirArg) {
 
   const runnable = args.tasks.filter((t) => held.has(t.key));
   const steps = makeSteps({ runId: req.runId, journals, table, note });
+  // A stop before the script: every held task ends stopped with its prior as counts, nothing of it ran.
+  const stopBeforeRoles = () => {
+    for (const t of runnable) {
+      byKey[t.key] = Object.assign(stopped(t.key, `signalled before any role: ${STOP.sig}`), { signal: STOP.sig, counts: RS.normCounts(t.prior), open: [], untaken: [] });
+      endTask(t.key, byKey[t.key]);
+    }
+  };
   const endTask = (key, r) => {
     if (!held.has(key)) return;
     try { steps.finish(key, r); } catch (e) { note(`[${key}] ${e.message}`); }
@@ -876,14 +969,20 @@ async function conduct(runDirArg) {
   };
   const byKey = {};
   let threw = null;
-  if (runnable.length) {
+  // (a) a signal that came during the registration or the wait for the starter is seen here
+  await settle();
+  if (STOP.sig) stopBeforeRoles();
+  else if (runnable.length) {
     const flags = ['check', '--host', req.host].concat(req.adapter.bin ? ['--bin', req.adapter.bin] : [],
       req.host === 'codex' ? [].concat(req.adapter.codexHome ? ['--home', req.adapter.codexHome] : [], req.adapter.codexAuth ? ['--auth', req.adapter.codexAuth] : [],
         req.adapter.codexKeyFile ? ['--key-file', req.adapter.codexKeyFile] : []) : ['--plugin-root', ROOT]);
     const ck = spawnSync(process.execPath, [path.join(__dirname, 'role-exec.js')].concat(flags), { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
     let cj = null;
     try { cj = JSON.parse(ck.stdout); } catch { /* below */ }
-    if (!cj || !cj.ok) {
+    // (b) a signal that came during the host check
+    await settle();
+    if (STOP.sig) stopBeforeRoles();
+    else if (!cj || !cj.ok) {
       const why = `the host check failed (role-exec.js check --host ${req.host}): ${cj ? cj.problems.join('; ') : (ck.stderr || ck.stdout || `exit ${ck.status}`).trim()}`;
       note(why);
       for (const t of runnable) { byKey[t.key] = stopped(t.key, why); endTask(t.key, byKey[t.key]); }
@@ -895,15 +994,56 @@ async function conduct(runDirArg) {
     }
   }
   for (const k of [...held]) endTask(k, byKey[k] || null);
+  // (c) a signal before results.json makes the exit 128+n, whatever the tasks reached; one after it is never handled
+  // (nothing below yields to the event loop), so the exit is the code results.json holds.
+  await settle();
   const results = keys.map((k) => blocked[k] || byKey[k]);
-  let exitCode = threw ? 4 : results.every((r) => r && r.status === 'done') ? 0 : 3;
+  let exitCode = STOP.sig ? signalCode(STOP.sig) : threw ? 4 : results.every((r) => r && r.status === 'done') ? 0 : 3;
   try { writeJsonAtomic(path.join(runDir, 'results.json'), { runId: req.runId, exitCode, finishedAt: new Date().toISOString(), results }); } catch (e) {
-    exitCode = 4;
+    if (!STOP.sig) exitCode = 4;
     note(`results.json could not be written: ${e.message}`);
     process.stderr.write(`chain-run: results.json could not be written: ${e.message}\n`);
   }
   note(`conductor exit ${exitCode}`);
   process.exit(exitCode);
+}
+
+// ---- stop: SIGTERM to the conductor of a run, only to its own pid and only when it is the process run.json names
+// (owner 2026-11-07, p-codex-threat-scope.md). The first check that fires decides (the README, "Stopping a run").
+function stopCmd(argv) {
+  const id = argv[0];
+  if (!id || id.startsWith('--')) usage('stop <run-id|run folder> [--config <file>]');
+  const { a, bad } = flagsOf(argv.slice(1), { '--config': 'config' });
+  if (bad) usage(bad);
+  const r = runDirOf(id, a.config);
+  if (r.error || !fs.existsSync(path.join(r.dir, 'request.json'))) { process.stderr.write(`chain-run: ${r.error || `no run in ${r.dir}`}\n`); process.exit(64); }
+  const dir = fs.realpathSync(r.dir);
+  const answer = (code, obj) => {
+    if (obj.why) process.stderr.write(`chain-run: ${obj.why}\n`);
+    process.stdout.write(JSON.stringify(obj) + '\n');
+    process.exit(code);
+  };
+  const res = read3(path.join(dir, 'results.json'));
+  if (!res.none) answer(2, { state: 'finished', exitCode: res.data && isPlain(res.data) ? res.data.exitCode : null });
+  const unknown = (why) => answer(6, { state: 'unknown', why: `${why}: no signal sent` });
+  const run = read3(path.join(dir, 'run.json'));
+  if (run.none) unknown(`${dir}/run.json is not there (the conductor has not written it yet)`);
+  if (!run.data || !isPlain(run.data)) unknown(`${dir}/run.json cannot be read (${run.unreadable || 'not an object'})`);
+  const pid = run.data.pid;
+  if (!Number.isInteger(pid) || pid <= 1) unknown(`run.json names no process (pid ${JSON.stringify(pid)})`);
+  const recorded = normL(run.data.lstart);
+  if (!recorded) unknown(`run.json names no start time of pid ${pid}`);
+  const there = exists(pid);
+  if (there === false) answer(4, { state: 'dead', why: `the conductor (pid ${pid}) is gone without results.json, see chain-run.js status` });
+  if (there === null) unknown(`whether pid ${pid} exists cannot be told`);
+  const now = lstartOf(pid);
+  if (!now) unknown(`ps does not answer for pid ${pid}`);
+  if (normL(now) !== recorded) answer(4, { state: 'dead', why: `pid ${pid} is another process (started ${normL(now)}, the conductor ${recorded}): the conductor is gone without results.json` });
+  try { process.kill(pid, 'SIGTERM'); } catch (e) {
+    if (e.code === 'ESRCH') answer(4, { state: 'dead', why: `the conductor (pid ${pid}) ended just now` });
+    unknown(`kill ${pid} SIGTERM failed (${e.code || e.message})`);
+  }
+  answer(0, { sent: 'SIGTERM', pid, runId: run.data.runId || path.basename(dir) });
 }
 
 // ---- status
@@ -998,12 +1138,13 @@ function status(argv) {
 }
 
 // Before the command line: resolve (scripts/chain-resolve.js) takes these functions at call time.
-module.exports = { lockData, liveText, read3, openStepVerdict, lockFileOf, loadConfig, runDirOf, refusalText, makeSteps, stepExec, openStepText, stateRootProblem, runScript, makePipeline, taskTable, parseTasks, lstartOf, liveness, reconcile, acquireTask, unrecordedCalls, takeLock, releaseLock, execStep, hookGate, adapterCfg, logState, CAUSE_KNOWN, MAX_WAIT };
+module.exports = { beginStop, StopError, lockData, liveText, read3, openStepVerdict, lockFileOf, loadConfig, runDirOf, refusalText, makeSteps, stepExec, openStepText, stateRootProblem, runScript, makePipeline, taskTable, parseTasks, lstartOf, liveness, reconcile, acquireTask, unrecordedCalls, takeLock, releaseLock, execStep, hookGate, adapterCfg, logState, CAUSE_KNOWN, MAX_WAIT };
 
 if (require.main === module) {
   const [cmd, ...rest] = process.argv.slice(2);
   if (cmd === 'start') start(rest);
   else if (cmd === 'status') status(rest);
+  else if (cmd === 'stop') stopCmd(rest);
   else if (cmd === 'resolve') RS.main(rest);
   else if (cmd === 'run' && rest.length === 1) conduct(path.resolve(rest[0])).catch((e) => { process.stderr.write(`chain-run: the conductor failed: ${e.stack}\n`); process.exit(4); });
   else usage(`unknown command ${JSON.stringify(cmd)}`);
