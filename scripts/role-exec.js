@@ -519,8 +519,11 @@ function createAgent(cfg) {
         model: slug, effort, bin: cx.bin, strictSchema: strict(o.schema), home: cx.home, auth: cx.auth, keyFile: cx.keyFile,
         stdin: body === null ? prompt : body.trim() + '\n\n' + prompt,
         env: codexEnv(c.env || process.env, cx.home, cx.auth, key),
+        // project_doc_max_bytes=0: Codex reads no project AGENTS.md at any -C, and the flag beats a trusted
+        // .codex/config.toml of the project (measured on codex 0.166.0), so a role gets the project rules only from its
+        // prompt. The instructions of the run home are not covered by it: check keeps them out of the home.
         argv: (callDir) => ['exec', '--json', '--ephemeral', '--output-schema', path.join(callDir, 'schema.json'), '-o', path.join(callDir, 'last.json'),
-          '-m', slug, '-c', `model_reasoning_effort=${effort}`, '-s', 'workspace-write', '-C', t.dir, '--skip-git-repo-check', '-'],
+          '-m', slug, '-c', `model_reasoning_effort=${effort}`, '-c', 'project_doc_max_bytes=0', '-s', 'workspace-write', '-C', t.dir, '--skip-git-repo-check', '-'],
       });
     }
     return Object.assign(plan, {
@@ -673,6 +676,38 @@ function binKind(file, env, problems) {
   return 'node-wrapper';
 }
 
+// The instruction channels of a run home that reach the model even with project_doc_max_bytes=0 (measured on codex
+// 0.166.0): AGENTS.md and AGENTS.override.md of the home, an empty one too, and the skills in skills/. A person puts
+// them there; Codex itself puts only skills/.system with its marker file. Every other entry is the state of Codex and
+// of the prepared home and is neither listed nor read: the home grows with use, so a list of allowed entries would turn
+// red after the first session. Instruction keys of config.toml, installed plugins and memories are not looked at
+// (README, Known gaps). One lstat per name: a file, a link or a folder of that name counts alike.
+const HOME_RULE_FILES = ['AGENTS.md', 'AGENTS.override.md'];
+const SYSTEM_SKILLS = '.system';
+const SYSTEM_SKILLS_MARKER = '.codex-system-skills.marker';
+function homeChannels(home) {
+  const found = [];
+  const lst = (p) => { try { return fs.lstatSync(p); } catch (e) { if (e.code === 'ENOENT') return null; throw e; } };
+  try {
+    for (const name of HOME_RULE_FILES) {
+      if (lst(path.join(home, name))) found.push(`the run home ${home} has ${name}: Codex gives it to every role ahead of the prompt; remove it`);
+    }
+    const dir = path.join(home, 'skills');
+    const st = lst(dir);
+    if (st && !st.isDirectory()) found.push(`the run home ${home} has skills that is not a folder: Codex reads the skills of its home for every role; remove it`);
+    else if (st) {
+      for (const e of fs.readdirSync(dir).sort()) {
+        const p = path.join(dir, e);
+        if (e === SYSTEM_SKILLS) {
+          const s = lst(p), m = s && s.isDirectory() ? lst(path.join(p, SYSTEM_SKILLS_MARKER)) : null;
+          if (!m || !m.isFile()) found.push(`the run home ${home} has skills/${SYSTEM_SKILLS} without ${SYSTEM_SKILLS_MARKER}: not the system skills Codex installs; remove it`);
+        } else found.push(`the run home ${home} has skills/${e}: Codex gives the skills of its home to every role; remove it`);
+      }
+    }
+  } catch (e) { found.push(`the run home ${home} cannot be read for its instruction files: ${e.message}`); }
+  return found;
+}
+
 function check(a) {
   const problems = [];
   const out = { ok: false, host: a.host, version: null, problems };
@@ -684,6 +719,7 @@ function check(a) {
     if (!home) { problems.push('no run home: --home <dir> (CODEX_HOME of the chain)'); return out; }
     if (isPersonalCodex(home)) { problems.push(personalNo(home)); return out; }
     try { fs.accessSync(home, fs.constants.W_OK); } catch { problems.push(`the run home ${home} is not writable (every codex command writes into it)`); return out; }
+    problems.push(...homeChannels(home));
     const auth = a.auth || 'chatgpt';
     let key = null;
     if (auth === 'apiKeyFile') { const k = readKey(a.keyFile); if (k.error) problems.push(k.error); else key = k.key; }
