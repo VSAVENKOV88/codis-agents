@@ -197,6 +197,10 @@ try {
   const g = (c.results || [])[0] || {};
   ok('gates a stopping conductor: no role and no service step starts, the task ends stopped with its signal', !c.error && !c.threw && c.launched.length === 0 && c.execs.length === 0
     && g.status === 'stopped' && g.signal === 'SIGTERM' && /^signalled: SIGTERM/.test(g.why || ''), JSON.stringify(c));
+
+  // ---- the tester cells: tests/chain-run-stop-tester-cases.js, a child with its own tally, so README keeps counting test files
+  const tc = spawnSync(process.execPath, [path.join(__dirname, 'chain-run-stop-tester-cases.js')], { encoding: 'utf8', timeout: 280000 });
+  ok('the tester cells of the stop (tests/chain-run-stop-tester-cases.js) pass', tc.status === 0, `${tc.status} ${tc.signal || ''}\n${(tc.stdout || '').split('\n').filter((l) => /FAIL/.test(l)).join('\n')}${(tc.stderr || '').slice(-800)}`);
 } finally {
   for (const s of sleeps) { try { process.kill(s, 'SIGKILL'); } catch { /* gone */ } }
   try { fs.rmSync(W, { recursive: true, force: true }); } catch { /* best effort */ }
