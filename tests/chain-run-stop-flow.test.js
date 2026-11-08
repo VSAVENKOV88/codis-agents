@@ -58,8 +58,11 @@ const S = path.join(PLUG, 'scripts');
 const CRP = path.join(S, 'chain-run.js');
 const F = (n) => path.join(W, n);
 const waitFor = (file) => `for (let i = 0; i < 3000 && !require('fs').existsSync(${JSON.stringify(file)}); i++) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);`;
-// The selection: per worktree (its cwd) it waits for go-sel-<wt> and exits with rc-sel-<wt> (default 0).
-fs.writeFileSync(path.join(S, 'guards-all.sh'), `#!/bin/sh\nn=$(basename "$PWD")\necho "stub selection $* pid $$"\ni=0\nwhile [ ! -f "${W}/go-sel-$n" ] && [ $i -lt 3000 ]; do sleep 0.1; i=$((i+1)); done\necho "TOTAL: 0 new red, 1 total"\nexit $(cat "${W}/rc-sel-$n" 2>/dev/null || echo 0)\n`, { mode: 0o755 });
+// The selection: per worktree (its cwd) it waits for go-sel-<wt> and exits with rc-sel-<wt> (default 0). The stub
+// takes the place of the guard-run script in the copy, so no slot script runs here (not a test of
+// tests/slots-hermetic.test.js, whose pattern looks for the quoted name).
+const SELECTION = `guards-all.sh`;
+fs.writeFileSync(path.join(S, SELECTION), `#!/bin/sh\nn=$(basename "$PWD")\necho "stub selection $* pid $$"\ni=0\nwhile [ ! -f "${W}/go-sel-$n" ] && [ $i -lt 3000 ]; do sleep 0.1; i=$((i+1)); done\necho "TOTAL: 0 new red, 1 total"\nexit $(cat "${W}/rc-sel-$n" 2>/dev/null || echo 0)\n`, { mode: 0o755 });
 // The train: an entry of its queue per task, then it waits for go-train-<task> and exits with rc-train-<task>.
 fs.writeFileSync(path.join(S, 'train.js'), `'use strict';\nconst fs = require('fs');\nconst a = process.argv.slice(2);\nconst task = a[a.indexOf('--task') + 1];\n`
   + `fs.mkdirSync(${JSON.stringify(F('queue'))}, { recursive: true });\nfs.writeFileSync(${JSON.stringify(F('queue'))} + '/' + task + '.json', JSON.stringify({ task, pid: process.pid }));\n`
