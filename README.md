@@ -249,7 +249,7 @@ codis-agents/
  ├── scripts/      38 scripts: memory slots, guard runs and selection, the train, post-checks, remote runner, cost
 ├── examples/     example project and machine configs
 ├── schemas/      their JSON schemas
-└── tests/        167 test files of the plugin itself (npm test)
+└── tests/        170 test files of the plugin itself (npm test)
 ```
 
 Every file, script and config key is described in the [Technical reference](#technical-reference).
@@ -726,6 +726,54 @@ the review with the owner the coordinator relaunches it with `useCases` and `ana
 Each task ends `done`, `use-cases-review` or `stopped` with the reason, the open questions, a proposed split or the
 review findings.
 
+### Stopping a run
+
+The conductor runs detached, in a session of its own, so Ctrl+C or the hang-up of the terminal that started it never
+reach it. `chain-run.js stop <run-id|run folder> [--config <file>]` stops a run: it sends SIGTERM to the conductor's own
+pid only - never to its group, never to a pid of 1 or less - and waits for nothing (`status --wait` shows the end).
+`kill -TERM|-INT|-HUP <pid>` by hand works the same. The first check that fires decides:
+
+| check | answer | exit |
+|---|---|---|
+| no argument, extra flags, an unknown run | usage naming `stop`, or `no run <id> in <runs>` | 64 |
+| `results.json` is there | `{state: "finished", exitCode}` | 2 |
+| `run.json` missing (the conductor has not written it yet) or unreadable, a pid that is no integer above 1, no start time | `{state: "unknown", why}` | 6 |
+| `kill(pid, 0)`: no such process | `{state: "dead"}` (as `status`) | 4 |
+| `ps` gives no start time for the live pid, or `kill(pid, 0)` cannot tell | `{state: "unknown", why}` | 6 |
+| the start time (`ps -o lstart=`, spaces folded on both sides) is not the one in `run.json`: the pid is another process | `{state: "dead", why}` | 4 |
+| SIGTERM sent | `{sent: "SIGTERM", pid, runId}` | 0 |
+
+On its first SIGTERM, SIGINT or SIGHUP the conductor writes `stopping <SIG>` into `log.txt` and from then on starts
+nothing: no role, service step, hook check or wait client, and no new intent in any journal. A live role gets SIGTERM
+to its group and SIGKILL after the pause of the adapter (30 s), its call ends `signalled`; a running service step
+without a wait (a post-check, the sha of a head) ends and its result is recorded; a running wait step (the selection,
+the train) is left open - its detached run lives on, its client is not waited for. A later signal changes nothing (the
+log names it ignored). Every task not ended gets the result `{status: "stopped", why: "signalled: <SIG> (chain-run.js
+stop or kill)", signal, counts, head, open: [{stepId, label, waitId}], untaken: [{stepId, label, outcome, value}],
+adapter?}`: `counts` and `head` are those of the end line of its journal (copy `counts` into the next `prior` as is),
+`open` the wait steps left open, `untaken` the verdicts recorded that the chain had not used yet (information, not a
+correction of the counts). A task stopped before its first step (the signal came while the conductor registered the
+tasks or checked the host) carries its `prior` as `counts`, `open: []`, `untaken: []`. Tasks that ended before the
+signal keep their result. The conductor writes `results.json` and exits 128+n of the first signal (143, 130, 129),
+also when every task is `done` and also when `results.json` cannot be written (the reason goes to stderr and the log);
+a signal after `results.json` is never handled, and the exit is its code.
+
+Restarting a stopped task (`chain-run.js resolve`, scripts/chain-resolve.js):
+
+| where it stopped | what the coordinator does | what follows |
+|---|---|---|
+| a role (its step closed with `signalled`) | start with `prior` = `counts` of the result (zeros left out) | the role runs again (its work was not accepted); without `prior` while the counts are not zero, the start is refused |
+| `select-<n>` open, the selection alive | wait | the start is refused (`alive`), `resolve` too ("decide after it ended") |
+| `select-<n>` open, ended with `.rc` 0 | `status <run>` for the basis and the step; `resolve <run> --task <k> --step <n> --as ran --verdict green --basis <b> --note <...>`; start with `resumeAt`, `head`, `prior` of its next | tester, review, train: no programmer, no second selection |
+| `select-<n>` open, ended with another product code | `resolve ... --as ran --verdict red`; start with `prior` = next counts, no `resumeAt` | from the beginning, the programmer runs |
+| `select-<n>` open, ended with a code of the environment (124, 77, 78, 72, 73, 65, 69) | `resolve ... --as abort`; start from the beginning with `prior` and `priorReason` (coordinator's decision, candidate) | `retry` would send it to the tester without a green selection |
+| `select-<n>` open, a start with `resumeAt`/`head` without a decision | - | refused: "resumeAt and head come only from a decision of resolve" |
+| `select-<n>` open, a start without `resumeAt` and without a decision | `prior` = `counts` | not refused (the step is gone, a note): the programmer runs again - the coordinator's choice |
+| `train-<n>` open, the ride alive | wait (`train.js status` names the entry) | the start and `resolve` are refused |
+| `train-<n>` open, the ride ended | `resolve ... --as ran --verdict <the verdict of its exit code>` | `green`/`green-unmerged`: next `done`, the start is refused ("the task is over by a decision"), the coordinator writes the result; `red`: from the beginning with `trainReds + 1`; `seam`/`conflict`: from the beginning; else `resumeAt: train` |
+
+No automatic `resume` is computed for a stopped task: the coordinator follows this table.
+
 ## How the chain decides
 
 - **Preconditions** first: a brief with an acceptance scenario, the worktree on its branch, no uncommitted changes, no
@@ -996,9 +1044,15 @@ fallback to another slot directory: a second directory would be a second queue t
   decision for a new state), not against a role. A refused start (an open step, a verdict whose use is not proven,
   damage) is lifted by `chain-run.js resolve` (scripts/chain-resolve.js); a conductor alive with other tasks of the run
   refuses it until the run ends. A dead lock that names a run without its folder, and a takeover token of a dead holder,
-  stay a technical cleanup by hand after checking the processes; removing a run folder is no recovery. The conductor
-  cannot be stopped from outside yet (`stop`, part B1-b2b-2). Children a role moves into a session of their own are not
-  seen by the reconciliation.
+  stay a technical cleanup by hand after checking the processes; removing a run folder is no recovery. Children a role
+  moves into a session of their own are not seen by the reconciliation.
+- Stopping a run (`chain-run.js stop`, [Stopping a run](#stopping-a-run)): the wait client of a wait step left open
+  lives on for at most its 270 s (it only reads; at its `--deadline` it ends its run's group, as under a live
+  conductor); a ride left open keeps the start of its task refused until its train is over; between the check of the
+  start time and the signal a pid could be reused (microseconds), and `lstart` has a resolution of one second; a
+  verdict in `untaken` whose head the tester shortened is not counted in `counts` (the coordinator corrects `prior`
+  with `priorReason`); a second signal changes nothing - its escalation and the cleanup of orphans come with part B2;
+  no automatic `resume` of a stopped task.
 - The role adapter `scripts/role-exec.js` (p-codex, parts A1a and A1b) runs one role on a host CLI, but no conductor
   uses it yet (part B): the chain still runs on the Workflow `agent()`; on codex only the roles that write a report
   alone (analyst, reviewers) are accepted, and they cannot take memory slots: inside the codex sandbox `heavy.sh` and

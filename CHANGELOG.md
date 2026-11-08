@@ -6,6 +6,13 @@ key and script, and this file says when and why each one changed. Versions befor
 
 ## Unreleased (p-codex-B)
 
+- **stop: a conductor run stops on a signal** (p-codex-B1-b2b-2, UC-6). New `chain-run.js stop <run>`: SIGTERM to the
+  conductor's own pid only, after its identity (the pid above 1 started at the recorded time); exit 0 sent, 2 finished,
+  4 dead, 6 the identity cannot be established, 64 arguments. The conductor handles SIGTERM, SIGINT and SIGHUP from its
+  first line: no new step after the line `stopping <SIG>`, live roles get SIGTERM and SIGKILL after the pause, a running
+  service step ends, a wait step is left open; every task not ended gets `stopped` with `signal`, `counts`, `head`,
+  `open`, `untaken`; the exit is 128+n of the first signal. The role adapter gains `stopAll` and keeps a role from
+  starting after a signal during its hook check. README "Stopping a run": the restart table with `resolve`.
 - **resolve: the way out of a refused start of the conductor** (p-codex-B1-b2b; the owner's answer to question 4,
   2026-11-07: "A, bound"). New `scripts/chain-resolve.js`, run as `chain-run.js resolve`: one decision per step in
   `runs/<runId>/resolved/<task>/`, written whole under the lock of the task and bound to the basis of the journal; the

@@ -82,7 +82,9 @@ role agents are unavailable).
   rejections, an analyst that ran, a pass "Mechanism"), so the counts of the task go on. Under the conductor a refused
   start (an open step of a dead run, a verdict whose use is not proven, damage) is lifted with `chain-run.js resolve`
   on the basis `chain-run.js status` prints, and the relaunch carries the `resumeAt`, `head` and `prior` of the
-  decision; `chain-run.js resolve --list` gives the decisions as lines for the digest. Relay them to the
+  decision; `chain-run.js resolve --list` gives the decisions as lines for the digest. A conductor run is stopped with
+  `chain-run.js stop <run>` (never Ctrl+C: it does not reach the conductor); its tasks end `stopped` with `signal`,
+  and the relaunch follows the table "Stopping a run" of the README. Relay them to the
   owner; write the owner's answers into the brief yourself (verbatim, dated) before the next run.
 - A light task (`mode: "light"`) stopped after a second rejection goes to the coordinator with the proposal of the
   full mode: relaunch it without `mode` (tester, analyst after a second rejection), `start` pointing to its reports.
