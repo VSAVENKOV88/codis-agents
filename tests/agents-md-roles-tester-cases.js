@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 // The tester's cells around p-codex-D3-3 (project rules for roles on Codex, the freshness of AGENTS.md in the chain)
-// that tests/agents-md-roles.test.js does not hold. Synthetic projects and homes only; no model and no real Codex.
+// that tests/agents-md-roles.test.js does not hold; that test runs this file as a child. Synthetic projects and homes only; no model and no real Codex.
 //   TH1  skills of the run home that is a file, or a link to a folder: red ("not a folder"), a link is never followed
 //   TH2  skills/.system whose marker is a folder, not a file: red
 //   TH3  two skills of a person: each named on its own line

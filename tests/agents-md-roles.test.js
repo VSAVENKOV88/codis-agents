@@ -280,5 +280,13 @@ console.error('unexpected ' + a); process.exit(9);\n`);
   ok('D1. README Known gaps: user skills ($HOME/.agents/skills), project skills, home changed between check and call',
     has('$HOME/.agents/skills') && has('`.agents/skills/`') && /changed between `role-exec\.js check` and a call/.test(readme));
 
+  // the tester cells (the home's skills as a file or link, the marker as a folder, the route of --base for foreign,
+  // edited and exit 69, the quoting of the base): tests/agents-md-roles-tester-cases.js, a child with its own tally, so
+  // README keeps counting test files
+  {
+    const tc = spawnSync(process.execPath, [path.join(__dirname, 'agents-md-roles-tester-cases.js')], { encoding: 'utf8', timeout: 240000 });
+    ok('the tester cells of the roles on Codex (tests/agents-md-roles-tester-cases.js) pass', tc.status === 0, `exit ${tc.status} ${tc.signal || ''} ${(tc.stdout || '').split('\n').filter((l) => /FAIL/.test(l)).join('\n').slice(-1500)} ${(tc.stderr || '').slice(-500)}`);
+  }
+
   done();
 })().catch((e) => { ok('no exception in the test', false, e.stack); done(); });
