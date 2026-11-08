@@ -72,6 +72,25 @@ one. For whatever the owner judges by the screen, show a mockup of all states be
 8. **Cost.** After each run, `node "${CLAUDE_PLUGIN_ROOT}/scripts/chain-cost.js" <transcripts>` (and `--journal <task folder>` for the tasks whose roles ran through the role adapter, `calls.jsonl`); a task above twice the
    median means the next similar one is split earlier.
 
+## After a plugin update
+
+When a project uses generated `AGENTS.md` files (`"agentsMd": true`), a new plugin version or a change of a `CLAUDE.md`
+or a file it imports makes them stale, and the preconditions of every new task stop on `agents-md.js check --root <wt>
+--base <arc>` with the file and this route. The update itself is a service change, never a task of the chain:
+
+1. A service branch from the head of the arc: `${CLAUDE_PLUGIN_ROOT}/scripts/wt-setup.sh <svc> <svc> <arc>`.
+2. `node "${CLAUDE_PLUGIN_ROOT}/scripts/agents-md.js" write --root <svc worktree>`, then
+   `node "${CLAUDE_PLUGIN_ROOT}/scripts/agents-md.js" check --root <svc worktree>` green; commit each `AGENTS.md` it
+   names by path.
+3. With `guardSubsetCommand` it rides as a passenger: `node "${CLAUDE_PLUGIN_ROOT}/scripts/train.js" ride --task <svc>
+   --branch <svc> --head <full sha> --base <arc>` in the background (its preconditions are not run, so the stale files
+   do not stop it); without the key, or once `train.js status` says `lock: free`, merge it into the arc yourself.
+4. Then merge the arc into the branch of every waiting task (a stopped task is relaunched after it). When the arc
+   already holds fresh files, this step alone is the route.
+
+The running roles are left alone: a role keeps the rules it was started with (its prompt), and the update changes only
+the files in the branches.
+
 ## Check the analysis
 
 Before a task of a wave starts (product or plugin), its analysis is read by the analysis checker (rule "Waves"):

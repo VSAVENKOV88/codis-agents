@@ -5,9 +5,14 @@
 // imports.
 //
 // usage: agents-md.js write [--root <dir>] [--config <file>] [--discard-edits] [--enable]
-//        agents-md.js check [--root <dir>] [--config <file>]
+//        agents-md.js check [--root <dir>] [--config <file>] [--base <branch>]
 //   --root     a directory of the project's git worktree (default: the working directory); its top level is used
-//   --config   the project config; default: the lookup of scripts/config.js from the root, without $CLAUDE_PROJECT_DIR
+//   --config   the project config; default: the lookup of scripts/config.js from the root, ignoring
+//              $CODIS_AGENTS_CONFIG and $CLAUDE_PROJECT_DIR (they name the session's project, not this worktree's)
+//   --base     check only: the branch the task started from; a red check then names the update route from it (a
+//              service branch, write, a commit by path, a passenger of the train, the base merged into the task
+//              branch) in place of write --root, which a task branch must not run by itself. The freshness of the
+//              base is not computed.
 //
 // The connection: "agentsMd": true in the project config (.claude/codis-agents.json). Connected, every expected
 // AGENTS.md must exist and be fresh; not connected, check says "not used", unless a generated AGENTS.md is anywhere git
@@ -97,20 +102,21 @@ class Fail extends Error {
 
 function usage() {
   console.error('usage: agents-md.js write [--root <dir>] [--config <file>] [--discard-edits] [--enable]\n'
-    + '       agents-md.js check [--root <dir>] [--config <file>]');
+    + '       agents-md.js check [--root <dir>] [--config <file>] [--base <branch>]');
   process.exit(64);
 }
 
 function parseArgs(argv) {
   const [cmd, ...rest] = argv;
   if (cmd !== 'write' && cmd !== 'check') usage();
-  const o = { cmd, root: process.cwd(), config: null, discard: false, enable: false };
+  const o = { cmd, root: process.cwd(), config: null, discard: false, enable: false, base: null };
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
     if (a === '--root' && rest[i + 1]) o.root = path.resolve(rest[++i]);
     else if (a === '--config' && rest[i + 1]) o.config = path.resolve(rest[++i]);
     else if (a === '--discard-edits' && cmd === 'write') o.discard = true;
     else if (a === '--enable' && cmd === 'write') o.enable = true;
+    else if (a === '--base' && cmd === 'check' && rest[i + 1]) o.base = rest[++i];
     else usage();
   }
   return o;
@@ -136,11 +142,13 @@ function lsIgnored(root, name) {
   return r.stdout.split('\0').filter(Boolean);
 }
 
-// {file, on}: the project config and its agentsMd. A value that is not a boolean is an error.
+// {file, on}: the project config and its agentsMd. A value that is not a boolean is an error. Without --config the
+// config is the one found from the root: CODIS_AGENTS_CONFIG and CLAUDE_PROJECT_DIR name the project of the session
+// that runs the check (the coordinator's main copy, another project), not of the worktree checked.
 function connection(root, explicit) {
   let file = explicit;
   if (!file) {
-    const env = Object.assign({}, process.env); delete env.CLAUDE_PROJECT_DIR;
+    const env = Object.assign({}, process.env); delete env.CLAUDE_PROJECT_DIR; delete env.CODIS_AGENTS_CONFIG;
     file = config.find(root, env);
   }
   if (!file) return { file: null, on: false };
@@ -667,6 +675,9 @@ function main(o) {
   const home = os.homedir();
   const conn = connection(root, o.config);
   const cmd = `node ${__filename} write --root ${root}`;
+  // How a red line tells to update: write in this worktree, or with --base the route from the base (the last line).
+  const fix = (flag) => (o.base ? `update it by the route below${flag ? ` (write ${flag})` : ''}` : `run ${cmd}${flag ? ` ${flag}` : ''}`);
+  const route = o.base ? `update route from ${o.base}: if ${o.base} already has fresh ${TARGET} files, merge ${o.base} into the task branch; otherwise, on a service branch from ${o.base}, run node ${__filename} write --root <its worktree>, commit each ${TARGET} it names by path and ride the branch to ${o.base} as a passenger of the train (coordinator skill, "After a plugin update"), then merge ${o.base} into the task branch` : null;
   const out = (l) => console.log(l);
 
   if (!conn.on && !(o.cmd === 'write' && o.enable)) {
@@ -686,7 +697,8 @@ function main(o) {
   if (o.enable && !conn.file) throw new Fail(1, `--enable: no project config found from ${root} (.claude/codis-agents.json): create it first; nothing written`);
   const blocked = o.enable && !conn.on ? ' (--enable blocked: the project stays not connected, nothing written)' : '';
   const stop = (code, lines) => new Fail(code, lines.map((l) => l + blocked)
-    .concat(o.cmd === 'write' && !blocked ? [`nothing written: settle every file above, then run ${cmd}`] : []));
+    .concat(o.cmd === 'write' && !blocked ? [`nothing written: settle every file above, then run ${cmd}`] : [])
+    .concat(route && code === 1 ? [route] : []));
 
   // The sources: a git worktree with a tracked CLAUDE.md at its root, each in the worktree, no override beside one.
   if (!top) throw new Fail(1, `not a git repository: ${o.root}${blocked}`);
@@ -738,14 +750,14 @@ function main(o) {
     const cur = existing(path.join(root, d, TARGET));
     const data = fileOf(src, g.body);
     plan.push({ d, tgt, data, cur, notes: g.notes, summary: `${data.length} bytes from ${src} and ${g.files} imported file${g.files === 1 ? '' : 's'}` });
-    if (cur.state === 'foreign') problems.push(`conflict: ${tgt} is not generated by codis-agents (no marker line, or a damaged one); keep it, move its rules into ${src} or remove it, then run ${cmd}`);
-    else if (cur.state === 'edited' && !(o.cmd === 'write' && o.discard)) problems.push(`${tgt} was edited by hand: move the edit into ${src} and run ${cmd} --discard-edits`);
+    if (cur.state === 'foreign') problems.push(`conflict: ${tgt} is not generated by codis-agents (no marker line, or a damaged one); keep it, move its rules into ${src} or remove it, then ${fix()}`);
+    else if (cur.state === 'edited' && !(o.cmd === 'write' && o.discard)) problems.push(`${tgt} was edited by hand: move the edit into ${src} and ${fix('--discard-edits')}`);
     else if (o.cmd === 'check') {
-      if (cur.state === 'missing') problems.push(`${tgt} is missing ("agentsMd": true in ${conn.file}): run ${cmd}`);
-      else if (cur.source !== src) problems.push(`${tgt} is stale (source moved: ${cur.source} -> ${src}): run ${cmd}`);
+      if (cur.state === 'missing') problems.push(`${tgt} is missing ("agentsMd": true in ${conn.file}): ${fix()}`);
+      else if (cur.source !== src) problems.push(`${tgt} is stale (source moved: ${cur.source} -> ${src}): ${fix()}`);
       else if (!cur.body.equals(g.body)) {
-        problems.push(cur.version !== VERSION ? `${tgt} was generated by agents-md v${cur.version} and differs from what v${VERSION} writes: run ${cmd}`
-          : `${tgt} is stale: ${src} or a file it imports changed; run ${cmd}`);
+        problems.push(cur.version !== VERSION ? `${tgt} was generated by agents-md v${cur.version} and differs from what v${VERSION} writes: ${fix()}`
+          : `${tgt} is stale: ${src} or a file it imports changed; ${fix()}`);
       }
     }
   }
@@ -760,7 +772,7 @@ function main(o) {
     if (cur.state === 'foreign' && ignored.has(f)) continue;
     const src = rel(d, SOURCE);
     if (cur.state === 'ours') {
-      if (o.cmd === 'check') problems.push(`generated ${f} without ${src}: run ${cmd} (it removes the file)`);
+      if (o.cmd === 'check') problems.push(`generated ${f} without ${src}: ${fix()} (it removes the file)`);
       orphans.push(f);
     } else if (cur.state === 'edited') {
       problems.push(`${f} was edited by hand and has no tracked ${src}: move the edit into a ${SOURCE}, then remove ${f} by hand`);

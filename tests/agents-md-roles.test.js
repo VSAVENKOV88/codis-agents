@@ -254,7 +254,8 @@ console.error('unexpected ' + a); process.exit(9);\n`);
   ps = await chain({ pre: [PRE], prog: [PROG], review: [D] }, Object.assign({}, T, { mode: 'light' }));
   ok('R1/R2. light: the programmer-checker and the reviewer carry the same lines', of(ps, 'prog').length === 1 && R2(of(ps, 'prog')[0]) && of(ps, 'review').length === 1 && R1(of(ps, 'review')[0]),
     of(ps, 'prog').concat(of(ps, 'review')).map((p) => p.slice(-500)).join('\n---\n'));
-  ok('S1. one function builds the check of the preconditions (agentsMdCheck), called by pre', /const agentsMdCheck = \(t, withBase\)/.test(SRC) && /const pre = [\s\S]{0,4000}agentsMdCheck\(t, true\)/.test(SRC));
+  ok('S1. one function builds the check of the preconditions (agentsMdCheck), called by pre', /const agentsMdCheck = \(t, withBase\)/.test(SRC)
+    && /const AGENTS_MD_PRE = [^\n]*agentsMdCheck\(t, true\)/.test(SRC) && /const pre = [^\n]*\n[^\n]*AGENTS_MD_PRE\(t\)/.test(SRC));
 
   // ---------------------------------------------------------------- U2, D1, D2: the coordinator skill and README
   const skill = fs.readFileSync(path.join(ROOT, 'skills', 'coordinator', 'SKILL.md'), 'utf8');
@@ -262,7 +263,7 @@ console.error('unexpected ' + a); process.exit(9);\n`);
   ok('U2. coordinator skill: "After a plugin update" - a service branch from the arc head (wt-setup.sh), write, commit by path, a passenger (train.js ride) or lock: free, then the arc merged into the waiting task branches; running roles untouched',
     /wt-setup\.sh/.test(sec) && /agents-md\.js" write/.test(sec) && /by path/.test(sec) && /train\.js" ride/.test(sec) && /lock: free/.test(sec)
     && /merge the arc into the branch of every waiting task/.test(sec) && /running roles/.test(sec) && /--base/.test(sec), sec || 'no section');
-  const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
+  const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8').replace(/\s+/g, ' '); // line breaks of the text do not count
   const has = (s) => readme.includes(s);
   ok('U1. README: agents-md.js check names --base and the route', /`check` also takes `--base <branch>`/.test(readme));
   ok('C1. README: the config is the one found from --root, CODIS_AGENTS_CONFIG and CLAUDE_PROJECT_DIR ignored', has('ignoring `CODIS_AGENTS_CONFIG` and `CLAUDE_PROJECT_DIR`'));
@@ -271,7 +272,7 @@ console.error('unexpected ' + a); process.exit(9);\n`);
   ok('D1. README: roles get the project rules only from the prompt (project_doc_max_bytes=0); the home check and what it does not see',
     has('-c project_doc_max_bytes=0') && has('`skills/.system` with `.codex-system-skills.marker`') && /instruction keys of the home's `config.toml`/.test(readme));
   ok('D1. README: two results apart - the own interactive session gets the full AGENTS.md; check with codex debug prompt-input and the marker line',
-    has('codex debug prompt-input') && has('codis-agents agents-md') && /your own interactive session gets the full `AGENTS\.md`/.test(readme));
+    has('codex debug prompt-input') && has('codis-agents agents-md') && /own interactive session\W+gets the full `AGENTS\.md`/.test(readme));
   ok('D2. README: trust the main repository root (covers worktrees), 32 KiB silently without trust, untrusted nothing, codex exec trusts by itself',
     has('without a trust record Codex reads 32 KiB silently') && has('`untrusted` - no project `AGENTS.md` at all') && has('`codex exec` in a git project marks it trusted in the home by itself'));
   ok('D2. README: Claude Code does not read the generated AGENTS.md by default; claude-md-and-agents-md gives the rules twice; the claude host reads CLAUDE.md',
