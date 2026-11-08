@@ -1,0 +1,4 @@
+#!/bin/sh
+# A fake codex CLI for tests/chain-run.test.js and tests/chain-run-steps.test.js; it calls no model. A shell script, so
+# `role-exec.js check` takes it for a native executable; the work is done by ../codex-fake.js in the same process (exec).
+exec node "$(dirname "$0")/../codex-fake.js" "$@"

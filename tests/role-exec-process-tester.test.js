@@ -6,7 +6,7 @@
 //    adapter - the outcome comes from the exit (crashed with rc), one record, the next call works;
 // T2 a multibyte UTF-8 character cut between two chunks of stdout: the result event is decoded whole (StringDecoder);
 // T3 claude result errors by api_error_status: 403 -> auth, 500 -> crashed, 400 -> crashed (no schema-refused on claude);
-// T4 spawn EACCES (the bin is not executable) -> crashed, one record, no throw;
+// T4 a bin that is not executable: the exec of the gate fails with 126 -> crashed, one record, no throw;
 // T5 a process outside the group keeps stdout open after the leader exits: the call still ends (bounded by the
 //    ceiling), its outcome is that of the exit, the note says stdout stayed open, the adapter does not kill that process;
 // T6 claude rate_limit_event not "allowed" (UC-2 Errors 5) beside the other outcomes: a kill from outside stays killed,
@@ -163,11 +163,11 @@ const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { retu
     ok('T3 C subtype error_max_turns without a status -> crashed', x.res === null && x.rec.outcome === 'crashed', JSON.stringify(x.rec).slice(0, 300));
   }
 
-  // ---- T4 spawn EACCES
+  // ---- T4 no execute bit
   for (const host of ['codex', 'claude']) {
     const x = await call(host, { lines: [] }, { bin: NOEXEC });
-    ok(`T4 ${host === 'codex' ? 'X' : 'C'} a bin without the execute bit -> crashed, the error names the spawn, one record, no throw`,
-      x.res === null && !x.threw && x.n === 1 && x.rec.outcome === 'crashed' && /spawn .*EACCES/.test(x.rec.error || ''), JSON.stringify(x.rec).slice(0, 300));
+    ok(`T4 ${host === 'codex' ? 'X' : 'C'} a bin without the execute bit -> crashed, rc 126, the text of the shell, one record, no throw`,
+      x.res === null && !x.threw && x.n === 1 && x.rec.outcome === 'crashed' && x.rec.rc === 126 && /ermission denied|cannot execute/i.test(x.rec.error || ''), JSON.stringify(x.rec).slice(0, 300));
   }
 
   // ---- T5 stdout held open by a process of another session after the leader exits

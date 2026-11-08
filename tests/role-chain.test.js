@@ -7,9 +7,24 @@
 // rejection for code, or the second red tester round for the product, brings the analyst into the same run; preconditions or open questions stop before the
 // programmer; git post-check of tester and reviewer from the HEAD of the previous role; lines of
 // rules/multi-agent.md marked <!-- role:<id> --> are in RULE_LIST and in the prompt of every role).
+// With CODIS_CHAIN_RUNTIME=conductor (tests/role-chain-conductor.test.js) every scenario runs through the conductor
+// instead (scripts/chain-run.js runScript: the role adapter createAgent with a launcher that answers from the same
+// script): the paths of the config and the tasks are moved under a temporary root, so the adapter can write its call
+// folders and calls.jsonl, and the root is cut out of every prompt, log line and result again, so the checks stay as
+// they are.
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { ok, done } = require('./lib');
+const CONDUCTOR = process.env.CODIS_CHAIN_RUNTIME === 'conductor';
+const ROOT_TMP = CONDUCTOR ? fs.mkdtempSync(path.join(os.tmpdir(), 'rc-conductor-')) : null;
+if (ROOT_TMP) process.on('exit', () => { try { fs.rmSync(ROOT_TMP, { recursive: true, force: true }); } catch { /* best effort */ } });
+const deepMap = (v, f) => (typeof v === 'string' ? f(v) : Array.isArray(v) ? v.map((x) => deepMap(x, f))
+  : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, deepMap(x, f)])) : v);
+const unroot = (s) => (ROOT_TMP ? String(s).split(ROOT_TMP).join('') : s);
+let conductorCalls = 0;
+const execSteps = [];
+const SERVICE_KINDS = ['sha', 'diff', 'left', 'post', 'run', 'merge'];
 
 const ROOT = path.join(__dirname, '..');
 const SRC = fs.readFileSync(path.join(ROOT, 'workflows', 'role-chain.js'), 'utf8').replace(/^export const meta/m, 'const meta');
@@ -48,8 +63,37 @@ async function run(script, task = T, extra = {}) {
     return role === 'test' && v && !v.head ? Object.assign({ head: 'T' }, v) : v;
   };
   const pipeline = async (items, fn) => Promise.all(items.map((it) => fn(it).catch(() => null)));
+  const a = Object.assign({ owner: 'o', config: CFG, tasks: [task] }, extra);
+  if (CONDUCTOR) {
+    // The adapter gets the plan of each call; the options of the call are read back from it (the agent type from the
+    // --agent of the claude argv), and the answer goes back as the structured output a claude result carries.
+    const launch = async (plan) => {
+      conductorCalls++;
+      const i = plan.argv.indexOf('--agent');
+      const opts = { label: plan.label, phase: plan.phase, schema: plan.schema, agentType: i >= 0 ? plan.argv[i + 1] : 'general-purpose' };
+      if (plan.model !== null) opts.model = plan.model;
+      if (plan.effort !== null) opts.effort = plan.effort;
+      return { output: await agent(unroot(plan.stdin), opts) };
+    };
+    // The service steps go through exec(step) (p-codex-B1-c, P3'): the fake exec answers a step with what the fake agent
+    // gives its Workflow form (step.agent: the same prompt and options), so every check of a service prompt holds; the
+    // conductor's own env step (no Workflow form) is answered "ok, no problems" here.
+    const exec = async (step) => {
+      execSteps.push(step.label);
+      if (!step.agent) return { value: { ok: true, problems: [], notes: [] } };
+      return { value: await agent(unroot(step.agent.prompt), step.agent.opts) };
+    };
+    const { runScript } = require('../scripts/chain-run.js');
+    const x = await runScript({ host: 'claude', pluginRoot: ROOT, args: deepMap(a, (s) => (s.startsWith('/') ? ROOT_TMP + s : s)),
+      launch, exec, log: (m) => logs.push(unroot(m)), note: () => {} });
+    // The conductor turns a throw of the script at load into stopped results (R13) and names the exception: the
+    // harness throws it again, as the fake runtime would.
+    if (x.threw) throw new Error(unroot(x.threw.message));
+    const res = JSON.parse(unroot(JSON.stringify(x.results)));
+    return { r: res[0], trace: trace.join('>'), full: full.join('>'), prompts, logs };
+  }
   const res = await new AsyncFunction('agent', 'pipeline', 'parallel', 'log', 'phase', 'args', SRC)(
-    agent, pipeline, null, (m) => logs.push(m), () => {}, Object.assign({ owner: 'o', config: CFG, tasks: [task] }, extra));
+    agent, pipeline, null, (m) => logs.push(m), () => {}, a);
   return { r: res[0], trace: trace.join('>'), full: full.join('>'), prompts, logs };
 }
 
@@ -292,10 +336,10 @@ async function run(script, task = T, extra = {}) {
   const dp = x.prompts.filter((p) => p.role === 'post' || p.role === 'diff');
   ok('post-check after the tester and the reviewer', x.full === 'pre>prog>test>post:x:tester>review>diff:x:reviewer>left:x:end', x.full);
   ok('tester checked from the programmer HEAD, reviewer from the tester HEAD',
-    dp.length === 2 && / --since P --role tester/.test(dp[0].prompt) && / --since T --role reviewer( |\n|$)/.test(dp[1].prompt), dp.map((p) => p.prompt).join(' | '));
+    dp.length === 2 && / --since 'P' --role tester/.test(dp[0].prompt) && / --since 'T' --role reviewer( |\n|$)/.test(dp[1].prompt), dp.map((p) => p.prompt).join(' | '));
   ok('post-check runs the plugin script with the tester allow-list from the config',
-    dp[0].prompt.includes("node /p/scripts/role-post-check.js --wt /w ") && dp[0].prompt.includes("--allow '-run\\.js$'")
-      && dp[1].prompt.includes("node /p/scripts/role-diff-check.js --wt /w ") && !dp[1].prompt.includes('--allow'), dp[0].prompt);
+    dp[0].prompt.includes("node /p/scripts/role-post-check.js --wt '/w' ") && dp[0].prompt.includes("--allow '-run\\.js$'")
+      && dp[1].prompt.includes("node /p/scripts/role-diff-check.js --wt '/w' ") && !dp[1].prompt.includes('--allow'), dp[0].prompt);
 
   x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], diff: [{ ok: false, offending: ['src/a.ts'] }, { ok: false, offending: ['src/a.ts'] }] });
   ok('tester changed product code -> stop, no review', x.r.status === 'stopped' && !x.trace.includes('review') && /src\/a\.ts/.test(x.r.why), JSON.stringify(x.r));
@@ -311,7 +355,7 @@ async function run(script, task = T, extra = {}) {
   x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D0] }, Object.assign({}, T, { stack: 'k-test' }));
   const lp = x.prompts.filter((p) => p.role === 'left' || p.role === 'post');
   ok('leftovers: runs the plugin script with --fix, the stack, the owner stack, the slots dir and the task log (after the tester inside role-post-check.js)',
-    lp.length === 2 && lp[0].prompt.includes('node /p/scripts/role-post-check.js --wt /w ') && lp[1].prompt.includes('node /p/scripts/role-leftovers-check.js --wt /w ') && lp.every((p) => p.prompt.includes("--stack 'k-test'")
+    lp.length === 2 && lp[0].prompt.includes("node /p/scripts/role-post-check.js --wt '/w' ") && lp[1].prompt.includes("node /p/scripts/role-leftovers-check.js --wt '/w' ") && lp.every((p) => p.prompt.includes("--stack 'k-test'")
       && p.prompt.includes("--owner-stack 'own'") && p.prompt.includes("--slots-dir '/slots'") && p.prompt.includes('--fix') && p.prompt.includes("--log '/d/leftovers.md'")), lp.map((p) => p.prompt).join(' | '));
   ok('leftovers: a cheap agent like the git post-check', lp.every((p) => p.opts.agentType === 'general-purpose' && p.opts.model === 'haiku'));
   x = await run({ pre: [PRE], prog: [PROG], test: [{ verdict: 'green', summary: '' }], review: [D0],
@@ -430,6 +474,15 @@ async function run(script, task = T, extra = {}) {
   ok('the full run step: a cheap agent runs wait-step.js start with guards-all.sh on the worktree, then waits in slices of at most 270 s',
     rp && rp.opts.model === 'haiku' && rp.opts.agentType === 'general-purpose' && rp.prompt.includes("node /p/scripts/wait-step.js start --id '/d/wait-select-1' --cwd '/w'")
       && rp.prompt.includes('/p/scripts/guards-all.sh') && rp.prompt.includes('wait-step.js wait') && /--max 270/.test(rp.prompt), rp && rp.prompt);
+  // p-codex-B1-b2a (tester): without exec (the Workflow) a wait step lives in the task folder and starts without --once,
+  // also when the task carries a field stepDir (only the conductor gives it, and only with exec).
+  ok('B1-b2a under the Workflow the wait step starts without --once', !!rp && !/--once/.test(rp.prompt), rp && rp.prompt);
+  {
+    const xs = await run(G1(), Object.assign({}, TB, { stepDir: '/elsewhere/steps/x' }), { config: ONE });
+    const rs = runsOf(xs)[0];
+    ok('B1-b2a under the Workflow a field stepDir is ignored: the wait step and the selection copy stay in the task folder',
+      xs.r.status === 'done' && !!rs && rs.prompt.includes("--id '/d/wait-select-1'") && rs.prompt.includes('/d/wait-select-1.guards.txt') && !rs.prompt.includes('/elsewhere') && !/--once/.test(rs.prompt), rs && rs.prompt);
+  }
   // C1 (p-wait, form 1): the full run of the wait step includes the selection (guardSubsetCommand narrows guardCommand),
   // so the programmer runs no selection after its mutations: no guards-select, no heavy.sh for it in its Order line.
   const orderOf = (pr) => (pr.match(/^Order:.*$/m) || [''])[0];
@@ -468,7 +521,7 @@ async function run(script, task = T, extra = {}) {
   const nfLine = (pOf(x, 'prog', 1).match(/^The selection of the task's guards the workflow ran.*$/m) || [''])[0];
   ok('C3. the fix round after a red full run: no "selected guards" (the workflow runs the full run again)', nfLine && !/selected guards/.test(nfLine) && /mutations after the commit/.test(nfLine), nfLine);
   ok('W14. the fix round: the environment is a refused queue (77, 78), not "no slot"', !/no slot/.test(pOf(x, 'prog', 1)) && /77/.test(pOf(x, 'prog', 1)), pOf(x, 'prog', 1));
-  ok('the tester post-check starts from the HEAD of the fix', / --since P2 --role tester/.test(pOf(x, 'post')), pOf(x, 'post'));
+  ok('the tester post-check starts from the HEAD of the fix', / --since 'P2' --role tester/.test(pOf(x, 'post')), pOf(x, 'post'));
   x = await run({ pre: [PRE], prog: [PROG, PROG], run: [RUN_RED], test: [{ verdict: 'green', summary: '' }], review: [D] }, TB, { config: ONE });
   ok('a red full run the programmer explains without a commit -> no second run, the tester gets the red log',
     x.r.status === 'done' && x.full === 'pre>prog>run:x:select-1>prog>test>post:x:tester>review>diff:x:reviewer>run:x:train-1>left:x:end' && /exit 1/.test(pOf(x, 'test')), x.full);
@@ -526,7 +579,7 @@ async function run(script, task = T, extra = {}) {
   ok('light: the programmer-checker prompt - red guard, code, mutations after the commit, own acceptance with evidence in test.md',
     /PROGRAMMER-CHECKER/.test(lp0) && /red guard/.test(lp0) && /mutations AFTER the commit/.test(lp0) && lp0.includes('/d/test.md') && lp0.includes('acc') && /evidence/.test(lp0), lp0);
   ok('light: the reviewer is told there is no tester role and checks the evidence in test.md', /light mode/.test(pOf(x, 'review')) && pOf(x, 'review').includes('test.md'), pOf(x, 'review'));
-  ok('light: the reviewer post-check starts from the programmer HEAD', / --since P --role reviewer/.test(pOf(x, 'diff')), pOf(x, 'diff'));
+  ok('light: the reviewer post-check starts from the programmer HEAD', / --since 'P' --role reviewer/.test(pOf(x, 'diff')), pOf(x, 'diff'));
   x = await run({ pre: [PRE], prog: [PROG, Object.assign({}, PROG, { head: 'P2' })], review: [{ verdict: 'rejected', docsOnly: false, summary: 'r' }, D] }, L, { config: ONE });
   ok('light: rejection -> programmer round -> full run -> second review -> done',
     x.r.status === 'done' && x.full === 'pre>prog>run:x:select-1>review>diff:x:reviewer>prog>run:x:select-r>review>diff:x:reviewer>run:x:train-1>left:x:end', x.full);
@@ -693,5 +746,15 @@ async function run(script, task = T, extra = {}) {
   ok('B8 explicit protectedBranches [] -> no branch is protected, the rule does not claim every branch push is refused',
     !/unknown|refuse every branch push/.test(pl) && /no branch is protected/.test(pl) && /do not create tags/.test(pl), pl);
 
+  if (CONDUCTOR) {
+    // Every call of every scenario went through the adapter: one line of calls.jsonl per call, whatever its outcome.
+    const lines = [];
+    const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { if (e.isDirectory()) walk(path.join(d, e.name)); else if (e.name === 'calls.jsonl') lines.push(...fs.readFileSync(path.join(d, e.name), 'utf8').split('\n').filter(Boolean)); } };
+    walk(ROOT_TMP);
+    ok(`conductor runtime: every agent call went through the role adapter (${conductorCalls} calls, ${lines.length} lines of calls.jsonl)`, conductorCalls > 100 && lines.length === conductorCalls, `${conductorCalls} vs ${lines.length}`);
+    const svc = lines.map((l) => JSON.parse(l).label).filter((lb) => SERVICE_KINDS.includes(String(lb).split(':')[0]));
+    ok(`conductor runtime E1: every service step went through exec, none through the adapter (${execSteps.length} steps)`, execSteps.length > 100 && !svc.length
+      && execSteps.some((lb) => /^env:/.test(lb)), svc.slice(0, 5).join(' '));
+  }
   done();
 })().catch((e) => { console.log('  FAIL crashed: ' + e.stack); process.exit(1); });

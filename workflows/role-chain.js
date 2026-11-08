@@ -78,8 +78,13 @@ const ROLE_MODELS = CFG.roleModels || {}
 const modelOf = (key) => { const m = ROLE_MODELS[key] || CFG.roleModel; return m ? { model: m } : {} }
 const abs = (p) => (p.startsWith('/') ? p : `${CFG.worktreeRoot}/${p}`)
 const specsOf = (t) => (t.spec === undefined ? [] : [].concat(t.spec))
+// sdir: the folder of the files of the task's service steps (wait steps, the copy of a selection log, leftovers.md, the
+// train's copies of its logs). Under the conductor (exec) it is the task field stepDir, <runDir>/steps/<key>/, outside
+// the write roots of the roles and new for every run (scripts/chain-run.js); the tasks file cannot set it. Without exec
+// (the Workflow) it is the task folder, as before.
 const TASKS = TASKS_IN.map((t) => Object.assign({}, t, {
   dir: t.dir || `${CFG.sharedDir}/${t.key}`, wt: abs(t.wt), gdir: t.gdir || t.wt, specs: specsOf(t),
+  sdir: typeof exec === 'function' && typeof t.stepDir === 'string' && t.stepDir ? t.stepDir : (t.dir || `${CFG.sharedDir}/${t.key}`),
 }))
 // Environment floors of the preconditions: config.js json gives preconditions {minFreeDiskGB, swapMinMB} from the machine
 // file (the defaults are explained in scripts/env-check.js); a config resolved before the machine file has minSwapGB.
@@ -207,6 +212,26 @@ const REVIEW_SCHEMA = { type: 'object', properties: {
 // failed check (ok=false or no result) is repeated once by the default model (label <label>#retry; config roleModels.wait
 // or roleModel when set) and the second
 // answer decides: the script gives the same answer again, so a real violation or real leftovers still stop the task.
+// Service steps as data (owner 2026-11-06, answer 1, translated: "a step must be a structured description of the
+// operation; without exec the present behaviour of the Workflow stays"). Each service step is built once as {kind, label, phase, effect, argv,
+// schema, noJson, wait?, stdoutField?, stampAt?, agent?}. Without the global exec (the Workflow runtime has none) the
+// script gives step.agent - the prompt and options of a cheap service agent - to agent(), as before. With exec (the
+// conductor, scripts/chain-run.js) it gives the step itself to exec(step), which runs argv as a process (no shell), takes
+// its JSON (or its trimmed output as the field stdoutField), checks it against schema and answers noJson with every
+// "$error" replaced by the error text when there is no answer; a step with wait runs wait.argv until its JSON says done.
+// The command line of the prompt is rendered from the same words (cmdLine), so prompt and argv never part: a word of
+// the command itself (program, script, subcommand, flag) is lit() and printed bare when it is a plain shell word; every
+// value is quoted by sq().
+// effect is the class of the step for the restart of a conductor (p-codex-B1-b): none - reads only (sha, diff, merge,
+// env); idempotent - a repeat is safe, its process may still live (left, post: they remove only the task's leftovers);
+// reuse - a detached step with an id of its own (run: wait-step.js; the selection and the train).
+const EXEC = typeof exec === 'function' ? exec : null
+const lit = (w) => ({ lit: String(w) })
+const PLAIN_WORD = /^[A-Za-z0-9_@%+=:,./-]+$/
+const argvOf = (ws) => ws.map((w) => (w && typeof w === 'object' ? w.lit : String(w)))
+const cmdLine = (ws) => ws.map((w) => (w && typeof w === 'object' && PLAIN_WORD.test(w.lit) ? w.lit : sq(w && typeof w === 'object' ? w.lit : w))).join(' ')
+const svc = (step) => (EXEC ? EXEC(step) : agent(step.agent.prompt, step.agent.opts))
+const node = (script) => [lit('node'), lit(`${SCRIPTS}/${script}`)]
 const checkOpts = (label, phase, schema, retry) => Object.assign({ label: retry ? `${label}#retry` : label, phase, schema, effort: 'low', agentType: 'general-purpose' },
   retry ? modelOf('wait') : { model: 'haiku' })
 async function checkTwice(t, what, passed, run) {
@@ -226,10 +251,14 @@ async function checkTwice(t, what, passed, run) {
 const FULL_SHA = /^([0-9a-f]{40}|[0-9a-f]{64})$/
 const ABBREV_SHA = /^[0-9a-fA-F]{4,64}$/
 const SHA_SCHEMA = { type: 'object', properties: { sha: { type: 'string' }, error: { type: 'string' } }, required: ['sha'] }
-const sha1 = (t, role, phase, h, retry) => agent(`Run one command and return what it prints as the schema field sha (change nothing, analyse nothing):
-git -C ${sq(t.wt)} rev-parse --verify -q ${sq(`${h}^{commit}`)}
-If it prints nothing or fails - sha = '', error = the error text or "no such commit".`,
-  checkOpts(`sha:${t.key}:${role}`, phase, SHA_SCHEMA, retry))
+const sha1 = (t, role, phase, h, retry) => {
+  const ws = [lit('git'), lit('-C'), t.wt, lit('rev-parse'), lit('--verify'), lit('-q'), `${h}^{commit}`]
+  const opts = checkOpts(`sha:${t.key}:${role}`, phase, SHA_SCHEMA, retry)
+  return svc({ kind: 'sha', label: opts.label, phase, effect: 'none', argv: argvOf(ws), schema: SHA_SCHEMA, stdoutField: 'sha', noJson: { sha: '', error: '$error' },
+    agent: { prompt: `Run one command and return what it prints as the schema field sha (change nothing, analyse nothing):
+${cmdLine(ws)}
+If it prints nothing or fails - sha = '', error = the error text or "no such commit".`, opts } })
+}
 async function fullHead(t, role, phase, h) {
   if (typeof h !== 'string' || FULL_SHA.test(h) || !ABBREV_SHA.test(h)) return h
   const good = (r) => !!(r && FULL_SHA.test(r.sha || '') && r.sha.startsWith(h.toLowerCase()))
@@ -243,17 +272,21 @@ async function fullHead(t, role, phase, h) {
 // every task stops before any agent (chain()), since the tester post-check could not tell a guard from product code.
 const TESTER_WRITABLE_MISSING = Array.isArray(CFG.testerWritable) && CFG.testerWritable.length ? ''
   : 'testerWritable is not set: the paths the tester may change (its guards and fixtures, as regular expressions, e.g. ["(^|/)tests/test_[^/]*\\.py$", "(^|/)tests/fixtures/"]) - set testerWritable in the project config (.claude/codis-agents.json); there is no default'
-const ALLOW = (CFG.testerWritable || []).map((r) => ` --allow ${sq(r)}`).join('')
-const diffCheck1 = (t, role, since, retry) => agent(`Run one command and return its JSON output as the schema fields (change nothing, analyse nothing):
-node ${SCRIPTS}/role-diff-check.js --wt ${t.wt} --since ${since} --role ${role}${role === 'tester' ? ALLOW : ''}
-If the command fails without JSON - ok=false, error = the error text.`,
-  checkOpts(`diff:${t.key}:${role}`, role === 'tester' ? 'Tester' : 'Reviewer', DIFF_SCHEMA, retry))
+const ALLOW = [].concat(...(CFG.testerWritable || []).map((r) => [lit('--allow'), r]))
+const diffCheck1 = (t, role, since, retry) => {
+  const ws = node('role-diff-check.js').concat([lit('--wt'), t.wt, lit('--since'), since, lit('--role'), lit(role)], role === 'tester' ? ALLOW : [])
+  const opts = checkOpts(`diff:${t.key}:${role}`, role === 'tester' ? 'Tester' : 'Reviewer', DIFF_SCHEMA, retry)
+  return svc({ kind: 'diff', label: opts.label, phase: opts.phase, effect: 'none', argv: argvOf(ws), schema: DIFF_SCHEMA, noJson: { ok: false, offending: [], error: '$error' },
+    agent: { prompt: `Run one command and return its JSON output as the schema fields (change nothing, analyse nothing):
+${cmdLine(ws)}
+If the command fails without JSON - ok=false, error = the error text.`, opts } })
+}
 const diffCheck = async (t, role, since) => (await checkTwice(t, role, (d) => !!(d && d.ok), (retry) => diffCheck1(t, role, since, retry))).res
 const diffFail = (role, d) => !d ? `the ${role} post-check returned no result`
   : !d.ok ? `the ${role} changed what the role may not: ${(d.offending || []).join(', ') || d.error || '?'}` : ''
 
 // Leftovers post-check: Docker resources of the task's stack (by label), processes in its worktree, the slots they hold.
-// --fix removes only those; what was removed goes into the task result and <dir>/leftovers.md, what remains stops it.
+// --fix removes only those; what was removed goes into the task result and <sdir>/leftovers.md, what remains stops it.
 const LEFT_SCHEMA = { type: 'object', properties: {
   ok: { type: 'boolean' }, found: { type: 'array', items: { type: 'string' } }, removed: { type: 'array', items: { type: 'string' } },
   remaining: { type: 'array', items: { type: 'string' } }, error: { type: 'string' },
@@ -262,12 +295,18 @@ const SLOTS_DIR = CFG.slots && CFG.slots.lockDir
 // A post-check agent sees only this text: without the context below it took --fix for a destructive step nobody asked
 // for and refused to run it (two refusals in one task, 2026-10-19), which stopped a task that had nothing left over.
 const LEFT_WHY = 'This is the leftovers post-check of the codis-agents process the project owner set up (rule "Docker" in rules/multi-agent.md): after the tester and at the end of every task it removes what this task itself left behind. --fix touches only Docker resources labelled with this task\'s own compose project, processes whose cwd or argv lie inside this task\'s worktree, and the slots they hold; the owner\'s stack is excluded by --owner-stack and is never touched. Running it is the expected step, not a decision for you to make.'
-const leftArgs = (t) => `${t.stack ? ` --stack ${sq(t.stack)}` : ''}${CFG.ownerStackReadOnly ? ` --owner-stack ${sq(CFG.ownerStackReadOnly)}` : ''}${SLOTS_DIR ? ` --slots-dir ${sq(SLOTS_DIR)}` : ''} --fix --log ${sq(`${t.dir}/leftovers.md`)}`
-const leftCheck1 = (t, when, retry) => agent(`${LEFT_WHY}
+const leftArgs = (t) => [].concat(t.stack ? [lit('--stack'), t.stack] : [], CFG.ownerStackReadOnly ? [lit('--owner-stack'), CFG.ownerStackReadOnly] : [],
+  SLOTS_DIR ? [lit('--slots-dir'), SLOTS_DIR] : [], [lit('--fix'), lit('--log'), `${t.sdir}/leftovers.md`])
+const LEFT_NOJSON = { ok: false, found: [], removed: [], remaining: ['$error'], error: '$error' }
+const leftCheck1 = (t, when, retry) => {
+  const ws = node('role-leftovers-check.js').concat([lit('--wt'), t.wt], leftArgs(t))
+  const opts = checkOpts(`left:${t.key}:${when}`, when === 'tester' ? 'Tester' : 'Reviewer', LEFT_SCHEMA, retry)
+  return svc({ kind: 'left', label: opts.label, phase: opts.phase, effect: 'idempotent', argv: argvOf(ws), schema: LEFT_SCHEMA, noJson: LEFT_NOJSON,
+    agent: { prompt: `${LEFT_WHY}
 Run one command and return its JSON output as the schema fields (change nothing else, analyse nothing):
-node ${SCRIPTS}/role-leftovers-check.js --wt ${t.wt}${leftArgs(t)}
-If the command fails without JSON - ok=false, error = the error text, remaining = [the error text].`,
-  checkOpts(`left:${t.key}:${when}`, when === 'tester' ? 'Tester' : 'Reviewer', LEFT_SCHEMA, retry))
+${cmdLine(ws)}
+If the command fails without JSON - ok=false, error = the error text, remaining = [the error text].`, opts } })
+}
 const leftPassed = (l) => !!(l && l.ok && !(l.remaining || []).length)
 // What a failed first attempt reports as removed was removed (--fix ran before the failure), so it is kept as well.
 const keepRemoved = (first, res) => {
@@ -285,11 +324,16 @@ const leftCheck = async (t, when) => {
 const POST_SCHEMA = { type: 'object', properties: {
   ok: { type: 'boolean' }, diff: DIFF_SCHEMA, left: LEFT_SCHEMA, error: { type: 'string' },
 }, required: ['diff', 'left'] }
-const postCheck1 = (t, since, retry) => agent(`${LEFT_WHY} The same command first runs the git post-check of the tester (role-diff-check.js: what the tester changed since the programmer's HEAD).
+const postCheck1 = (t, since, retry) => {
+  const ws = node('role-post-check.js').concat([lit('--wt'), t.wt, lit('--since'), since, lit('--role'), lit('tester')], ALLOW, leftArgs(t))
+  const opts = checkOpts(`post:${t.key}:tester`, 'Tester', POST_SCHEMA, retry)
+  return svc({ kind: 'post', label: opts.label, phase: 'Tester', effect: 'idempotent', argv: argvOf(ws), schema: POST_SCHEMA,
+    noJson: { ok: false, error: '$error', diff: { ok: false, offending: [], error: '$error' }, left: LEFT_NOJSON },
+    agent: { prompt: `${LEFT_WHY} The same command first runs the git post-check of the tester (role-diff-check.js: what the tester changed since the programmer's HEAD).
 Run one command and return its JSON output as the schema fields (change nothing else, analyse nothing):
-node ${SCRIPTS}/role-post-check.js --wt ${t.wt} --since ${since} --role tester${ALLOW}${leftArgs(t)}
-If the command fails without JSON - ok=false, error = the error text, diff = {ok: false, offending: [], error: the error text}, left = {ok: false, found: [], removed: [], remaining: [the error text], error: the error text}.`,
-  checkOpts(`post:${t.key}:tester`, 'Tester', POST_SCHEMA, retry))
+${cmdLine(ws)}
+If the command fails without JSON - ok=false, error = the error text, diff = {ok: false, offending: [], error: the error text}, left = {ok: false, found: [], removed: [], remaining: [the error text], error: the error text}.`, opts } })
+}
 const postPassed = (p) => !!(p && p.diff && p.diff.ok && leftPassed(p.left))
 const postCheck = async (t, since) => {
   const { first, res } = await checkTwice(t, 'tester and leftovers (tester)', postPassed, (retry) => postCheck1(t, since, retry))
@@ -320,15 +364,20 @@ const RUN_SCHEMA = { type: 'object', properties: {
   done: { type: 'boolean' }, rc: { type: ['number', 'null'] }, seconds: { type: 'number' }, log: { type: 'string' },
   tail: { type: 'string' }, alive: { type: 'boolean' }, pid: { type: 'number' }, error: { type: 'string' },
 }, required: ['done', 'rc', 'log'] }
+// In the steps folder of a run (sdir is not the task folder) an id names one step: --once refuses a second start of it,
+// and the retry of the same step passes --reuse.
 const runStep1 = (t, step, cmd, retry, phase = 'Selection') => {
-  const id = `${t.dir}/wait-${step}`
-  return agent(`This is a wait step of the codis-agents process the project owner set up: a long deterministic command runs in the background and you only wait for it, so that the role agents do not. Running it is the expected step, not a decision for you to make; change nothing, analyse nothing.
-1. Run once: node ${SCRIPTS}/wait-step.js start --id ${sq(id)} --cwd ${sq(t.wt)}${retry ? ' --reuse' : ''} -- ${sq(cmd)}
-2. Run: node ${SCRIPTS}/wait-step.js wait --id ${sq(id)} --max 270
+  const id = `${t.sdir}/wait-${step}`
+  const start = node('wait-step.js').concat([lit('start'), lit('--id'), id, lit('--cwd'), t.wt], retry ? [lit('--reuse')] : [], t.sdir !== t.dir ? [lit('--once')] : [], [lit('--'), cmd])
+  const wait = node('wait-step.js').concat([lit('wait'), lit('--id'), id, lit('--max'), lit(270)])
+  const opts = checkOpts(`run:${t.key}:${step}`, phase, RUN_SCHEMA, retry)
+  return svc({ kind: 'run', label: opts.label, phase, effect: 'reuse', argv: argvOf(start), wait: { id, argv: argvOf(wait) }, schema: RUN_SCHEMA,
+    noJson: { done: false, rc: null, log: `${id}.log`, error: '$error' }, agent: { prompt: `This is a wait step of the codis-agents process the project owner set up: a long deterministic command runs in the background and you only wait for it, so that the role agents do not. Running it is the expected step, not a decision for you to make; change nothing, analyse nothing.
+1. Run once: ${cmdLine(start)}
+2. Run: ${cmdLine(wait)}
    (Bash with timeout 300000 ms; it blocks up to 270 s and prints JSON). While the JSON says "done":false (the run is alive: "alive":true), run the same command 2 again, nothing else in between, whatever the tail, the queue position or the time that has passed: an unchanged tail, a long wait or a queue position that does not move is not a reason to stop - the run may wait hours for a memory slot, and wait-step itself ends a hung run at its deadline. Never run the command of step 1 twice.
 3. Return the schema only once the JSON says "done":true: its fields (done, rc, seconds, log, tail, alive, pid, error) exactly as printed - do not describe or judge the result. Never return "done":false yourself, except when a command printed no JSON:
-If a command fails without JSON - done=false, rc=null, log=${sq(id + '.log')}, error = the error text.`,
-  checkOpts(`run:${t.key}:${step}`, phase, RUN_SCHEMA, retry))
+If a command fails without JSON - done=false, rc=null, log=${sq(id + '.log')}, error = the error text.`, opts } })
 }
 const ranStep = (r) => !!(r && typeof r.rc === 'number')
 // Exit codes of the selection step that are the environment, not the product (p-wait D1; coordinator 2026-10-24): the
@@ -357,7 +406,7 @@ const runFail = (step, r) => (!r ? `the wait step ${step} returned no result`
 // selection overwrites it. It is never the log of a full run (guards-<name>.txt): the selection has its own file.
 const selectStep = async (t, n) => {
   const step = `select-${n}`
-  const copy = `${t.dir}/wait-${step}.guards.txt`
+  const copy = `${t.sdir}/wait-${step}.guards.txt`
   const r = await runStep(t, step, `${selectRun(t)}; rc=$?; cp ${sq(`${CFG.sharedDir}/guards-${gname(t)}.select.txt`)} ${sq(copy)} 2>/dev/null; exit $rc`)
   const f = runFail(step, r)
   return f ? { fail: f } : Object.assign({}, r, { guards: copy })
@@ -451,6 +500,23 @@ function priorOf(t, light) {
   return { prior: p }
 }
 const PRIOR_MECH = 'an earlier run (prior.mechanism)'
+// The entry in the middle of the chain (scripts/chain-resolve.js: a decision of resolve gives resumeAt and head, the
+// conductor checks the task against it and sets resumeSince): {resume: null | {at, head, since}} or {error}. Only under the
+// conductor (exec): the Workflow runtime has no resolve, so a task there starts from its beginning. tester - the tester
+// round on head (the programmer's commit); review - the tester's post-check from resumeSince (none in the light mode or
+// for a review repeated), then the review of head; train - the reviewer's post-check from resumeSince, then the ride.
+const RESUME_AT = ['tester', 'review', 'train']
+function resumeOf(t, light) {
+  const has = (k) => t[k] !== undefined
+  if (!has('resumeAt')) return has('head') ? { error: 'head without resumeAt: head names the commit the chain resumes on, it comes with resumeAt from a decision of resolve' } : { resume: null }
+  if (!EXEC) return { error: 'resumeAt is an entry of the conductor (scripts/chain-run.js, from a decision of resolve): under the Workflow runtime a task starts from its beginning - drop resumeAt and head' }
+  if (!RESUME_AT.includes(t.resumeAt)) return { error: `resumeAt must be one of ${RESUME_AT.join(', ')}, not ${JSON.stringify(t.resumeAt)}` }
+  if (typeof t.head !== 'string' || !FULL_SHA.test(t.head)) return { error: `resumeAt ${t.resumeAt} needs head, the full sha the chain resumes on, not ${JSON.stringify(t.head)}` }
+  if (t.analystFirst === true || t.useCasesFirst === true) return { error: 'resumeAt does not go with analystFirst or useCasesFirst: the entry in the middle skips the analyst' }
+  if (light && t.resumeAt !== 'review') return { error: `resumeAt ${t.resumeAt} in the light mode: a light task resumes only at the review (it has no tester; its train follows the review)` }
+  if (t.resumeAt === 'train' && !ONE_RUN) return { error: 'resumeAt train without guardSubsetCommand: there is no train' }
+  return { resume: { at: t.resumeAt, head: t.head, since: nonBlankS(t.resumeSince) ? t.resumeSince.trim() : '' } }
+}
 // The counts of a run, in the shape of prior (review 1 of p-testerred-route): every result of a task carries them, the
 // seed included, so the next run's prior is a copy and nobody recounts reds from test.md (cvm-wheel-c lost one that way).
 const countsOf = (st) => Object.assign({ testerReds: st.reds || 0, trainReds: st.trainReds || 0, rejections: st.rejections || 0 },
@@ -496,8 +562,25 @@ const preAnalysis = (t) => (t.an.mode === 'reused'
   : t.an.mode === 'none'
     ? ` the noAnalysis reason "${t.an.reason}" says why this task needs no matrix of its own (a tail, a one-line fix, a rename); "the arc specification covers it" is not such a reason;`
     : '')
-const pre = (t) => agent(`You check PRECONDITIONS (read only, change nothing). ${RULES(t)}
-Check: ${t.dir}/BRIEF.md exists and contains an acceptance scenario in the real environment;${preAnalysis(t)}${ONE_RUN && nonBlankS(t.base) ? ` the base ${t.base.trim()} is a branch of the repository: git -C ${sq(t.wt)} show-ref --verify --quiet ${sq(`refs/heads/${t.base.trim()}`)} exits 0 (the integration train moves that branch after a green ride; a commit or a missing branch fails);` : ''}${t.uc ? ` the use cases ${t.uc} exist, are non-empty and have no open questions to the owner left unanswered (they were reviewed with the owner);` : ''}${t.specs.length ? ` the arc specification ${t.specs.join(', ')} exists;` : ''} ${t.wt} exists and is on branch ${t.branch}; there are no uncommitted changes (except untracked build output or probes); the brief has no unanswered questions to the owner on which acceptance depends; the environment has room: run node ${SCRIPTS}/env-check.js --path ${sq(t.wt)} --path ${sq(t.dir)} --worktree ${sq(t.wt)} --min-disk-gb ${ENV.minFreeDiskGB} --min-swap-mb ${ENV.swapMinMB} (free disk and swap headroom; the worktree is not the main working copy of its repository) and copy its problems. ok=false if any of this fails.`,
+// The environment check of the preconditions (owner 2026-11-06, answer 3, translated: "the conductor checks the
+// preconditions; the role gets a structured result with the time of the check and its scope; a success of the check on
+// the host does not mean that the same capabilities are available inside the role's sandbox"). Under the Workflow the pre agent runs env-check.js itself; with
+// exec the conductor runs it first as the step env (its time stamped into checkedAt) and the pre prompt carries the
+// result with its scope instead of the command. A check that printed no JSON (exit 64, not started) stops the task
+// before pre: an unknown room is never passed on as checked.
+const ENV_SCHEMA = { type: 'object', properties: {
+  ok: { type: 'boolean' }, problems: { type: 'array', items: { type: 'string' } }, notes: { type: 'array', items: { type: 'string' } },
+  checkedAt: { type: 'string' }, error: { type: 'string' },
+}, required: ['ok', 'problems'] }
+const ENV_SCOPE = 'the host of the conductor, outside the sandbox of the role'
+const envWords = (t) => node('env-check.js').concat([lit('--path'), t.wt, lit('--path'), t.dir, lit('--worktree'), t.wt, lit('--min-disk-gb'), lit(ENV.minFreeDiskGB), lit('--min-swap-mb'), lit(ENV.swapMinMB)])
+const envStep = (t) => ({ kind: 'env', label: `env:${t.key}`, phase: 'Preconditions', effect: 'none', argv: argvOf(envWords(t)), schema: ENV_SCHEMA, stampAt: 'checkedAt',
+  noJson: { ok: false, problems: [], notes: [], error: '$error' } })
+const envLine = (t, env) => (env
+  ? ` the environment has room: the conductor ran ${cmdLine(envWords(t))} before you, on ${ENV_SCOPE}; its result: ${JSON.stringify({ ok: env.ok, problems: env.problems || [], notes: env.notes || [], checkedAt: env.checkedAt || null, scope: ENV_SCOPE, paths: [t.wt, t.dir], worktree: t.wt, floors: { minFreeDiskGB: ENV.minFreeDiskGB, swapMinMB: ENV.swapMinMB } })} - copy its problems and do not run it again; a success on the host does not mean the same room or capabilities inside the sandbox of a role.`
+  : ` the environment has room: run ${cmdLine(envWords(t))} (free disk and swap headroom; the worktree is not the main working copy of its repository) and copy its problems.`)
+const pre = (t, env) => agent(`You check PRECONDITIONS (read only, change nothing). ${RULES(t)}
+Check: ${t.dir}/BRIEF.md exists and contains an acceptance scenario in the real environment;${preAnalysis(t)}${ONE_RUN && nonBlankS(t.base) ? ` the base ${t.base.trim()} is a branch of the repository: git -C ${sq(t.wt)} show-ref --verify --quiet ${sq(`refs/heads/${t.base.trim()}`)} exits 0 (the integration train moves that branch after a green ride; a commit or a missing branch fails);` : ''}${t.uc ? ` the use cases ${t.uc} exist, are non-empty and have no open questions to the owner left unanswered (they were reviewed with the owner);` : ''}${t.specs.length ? ` the arc specification ${t.specs.join(', ')} exists;` : ''} ${t.wt} exists and is on branch ${t.branch}; there are no uncommitted changes (except untracked build output or probes); the brief has no unanswered questions to the owner on which acceptance depends;${envLine(t, env)} ok=false if any of this fails.`,
   Object.assign({ label: `pre:${t.key}`, phase: 'Preconditions', schema: PRE_SCHEMA, effort: 'low', agentType: 'general-purpose' }, modelOf('preconditions')))
 
 // The mechanism step (p-mechanism, owner 2026-11-01: "yes to the step 'challenge the mechanism'"; diagnosis mechanism-gap):
@@ -696,9 +779,12 @@ function testerRed(t, st, round, tr) {
   return null
 }
 
-async function buildAndTest(t, st, firstTask, tag, maxRounds) {
-  const s1 = await progStep(t, st, firstTask, `${tag}1`)
-  if (s1.fail) return s1
+// skipFirst: the entry at the tester (resumeAt tester): the first programmer round is the one a decision of resolve took.
+async function buildAndTest(t, st, firstTask, tag, maxRounds, skipFirst) {
+  if (!skipFirst) {
+    const s1 = await progStep(t, st, firstTask, `${tag}1`)
+    if (s1.fail) return s1
+  }
   for (let r = 1; r <= maxRounds; r++) {
     const x = await testChecked(t, st, `${tag}${r}`)
     if (x.fail) return x
@@ -783,15 +869,28 @@ async function chain(t0) {
   if (t0.prior !== undefined) seed = countsOf({ reds: pr.prior.testerReds, trainReds: pr.prior.trainReds, rejections: pr.prior.rejections, analyst: pr.prior.analyst, mechanism: pr.prior.mechanism })
   const bs = baseOf(t0)
   if (bs) return refuse(bs)
-  const t = Object.assign({}, t0, { kind: kd.kind, an, uc: uc.first ? '' : uc.path || '', ucFirst: uc.first ? uc.path : '', light: md.light })
+  const rs = resumeOf(t0, md.light)
+  if (rs.error) return refuse(rs.error)
+  const t = Object.assign({}, t0, { kind: kd.kind, an, uc: uc.first ? '' : uc.path || '', ucFirst: uc.first ? uc.path : '', light: md.light, resume: rs.resume })
   const withAn = (r) => Object.assign({}, r, { kind: kd.kind, analysis: an, counts: countsOf(st) }, nonBlank(t0.feature) ? { feature: t0.feature.trim() } : {}, md.light ? { mode: 'light' } : {},
     uc.path && !r.useCases ? { useCases: uc.path } : {})
   // The counters of the task start from the counts of its earlier runs (prior); without prior from zero, as before.
   const p0 = pr.prior
   const st = { head: '', leftovers: [], reds: p0.testerReds || 0, priorReds: p0.testerReds || 0, trainReds: p0.trainReds || 0,
     rejections: p0.rejections || 0, analyst: p0.analyst || '', mechanism: p0.mechanism ? PRIOR_MECH : '' }
+  // The conductor reads the counters of this task through the getter when it journals a step (scripts/chain-run.js); under
+  // the Workflow runtime there is no checkpoint.
+  if (typeof checkpoint === 'function') checkpoint(t.key, () => ({ counts: countsOf(st), head: st.head }))
   if (priorLine(p0)) log(`${t.title}: prior runs of the task - ${priorLine(p0)} (the counters start from them)`)
-  const pc = await pre(t)
+  let env = null
+  if (EXEC) {
+    env = await svc(envStep(t))
+    if (!env || env.error) {
+      const e = `the environment check could not run (${cmdLine(envWords(t))}): ${env ? env.error : 'no result'}`
+      return withAn(stop(t, `preconditions: ${e}`, { problems: [e], questions: [] }))
+    }
+  }
+  const pc = await pre(t, env)
   if (!pc) return withAn(stop(t, 'the precondition check returned no result'))
   if (!pc.ok || pc.blockingQuestions.length) return withAn(stop(t, 'preconditions', { problems: pc.problems, questions: pc.blockingQuestions }))
   const r = await work(t, st)
@@ -818,10 +917,18 @@ async function work(t, st) {
     if (!a.ready || a.split.length || a.questions.length) return stop(t, 'analyst: split the task or an answer is needed', { split: a.split, questions: a.questions, analyst: a.summary })
   } else log(t.an.mode === 'reused' ? `${t.title}: analyst reused - ${t.an.path}` : `${t.title}: no analyst - ${t.an.reason}`)
 
+  if (t.resume) {
+    const z = await resumeEntry(t, st)
+    if (z) return z
+  }
   if (t.light) return light(t, st)
-  const b = await buildAndTest(t, st, t.start || 'Start with red guards for the cells of the brief (and analyst.md, if any).', '', 3)
-  if (b.redAnalyst) return afterRedAnalyst(t, st, b)
-  if (b.fail) return stop(t, b.stopWhy || b.fail, b)
+  const at = t.resume ? t.resume.at : ''
+  if (at === 'train') return ride(t, st, RESUMED)
+  if (at !== 'review') {
+    const b = await buildAndTest(t, st, t.start || 'Start with red guards for the cells of the brief (and analyst.md, if any).', '', 3, at === 'tester')
+    if (b.redAnalyst) return afterRedAnalyst(t, st, b)
+    if (b.fail) return stop(t, b.stopWhy || b.fail, b)
+  }
   const rv = await reviewLoop(t, st, '')
   if (rv.ok) return ride(t, st, rv.ok.summary)
   if (rv.redAnalyst) return afterRedAnalyst(t, st, rv)
@@ -842,6 +949,26 @@ async function work(t, st) {
   const rv2 = await reviewLoop(t, st, 'A')
   if (rv2.ok) return ride(t, st, rv2.ok.summary)
   return stop(t, `after the analyst: ${rv2.fail}`, rv2)
+}
+
+// The entry in the middle (resumeOf): the head the decision names, then the post-check the chain runs before that point -
+// the tester's from resumeSince before the review (not in the light mode, which has no tester), the reviewer's before the
+// train. Red or no answer after its repeat stops the task, no role is called. null to go on.
+const RESUMED = 'resumed at the train by a decision of resolve (the review of the earlier run was done)'
+async function resumeEntry(t, st) {
+  const R = t.resume
+  st.head = R.head
+  log(`${t.title}: resumed at ${R.at} on ${R.head} (a decision of resolve)`)
+  if (R.at === 'review' && R.since && !t.light) {
+    const pc = await postCheck(t, R.since)
+    const f = diffFail('tester', pc && pc.diff) || leftFail(st, 'tester', pc && pc.left)
+    if (f) return stop(t, `at the entry of the review: ${f}`)
+  }
+  if (R.at === 'train') {
+    const f = diffFail('reviewer', await diffCheck(t, 'reviewer', R.since || R.head))
+    if (f) return stop(t, `at the entry of the train: ${f}`)
+  }
+  return null
 }
 
 // Second red tester round for the product -> analyst in the same run: a matrix of cases from the tester's findings
@@ -875,7 +1002,8 @@ async function redAnalystRound(t, st, x) {
 // with the proposal to relaunch in the full mode. Why: tasks of up to 100 lines of product took 2-2.6 h through the
 // chain against about 0.6 h in one session (measurement 2026-10-20).
 async function light(t, st) {
-  const s1 = await progStep(t, st, t.start || 'Start with red guards for the cells of the brief (and analyst.md, if any).', '1')
+  // resumeAt review (the only entry of a light task): the programmer's round is the one a decision of resolve took
+  const s1 = t.resume ? {} : await progStep(t, st, t.start || 'Start with red guards for the cells of the brief (and analyst.md, if any).', '1')
   if (s1.fail) return stop(t, s1.fail, s1)
   const x1 = await reviewChecked(t, st, '1')
   if (x1.fail) return stop(t, x1.fail, x1)
@@ -935,18 +1063,22 @@ const GUARD_GLOBS = Array.isArray(CFG.guardFiles) ? CFG.guardFiles.filter((g) =>
 const MERGE_SCHEMA = { type: 'object', properties: {
   mergeOnly: { type: 'boolean' }, reason: { type: 'string' }, files: { type: 'array', items: { type: 'string' } }, error: { type: 'string' },
 }, required: ['mergeOnly'] }
-const mergeCmd = (t, before, head) => `node ${SCRIPTS}/merge-only.js ${sq(before)} ${sq(head)} --base ${sq(String(t.base).trim())} --wt ${sq(t.wt)}${MERGE_GLOBS.map((g) => ` --files ${sq(g)}`).join('')}${GUARD_GLOBS.map((g) => ` --guards ${sq(g)}`).join('')}`
-const mergeOnly1 = (t, n, before, head, retry) => agent(`Run one command and return its JSON output as the schema fields (change nothing, analyse nothing):
-${mergeCmd(t, before, head)}
-Exit 0, 1 and 2 all print JSON: return its fields as printed. If it prints no JSON - mergeOnly=false, error = the error text.`,
-  checkOpts(`merge:${t.key}:${n}`, 'Train', MERGE_SCHEMA, retry))
+const mergeCmd = (t, before, head) => node('merge-only.js').concat([before, head, lit('--base'), String(t.base).trim(), lit('--wt'), t.wt], ...MERGE_GLOBS.map((g) => [lit('--files'), g]), ...GUARD_GLOBS.map((g) => [lit('--guards'), g]))
+const mergeOnly1 = (t, n, before, head, retry) => {
+  const ws = mergeCmd(t, before, head)
+  const opts = checkOpts(`merge:${t.key}:${n}`, 'Train', MERGE_SCHEMA, retry)
+  return svc({ kind: 'merge', label: opts.label, phase: 'Train', effect: 'none', argv: argvOf(ws), schema: MERGE_SCHEMA, noJson: { mergeOnly: false, error: '$error' },
+    agent: { prompt: `Run one command and return its JSON output as the schema fields (change nothing, analyse nothing):
+${cmdLine(ws)}
+Exit 0, 1 and 2 all print JSON: return its fields as printed. If it prints no JSON - mergeOnly=false, error = the error text.`, opts } })
+}
 const mergeAnswered = (r) => !!(r && typeof r.mergeOnly === 'boolean' && !r.error)
 async function mergeOnlyStep(t, n, before, head) {
   const { res } = await checkTwice(t, `merge-only check of ${before}..${head}`, mergeAnswered, (retry) => mergeOnly1(t, n, before, head, retry))
   return mergeAnswered(res) && res.mergeOnly === true ? res : null
 }
 const resultOf = (t, head) => `${CFG.sharedDir}/train/result/${t.key}-${head}.json`
-const rideCmd = (t, head) => `${CFG.configPath ? `CODIS_AGENTS_CONFIG=${sq(CFG.configPath)} ` : ''}node ${SCRIPTS}/train.js ride --task ${sq(t.key)} --branch ${sq(t.branch)} --head ${sq(head)} --base ${sq(String(t.base).trim())} --dir ${sq(t.dir)}`
+const rideCmd = (t, head) => `${CFG.configPath ? `CODIS_AGENTS_CONFIG=${sq(CFG.configPath)} ` : ''}node ${SCRIPTS}/train.js ride --task ${sq(t.key)} --branch ${sq(t.branch)} --head ${sq(head)} --base ${sq(String(t.base).trim())} --dir ${sq(t.sdir)}`
 const fixTail = (t) => (INNER
   ? 'Commit on the branch (a red guard first when none covers it, mutations after the commit); do not run the selection or a full run yourself: the workflow runs the selection on your new HEAD, then the second review of the diff, then the train again. If there is nothing to fix on the branch (a known or a stale guard), explain it in prog.md and commit nothing: the coordinator decides.'
   : t.light
@@ -981,7 +1113,7 @@ async function trainTester(t, st, n, v, res, before, extra) {
 }
 const trainTask = (t, v, res) => {
   const base = String(t.base).trim()
-  if (v === 'red') return `The integration train came back red for your branch (verdict red): read the result ${res} - its train log (log), the attribution log (attribution) and the guards red on the arc head ${base} + your branch alone (guards); copies of the logs are in ${t.dir}. Fix the red on the branch. ${fixTail(t)}`
+  if (v === 'red') return `The integration train came back red for your branch (verdict red): read the result ${res} - its train log (log), the attribution log (attribution) and the guards red on the arc head ${base} + your branch alone (guards); copies of the logs are in ${t.sdir}. Fix the red on the branch. ${fixTail(t)}`
   if (v === 'conflict') return `The integration train excluded your branch: merging it into the train conflicts (verdict conflict; the files are in ${res}, field files). Your fix: merge the head of the arc branch ${base} into your branch ${t.branch} and resolve the conflict, then check the guards of those files. ${fixTail(t)}${MERGE_GLOBS.length ? ` When every file you resolve matches mergeOnlyFiles (${MERGE_GLOBS.join(', ')}), commit the merge alone - one merge commit, no other edits and no other commits: the workflow then skips the selection (scripts/merge-only.js) and goes to the second review and the train.` : ''}`
   return `The integration train found a seam (verdict seam): your branch is green alone on the arc head but red together with its partner, named in ${res} (partner, partnerBranch; the guards in guards; partnerResult is the partner's own result - it arrived first and rode before you). Your fix: merge the head of the arc branch ${base} into your branch ${t.branch} (it holds the partner once partnerResult is green) and fix the seam with it on that head. ${fixTail(t)}`
 }
