@@ -451,6 +451,12 @@ const PROG1 = (key, extra) => Object.assign({ n: 1, stepKind: 'prog', label: `pr
   ok('Q2: no journal -> basis 0:-', (JSON.parse(x.stdout || '{}').commitsBasis) === '0:-', x.stdout + x.stderr);
 }
 
+// ---- the tester cells: tests/chain-resolve-tester-cases.js, a child with its own tally, so README keeps counting test files
+{
+  const tc = spawnSync(process.execPath, [path.join(__dirname, 'chain-resolve-tester-cases.js')], { encoding: 'utf8', timeout: 120000 });
+  ok('the tester cells of resolve (tests/chain-resolve-tester-cases.js) pass', tc.status === 0, `${tc.status} ${tc.signal || ''}\n${(tc.stdout || '').split('\n').filter((l) => /FAIL/.test(l)).join('\n')}${(tc.stderr || '').slice(-800)}`);
+}
+
 for (const c of procs) { try { c.kill('SIGKILL'); } catch { /* gone */ } }
 try { fs.rmSync(W, { recursive: true, force: true }); } catch { /* best effort */ }
 done();
