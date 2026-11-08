@@ -51,12 +51,15 @@ function mkRun(key, steps, o = {}) {
   CJ.writeAtomic(path.join(rd, 'run.json'), { runId: id, pid: cond.pid, lstart: cond.lstart, host: 'claude', tasks: [key] });
   CJ.writeAtomic(path.join(rd, 'tasks', `${key}.json`), o.ended ? { state: 'ended', result: { status: 'stopped' } } : { state: 'running' });
   const j = CJ.openJournal(rd, id, key);
+  // o.parallel: every intent and launch before the results (review || sec)
+  const result = (s) => { if (s.value !== undefined) j.append({ type: 'result', stepId: `${id}:${s.n}`, outcome: 'ok', value: s.value }); };
   for (const s of steps) {
     const stepId = `${id}:${s.n}`;
     j.append({ type: 'intent', stepId, n: s.n, kind: s.kind || 'agent', stepKind: s.stepKind, label: s.label, effect: s.effect || 'never', gated: s.kind !== 'exec', gitHead: s.gitHead || H, counts: s.counts || { testerReds: 0, trainReds: 0, rejections: 0 }, head: '' });
     if (s.launch !== false) j.append({ type: 'launch', stepId, gated: s.kind !== 'exec', pid: s.pid || DEAD.pid, pgid: null, lstart: s.lstart || DEAD.lstart });
-    if (s.value !== undefined) j.append({ type: 'result', stepId, outcome: 'ok', value: s.value });
+    if (!o.parallel) result(s);
   }
+  if (o.parallel) steps.forEach(result);
   if (o.end) j.append({ type: 'end', status: 'stopped', counts: o.end });
   return { id, rd };
 }
@@ -330,7 +333,7 @@ const PROG1 = (key, extra) => Object.assign({ n: 1, stepKind: 'prog', label: `pr
   const key = 'r13';
   const C = { testerReds: 0, trainReds: 0, rejections: 0 };
   const { rd } = mkRun(key, [{ n: 1, stepKind: 'review', label: `review:${key}#1`, counts: C, value: { verdict: 'done', docsOnly: false, summary: '' } },
-    { n: 2, stepKind: 'sec', label: `sec:${key}#1`, counts: C, value: { verdict: 'rejected', docsOnly: false, summary: '' } }]);
+    { n: 2, stepKind: 'sec', label: `sec:${key}#1`, counts: C, value: { verdict: 'rejected', docsOnly: false, summary: '' } }], { parallel: true });
   const b = R.basisOf(rd, key);
   let x = resolve(rd, key, ['--as', 'ran', '--step', '1', '--verdict', 'done', '--note', 'n', '--basis', b]);
   let sc = R.startCheck(RUNS, key, { key }, 'own', ctx(key));

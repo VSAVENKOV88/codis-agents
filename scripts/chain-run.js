@@ -100,6 +100,7 @@ const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const { createAgent, validate, realish, overlap, procOf } = require('./role-exec.js');
 const CJ = require('./chain-journal.js');
+const RS = require('./chain-resolve.js');
 
 const ROOT = path.join(__dirname, '..');
 const MAX_WAIT = 270;
@@ -185,6 +186,7 @@ function parseTasks(text) {
     if (keys.has(t.key.toLowerCase())) return { error: `two tasks have the key ${t.key}` };
     keys.add(t.key.toLowerCase());
     if (Object.prototype.hasOwnProperty.call(t, 'stepDir')) return { error: `task ${t.key}: the field stepDir is the conductor's (the steps folder of a run), a tasks file cannot set it` };
+    if (Object.prototype.hasOwnProperty.call(t, 'resumeSince')) return { error: `task ${t.key}: the field resumeSince is the conductor's (from the decision of resolve), a tasks file cannot set it` };
     for (const [k, x] of Object.entries(t)) {
       const fine = typeof x === 'string' || typeof x === 'boolean' || (Array.isArray(x) && x.every((y) => typeof y === 'string'))
         || (isPlain(x) && Object.values(x).every((y) => ['string', 'number', 'boolean'].includes(typeof y)));
@@ -470,7 +472,7 @@ const unrecordedText = (u) => (u.error ? `${u.error}, so nothing is known about 
 const lockFileOf = (runsDir, key) => path.join(runsDir, '.locks', `${key}.lock`);
 const stepDirOf = (runDir, key) => path.join(runDir, 'steps', key);
 const RUN_ID_RE = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
-const lockData = (me) => ({ pid: me.pid, lstart: me.lstart, runId: me.runId, takenAt: new Date().toISOString() });
+const lockData = (me) => Object.assign({ pid: me.pid, lstart: me.lstart, runId: me.runId, takenAt: new Date().toISOString() }, me.by ? { by: me.by } : {});
 // What keeps a lock from naming a run, or null.
 function lockProblem(d) {
   if (!isPlain(d)) return 'holds no lock';
@@ -501,7 +503,9 @@ function releaseLock(file, me) {
 // The refusal text of a reconciliation: undetermined, every reason, the notes, and what the task folder's calls say.
 function refusalText(rc, ctx) {
   const u = ctx && ctx.dir ? unrecordedCalls(ctx.dir) : null;
-  return `undetermined: ${rc.reasons.map((r) => (r.runId && !r.why.startsWith(`run ${r.runId},`) ? `run ${r.runId}: ${r.why}` : r.why)).join('; ')}${rc.notes.length ? `; also: ${rc.notes.join('; ')}` : ''}${u ? `; ${unrecordedText(u)}` : ''}`;
+  const runs = ctx && ctx.key ? [...new Set(rc.reasons.filter((r) => r.runDir).map((r) => r.runDir))] : [];
+  const basis = runs.length ? `; the basis to resolve on: ${runs.map((d) => `run ${path.basename(d)} ${RS.basisOf(d, ctx.key)}`).join(', ')}` : '';
+  return `undetermined: ${rc.reasons.map((r) => (r.runId && !r.why.startsWith(`run ${r.runId},`) ? `run ${r.runId}: ${r.why}` : r.why)).join('; ')}${rc.notes.length ? `; also: ${rc.notes.join('; ')}` : ''}${u ? `; ${unrecordedText(u)}` : ''}${basis}`;
 }
 // The takeover of a dead lock under its token: {ok, rc} | {why} | {retry} (the lock moved: take it again).
 function takeover(file, dead, me, check) {
@@ -602,7 +606,7 @@ function reconcile(runsDir, key, ownRunId, ctx) {
   for (const id of ids) {
     if (id === ownRunId) continue;
     const rd = path.join(runsDir, id);
-    const R = (why) => reasons.push({ runId: id, runDir: rd, why });
+    const R = (why, meta) => reasons.push(Object.assign({ runId: id, runDir: rd, why, kind: 'run' }, meta || {}));
     let st;
     try { st = fs.lstatSync(rd); } catch (e) { if (e.code !== 'ENOENT') R(`${rd} cannot be read: ${e.message}`); continue; }
     if (!st.isDirectory()) { notes.push(`${rd} is not a run folder`); continue; }
@@ -615,8 +619,8 @@ function reconcile(runsDir, key, ownRunId, ctx) {
     const c = { runId: id, wt: ctx && ctx.wt, dir: ctx && ctx.dir };
     if (running) {
       const cl = liveness({ pid: run.data.pid, lstart: run.data.lstart });
-      if (cl.state === 'alive') { R(`another conductor runs it: pid ${run.data.pid}, run ${id}, and its task is running (the lock of the task was removed by hand?)`); continue; }
-      if (cl.state === 'unknown') { R(`cannot tell whether conductor run ${id} (pid ${run.data.pid}) with the task running lives - ${cl.why}`); continue; }
+      if (cl.state === 'alive') { R(`another conductor runs it: pid ${run.data.pid}, run ${id}, and its task is running (the lock of the task was removed by hand?)`, { kind: 'live' }); continue; }
+      if (cl.state === 'unknown') { R(`cannot tell whether conductor run ${id} (pid ${run.data.pid}) with the task running lives - ${cl.why}`, { kind: 'live' }); continue; }
     }
     const jr = CJ.readJournal(rd, key);
     if (jr.error) { R(`${jr.error}; see ${path.join(rd, 'run.json')}`); continue; }
@@ -628,12 +632,12 @@ function reconcile(runsDir, key, ownRunId, ctx) {
     for (const tn of jr.torn) notes.push(`run ${id}: a torn tail of ${tn.bytes} bytes in ${tn.file} (no record)`);
     for (const step of Object.values(jr.state.open)) {
       const v = openStepVerdict(step, rd, key, c);
-      if (v.block) R(`${v.text}; see ${path.join(rd, 'run.json')}`); else notes.push(v.text);
+      if (v.block) R(`${v.text}; see ${path.join(rd, 'run.json')}`, { kind: 'open', n: step.n }); else notes.push(v.text);
     }
-    for (const v of jr.state.unaccounted || []) R(`the verdict of step ${v.n} ${v.label} is recorded (${v.outcome}: ${v.value}), but its use by the chain is not proven: no later step that carries a verdict and no end follow it`);
-    for (const v of jr.state.afterEnd || []) R(`the verdict of step ${v.n} ${v.label} came after its end (${v.outcome}: ${v.value}): the chain did not take it`);
+    for (const v of jr.state.unaccounted || []) R(`the verdict of step ${v.n} ${v.label} is recorded (${v.outcome}: ${v.value}), but its use by the chain is not proven: no later step that carries a verdict and no end follow it`, { kind: 'unaccounted', n: v.n });
+    for (const v of jr.state.afterEnd || []) R(`the verdict of step ${v.n} ${v.label} came after its end (${v.outcome}: ${v.value}): the chain did not take it`, { kind: 'afterEnd', n: v.n });
   }
-  return { reasons, notes };
+  return { reasons: RS.closeReasons(reasons, key, notes), notes };
 }
 
 const stopped = (key, why) => ({ task: key, status: 'stopped', why });
@@ -811,14 +815,19 @@ async function conduct(runDirArg) {
     if (!me.lstart) { block(t.key, 'the conductor cannot read its own start time (ps -o lstart): the lock of the task cannot name it'); continue; }
     try {
       fs.mkdirSync(dir, { recursive: true });
-      const ctx = { wt: table[t.key].wt, dir };
+      const ctx = { wt: table[t.key].wt, dir, key: t.key };
+      let sc = null;
       const got = acquireTask(runsDir, t.key, me, () => {
         const rc = reconcile(runsDir, t.key, req.runId, ctx);
+        // The decisions of resolve: the start follows their next (resumeAt, head, prior) - scripts/chain-resolve.js.
+        if (!rc.reasons.length) { sc = RS.startCheck(runsDir, t.key, t, req.runId, ctx); if (sc.why) rc.reasons.push({ why: `undetermined: ${sc.why}`, kind: 'start' }); }
         return Object.assign(rc, { text: rc.reasons.length ? refusalText(rc, ctx) : null });
       });
       if (!got.ok) { block(t.key, got.why); continue; }
       held.add(t.key);
       found[t.key] = { notes: got.rc.notes };
+      if (sc && sc.resumeSince) found[t.key].resumeSince = sc.resumeSince;
+      if (sc && sc.priorNote) { found[t.key].prior = sc.priorNote; note(`[${t.key}] prior: ${sc.priorNote}`); }
       if (got.took) note(`[${t.key}] took over the lock of dead conductor run ${got.took.runId} (pid ${got.took.pid})`);
       for (const n of got.rc.notes) note(`[${t.key}] reconcile: ${n}`);
       // The registration: the journal and the steps folder, then the record that makes the task part of this run.
@@ -870,7 +879,7 @@ async function conduct(runDirArg) {
       note(why);
       for (const t of runnable) { byKey[t.key] = stopped(t.key, why); endTask(t.key, byKey[t.key]); }
     } else {
-      const x = await runScript({ host: req.host, args: Object.assign({}, args, { tasks: runnable.map((t) => Object.assign({}, t, { stepDir: stepDirOf(runDir, t.key) })) }), adapter: req.adapter, callsDir: runDir,
+      const x = await runScript({ host: req.host, args: Object.assign({}, args, { tasks: runnable.map((t) => Object.assign({}, t, { stepDir: stepDirOf(runDir, t.key) }, found[t.key].resumeSince ? { resumeSince: found[t.key].resumeSince } : {})) }), adapter: req.adapter, callsDir: runDir,
         steps, note, log: (m) => note(`log ${m}`), onTaskEnd: endTask });
       threw = x.threw;
       runnable.forEach((t, i) => { byKey[t.key] = x.results[i] || stopped(t.key, 'the chain gave no result'); });
@@ -923,12 +932,14 @@ function snapshot(runDir) {
   const res = () => { const r = readJson(path.join(runDir, 'results.json')); return r && Array.isArray(r.results) ? r : null; };
   const req = readJson(path.join(runDir, 'request.json')) || {};
   const done = res();
-  if (done) return { state: 'finished', runId: done.runId, exitCode: done.exitCode, results: done.results };
+  const decided = (k) => ({ basis: RS.basisOf(runDir, k), resolved: (() => { const d = RS.decisionsOf(runDir, k); return d.list.concat(d.abort ? [d.abort] : []).map(RS.decisionLine); })() });
+  const keys0 = ((req.args && req.args.tasks) || []).map((t) => t.key);
+  if (done) return { state: 'finished', runId: done.runId, exitCode: done.exitCode, results: done.results, tasks: Object.fromEntries(keys0.map((k) => [k, decided(k)])) };
   const run = readJson(path.join(runDir, 'run.json'));
   // unknown counts as running: a conductor that cannot be told dead is not declared dead.
   const live = !!run && liveness({ pid: run.pid, lstart: run.lstart }).state !== 'gone';
   const again = live ? null : res();
-  if (again) return { state: 'finished', runId: again.runId, exitCode: again.exitCode, results: again.results };
+  if (again) return { state: 'finished', runId: again.runId, exitCode: again.exitCode, results: again.results, tasks: Object.fromEntries(keys0.map((k) => [k, decided(k)])) };
   const ls = logState(runDir);
   const keys = ((req.args && req.args.tasks) || []).map((t) => t.key);
   const table = req.args ? taskTable(req.args) : {};
@@ -940,7 +951,7 @@ function snapshot(runDir) {
     // The open steps come from the journal; without one (a run of an older version, damage), from the lines of the log.
     const open = jr.state ? Object.values(jr.state.open).map((x) => ({ stepId: x.stepId, label: x.label, since: x.at, effect: x.effect, pid: x.launch ? x.launch.pid : null, text: openStepText(x, ctx) }))
       : Object.entries(ls.open[k] || {}).map(([label, since]) => ({ label, since }));
-    tasks[k] = { state: st ? st.state : 'not taken', open, last: ls.last[k] || null };
+    tasks[k] = Object.assign({ state: st ? st.state : 'not taken', open, last: ls.last[k] || null }, decided(k));
     if (!jr.none) tasks[k].journal = { seq: jr.seq, snapshot: jr.snapshot, segments: jr.segments, torn: jr.torn, error: jr.error };
     if (!live && table[k]) {
       const u = unrecordedCalls(table[k].dir);
@@ -954,6 +965,7 @@ function snapshot(runDir) {
 }
 function status(argv) {
   const id = argv[0];
+  if (id === '--commits') return RS.statusCommits(argv);
   if (!id || id.startsWith('--')) usage('status <run-id|run folder>');
   const { a, bad } = flagsOf(argv.slice(1), { '--wait': 'wait', '--config': 'config' });
   if (bad) usage(bad);
@@ -976,12 +988,14 @@ function status(argv) {
   })();
 }
 
+// Before the command line: resolve (scripts/chain-resolve.js) takes these functions at call time.
+module.exports = { lockData, liveText, read3, openStepVerdict, lockFileOf, loadConfig, runDirOf, refusalText, makeSteps, stepExec, openStepText, stateRootProblem, runScript, makePipeline, taskTable, parseTasks, lstartOf, liveness, reconcile, acquireTask, unrecordedCalls, takeLock, releaseLock, execStep, hookGate, adapterCfg, logState, CAUSE_KNOWN, MAX_WAIT };
+
 if (require.main === module) {
   const [cmd, ...rest] = process.argv.slice(2);
   if (cmd === 'start') start(rest);
   else if (cmd === 'status') status(rest);
+  else if (cmd === 'resolve') RS.main(rest);
   else if (cmd === 'run' && rest.length === 1) conduct(path.resolve(rest[0])).catch((e) => { process.stderr.write(`chain-run: the conductor failed: ${e.stack}\n`); process.exit(4); });
   else usage(`unknown command ${JSON.stringify(cmd)}`);
 }
-
-module.exports = { makeSteps, stepExec, openStepText, stateRootProblem, runScript, makePipeline, taskTable, parseTasks, lstartOf, liveness, reconcile, acquireTask, unrecordedCalls, takeLock, releaseLock, execStep, hookGate, adapterCfg, logState, CAUSE_KNOWN, MAX_WAIT };

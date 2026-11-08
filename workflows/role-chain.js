@@ -500,6 +500,23 @@ function priorOf(t, light) {
   return { prior: p }
 }
 const PRIOR_MECH = 'an earlier run (prior.mechanism)'
+// The entry in the middle of the chain (scripts/chain-resolve.js: a decision of resolve gives resumeAt and head, the
+// conductor checks the task against it and sets resumeSince): {resume: null | {at, head, since}} or {error}. Only under the
+// conductor (exec): the Workflow runtime has no resolve, so a task there starts from its beginning. tester - the tester
+// round on head (the programmer's commit); review - the tester's post-check from resumeSince (none in the light mode or
+// for a review repeated), then the review of head; train - the reviewer's post-check from resumeSince, then the ride.
+const RESUME_AT = ['tester', 'review', 'train']
+function resumeOf(t, light) {
+  const has = (k) => t[k] !== undefined
+  if (!has('resumeAt')) return has('head') ? { error: 'head without resumeAt: head names the commit the chain resumes on, it comes with resumeAt from a decision of resolve' } : { resume: null }
+  if (!EXEC) return { error: 'resumeAt is an entry of the conductor (scripts/chain-run.js, from a decision of resolve): under the Workflow runtime a task starts from its beginning - drop resumeAt and head' }
+  if (!RESUME_AT.includes(t.resumeAt)) return { error: `resumeAt must be one of ${RESUME_AT.join(', ')}, not ${JSON.stringify(t.resumeAt)}` }
+  if (typeof t.head !== 'string' || !FULL_SHA.test(t.head)) return { error: `resumeAt ${t.resumeAt} needs head, the full sha the chain resumes on, not ${JSON.stringify(t.head)}` }
+  if (t.analystFirst === true || t.useCasesFirst === true) return { error: 'resumeAt does not go with analystFirst or useCasesFirst: the entry in the middle skips the analyst' }
+  if (light && t.resumeAt !== 'review') return { error: `resumeAt ${t.resumeAt} in the light mode: a light task resumes only at the review (it has no tester; its train follows the review)` }
+  if (t.resumeAt === 'train' && !ONE_RUN) return { error: 'resumeAt train without guardSubsetCommand: there is no train' }
+  return { resume: { at: t.resumeAt, head: t.head, since: nonBlankS(t.resumeSince) ? t.resumeSince.trim() : '' } }
+}
 // The counts of a run, in the shape of prior (review 1 of p-testerred-route): every result of a task carries them, the
 // seed included, so the next run's prior is a copy and nobody recounts reds from test.md (cvm-wheel-c lost one that way).
 const countsOf = (st) => Object.assign({ testerReds: st.reds || 0, trainReds: st.trainReds || 0, rejections: st.rejections || 0 },
@@ -762,9 +779,12 @@ function testerRed(t, st, round, tr) {
   return null
 }
 
-async function buildAndTest(t, st, firstTask, tag, maxRounds) {
-  const s1 = await progStep(t, st, firstTask, `${tag}1`)
-  if (s1.fail) return s1
+// skipFirst: the entry at the tester (resumeAt tester): the first programmer round is the one a decision of resolve took.
+async function buildAndTest(t, st, firstTask, tag, maxRounds, skipFirst) {
+  if (!skipFirst) {
+    const s1 = await progStep(t, st, firstTask, `${tag}1`)
+    if (s1.fail) return s1
+  }
   for (let r = 1; r <= maxRounds; r++) {
     const x = await testChecked(t, st, `${tag}${r}`)
     if (x.fail) return x
@@ -849,7 +869,9 @@ async function chain(t0) {
   if (t0.prior !== undefined) seed = countsOf({ reds: pr.prior.testerReds, trainReds: pr.prior.trainReds, rejections: pr.prior.rejections, analyst: pr.prior.analyst, mechanism: pr.prior.mechanism })
   const bs = baseOf(t0)
   if (bs) return refuse(bs)
-  const t = Object.assign({}, t0, { kind: kd.kind, an, uc: uc.first ? '' : uc.path || '', ucFirst: uc.first ? uc.path : '', light: md.light })
+  const rs = resumeOf(t0, md.light)
+  if (rs.error) return refuse(rs.error)
+  const t = Object.assign({}, t0, { kind: kd.kind, an, uc: uc.first ? '' : uc.path || '', ucFirst: uc.first ? uc.path : '', light: md.light, resume: rs.resume })
   const withAn = (r) => Object.assign({}, r, { kind: kd.kind, analysis: an, counts: countsOf(st) }, nonBlank(t0.feature) ? { feature: t0.feature.trim() } : {}, md.light ? { mode: 'light' } : {},
     uc.path && !r.useCases ? { useCases: uc.path } : {})
   // The counters of the task start from the counts of its earlier runs (prior); without prior from zero, as before.
@@ -895,10 +917,18 @@ async function work(t, st) {
     if (!a.ready || a.split.length || a.questions.length) return stop(t, 'analyst: split the task or an answer is needed', { split: a.split, questions: a.questions, analyst: a.summary })
   } else log(t.an.mode === 'reused' ? `${t.title}: analyst reused - ${t.an.path}` : `${t.title}: no analyst - ${t.an.reason}`)
 
+  if (t.resume) {
+    const z = await resumeEntry(t, st)
+    if (z) return z
+  }
   if (t.light) return light(t, st)
-  const b = await buildAndTest(t, st, t.start || 'Start with red guards for the cells of the brief (and analyst.md, if any).', '', 3)
-  if (b.redAnalyst) return afterRedAnalyst(t, st, b)
-  if (b.fail) return stop(t, b.stopWhy || b.fail, b)
+  const at = t.resume ? t.resume.at : ''
+  if (at === 'train') return ride(t, st, RESUMED)
+  if (at !== 'review') {
+    const b = await buildAndTest(t, st, t.start || 'Start with red guards for the cells of the brief (and analyst.md, if any).', '', 3, at === 'tester')
+    if (b.redAnalyst) return afterRedAnalyst(t, st, b)
+    if (b.fail) return stop(t, b.stopWhy || b.fail, b)
+  }
   const rv = await reviewLoop(t, st, '')
   if (rv.ok) return ride(t, st, rv.ok.summary)
   if (rv.redAnalyst) return afterRedAnalyst(t, st, rv)
@@ -919,6 +949,26 @@ async function work(t, st) {
   const rv2 = await reviewLoop(t, st, 'A')
   if (rv2.ok) return ride(t, st, rv2.ok.summary)
   return stop(t, `after the analyst: ${rv2.fail}`, rv2)
+}
+
+// The entry in the middle (resumeOf): the head the decision names, then the post-check the chain runs before that point -
+// the tester's from resumeSince before the review (not in the light mode, which has no tester), the reviewer's before the
+// train. Red or no answer after its repeat stops the task, no role is called. null to go on.
+const RESUMED = 'resumed at the train by a decision of resolve (the review of the earlier run was done)'
+async function resumeEntry(t, st) {
+  const R = t.resume
+  st.head = R.head
+  log(`${t.title}: resumed at ${R.at} on ${R.head} (a decision of resolve)`)
+  if (R.at === 'review' && R.since && !t.light) {
+    const pc = await postCheck(t, R.since)
+    const f = diffFail('tester', pc && pc.diff) || leftFail(st, 'tester', pc && pc.left)
+    if (f) return stop(t, `at the entry of the review: ${f}`)
+  }
+  if (R.at === 'train') {
+    const f = diffFail('reviewer', await diffCheck(t, 'reviewer', R.since || R.head))
+    if (f) return stop(t, `at the entry of the train: ${f}`)
+  }
+  return null
 }
 
 // Second red tester round for the product -> analyst in the same run: a matrix of cases from the tester's findings
@@ -952,7 +1002,8 @@ async function redAnalystRound(t, st, x) {
 // with the proposal to relaunch in the full mode. Why: tasks of up to 100 lines of product took 2-2.6 h through the
 // chain against about 0.6 h in one session (measurement 2026-10-20).
 async function light(t, st) {
-  const s1 = await progStep(t, st, t.start || 'Start with red guards for the cells of the brief (and analyst.md, if any).', '1')
+  // resumeAt review (the only entry of a light task): the programmer's round is the one a decision of resolve took
+  const s1 = t.resume ? {} : await progStep(t, st, t.start || 'Start with red guards for the cells of the brief (and analyst.md, if any).', '1')
   if (s1.fail) return stop(t, s1.fail, s1)
   const x1 = await reviewChecked(t, st, '1')
   if (x1.fail) return stop(t, x1.fail, x1)

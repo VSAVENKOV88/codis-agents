@@ -51,9 +51,9 @@ async function run(script, task, cfg = CFG, withExec = true) {
   ok('Z1: resumeAt tester -> no programmer, tester then review, done', x.r.status === 'done' && !/prog/.test(x.trace) && /test.*review/.test(x.trace), x.trace);
   ok('Z1: the tester post-check runs from the head given', x.since.includes(`post:${HP}`), JSON.stringify(x.since));
 
-  x = await run({ pre: [PRE], test: [{ verdict: 'red', head: HB, summary: 'r' }], prog: [PROG], analyst: [{ ready: true, cells: 1, subsystems: 1, split: [], questions: [], summary: 'a', mechanismOrCells: 'cells' }] },
+  x = await run({ pre: [PRE], test: [{ verdict: 'red', head: HB, summary: 'r' }, { verdict: 'green', head: HB, summary: '' }], review: [{ verdict: 'done', docsOnly: false, summary: '' }], prog: [PROG], analyst: [{ ready: true, cells: 1, subsystems: 1, split: [], questions: [], summary: 'a', mechanismOrCells: 'cells' }] },
     Object.assign({}, T, { resumeAt: 'tester', head: HP, prior: { testerReds: 1 } }));
-  ok('Z1: the second red tester round after the entry goes to the analyst (prior counted)', /test>analyst/.test(x.trace), x.trace);
+  ok('Z1: the second red tester round after the entry goes to the analyst (prior counted)', /test>(post:x:tester>)?analyst/.test(x.trace) && !/prog.*test>(post:x:tester>)?analyst/.test(x.trace), x.trace);
 
   x = await run({ pre: [PRE], review: [{ verdict: 'done', docsOnly: false, summary: '' }] },
     Object.assign({}, T, { resumeAt: 'review', head: HB, resumeSince: HP }));
