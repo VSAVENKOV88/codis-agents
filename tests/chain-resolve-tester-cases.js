@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 'use strict';
 // The tester cells of resolve (p-codex-B1-b2b), a child of tests/chain-resolve.test.js with its own tally:
 // T1 (Q1) the commits journal resolved by `chain-run.js resolve --commits` is opened by the real adapter
