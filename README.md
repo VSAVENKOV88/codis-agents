@@ -745,7 +745,8 @@ pid only - never to its group, never to a pid of 1 or less - and waits for nothi
 
 On its first SIGTERM, SIGINT or SIGHUP the conductor writes `stopping <SIG>` into `log.txt` and from then on starts
 nothing: no role, service step, hook check or wait client, and no new intent in any journal. A live role gets SIGTERM
-to its group and SIGKILL after the pause of the adapter (30 s), its call ends `signalled`; a running service step
+to its group and SIGKILL after the pause of the adapter (30 s), its call ends `signalled` (the chain never reads its
+missing answer as an outcome of the task, at any role, the precondition check included); a running service step
 without a wait (a post-check, the sha of a head) ends and its result is recorded; a running wait step (the selection,
 the train) is left open - its detached run lives on, its client is not waited for. A later signal changes nothing (the
 log names it ignored). Every task not ended gets the result `{status: "stopped", why: "signalled: <SIG> (chain-run.js

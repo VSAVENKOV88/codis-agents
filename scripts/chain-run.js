@@ -783,6 +783,10 @@ async function runScript(o) {
         steps.end(key, stepId, { outcome: r.outcome || null, value: v, rc: r.rc, signal: r.signal, error: r.error, callDir: r.callDir, seconds });
         if (r.outcome === 'not-registered') throw new Error(`journal/run-state not written: ${r.error}`);
       }
+      // A role that gives no answer while the conductor stops was interrupted by the stop: the chain gets StopError, not
+      // null, so no path of role-chain.js turns the interrupt into a product outcome ("... returned no result") before
+      // its next gate. The step is already closed in the journal with its outcome.
+      if (v === null && STOP.sig) throw new StopError(STOP.sig);
       return v;
     };
     const src = fs.readFileSync(path.join(o.pluginRoot || ROOT, 'workflows', 'role-chain.js'), 'utf8').replace(/^export const meta/m, 'const meta');
