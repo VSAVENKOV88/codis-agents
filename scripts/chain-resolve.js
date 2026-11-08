@@ -31,8 +31,8 @@
 // The start (startCheck, called by the conductor under the lock after the reconciliation passed): when the newest run of
 // the task has decisions, the task must carry their next - resumeAt, head, prior equal to next.counts - or, after abort,
 // priorReason and no resumeAt; a next "done" refuses. Without decisions prior must equal the counts of the newest
-// journal. A prior that differs passes only with priorReason, which is kept with both sets. After any decision the
-// worktree has no tracked change and the head of next is an ancestor of HEAD.
+// journal. A prior that differs passes only with priorReason, which is kept with both sets. After a decision ran or
+// retry the worktree has no tracked change and the head of next is an ancestor of HEAD; after abort neither is checked.
 //
 // The commits journal of the adapter (scripts/commit-service.js, <commit.stateDir>/<task>/commits.jsonl): an
 // undetermined request is closed by two lines under journal.lock, {ev: resolved} and {ev: result, resolved: true};
