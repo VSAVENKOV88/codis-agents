@@ -8,7 +8,10 @@
 //      precondition role never starts, the task ends signalled;
 //   T3 a stop of a light-mode task while its programmer-checker runs: the result of a signal;
 //   T4 stop by its run id with --config (not by the folder): exit 0, the conductor stops;
-//   T5 a SIGINT after the first SIGTERM: the exit stays 143, the second one is named ignored.
+//   T5 a SIGINT after the first SIGTERM: the exit stays 143, the second one is named ignored;
+//   T6 review and security review at once, the review ends on SIGTERM and the security review ignores it: the conductor
+//      exits only after the second role is gone (SIGKILL to its group after the pause), both calls end signalled in the
+//      journal, no role process outlives the conductor (UC-6 steps 1 and 3).
 // Everywhere: after the log line "stopping <SIG>" no "started" line and no intent; end is the last line of the journal.
 // No model is called (the fake claude of tests/fixtures/chain-run/bin); every process runs under
 // tests/fixtures/chain-run/kill-hook.js, a signal reaches only the pid of the conductor a test names (=<pid>) and the
@@ -172,6 +175,28 @@ const signalled = (res, sig) => res.status === 'stopped' && res.signal === sig &
     res = resultOf(A, 't4');
     ok('T5 a SIGINT after SIGTERM: the exit stays 143, results.json 143, the SIGINT named ignored', x.code === 143 && (readJson(path.join(A.dir, 'results.json')) || {}).exitCode === 143
       && signalled(res, 'SIGTERM') && logLines(A).some((l) => / signal SIGINT ignored: stopping since SIGTERM$/.test(l)), JSON.stringify(x) + logLines(A).slice(-6).join(' | '));
+
+    // ---- T6: review and security review at once, the review ends on SIGTERM, the security review ignores it: the
+    // conductor waits for the second role (SIGKILL after the pause) before results.json and its exit; no role outlives it
+    fd = fake({ reviewer: [{ $sleep: 120, then: DONE }], 'security-reviewer': [{ $ignoreTerm: true, $sleep: 120, then: DONE }] });
+    A = conduct([task('t6', { security: true })], { fd });
+    await until(() => starts(fd, 'reviewer').length && starts(fd, 'security-reviewer').length, 120000);
+    const secPid = (starts(fd, 'security-reviewer')[0] || {}).pid;
+    allow(A);
+    s = cli(['stop', A.dir]);
+    x = await A.exit;
+    let secAlive = false;
+    try { process.kill(secPid, 0); secAlive = true; } catch { /* gone */ }
+    const kl = text(KLOG).split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return {}; } });
+    const secKill = kl.find((l) => l.pid === -secPid && l.sig === 'SIGKILL');
+    const rs = jlines(A, 't6').filter((l) => l.type === 'result');
+    res = resultOf(A, 't6');
+    ok('T6 two roles, one ignores SIGTERM: the security review does not outlive the conductor (SIGKILL sent to its group before the exit)', s.code === 0 && x.code === 143 && !!secPid && !secAlive && !!secKill,
+      JSON.stringify({ x, secPid, secAlive, secKill }));
+    ok('T6 both role calls recorded signalled in the journal, the task ends with the result of a signal', rs.filter((l) => l.outcome === 'signalled').length === 2 && signalled(res, 'SIGTERM'),
+      JSON.stringify(rs.map((l) => l.outcome)) + JSON.stringify(res));
+    inv = invariant(A, 't6', 'SIGTERM');
+    ok('T6 invariant (end is the last journal line, no result after it)', !inv, inv);
   } catch (e) {
     ok('the tester cells ran to their end', false, e.stack);
   } finally {
