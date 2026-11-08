@@ -325,6 +325,14 @@ const PROG1 = (key, extra) => Object.assign({ n: 1, stepKind: 'prog', label: `pr
   x = resolve(rd, key, ['--as', 'abort', '--note', 'n', '--basis', b]);
   ok('R12: a dead lock of a run without its folder -> refused, cleanup by hand', x.status !== 0 && /by hand/.test(x.stderr) && fs.existsSync(lock), x.stderr);
   fs.rmSync(lock);
+  // a resolve that dies holding the lock (its release never runs) leaves a lock that names the target run, by resolve
+  const r2 = mkRun(key, [PROG1(key)]);
+  const realRelease = CRM.releaseLock;
+  CRM.releaseLock = () => {};
+  let left = null;
+  try { R.resolveRun({ runDir: r2.rd, key, as: 'retry', n: 1, basis: R.basisOf(r2.rd, key), note: 'n' }); left = JSON.parse(fs.readFileSync(lock, 'utf8')); } finally { CRM.releaseLock = realRelease; }
+  ok('R11: a resolve killed with the lock leaves it naming the target run (by resolve), whose folder exists', left && left.runId === r2.id && left.by === 'resolve', JSON.stringify(left));
+  fs.rmSync(lock, { force: true });
   clean(key);
 }
 
