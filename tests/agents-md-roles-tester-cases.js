@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 'use strict';
 // The tester's cells around p-codex-D3-3 (project rules for roles on Codex, the freshness of AGENTS.md in the chain)
 // that tests/agents-md-roles.test.js does not hold; that test runs this file as a child. Synthetic projects and homes only; no model and no real Codex.
