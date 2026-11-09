@@ -372,5 +372,13 @@ const REVIEW_OK = { verdict: 'done', docsOnly: false, fixBehaviourUnchanged: nul
     a = await ask(f, () => {});
     ok('S9 the main checkout as the worktree: <wt>/.git/hooks is no write place of the role, committed as in 0.4.36', a && a.status === 'committed', J(a));
   }
+
+  // the tester cells (links to the worktree and the task folder, the reading kinds, the npm cache by any case and in a
+  // launcher's plan, a stateDir holding a root, S9 corners, head of 7 digits, no answer): a child with its own tally, so
+  // README keeps counting test files
+  {
+    const tc = spawnSync(process.execPath, [path.join(__dirname, 'role-exec-codex-roles-tester-cases.js')], { encoding: 'utf8', timeout: 240000 });
+    ok('the tester cells of prog/test on codex (tests/role-exec-codex-roles-tester-cases.js) pass', tc.status === 0, `exit ${tc.status} ${tc.signal || ''} ${(tc.stdout || '').split('\n').filter((l) => /FAIL/.test(l)).join('\n').slice(-1500)} ${(tc.stderr || '').slice(-500)}`);
+  }
   done();
 })().catch((e) => { ok('the test ran to its end', false, e && e.stack); done(); });
