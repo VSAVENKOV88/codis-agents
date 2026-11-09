@@ -458,7 +458,7 @@ const underAny = (p, roots) => roots.some((r) => p === r || p.startsWith(r + pat
     const f = fixture({ main, hooks: {}, under: TMP_BASE });
     f.canary = path.join(BASE, `canary-ev08-${fixN}`);
     f.state = path.join(BASE, `state-ev08-${fixN}`);
-    // the hooks folder outside tmp: a hooks folder the role can write refuses every request (role-exec-codex-roles S9)
+    // the hooks folder outside tmp: an untracked hooks folder the role can write refuses every request (H5)
     f.hooks = path.join(BASE, `hooks-ev08-${fixN}`);
     fs.mkdirSync(f.canary, { recursive: true });
     const ssh = path.join(f.canary, 'ssh', 'id_rsa');
@@ -527,8 +527,8 @@ const underAny = (p, roots) => roots.some((r) => p === r || p.startsWith(r + pat
     fs.writeFileSync(path.join(f.wt, 'a.txt'), 'x\n');
     const a = await answer(s, ask(s, ['a.txt']));
     const m = f.mark('pre-commit');
-    ok('EV-12/EV-13 a relative core.hooksPath inside the worktree (a hook the role wrote): refused before any hook, the folder is a write place of the role',
-      a && a.status === 'refused' && /hooks folder \S+my-hooks lies in the role's write places/.test(a.why) && !m && !fs.existsSync(outside) && f.tip() === f.h0, J({ a, m }));
+    ok('EV-12/EV-13 a relative core.hooksPath inside the worktree (a hook the role wrote, untracked): refused before any hook, the folder is a write place of the role the tip does not track',
+      a && a.status === 'refused' && /hooks folder \S+my-hooks is not tracked in [0-9a-f]+ inside the role's write roots/.test(a.why) && !m && !fs.existsSync(outside) && f.tip() === f.h0, J({ a, m }));
     await s.close();
   }
   {
@@ -786,6 +786,20 @@ agent('x',{label:'prog:K#1',schema:{type:'object',properties:{status:{type:'stri
     await sleep(300);
     ok('MA-07 a setsid daemon of a hook and SIGKILL of the adapter: the leftovers check finds it by its cwd in the worktree and removes it',
       before && !alive(dpid), J({ before, dpid, out: lc.stdout.slice(0, 800) }));
+  }
+  // ---- H1-H9 (p-codex A2a-3b): the hooks folder of a check against the tip at the start of the call:
+  // tests/commit-hooks-place-cases.js, a child with its own tally, so README keeps counting test files
+  {
+    const hp = spawnSync(process.execPath, [path.join(__dirname, 'commit-hooks-place-cases.js')], { encoding: 'utf8', timeout: 300000 });
+    process.stdout.write((hp.stdout || '').replace(/\n+$/, '').replace(/^/gm, '  | ') + '\n');
+    ok('the cells of the hooks folder against the tip (tests/commit-hooks-place-cases.js) pass', hp.status === 0, `exit ${hp.status} ${hp.signal || ''} ${(hp.stderr || '').slice(-500)}`);
+  }
+  // ---- the tester's cells of the hooks folder (the second pass, a second request, case, links, the global config, P0
+  // unknown, the limit of the walk): tests/commit-hooks-place-tester-cases.js, a child with its own tally
+  {
+    const hp = spawnSync(process.execPath, [path.join(__dirname, 'commit-hooks-place-tester-cases.js')], { encoding: 'utf8', timeout: 300000 });
+    process.stdout.write((hp.stdout || '').replace(/\n+$/, '').replace(/^/gm, '  | ') + '\n');
+    ok('the tester\'s cells of the hooks folder against the tip (tests/commit-hooks-place-tester-cases.js) pass', hp.status === 0, `exit ${hp.status} ${hp.signal || ''} ${(hp.stderr || '').slice(-500)}`);
   }
   // ---- the tester's cells (the order and set of the hooks, the message after stripspace, LANG/LC_ALL, nothing to
   // commit, mode and recreation of a named path, close with a queued request, non-executable hooks):

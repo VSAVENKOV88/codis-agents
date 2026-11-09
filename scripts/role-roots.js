@@ -1,7 +1,7 @@
 'use strict';
 // The places a role on the codex host writes, in one function for every consumer (p-codex A2a-3a, cell S4): the argv of
 // prog and test (scripts/role-exec.js), the check of commit.stateDir (role-exec.js createAgent), the write roots of the
-// profile of a commit check and the refusal of a hooks folder in the role's reach (scripts/commit-service.js). A root
+// profile of a commit check and the compare of a hooks folder in the role's reach with the tip (scripts/commit-service.js). A root
 // added or dropped here changes all of them at once.
 const fs = require('fs');
 const path = require('path');
