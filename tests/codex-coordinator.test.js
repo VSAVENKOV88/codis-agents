@@ -156,8 +156,14 @@ ok('G4 every such command of a Codex block matches a rule (a plain argv, the lit
 ok('G4 no variable, nohup, redirection, pipe or & in those commands', !spans.some(special), spans.filter(special).join(' | '));
 // L7*
 ok('L7* coordinator, Claude Code: train.js watch in the background with run_in_background', /train\.js[^.]*watch[^.]*run_in_background/.test(coClaude), coClaude.slice(0, 400));
-ok('L7* coordinator, Codex: train.js watch --detach (prints {pid, log}); its pid and train.js status on every slice', /train\.js watch --detach/.test(coCodex) && /\{pid, log\}/.test(coCodex)
-  && /every slice/.test(coCodex) && /train\.js status/.test(coCodex), coCodex.slice(0, 600));
+ok('L7* coordinator, Codex: train.js watch --detach (prints {pid, log}); train.js status on every slice', /train\.js watch --detach/.test(coCodex) && /\{pid, log\}/.test(coCodex)
+  && /every slice[^.]*`node <plugin>\/scripts\/train\.js status`/.test(coCodex), coCodex.slice(0, 600));
+// the session runs in the sandbox, where kill -0 and ps of a process outside it answer "Operation not permitted": the
+// liveness of the detached watch is told by train.js status (under its rule), never by the session itself
+ok('L7* coordinator, Codex: no liveness check of the pid by the session (kill, ps, "whether that pid is alive")',
+  !/kill -0|\bps -p\b|whether (that|its|the) pid is alive/.test(coCodex), coCodex.slice(0, 600));
+ok('L7* coordinator, Codex: status names the detached watch (alive, ended with its event, gone without one); a second --detach returns the live one',
+  /detached watch pid N alive/.test(coCodex) && /ended/.test(coCodex) && /gone without an event/.test(coCodex) && /returns that watch/.test(coCodex), coCodex.slice(0, 900));
 // L10
 ok('L10 coordinator: on Codex the rules come from the project AGENTS.md (agentsMd), else read the file at the plugin root', /AGENTS\.md/.test(co.split('\n').slice(0, 20).join('\n')) && /agentsMd/.test(co.split('\n').slice(0, 20).join('\n')));
 // L17*

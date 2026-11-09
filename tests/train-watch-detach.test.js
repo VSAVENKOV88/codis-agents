@@ -1,14 +1,18 @@
 #!/usr/bin/env node
 'use strict';
-// p-codex-D2, L7* (owner 2026-11-09, G3): `train.js watch --detach` starts the coordinator's background wait as a
-// process of its own session with its output in a log, prints one JSON line {pid, log} and exits 0 at once. On Codex
-// the coordinator's session runs it under the rule for `node <plugin>/scripts/train.js` (a plain argv: nohup, & or a
-// redirection would not match the rule), and a command still attached to the turn dies with the turn (E2, 2026-11-09).
+// `train.js watch --detach` starts the coordinator's background wait as a process of its own session with its output in
+// a log, records it in <sharedDir>/train/watches/<pid>.json {pid, procStart, log, at}, prints one JSON line {pid, log}
+// and exits 0 at once. The coordinator on Codex runs in a sandbox that cannot see a process outside it (kill -0 and ps
+// answer "Operation not permitted"), so train.js status, run under its own rule, tells it what became of the watch.
 //   D1 exit 0 at once with {pid, log}; the log lies under <sharedDir>/train/logs/
 //   D2 the pid is alive after the starter has exited, in a session and process group of its own (pid = pgid = sid)
-//   D3 the pid runs `train.js watch` with the other arguments (--poll) and without --detach (no second detach); status
-//      answers while it runs
+//   D3 the pid runs `train.js watch` with the other arguments (--poll) and without --detach; status answers while it runs
+//   D5 status names the live detached watch and its log
+//   D6 a second --detach while it lives returns that watch ({pid, log, running: true}) and starts no other
 //   D4 the watch's output goes to the log: on a new verdict without an addressee it writes {orphans} there and exits
+//   D7 status names the ended watch with its event
+//   D8 a detached watch killed without an event (SIGKILL) is named "gone without an event"; a new --detach starts a new
+//      watch and drops the records of the watches that are no longer alive
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -31,6 +35,7 @@ const tr = (...a) => spawnSync(process.execPath, [TRAIN, ...a], { cwd: T, encodi
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
 const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 const ps = (pid, f) => (spawnSync('ps', ['-o', `${f}=`, '-p', String(pid)], { encoding: 'utf8', env: Object.assign({}, process.env, { LC_ALL: 'C' }) }).stdout || '').trim();
+const ls = (d) => { try { return fs.readdirSync(d); } catch { return []; } };
 let pid = 0;
 try {
   const t0 = Date.now();
@@ -47,6 +52,14 @@ try {
   ok('D3 the detached process runs train.js watch --poll 0.2 without --detach', /train\.js watch --poll 0\.2$/.test(args) && !/--detach/.test(args), args);
   const st = tr('status');
   ok('D3 status answers while the detached watch runs', st.status === 0 && /^halt: none/m.test(st.stdout), st.stdout);
+  const st5 = tr('status');
+  ok('D5 status names the live detached watch and its log', new RegExp(`^detached watch pid ${pid} alive, log ${j && j.log}$`, 'm').test(st5.stdout), st5.stdout);
+  const r6 = tr('watch', '--detach', '--poll', '0.2');
+  let j6 = null;
+  try { j6 = JSON.parse(r6.stdout.trim().split('\n').pop()); } catch { /* none */ }
+  ok('D6 a second --detach while it lives returns that watch and starts no other', r6.status === 0 && j6 && j6.pid === pid && j6.running === true && j && j6.log === j.log
+    && ls(path.join(shared, 'train', 'watches')).length === 1, `${r6.status} ${r6.stdout} ${r6.stderr}`);
+  if (j6 && j6.pid && j6.pid !== pid) { try { process.kill(j6.pid, 'SIGKILL'); } catch { /* gone */ } }
   // D4: a verdict without an addressee that comes after the start ends the watch, its JSON in the log
   const res = path.join(shared, 'train', 'result'), wd = path.join(shared, 'train', 'waiters');
   fs.mkdirSync(res, { recursive: true }); fs.mkdirSync(wd, { recursive: true });
@@ -56,6 +69,18 @@ try {
   for (let i = 0; i < 100 && alive(pid); i++) sleep(100);
   const log = j ? fs.readFileSync(j.log, 'utf8') : '';
   ok('D4 a new verdict without an addressee ends the detached watch; {orphans} is in its log', !alive(pid) && /"orphans"/.test(log) && /k1/.test(log), `${alive(pid)} ${log}`);
+  const st7 = tr('status');
+  ok('D7 status names the ended watch with its event', new RegExp(`^detached watch pid ${pid} ended: orphans k1 ${head}, log `, 'm').test(st7.stdout), st7.stdout);
+  const r8 = tr('watch', '--detach', '--poll', '0.2');
+  let j8 = null;
+  try { j8 = JSON.parse(r8.stdout.trim().split('\n').pop()); } catch { /* none */ }
+  const pid8 = j8 && j8.pid;
+  ok('D8 a new --detach after the end starts a new watch and drops the record of the ended one', r8.status === 0 && !!pid8 && pid8 !== pid && alive(pid8) && !j8.running
+    && JSON.stringify(ls(path.join(shared, 'train', 'watches'))) === JSON.stringify([`${pid8}.json`]), `${r8.stdout} ${r8.stderr}`);
+  if (pid8) { try { process.kill(pid8, 'SIGKILL'); } catch { /* gone */ } }
+  for (let i = 0; i < 50 && pid8 && alive(pid8); i++) sleep(100);
+  const st8 = tr('status');
+  ok('D8 a watch killed without an event is "gone without an event"', new RegExp(`^detached watch pid ${pid8} gone without an event, log .*: start it again with train\\.js watch --detach$`, 'm').test(st8.stdout), st8.stdout);
 } finally {
   if (pid && alive(pid)) { try { process.kill(pid, 'SIGTERM'); } catch { /* gone */ } }
   fs.rmSync(T, { recursive: true, force: true });
