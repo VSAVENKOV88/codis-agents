@@ -466,6 +466,11 @@ console.error('unexpected ' + a); process.exit(9);\n`);
   ok('A1-29 the adapter reads the catalog that check cached', argOf(r.plan, '-m') === 'gpt-6-astra' && r.res && r.res.verdict === 'done', JSON.stringify(r.res));
   c = check(cx, { version: 'codex-cli 0.150.0' });
   ok('A1-29 check codex: a version outside the list -> red with the reason', c.rc === 1 && c.j && c.j.ok === false && c.j.problems.some((p) => /version/.test(p)), c.out);
+  // p-codex-v167 C1/C4: 0.166.0 and 0.167.0 are verified, the next minor is not
+  c = check(cx, { version: 'codex-cli 0.167.0' });
+  ok('A1-29 check codex 0.167.0 -> green (C1)', c.rc === 0 && c.j && c.j.ok === true && c.j.version === '0.167.0', c.out);
+  c = check(cx, { version: 'codex-cli 0.168.0' });
+  ok('A1-29 check codex 0.168.0 -> red "not in the allowed list (0.166.0, 0.167.0)" (C1)', c.rc === 1 && c.j && c.j.problems.some((p) => /codex version 0\.168\.0 is not in the allowed list \(0\.166\.0, 0\.167\.0\)/.test(p)), c.out);
   c = check(cx, { loggedOut: true });
   ok('A1-29 check codex: login status rc 1 -> red, the login command for this home in the reason', c.rc === 1 && c.j && c.j.problems.some((p) => /login/.test(p) && p.includes(HOME)), c.out);
   c = check(cx.concat(['--model', 'gpt-9']), {});

@@ -416,8 +416,8 @@ const underAny = (p, roots) => roots.some((r) => p === r || p.startsWith(r + pat
     exe(fake, '#!/bin/sh\necho "codex-cli 0.165.0"\n');
     const s2 = service(f, { codex: fake });
     const b = await answer(s2, ask(s2, ['a.txt']));
-    ok('EV-06 codex 0.165.0 -> refused "codex 0.165.0 is not among the verified versions (0.166.0)", no hook ran',
-      b && b.status === 'refused' && /no safe check path: codex 0\.165\.0 is not among the verified versions \(0\.166\.0\)/.test(b.why) && f.marks().length === 0, J(b));
+    ok('EV-06 codex 0.165.0 -> refused "codex 0.165.0 is not among the verified versions (0.166.0, 0.167.0)", no hook ran',
+      b && b.status === 'refused' && /no safe check path: codex 0\.165\.0 is not among the verified versions \(0\.166\.0, 0\.167\.0\)/.test(b.why) && f.marks().length === 0, J(b));
     await s2.close();
   }
 
