@@ -250,6 +250,17 @@ const moved = (r) => r.a && r.a.status === 'refused' && !r.moved && /^the hooks 
   }
   {
     const f = fixture({ tracked: false, hooksPath: null });
+    const one = path.join(f.d, 'hooks-one'), two = path.join(f.d, 'hooks-two'), link = path.join(f.d, 'hooks-link');
+    exe(path.join(one, 'pre-commit'), f.hookText('one', ''));
+    exe(path.join(two, 'pre-commit'), f.hookText('two', ''));
+    fs.symlinkSync(one, link);
+    f.setHooksPath(link);
+    const r = await request(f, { before: () => { fs.unlinkSync(link); fs.symlinkSync(two, link); } });
+    ok('H8 P0 an absolute core.hooksPath that is a link outside the role\'s places, the link retargeted during the call (the same config value): refused by the real path, no hook ran',
+      moved(r) && r.a.why.includes(`${one} -> ${two}`) && !r.marks.length, J(r));
+  }
+  {
+    const f = fixture({ tracked: false, hooksPath: null });
     const inc = path.join(f.wt, 'inc.cfg');
     exe(path.join(f.wt, 'role-hooks', 'pre-commit'), f.hookText('role', ''));
     const r = await request(f, { before: () => { fs.writeFileSync(inc, '[core]\n\thooksPath = role-hooks\n'); git(f.repo, ['config', 'include.path', inc]); } });

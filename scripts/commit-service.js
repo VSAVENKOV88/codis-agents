@@ -1086,7 +1086,8 @@ function openCommitService(o) {
     const hk = checkHooks();
     if (hk.error) return { why: `no safe check path: ${hk.error}` };
     const real = rolePlaces.realish(hk.dir);
-    if (hk.dir !== hooksStart.dir) return { why: `the hooks location changed during the call (${hooksStart.dir} -> ${hk.dir})` };
+    // compared by the real path: a link of the location retargeted during the call is a change, two spellings of one
+    // folder are not
     if (real !== hooksStart.real) return { why: `the hooks location changed during the call (${hooksStart.real} -> ${real})` };
     if (!hooksStart.place) return { hk };
     const rel = rolePlaces.inside(real, wtReal) ? path.relative(wtReal, real).split(path.sep).join('/') : null;
