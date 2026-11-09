@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 'use strict';
 // The tester cells of p-codex-A2a-3c (the conductor connects the commit channel), a child of
 // tests/chain-run-commit.test.js with its own tally, so README keeps counting test files. Cells beyond the programmer's:
