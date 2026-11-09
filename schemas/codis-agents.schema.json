@@ -87,6 +87,11 @@
       },
       "description": "Model alias per role, over roleModel: the roles, the preconditions agent, and wait - the repeat of a post-check or wait step."
     },
+    "commitAuthor": {
+      "type": "object", "additionalProperties": false, "required": ["name", "email"],
+      "properties": { "name": { "type": "string", "minLength": 1 }, "email": { "type": "string", "minLength": 1 } },
+      "description": "Author and committer of the commits the commit channel makes for prog and test on codex under the conductor (scripts/chain-run.js). Left out: user.name and user.email of git; without either a codex task stops before any role."
+    },
     "threatModel": { "type": "string", "description": "Path (relative to the worktree) of the threat model the security reviewer reads." },
     "gitHooks": {
       "type": "object", "additionalProperties": false,

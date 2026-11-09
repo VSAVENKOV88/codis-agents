@@ -46,8 +46,8 @@ const K_PRE = 'gp:blockingQuestions,ok,problems', K_PROG = keyOf(PROG_S), K_TEST
 // ---- C5: the README, no process needed
 ok('C5 README: no "no conductor uses it yet" and no "not connected to the conductor yet"', !/no conductor uses it yet/.test(README) && !/not connected to the conductor yet/.test(README));
 ok('C5 README: the conductor gives the channel <sharedDir>/runs/.commit, the path for status --commits and resolve --commits',
-  /chain-run\.js status --commits <sharedDir>\/runs\/\.commit --task <key>/.test(README) && /chain-run\.js resolve --commits <sharedDir>\/runs\/\.commit/.test(README));
-ok('C1b README: a cleanup of old runs must keep <sharedDir>/runs/.commit', /cleanup of old runs[^.]*keeps? `?<sharedDir>\/runs\/\.commit/.test(README));
+  /chain-run\.js\s+status\s+--commits\s+<sharedDir>\/runs\/\.commit\s+--task\s+<key>/.test(README) && /chain-run\.js\s+resolve\s+--commits\s+<sharedDir>\/runs\/\.commit/.test(README));
+ok('C1b README: a cleanup of old runs must keep <sharedDir>/runs/.commit', /cleanup\s+of\s+old\s+runs[^.]*keeps?\s+`?<sharedDir>\/runs\/\.commit/.test(README));
 ok('C1c README and schema: commitAuthor', /\| `commitAuthor` \|/.test(README)
   && !!(JSON.parse(fs.readFileSync(path.join(ROOT, 'schemas', 'codis-agents.schema.json'), 'utf8')).properties.commitAuthor));
 
@@ -62,7 +62,7 @@ const RTMP = path.join(W, 'rtmp');
 const NOID = path.join(W, 'home-noid'), IDH = path.join(W, 'home-id');
 for (const d of [RTMP, NOID, IDH, REPO]) fs.mkdirSync(d, { recursive: true });
 fs.writeFileSync(path.join(IDH, '.gitconfig'), '[user]\n\tname = Home Person\n\temail = home@example.com\n');
-const AUTHOR = { name: 'codis-agents', email: 'noreply@users.noreply.github.com' };
+const AUTHOR = { name: 'codis-agents', email: 'agents@example.com' };
 const cfgFile = (name, extra) => {
   const f = path.join(W, `${name}.json`);
   fs.writeFileSync(f, JSON.stringify(Object.assign({ repoDir: REPO, sharedDir: SHARED, worktreeRoot: WTR, guardCommand: 'true {wt}', testerWritable: ['-run\\.js$'] }, extra || {})));
@@ -139,7 +139,7 @@ try {
     // C2: a codex task without a branch - prog refused before any hook check or launch
     const recs = [];
     let launched = 0;
-    const ag = RE.createAgent(Object.assign({}, cx, { launch: async () => { launched++; return { output: '{}', rc: 0 }; }, beforeLaunch: async () => { launched++; return null; }, onRecord: (r) => recs.push(r) }));
+    const ag = RE.createAgent(Object.assign({}, cx, { env: Object.assign({}, process.env, { TMPDIR: RTMP }), launch: async () => { launched++; return { output: '{}', rc: 0 }; }, beforeLaunch: async () => { launched++; return null; }, onRecord: (r) => recs.push(r) }));
     const v = await ag('p', { label: 'prog:u2#1', schema: PROG_S, agentType: 'general-purpose' });
     ok('C2 a codex task without a branch: prog refused "has no branch", nothing launched', v === null && !launched && recs[0] && recs[0].outcome === 'refused' && /has no branch/.test(recs[0].error || ''), J(recs));
   }

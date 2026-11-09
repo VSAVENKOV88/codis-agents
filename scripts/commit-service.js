@@ -87,8 +87,9 @@
 // the request lies there, and the same id in a later call gets it from the journal. Untracked and ignored files of
 // the worktree, and any file outside it, can influence a check and are not part of the commit (README, Known gaps).
 //
-// The journal of the task (<stateDir>/<task>/commits.jsonl, owner B 2026-11-06 answers 12, 13): one writer (a lock
-// with the pid), version 1, an event number per line, every line written and fsynced before the action it announces:
+// The journal of the task (<stateDir>/<task>/commits.jsonl, owner B 2026-11-06 answers 12, 13; under the conductor one
+// stateDir per project, so a task keeps its journal across runs): one writer (a lock with the pid), version 1, an event
+// number per line and the runId of the conductor's run when one is given, every line written and fsynced before the action it announces:
 // intent (tree and parent) before commit-tree, intent-commit (sha and old tip) before update-ref, then the result. A
 // torn last line is cut off, kept beside the journal and named in the notes, and its step is not taken as done; a
 // damaged line inside refuses every request. On open, an intent without a result is settled by the tip of the branch:
@@ -276,8 +277,9 @@ const which = (bin, envPath) => {
   return null;
 };
 
-// o: {task, callId, wt, branch, box, stateDir, git?, gitVersions?, author?, userEnv?, pollMs?, watch?, inject?, log?,
-// codex?, codexVersions?, network?, tdir?, npmCache?, killGraceMs?} - codex: the binary (a name looked up in the
+// o: {task, callId, wt, branch, box, stateDir, runId?, git?, gitVersions?, author?, userEnv?, pollMs?, watch?, inject?, log?,
+// codex?, codexVersions?, network?, tdir?, npmCache?, killGraceMs?} - runId: the run of the conductor, written into every
+// event of the journal (a call without a conductor writes none, and older lines without it are read the same); codex: the binary (a name looked up in the
 // PATH of userEnv, default "codex"); network: the network of the role, given to its checks; tdir: the task folder,
 // a write root of the role and of its checks; npmCache: the npm cache of the call (default <folder of the box>/npm-cache),
 // which must resolve inside the worktree or the task folder when a check runs (else the request is refused);
@@ -294,6 +296,7 @@ function openCommitService(o) {
   for (const k of ['task', 'callId']) if (typeof o[k] !== 'string' || !SEGMENT_RE.test(o[k]) || o[k] === '.' || o[k] === '..') bad(`${k} must be a plain name, got ${q(o[k])}`);
   for (const k of ['wt', 'box', 'stateDir']) if (typeof o[k] !== 'string' || !path.isAbsolute(o[k])) bad(`${k} must be an absolute path`);
   if (typeof o.branch !== 'string' || !o.branch || /[\0\n]/.test(o.branch)) bad('branch is required');
+  if (o.runId !== undefined && (typeof o.runId !== 'string' || !SEGMENT_RE.test(o.runId))) bad(`runId must be a plain name, got ${q(o.runId)}`);
   const userEnv = o.userEnv || {};
   const log = typeof o.log === 'function' ? o.log : () => {};
   const inject = o.inject || {};
@@ -456,7 +459,7 @@ function openCommitService(o) {
   }
   const append = (ev) => {
     if (!jfd) throw new Error('the journal is not open');
-    const line = JSON.stringify(Object.assign({ v: JOURNAL_VERSION, n: lastN + 1, ts: new Date().toISOString(), call: o.callId }, ev)) + '\n';
+    const line = JSON.stringify(Object.assign({ v: JOURNAL_VERSION, n: lastN + 1, ts: new Date().toISOString(), call: o.callId }, o.runId ? { runId: o.runId } : {}, ev)) + '\n';
     const size = fs.fstatSync(jfd).size;
     try {
       // a write on a full disk may take part of the line without an error

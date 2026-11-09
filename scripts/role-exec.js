@@ -513,10 +513,12 @@ function createAgent(cfg) {
   // git of the compare of an answer: commit.git, else the PATH (commit-service refuses a commit.git that is not absolute)
   const gitBin = cm && typeof cm.git === 'string' && path.isAbsolute(cm.git) ? cm.git : 'git';
   if (cm) {
-    if (typeof cm !== 'object') no('commit must be an object {stateDir, git?, gitVersions?, author?, codexVersions?, walkMaxEntries?, walkTimeoutMs?, walkMaxResultBytes?, walkMaxIgnoreBytes?, walkMaxReadBytes?}');
+    if (typeof cm !== 'object') no('commit must be an object {stateDir, runId?, git?, gitVersions?, author?, codexVersions?, walkMaxEntries?, walkTimeoutMs?, walkMaxResultBytes?, walkMaxIgnoreBytes?, walkMaxReadBytes?}');
     for (const k of ['walkMaxEntries', 'walkTimeoutMs', 'walkMaxResultBytes', 'walkMaxIgnoreBytes', 'walkMaxReadBytes']) if (cm[k] !== undefined && !(Number.isFinite(cm[k]) && cm[k] > 0)) no(`commit.${k} must be a positive number, got ${JSON.stringify(cm[k])}`);
     if (c.host !== 'codex') no('commit on the claude host: the commit channel of claude -p comes with part A2c');
     if (typeof cm.stateDir !== 'string' || !path.isAbsolute(cm.stateDir)) no(`commit.stateDir is required and absolute, got ${JSON.stringify(cm.stateDir)}`);
+    // the run of the conductor, written into every event of the journal (letters, digits, . _ -)
+    if (cm.runId !== undefined && (typeof cm.runId !== 'string' || !/^[A-Za-z0-9._-]+$/.test(cm.runId))) no(`commit.runId must be a plain name, got ${JSON.stringify(cm.runId)}`);
     const sd = realish(cm.stateDir);
     const roots = [...new Set([].concat(...Object.values(tasks).map((t) => rootsOf(t).reach)))];
     for (const r of roots) {
@@ -655,7 +657,7 @@ function createAgent(cfg) {
           // the checks of a commit run in codex sandbox with the rights of the role: its write roots, its network (only
           // the tester has one), an npm cache of the call (owner answers 4-6); stopping them is a live stop of the adapter
           svc = openCommitService({ task: plan.key, callId: path.basename(plan.callDir), wt: plan.t.wt, branch: plan.t.branch,
-            box: path.join(plan.callDir, 'commit'), stateDir: cm.stateDir, git: cm.git, gitVersions: cm.gitVersions, author: cm.author,
+            box: path.join(plan.callDir, 'commit'), stateDir: cm.stateDir, runId: cm.runId, git: cm.git, gitVersions: cm.gitVersions, author: cm.author,
             userEnv: c.env || process.env, inject: cm.inject, log, codex: cx.bin, codexVersions: cm.codexVersions, network: plan.kind === 'test',
             tdir: plan.t.dir, npmCache: path.join(plan.callDir, 'npm-cache'), killGraceMs: graceMs, walkMaxEntries: cm.walkMaxEntries, walkTimeoutMs: cm.walkTimeoutMs,
             walkMaxResultBytes: cm.walkMaxResultBytes, walkMaxIgnoreBytes: cm.walkMaxIgnoreBytes, walkMaxReadBytes: cm.walkMaxReadBytes });

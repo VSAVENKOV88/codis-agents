@@ -102,8 +102,13 @@ const SPEC = {
   // AGENTS.md for Codex generated from CLAUDE.md (scripts/agents-md.js): true - connected, the generated file must exist
   // and be fresh (agents-md.js check); false or left out - not used.
   agentsMd: ['boolean', false],
+  // The author and committer of the commits the commit channel makes for prog and test on codex under the conductor
+  // (scripts/chain-run.js): {name, email}. Left out - user.name and user.email of git; without either the conductor stops
+  // a codex task before any role, since there is no silent default author.
+  commitAuthor: ['object', null],
   $schema: ['string', ''],
 };
+const AUTHOR_SPEC = { name: ['string', ''], email: ['string', ''] };
 const REQUIRED = ['repoDir', 'worktreeRoot', 'sharedDir'];
 const SLOT_SPEC = {
   medium: ['number', 2], heavy: ['number', 2], total: ['number', 4], lockDir: ['path', '~/.cache/codis-agents/slots'],
@@ -541,6 +546,11 @@ function resolve(raw, opts = {}) {
   c.roleModels = models;
   for (const [k, list] of [['testerWritable', c.testerWritable || []]]) {
     for (const re of list) { try { new RegExp(re); } catch (e) { errors.push(`${k}: bad regular expression ${re}`); } }
+  }
+  if (c.commitAuthor) {
+    c.commitAuthor = level(AUTHOR_SPEC, c.commitAuthor, 'commitAuthor.', errors);
+    // git refuses an identity with an angle bracket or a line break, and the commit-tree of the channel would fail late
+    for (const k of Object.keys(AUTHOR_SPEC)) if (!c.commitAuthor[k].trim() || /[<>\n\0]/.test(c.commitAuthor[k])) errors.push(`commitAuthor.${k}: expected a non-empty string without <, > or a line break`);
   }
   for (const g of c.mergeOnlyFiles || []) if (!g || /\n/.test(g)) errors.push(`mergeOnlyFiles: an empty or multi-line glob: ${JSON.stringify(g)}`);
   try { new RegExp(c.protectedTagPattern); } catch (e) { errors.push('protectedTagPattern: bad regular expression'); }

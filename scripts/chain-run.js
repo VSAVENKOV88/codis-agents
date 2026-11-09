@@ -17,6 +17,12 @@
 // scripts/codex-hooks-check.js --codex-home <run home> --cwd <task dir> --codex <codex bin>, hookGate): exit 0 runs the
 // role, 1 ends the call as hook-untrusted, 2 as refused, 3 or anything else as hook-unverified (cause unknown); the role
 // is not started then. Checks of one run home run one after the other. pre runs on codex (preconditionsByConductor).
+// prog and test on codex commit through the commit channel of the adapter (adapterCfg: cfg.commit): its state folder is
+// <sharedDir>/runs/.commit, one per project (owner 2026-11-09), so the journal of a task survives its runs and every
+// event carries the runId of its run; the commits go to the branch of the task, authored by commitAuthor of the config
+// or else user.name/user.email of git. Before any role of a codex task the conductor stops it when there is no author
+// (authorProblem) or, under the task's lock, when its commit journal is damaged or holds an undetermined step
+// (commitJournalProblem): such a task waits for resolve --commits instead of running roles whose commits are refused.
 // Every step of a task is journaled (owner 2026-11-06, answer 2; scripts/chain-journal.js, makeSteps): the intent with its
 // stepId goes to disk before the step runs, then its launch, then its result, before the script gets the value; a role's
 // launch comes through the gate of the adapter before the CLI does any work (cfg.onLaunch), a service step's right after
@@ -34,8 +40,9 @@
 //     conductor detached, in a session of its own (Ctrl+C or the hang-up of this terminal does not reach it). It waits
 //     for the conductor's "ready" over IPC (no timer), which comes after the locks of the tasks, and prints {runId,
 //     runDir, pid, tasks: {<key>: "held" or why the task stopped before any role}}.
-//     A state folder inside a write root of a role (stateRootProblem) and a task key that cannot name files of the state
-//     are refused here too.
+//     A state folder (<sharedDir>/runs, or <sharedDir>/runs/.commit through a link) inside a write root of a role
+//     (stateRootProblem) and a task key that cannot name files of the state are refused here too. A codex task without
+//     an author of its commits, or whose commit journal is undetermined or damaged, is named with that reason.
 //     Exit: 0 started; 64 arguments, tasks file, owner file, a refusal of the adapter or the place of the state; 65 the
 //     config is not found or invalid; 70 the conductor died before it was ready (the tail of its output on stderr).
 //   chain-run.js status <run-id|run folder> [--wait <s>] [--config <file>]
@@ -119,6 +126,7 @@ const os = require('os');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const { createAgent, validate, realish, overlap, procOf, stopAll } = require('./role-exec.js');
+const RR = require('./role-roots.js');
 const CJ = require('./chain-journal.js');
 const RS = require('./chain-resolve.js');
 
@@ -210,14 +218,22 @@ const isPlain = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 const labelKey = (label) => (/^[a-z]+:([^:#]+)/.exec(String(label)) || [])[1] || null;
 
 // The task table of the adapter: the same normalization as workflows/role-chain.js (TASKS: dir by default
-// <sharedDir>/<key>, a relative wt under worktreeRoot), so a role runs in the folder the script names in its prompts.
+// <sharedDir>/<key>, a relative wt under worktreeRoot), so a role runs in the folder the script names in its prompts;
+// branch is the branch the commit channel commits to (role-exec.js refuses prog/test of a task without it).
 function taskTable(args) {
   const c = args.config || {};
   const abs = (p) => (String(p).startsWith('/') ? p : `${c.worktreeRoot}/${p}`);
   const out = {};
-  for (const t of args.tasks || []) out[t.key] = { dir: t.dir || `${c.sharedDir}/${t.key}`, wt: typeof t.wt === 'string' ? abs(t.wt) : t.wt };
+  for (const t of args.tasks || []) {
+    out[t.key] = { dir: t.dir || `${c.sharedDir}/${t.key}`, wt: typeof t.wt === 'string' ? abs(t.wt) : t.wt };
+    if (typeof t.branch === 'string') out[t.key].branch = t.branch;
+  }
   return out;
 }
+// The state folder of the commit channel (scripts/commit-service.js): one per project, so the journal of a task,
+// <stateDir>/<key>/commits.jsonl, is the same in every run and an undetermined step of one run blocks the next (owner
+// 2026-11-09). Its name starts with a dot: the reconciliation and every listing of the runs skip it.
+const commitStateDir = (config) => path.join(config.sharedDir, 'runs', '.commit');
 
 // The form of the tasks file, not its meaning (role-chain.js judges the fields): {tasks} or {error}.
 function parseTasks(text) {
@@ -244,17 +260,48 @@ function parseTasks(text) {
   return { tasks: v };
 }
 
-// The state of the runs must lie outside the write roots of the roles (owner 2026-11-07): the task folders and worktrees,
-// and on codex also /tmp and the TMPDIR of the role, which the sandbox lets a role write. Text of the overlap, or null.
+// The state of the runs, and in it the state folder of the commit channel, must lie outside the write roots of the
+// roles (owner 2026-11-07): the places scripts/role-roots.js gives - on codex every folder a role reaches (the worktree,
+// the task folder, /tmp, the role's TMPDIR), on claude the worktree and the task folder. <sharedDir>/runs/.commit is
+// resolved apart, since a link there would carry the journal into a role's reach. Text of the overlap, or null.
 function stateRootProblem(args, host, env) {
-  const state = realish(path.join(args.config.sharedDir, 'runs'));
-  const roots = [];
-  for (const [k, t] of Object.entries(taskTable(args))) roots.push([`the task folder of ${k}`, t.dir], [`the worktree of ${k}`, t.wt]);
-  if (host === 'codex') { roots.push(['/tmp', '/tmp']); if (env && env.TMPDIR) roots.push(['the TMPDIR of a role', env.TMPDIR]); }
-  for (const [name, p] of roots) {
-    if (typeof p !== 'string') continue;
-    const r = realish(p);
-    if (overlap(state, r)) return `the state folder ${state} (<sharedDir>/runs) overlaps ${name} (${r}), a write root of a role: put sharedDir outside it`;
+  const states = [['the state folder', '<sharedDir>/runs', realish(path.join(args.config.sharedDir, 'runs'))],
+    ['the commit state folder', '<sharedDir>/runs/.commit', realish(commitStateDir(args.config))]];
+  for (const [k, t] of Object.entries(taskTable(args))) {
+    // a task without a worktree path still has its task folder as a root
+    const r = RR.roleRoots({ wt: typeof t.wt === 'string' ? t.wt : t.dir, tdir: t.dir, tmpdir: env && env.TMPDIR });
+    for (const root of host === 'codex' ? r.reach : r.check) {
+      for (const [what, name, state] of states) {
+        if (overlap(state, root)) return `${what} ${state} (${name}) overlaps ${root}, a write root of a role of task ${k}: put sharedDir outside it`;
+      }
+    }
+  }
+  return null;
+}
+
+// The author of the commit channel on codex: commitAuthor of the config, else user.name and user.email of git as the
+// adapter reads them (the user's config sources seen from the worktree; no GIT_* of this process but GIT_CONFIG_*).
+// Text of the refusal, or null: there is no silent default author, the owner sees the author in git log.
+const AUTHOR_MISSING = 'the commit channel needs an author: set commitAuthor in the project config or user.name/user.email in git';
+function authorProblem(config, wt) {
+  if (config.commitAuthor) return null;
+  const env = {};
+  for (const [k, v] of Object.entries(process.env)) if (!/^GIT_/.test(k) || /^GIT_CONFIG_/.test(k)) env[k] = v;
+  let cwd;
+  try { if (typeof wt === 'string' && fs.statSync(wt).isDirectory()) cwd = wt; } catch { /* outside a worktree: the user's own config only */ }
+  const get = (k) => { const p = spawnSync('git', ['-c', 'core.fsmonitor=false', 'config', '--get', k], { cwd, env, encoding: 'utf8' }); return p.status === 0 ? p.stdout.trim() : ''; };
+  return get('user.name') && get('user.email') ? null : AUTHOR_MISSING;
+}
+// The commit journal of a task before its roles: a damaged journal or an undetermined step makes the adapter refuse
+// every request of the task, so the task waits for the coordinator instead of running a programmer whose commits are
+// all refused. Text of the refusal, or null. An intent without a result is settled by the adapter at its next open.
+function commitJournalProblem(config, key) {
+  const dir = commitStateDir(config);
+  const file = path.join(dir, key, 'commits.jsonl');
+  const st = RS.commitsState(file);
+  if (st.damage) return `the commit journal ${file}: ${st.damage}; the commit channel refuses every request of the task until it is repaired by hand (resolve --commits refuses damage)`;
+  if (st.undetermined.length) {
+    return `the commit journal ${file} has an undetermined commit step (request ${st.undetermined.join(', ')}): the task waits for the coordinator - chain-run.js status --commits ${dir} --task ${key} gives the basis, chain-run.js resolve --commits ${dir} --task ${key} --request <id> --wt <worktree> --as committed|refused --basis <basis> --note <text> decides`;
   }
   return null;
 }
@@ -267,10 +314,16 @@ function loadConfig(file) {
 }
 
 // The adapter's config of a run: host, the task table, the host CLI options from start; on codex the hook check before
-// each launch and pre allowed (the conductor checks the environment itself).
-function adapterCfg(host, args, ad, callsDir, log) {
+// each launch, pre allowed (the conductor checks the environment itself) and the commit channel of prog and test:
+// the state folder of the project, the runId every event of a task's journal carries, and commitAuthor of the config
+// as author (left out: the adapter takes user.name/user.email of git; the conductor stops a task without either).
+function adapterCfg(host, args, ad, callsDir, log, runId) {
   const cfg = { host, tasks: taskTable(args), pluginRoot: ROOT, callsDir, log };
   if (host === 'codex') {
+    const config = args.config || {};
+    cfg.commit = { stateDir: commitStateDir(config) };
+    if (runId !== undefined) cfg.commit.runId = runId;
+    if (config.commitAuthor) cfg.commit.author = { name: config.commitAuthor.name, email: config.commitAuthor.email };
     cfg.codex = { home: ad.codexHome };
     if (ad.bin) cfg.codex.bin = ad.bin;
     if (ad.codexAuth) cfg.codex.auth = ad.codexAuth;
@@ -755,7 +808,7 @@ async function runScript(o) {
   };
   try {
     const sharedDir = (args.config && args.config.sharedDir) || os.tmpdir();
-    const cfg = adapterCfg(o.host, args, o.adapter || {}, o.callsDir || path.join(sharedDir, 'calls'), note);
+    const cfg = adapterCfg(o.host, args, o.adapter || {}, o.callsDir || path.join(sharedDir, 'calls'), note, o.runId);
     if (o.launch) cfg.launch = o.launch;
     const steps = o.steps || null;
     const recs = {};
@@ -852,7 +905,7 @@ function start(argv) {
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
   const runId = `${stamp}-${require('crypto').randomBytes(3).toString('hex')}`;
   const runDir = path.join(realish(lc.config.sharedDir), 'runs', runId);
-  try { createAgent(adapterCfg(a.host, args, ad, runDir, () => {})); } catch (e) { process.stderr.write(`chain-run: ${e.message}\n`); process.exit(64); }
+  try { createAgent(adapterCfg(a.host, args, ad, runDir, () => {}, runId)); } catch (e) { process.stderr.write(`chain-run: ${e.message}\n`); process.exit(64); }
   const where = stateRootProblem(args, a.host, process.env);
   if (where) { process.stderr.write(`chain-run: ${where}\n`); process.exit(64); }
   const logFile = path.join(runDir, 'log.txt');
@@ -927,6 +980,8 @@ async function conduct(runDirArg) {
     const dir = table[t.key].dir;
     const lockFile = lockFileOf(runsDir, t.key);
     if (!me.lstart) { block(t.key, 'the conductor cannot read its own start time (ps -o lstart): the lock of the task cannot name it'); continue; }
+    const noAuthor = req.host === 'codex' ? authorProblem(args.config, table[t.key].wt) : null;
+    if (noAuthor) { block(t.key, noAuthor); continue; }
     try {
       fs.mkdirSync(dir, { recursive: true });
       const ctx = { wt: table[t.key].wt, dir, key: t.key };
@@ -935,6 +990,9 @@ async function conduct(runDirArg) {
         const rc = reconcile(runsDir, t.key, req.runId, ctx);
         // The decisions of resolve: the start follows their next (resumeAt, head, prior) - scripts/chain-resolve.js.
         if (!rc.reasons.length) { sc = RS.startCheck(runsDir, t.key, t, req.runId, ctx); if (sc.why) rc.reasons.push({ why: `undetermined: ${sc.why}`, kind: 'start' }); }
+        // the commit journal of the task, read under its lock: no other conductor runs the task meanwhile
+        const cj = !rc.reasons.length && req.host === 'codex' ? commitJournalProblem(args.config, t.key) : null;
+        if (cj) rc.reasons.push({ why: cj, kind: 'commits' });
         return Object.assign(rc, { text: rc.reasons.length ? refusalText(rc, ctx) : null });
       });
       if (!got.ok) { block(t.key, got.why); continue; }
@@ -1006,7 +1064,7 @@ async function conduct(runDirArg) {
       note(why);
       for (const t of runnable) { byKey[t.key] = stopped(t.key, why); endTask(t.key, byKey[t.key]); }
     } else {
-      const x = await runScript({ host: req.host, args: Object.assign({}, args, { tasks: runnable.map((t) => Object.assign({}, t, { stepDir: stepDirOf(runDir, t.key) }, found[t.key].resumeSince ? { resumeSince: found[t.key].resumeSince } : {})) }), adapter: req.adapter, callsDir: runDir,
+      const x = await runScript({ host: req.host, runId: req.runId, args: Object.assign({}, args, { tasks: runnable.map((t) => Object.assign({}, t, { stepDir: stepDirOf(runDir, t.key) }, found[t.key].resumeSince ? { resumeSince: found[t.key].resumeSince } : {})) }), adapter: req.adapter, callsDir: runDir,
         steps, note, log: (m) => note(`log ${m}`), onTaskEnd: endTask });
       threw = x.threw;
       runnable.forEach((t, i) => { byKey[t.key] = x.results[i] || stopped(t.key, 'the chain gave no result'); });
@@ -1157,7 +1215,7 @@ function status(argv) {
 }
 
 // Before the command line: resolve (scripts/chain-resolve.js) takes these functions at call time.
-module.exports = { beginStop, StopError, lockData, liveText, read3, openStepVerdict, lockFileOf, loadConfig, runDirOf, refusalText, makeSteps, stepExec, openStepText, stateRootProblem, runScript, makePipeline, taskTable, parseTasks, lstartOf, liveness, reconcile, acquireTask, unrecordedCalls, takeLock, releaseLock, execStep, hookGate, adapterCfg, logState, CAUSE_KNOWN, MAX_WAIT };
+module.exports = { authorProblem, commitJournalProblem, commitStateDir, beginStop, StopError, lockData, liveText, read3, openStepVerdict, lockFileOf, loadConfig, runDirOf, refusalText, makeSteps, stepExec, openStepText, stateRootProblem, runScript, makePipeline, taskTable, parseTasks, lstartOf, liveness, reconcile, acquireTask, unrecordedCalls, takeLock, releaseLock, execStep, hookGate, adapterCfg, logState, CAUSE_KNOWN, MAX_WAIT };
 
 if (require.main === module) {
   const [cmd, ...rest] = process.argv.slice(2);
