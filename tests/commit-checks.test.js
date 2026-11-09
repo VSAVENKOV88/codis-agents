@@ -458,7 +458,7 @@ const underAny = (p, roots) => roots.some((r) => p === r || p.startsWith(r + pat
     const f = fixture({ main, hooks: {}, under: TMP_BASE });
     f.canary = path.join(BASE, `canary-ev08-${fixN}`);
     f.state = path.join(BASE, `state-ev08-${fixN}`);
-    // the hooks folder outside tmp: a hooks folder the role can write refuses every request (role-exec-codex-roles S9)
+    // the hooks folder outside tmp: an untracked hooks folder the role can write refuses every request (H5)
     f.hooks = path.join(BASE, `hooks-ev08-${fixN}`);
     fs.mkdirSync(f.canary, { recursive: true });
     const ssh = path.join(f.canary, 'ssh', 'id_rsa');
@@ -527,8 +527,8 @@ const underAny = (p, roots) => roots.some((r) => p === r || p.startsWith(r + pat
     fs.writeFileSync(path.join(f.wt, 'a.txt'), 'x\n');
     const a = await answer(s, ask(s, ['a.txt']));
     const m = f.mark('pre-commit');
-    ok('EV-12/EV-13 a relative core.hooksPath inside the worktree (a hook the role wrote): refused before any hook, the folder is a write place of the role',
-      a && a.status === 'refused' && /hooks folder \S+my-hooks lies in the role's write places/.test(a.why) && !m && !fs.existsSync(outside) && f.tip() === f.h0, J({ a, m }));
+    ok('EV-12/EV-13 a relative core.hooksPath inside the worktree (a hook the role wrote, untracked): refused before any hook, the folder is a write place of the role the tip does not track',
+      a && a.status === 'refused' && /hooks folder \S+my-hooks is not tracked in [0-9a-f]+ inside the role's write roots/.test(a.why) && !m && !fs.existsSync(outside) && f.tip() === f.h0, J({ a, m }));
     await s.close();
   }
   {

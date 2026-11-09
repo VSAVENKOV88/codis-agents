@@ -7,9 +7,9 @@
 //   TS3  S3/T2/T4 analyst, usecases, sec: -C the task folder, no sandbox keys, the host section once, no commit client
 //   TS4  S5 an inherited npm cache under a mixed-case name; test gets the cache of the call; the plan of a launcher too
 //   TS5  S4 a commit.stateDir that holds the worktree; a stateDir through a link into the task folder
-//   TS6  S9 <wt>/.codex as the hooks folder is no write place (committed); /tmp itself; a link in the worktree to a folder
-//        under /tmp (refused by the real path); a link in the worktree to a folder outside (committed); a hooks folder in
-//        the worktree that does not exist yet (refused: the role could create it)
+//   TS6  H6 <wt>/.codex as the hooks folder is no write place (committed); H5 /tmp itself; a link in the worktree to a
+//        folder under /tmp (refused as not tracked, by the real path); H1 a link in the worktree to a folder outside
+//        (committed); H5 a hooks folder in the worktree that does not exist yet (refused: the tip does not track it)
 //   TS7  R1 a head of exactly 7 hex digits and commits as 7-digit prefixes: ok; R2 two commits, head = the first: invalid
 //   TS8  R5 the CLI ends 0 without an answer: no-result, no compare, the summary kept
 const fs = require('fs');
@@ -210,7 +210,7 @@ const NO_DUMP = { argv: [], env: {}, stdin: '', cwd: '/' };
     ok('TS5 S4 a commit.stateDir through a link into the task folder: refused by its real path', !!e && /a folder a role writes/.test(e), String(e));
   }
 
-  // ---- TS6: S9 corners
+  // ---- TS6: corners of H1, H5, H6
   {
     const newId = () => crypto.randomBytes(16).toString('hex');
     const ask = async (f, setup) => {
@@ -229,26 +229,28 @@ const NO_DUMP = { argv: [], env: {}, stdin: '', cwd: '/' };
       return a;
     };
     const OWNER = 'Changing the hooks of the check through the commit adapter is not supported; it needs a separate task of the coordinator.';
+    const untracked = (a, dir) => a && a.status === 'refused' && a.why.includes(`no safe check path: the hooks folder ${dir} is not tracked in `)
+      && a.why.includes(`inside the role's write roots; ${OWNER}`) && !/lies in the role's write places/.test(a.why);
     let f = fixture();
     let a = await ask(f, (q) => { fs.mkdirSync(path.join(q.wt, '.codex', 'hooks'), { recursive: true }); git(q.wt, ['config', 'core.hooksPath', '.codex/hooks']); });
-    ok('TS6 S9 <wt>/.codex/hooks as the hooks folder: no write place of the role, committed as in 0.4.36', a && a.status === 'committed', J(a));
+    ok('TS6 H6 <wt>/.codex/hooks as the hooks folder: no write place of the role, committed as in 0.4.36', a && a.status === 'committed', J(a));
     const tmpHooks = fs.mkdtempSync('/tmp/codis-tc-hooks-');
     try {
       f = fixture();
       a = await ask(f, (q) => { git(q.wt, ['config', 'core.hooksPath', tmpHooks]); });
-      ok('TS6 S9 a hooks folder under /tmp itself (not the TMPDIR of the role): refused with the owner\'s text', a && a.status === 'refused' && a.why.includes(OWNER), J(a));
+      ok('TS6 H5 a hooks folder under /tmp itself (not the TMPDIR of the role): refused as not tracked with the owner\'s text', untracked(a, fs.realpathSync(tmpHooks)), J(a));
       f = fixture({ files: { hk: { link: tmpHooks } } });
       a = await ask(f, (q) => { git(q.wt, ['config', 'core.hooksPath', 'hk']); });
-      ok('TS6 S9 a tracked link in the worktree whose real path lies under /tmp: refused', a && a.status === 'refused' && a.why.includes(OWNER), J(a));
+      ok('TS6 H5 a tracked link in the worktree whose real path lies under /tmp: refused as not tracked by its real path', untracked(a, fs.realpathSync(tmpHooks)), J(a));
     } finally { fs.rmSync(tmpHooks, { recursive: true, force: true }); }
     const outside = path.join(BASE, 'outside-hooks');
     fs.mkdirSync(outside, { recursive: true });
     f = fixture({ files: { hk: { link: outside } } });
     a = await ask(f, (q) => { git(q.wt, ['config', 'core.hooksPath', 'hk']); });
-    ok('TS6 S9 a tracked link in the worktree whose real path lies outside every place: committed (the place is the real path)', a && a.status === 'committed', J(a));
+    ok('TS6 H1 a tracked link in the worktree whose real path lies outside every place: committed (the place is the real path)', a && a.status === 'committed', J(a));
     f = fixture();
     a = await ask(f, (q) => { git(q.wt, ['config', 'core.hooksPath', 'not-yet']); });
-    ok('TS6 S9 a hooks folder in the worktree that does not exist yet: refused (the role could create it)', a && a.status === 'refused' && a.why.includes(OWNER) && !fs.existsSync(path.join(f.wt, 'not-yet')), J(a));
+    ok('TS6 H5 a hooks folder in the worktree that does not exist yet: refused as not tracked', untracked(a, path.join(fs.realpathSync(f.wt), 'not-yet')) && !fs.existsSync(path.join(f.wt, 'not-yet')), J(a));
   }
 
   // ---- TS7, TS8: the compare of the answer

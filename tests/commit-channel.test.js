@@ -431,8 +431,8 @@ const markScript = (f, name) => `#!/bin/sh\necho ${name} >> '${f.marks}'\ncat >/
     exe(path.join(H, 'clean'), `#!/bin/sh\necho filter >> '${f.marks}'\necho FILTERED\n`);
     exe(path.join(H, 'gpg'), markScript(f, 'gpg'));
     exe(path.join(H, 'ssh'), markScript(f, 'ssh'));
-    // the hooks folder the include names lies outside the role's write places: one inside them refuses every request
-    // (tests/role-exec-codex-roles.test.js, S9), and this case is about the plumbing of a commit that goes through
+    // the hooks folder the include names lies outside the role's write places: an untracked one inside them refuses
+    // every request (H5, tests/commit-hooks-place-cases.js), and this case is about the plumbing of a commit that goes through
     const IH = path.join(f.d, 'inc-hooks');
     fs.mkdirSync(IH);
     exe(path.join(IH, 'reference-transaction'), markScript(f, 'include-reference-transaction'));
@@ -562,9 +562,9 @@ const markScript = (f, name) => `#!/bin/sh\necho ${name} >> '${f.marks}'\ncat >/
       const r = await client(s, ['-m', 'm', '--', 'a.txt']);
       const named = /hook\.<name>/.test(name);
       if (/^OC-12a /.test(name)) {
-        // a hooks folder in the worktree is a folder the role writes: refused before any hook (S9)
-        ok(`${name} -> refused: the hooks folder lies in the role's write places, no commit, no hook ran`, r.j && r.j.status === 'refused'
-          && /lies in the role's write places/.test(r.j.why) && /not supported; it needs a separate task of the coordinator/.test(r.j.why)
+        // an untracked hooks folder in the worktree is a folder the role writes and the tip does not track: refused before any hook (H5)
+        ok(`${name} -> refused: the hooks folder is not tracked in the tip inside the role's write roots, no commit, no hook ran`, r.j && r.j.status === 'refused'
+          && /is not tracked in [0-9a-f]+ inside the role's write roots/.test(r.j.why) && /not supported; it needs a separate task of the coordinator/.test(r.j.why)
           && tip(f.wt) === t0 && hostileMarks(f) === '', JSON.stringify(r.j));
       } else if (named || !has('codex')) {
         ok(`${name} -> refused "no safe check path", no commit, no hook ran`, r.j && r.j.status === 'refused' && /no safe check path/.test(r.j.why)

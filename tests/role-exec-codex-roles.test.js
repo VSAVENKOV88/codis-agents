@@ -4,11 +4,12 @@
 // channel. Here the CLI is a fake (a Node script named in codex.bin, started by spawnRole through the launch gate): it
 // saves its argv, cwd, environment and stdin, asks the adapter for commits through scripts/commit-req.js, can move the
 // branch behind the adapter, and writes the answer with the shas it got. No model is called.
-// Cells of the analysis (p-codex-A2a-3/analyst.md, part a, and the coordinator's cells S9, R6, R3a):
+// Cells of the analysis (p-codex-A2a-3/analyst.md, part a, and the coordinator's cells R6, R3a; part b's H1, H5, H6
+// for the role's places, the rest of part b in tests/commit-hooks-place-cases.js):
 //   S1/S2 argv and cwd of prog/test (workspace root = the worktree, the task folder a writable root, the network by the
 //   kind), S3 the other kinds as before, S4 one function of the role's write places, S5 the npm cache of the call,
-//   S6 prog/test on codex without cfg.commit, S7 CODEX_REFUSED, S8 the cwd the launch hook sees, S9 a hooks folder in
-//   the role's write places, R1-R6 and R3a the answer against the adapter's commits, T1-T4 the host section of the
+//   S6 prog/test on codex without cfg.commit, S7 CODEX_REFUSED, S8 the cwd the launch hook sees, H5 an untracked hooks
+//   folder in the role's write places, H1/H6 one outside them, R1-R6 and R3a the answer against the adapter's commits, T1-T4 the host section of the
 //   prompt, T5 the rule "Waiting".
 const fs = require('fs');
 const os = require('os');
@@ -325,7 +326,8 @@ const REVIEW_OK = { verdict: 'done', docsOnly: false, fixBehaviourUnchanged: nul
     ok('S4 commit.stateDir outside every place of the role: accepted', tryMk(f.state) === null, String(tryMk(f.state)));
   }
 
-  // ---- S9: a hooks folder in the role's write places refuses every request before any hook
+  // ---- H5, H1, H6: an untracked hooks folder in the role's write places refuses every request before any hook; one
+  // outside them is not compared with the tip
   {
     const newId = () => crypto.randomBytes(16).toString('hex');
     const svcOf = (f) => {
@@ -347,34 +349,36 @@ const REVIEW_OK = { verdict: 'done', docsOnly: false, fixBehaviourUnchanged: nul
       return a;
     };
     const OWNER = 'Changing the hooks of the check through the commit adapter is not supported; it needs a separate task of the coordinator.';
+    const untracked = (a, dir) => a && a.status === 'refused' && a.why.includes(`no safe check path: the hooks folder ${dir} is not tracked in `)
+      && a.why.includes(`inside the role's write roots; ${OWNER}`) && !/lies in the role's write places/.test(a.why);
     const hook = (dir, mark) => { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, 'pre-commit'), `#!/bin/sh\necho ran > '${mark}'\n`); fs.chmodSync(path.join(dir, 'pre-commit'), 0o755); };
     let f = fixture();
     const mark = path.join(f.d, 'hook-ran');
     let a = await ask(f, (q) => { hook(path.join(q.wt, '.githooks'), mark); git(q.wt, ['config', 'core.hooksPath', '.githooks']); });
-    ok('S9 a relative core.hooksPath inside the worktree with a hook: refused with the owner\'s text and the folder, the hook never ran',
-      a && a.status === 'refused' && a.why.includes(OWNER) && a.why.includes(path.join(rp(f.wt), '.githooks')) && !fs.existsSync(mark), J(a));
+    ok('H5 an untracked relative core.hooksPath inside the worktree with a hook: refused as not tracked with the owner\'s text and the folder, the hook never ran',
+      untracked(a, path.join(rp(f.wt), '.githooks')) && !fs.existsSync(mark), J(a));
     f = fixture();
     a = await ask(f, (q) => { fs.mkdirSync(path.join(q.wt, '.githooks')); git(q.wt, ['config', 'core.hooksPath', '.githooks']); });
-    ok('S9 the same folder without any hook (a removed hook): refused all the same', a && a.status === 'refused' && a.why.includes(OWNER), J(a));
+    ok('H5 the same folder without any hook: refused all the same', untracked(a, path.join(rp(f.wt), '.githooks')), J(a));
     f = fixture();
     a = await ask(f, (q) => { fs.mkdirSync(path.join(q.rtmp, 'hk')); git(q.wt, ['config', 'core.hooksPath', path.join(q.rtmp, 'hk')]); });
-    ok('S9 a hooks folder under the role\'s TMPDIR: refused', a && a.status === 'refused' && a.why.includes(OWNER), J(a));
+    ok('H5 a hooks folder under the role\'s TMPDIR: refused as not tracked', untracked(a, path.join(rp(f.rtmp), 'hk')), J(a));
     f = fixture();
     a = await ask(f, (q) => { fs.mkdirSync(path.join(q.tdir, 'hk')); git(q.wt, ['config', 'core.hooksPath', path.join(q.tdir, 'hk')]); });
-    ok('S9 a hooks folder under the task folder: refused', a && a.status === 'refused' && a.why.includes(OWNER), J(a));
+    ok('H5 a hooks folder under the task folder: refused as not tracked', untracked(a, path.join(rp(f.tdir), 'hk')), J(a));
     f = fixture();
     a = await ask(f, (q) => { fs.mkdirSync(path.join(q.d, 'outside-hooks')); git(q.wt, ['config', 'core.hooksPath', path.join(q.d, 'outside-hooks')]); });
-    ok('S9 a hooks folder outside the role\'s places (no hook): committed as in 0.4.36', a && a.status === 'committed', J(a));
+    ok('H1 a hooks folder outside the role\'s places (no hook): committed as in 0.4.36', a && a.status === 'committed', J(a));
     f = fixture();
     a = await ask(f, () => {});
-    ok('S9 a linked worktree with <common dir>/hooks outside it: committed as in 0.4.36', a && a.status === 'committed', J(a));
+    ok('H1 a linked worktree with <common dir>/hooks outside it: committed as in 0.4.36', a && a.status === 'committed', J(a));
     f = fixture({ main: true });
     a = await ask(f, () => {});
-    ok('S9 the main checkout as the worktree: <wt>/.git/hooks is no write place of the role, committed as in 0.4.36', a && a.status === 'committed', J(a));
+    ok('H6 the main checkout as the worktree: <wt>/.git/hooks is no write place of the role, committed as in 0.4.36', a && a.status === 'committed', J(a));
   }
 
   // the tester cells (links to the worktree and the task folder, the reading kinds, the npm cache by any case and in a
-  // launcher's plan, a stateDir holding a root, S9 corners, head of 7 digits, no answer): a child with its own tally, so
+  // launcher's plan, a stateDir holding a root, H5/H6 corners, head of 7 digits, no answer): a child with its own tally, so
   // README keeps counting test files
   {
     const tc = spawnSync(process.execPath, [path.join(__dirname, 'role-exec-codex-roles-tester-cases.js')], { encoding: 'utf8', timeout: 240000 });

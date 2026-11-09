@@ -114,7 +114,7 @@ const request = async (f, o) => {
 };
 const rp = (p) => fs.realpathSync(p);
 const refusedM1 = (r) => r.a && r.a.status === 'refused' && !r.moved && !S9.test(r.a.why);
-const differs = (f, kind, p) => (r) => refusedM1(r) && r.a.why.includes(`the hooks folder ${rp(f.hp)} differs from ${f.h0}:`) && r.a.why.includes(`${kind} ${p}`) && r.a.why.includes(OWNER);
+const differs = (f, kind, p) => (r) => refusedM1(r) && r.a.why.includes(`the hooks folder ${path.join(rp(f.wt), HP)} differs from ${f.h0}:`) && r.a.why.includes(`${kind} ${p}`) && r.a.why.includes(OWNER);
 const untracked = (f, dir) => (r) => refusedM1(r) && r.a.why.includes(`no safe check path: the hooks folder ${dir} is not tracked in ${f.h0} inside the role's write roots; ${OWNER}`);
 const moved = (r) => r.a && r.a.status === 'refused' && !r.moved && /^the hooks location changed during the call \(/.test(r.a.why);
 

@@ -35,8 +35,13 @@
 // The checks (owner 2026-11-06, answers 1 to 6 and G7; owner 2026-11-07 on the walk): the hooks of a check (pre-commit,
 // prepare-commit-msg, commit-msg) are taken from the folder the user's git would use - the last core.hooksPath (a
 // relative one from the worktree root, ~ from the user's HOME), else <common git dir>/hooks; a hook.* key is refused.
-// A hooks folder in the role's write places (scripts/role-roots.js reach: the worktree, the task folder, /tmp, the
-// role's TMPDIR; <wt>/.git and <wt>/.codex do not count) refuses every request before any hook, with or without hooks.
+// The hooks folder against the start of the call (owner 2026-11-09, "hooks: B"): its location P0 is recorded when the
+// service opens, and before the hooks of every request and every pass, and after every pass, the location must still
+// be P0. When P0 lies in the role's write places (scripts/role-roots.js reach: the worktree, the task folder, /tmp, the
+// role's TMPDIR; <wt>/.git and <wt>/.codex do not count), the folder must also be tracked in the tip at the start of
+// the call, unnamed by the request and equal to that tip both ways (every file on disk, ignored ones too, by bytes and
+// mode; no file added or deleted), with or without executable hooks in it; anything else refuses with its path. An
+// uncommitted change of a hook so never changes the check of a commit; a hook committed before the call is trusted.
 // Without such hooks the request is committed as above and nothing of the worktree outside it is looked at.
 // On both paths the named paths are checked against the recorded tip H0 and the file system: a path inside a gitlink or
 // under a tracked file is refused, so is another spelling of a tracked entry (the same dev and inode, and one name in
@@ -120,7 +125,8 @@ const CHECK_HOOKS = ['pre-commit', 'prepare-commit-msg', 'commit-msg'];
 // codex versions whose sandbox was checked for the profile of a check (cfg.commit.codexVersions)
 const VERIFIED_CODEX_VERSIONS = ['0.166.0'];
 const CHECK_PROFILE = 'codis-check';
-// The refusal of a request whose hooks folder the role can write (owner 2026-11-09).
+// The text of a refusal for a hooks folder in the role's write places that is untracked, named by the request or not
+// equal to the tip at the start of the call (owner 2026-11-09).
 const HOOKS_CHANGE = 'Changing the hooks of the check through the commit adapter is not supported; it needs a separate task of the coordinator.';
 // the pause between SIGTERM and SIGKILL of a check's group when the call ends (owner answer 2 of part A1)
 const KILL_GRACE_MS = 30 * 1000;
@@ -1026,6 +1032,76 @@ function openCommitService(o) {
   // worktree read only. The npm cache never adds a root: its path lies in the call folder, which the role can replace
   // by a link at any time, so a root taken from it would be a folder of the role's choosing.
   const roleRoots = () => places.check;
+
+  // ---- the hooks folder against the start of the call (mechanism M1-B, owner 2026-11-09 "hooks: B")
+  // P0, the hooks location when the service opens: {dir, real, place} (place: the role's write place that holds it, or
+  // null) or {error}; null when the worktree is unknown (then the service is broken and refuses every request).
+  const hooksStart = gitDir && wtReal ? (() => {
+    const h = checkHooks();
+    return h.error ? h : { dir: h.dir, real: rolePlaces.realish(h.dir), place: rolePlaces.placeOf(h.dir, places) };
+  })() : null;
+  // The difference of the hooks folder (real path, rel its path in the worktree) and its tree in the tip, both ways:
+  // every non-folder entry on disk (lstat, links not followed, ignored entries included) against every non-folder entry
+  // of the tip under rel, by bytes and mode. [{kind: modified | added | deleted, path}] or {error}.
+  const hooksDiff = (real, rel, tree) => {
+    const pre = `${rel}/`;
+    const list = [];
+    const onDisk = new Set();
+    const stack = [[real, rel]];
+    let seen = 0;
+    while (stack.length) {
+      const [dir, relDir] = stack.pop();
+      let names;
+      try { names = fs.readdirSync(dir); } catch (e) {
+        if (e.code !== 'ENOENT') list.push({ kind: 'modified', path: relDir });
+        continue;
+      }
+      for (const name of names) {
+        if (++seen > walkLimits.entries) return { error: `no safe check path: the hooks folder ${real} has more than ${walkLimits.entries} entries` };
+        const p = `${relDir}/${name}`;
+        let st;
+        try { st = fs.lstatSync(path.join(dir, name)); } catch { continue; } // gone since the listing
+        if (st.isDirectory()) { stack.push([path.join(dir, name), p]); continue; }
+        onDisk.add(p);
+        if (!tree.map.has(p) || tree.map.get(p).type === 'tree') list.push({ kind: 'added', path: p });
+      }
+    }
+    for (const [p, e] of tree.map) {
+      if (!p.startsWith(pre) || e.type === 'tree') continue;
+      // a submodule in the hooks folder is never equal: its files are not compared
+      const kinds = e.type === 'blob' ? pathDiff(p, e.mode, e.oid) : ['modified'];
+      if (!kinds) continue;
+      list.push({ kind: kinds.includes('deleted') && !onDisk.has(p) ? 'deleted' : 'modified', path: p });
+    }
+    return list.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  };
+  // The gate of the hooks folder, before the hooks of a request and of every pass and after every pass (named: the paths
+  // of the request, null after a pass): {hk} or {why}. The location must be P0 (H8). When P0 lies in the role's write
+  // places, the folder must also be tracked in the tip at the start of the call (H5), unnamed by the request (H4) and
+  // equal to that tip file by file (H3, H7, H9): the role cannot commit a change under it through the adapter, so the
+  // tip at the start of the call holds the hooks the call is checked with. <wt>/.git and <wt>/.codex are no write place.
+  const hooksGate = (named) => {
+    if (!hooksStart) return { why: 'no safe check path: the hooks location at the start of the call is unknown' };
+    if (hooksStart.error) return { why: `no safe check path: ${hooksStart.error}` };
+    const hk = checkHooks();
+    if (hk.error) return { why: `no safe check path: ${hk.error}` };
+    const real = rolePlaces.realish(hk.dir);
+    if (hk.dir !== hooksStart.dir) return { why: `the hooks location changed during the call (${hooksStart.dir} -> ${hk.dir})` };
+    if (real !== hooksStart.real) return { why: `the hooks location changed during the call (${hooksStart.real} -> ${real})` };
+    if (!hooksStart.place) return { hk };
+    const rel = rolePlaces.inside(real, wtReal) ? path.relative(wtReal, real).split(path.sep).join('/') : null;
+    const tree = treeOf(startTip);
+    if (tree.error) return { why: tree.error };
+    const e = rel ? tree.map.get(rel) : null;
+    if (!e || e.type !== 'tree') return { why: `no safe check path: the hooks folder ${real} is not tracked in ${startTip} inside the role's write roots; ${HOOKS_CHANGE}` };
+    for (const p of named || []) {
+      if (rolePlaces.within(path.join(wtReal, p), real)) return { why: `the request names ${q(p)} in the hooks folder ${real}. ${HOOKS_CHANGE}` };
+    }
+    const diff = hooksDiff(real, rel, tree);
+    if (diff.error) return { why: diff.error };
+    if (diff.length) return { why: `the hooks folder ${real} differs from ${startTip}: ${listText(diff)}. ${HOOKS_CHANGE}` };
+    return { hk };
+  };
   // the npm cache must resolve (through its nearest existing folder) inside a root of the role; checked per request,
   // before the probe and the hooks: a cache elsewhere is refused instead of failing inside the sandbox
   const cacheOutside = () => {
@@ -1167,6 +1243,8 @@ function openCommitService(o) {
       fs.mkdirSync(msgDir, { recursive: true, mode: 0o700 });
       const msgFile = path.join(msgDir, 'COMMIT_EDITMSG');
       fs.writeFileSync(msgFile, snap.message);
+      const before = hooksGate(null);
+      if (before.why) return fail(before.why);
       const profile = profileOf(msgDir);
       for (const h of hk.hooks) {
         const home = newHome(`${id}-${pass}`);
@@ -1185,7 +1263,10 @@ function openCommitService(o) {
         if (res.rc !== 0 || res.signal) return fail(`${h} failed (${res.signal ? `signal ${res.signal}` : `rc ${res.rc}`})`);
       }
       if (inject.afterChecks) inject.afterChecks({ id, privIndex });
-      // the compare after the pass, against what was recorded before it
+      // the compare after the pass, against what was recorded before it; the hooks folder first, so a write of the pass
+      // into it (an ignored entry too) refuses with its path before the compare of the worktree (H9)
+      const after = hooksGate(null);
+      if (after.why) return fail(after.why);
       const wt2 = g(['write-tree']);
       if (wt2.rc !== 0 || wt2.out.trim() !== snap.tree) return fail('index changes are an adapter operation: the tree of the private index changed during the check');
       const d = discover();
@@ -1239,13 +1320,10 @@ function openCommitService(o) {
     const done = (res) => finish(id, hash, res);
     const cancelled = (extra) => done(Object.assign({ status: 'cancelled', why: 'the call ended during the check' }, extra));
     try {
-      const hk = checkHooks();
-      if (hk.error) return done({ status: 'refused', why: `no safe check path: ${hk.error}` });
-      // A hooks folder the role can write would let it change the check of its own commit (an edited, added or removed
-      // hook), so every request is refused, with or without executable hooks in it; <wt>/.git and <wt>/.codex stay
-      // read only for the role and do not count.
-      const reach = rolePlaces.placeOf(hk.dir, places);
-      if (reach) return done({ status: 'refused', why: `no safe check path: the hooks folder ${rolePlaces.realish(hk.dir)} lies in the role's write places (${reach}). ${HOOKS_CHANGE}` });
+      // before the decision to check: a hook removed from a folder the role writes refuses too (H7)
+      const gate = hooksGate(r.paths);
+      if (gate.why) return done({ status: 'refused', why: gate.why });
+      const hk = gate.hk;
       const checking = hk.hooks.length > 0;
       const pre = preflight(!checking);
       if (pre) return done({ status: 'refused', why: pre });
