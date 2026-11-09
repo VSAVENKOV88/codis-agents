@@ -205,7 +205,7 @@ const lineOf = (prompt, argv) => prompt.split('\n').map((l) => l.replace(/^\d\. 
       r && r.adapter && r.adapter.length === 1 && r.adapter[0].outcome === 'auth' && r.adapter[0].cause === 'auth' && nn.some((m) => /could not be written/.test(m)), JSON.stringify(r) + ' ' + nn.join(' | '));
   }
 
-  // ---- A12, A13: pre on codex under the conductor's flag; prog and test stay refused
+  // ---- A12, A13: pre on codex under the conductor's flag; prog and test without cfg.commit are refused
   const home = path.join(W, 'home');
   fs.mkdirSync(home);
   fs.writeFileSync(path.join(home, RE.CATALOG_FILE), JSON.stringify({ models: [{ slug: 'gpt-6-astra', supported_reasoning_levels: ['high'] }] }));
@@ -225,7 +225,7 @@ const lineOf = (prompt, argv) => prompt.split('\n').map((l) => l.replace(/^\d\. 
   rv = await m.ag('check', { label: 'pre:x', schema: PRE_S, agentType: 'general-purpose' });
   ok('A12 pre on codex with preconditionsByConductor: it runs', rv && rv.ok === true && m.calls.join() === 'pre:x', JSON.stringify(m.recs));
   rv = await m.ag('prog', { label: 'prog:x#1', schema: PRE_S, agentType: 'general-purpose' });
-  ok('A13 prog on codex stays refused under the flag ("part A2")', rv === null && m.calls.length === 1 && /A2/.test((m.recs[1] || {}).error || ''), JSON.stringify(m.recs[1]));
+  ok('A13 prog on codex without cfg.commit is refused under the flag: it needs the commit channel', rv === null && m.calls.length === 1 && /the programmer on codex needs the commit channel \(cfg\.commit\)/.test((m.recs[1] || {}).error || ''), JSON.stringify(m.recs[1]));
 
   // ---- A7-A10, A13', A7p, G17: the hook check before each codex role
   const fdir = path.join(W, 'fake-trace');

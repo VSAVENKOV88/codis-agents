@@ -20,7 +20,7 @@ const { ok, done } = require('./lib');
 const ROOT = path.join(__dirname, '..');
 const SCRIPT = path.join(ROOT, 'scripts', 'role-exec.js');
 const FIX = path.join(__dirname, 'fixtures', 'role-exec');
-const { createAgent, check, realish, overlap } = require(SCRIPT);
+const { createAgent, check, realish, overlap, hostSection } = require(SCRIPT);
 const CATALOG = JSON.parse(fs.readFileSync(path.join(FIX, 'codex-models.json'), 'utf8'));
 
 // REVIEW_SCHEMA from the source of role-chain.js (the schema of the acceptance calls)
@@ -295,7 +295,7 @@ const seen = (name, x) => { OUTCOMES.push([name, x]); return x; };
   const tb = task({ lines: xOk().slice(0, 3), pad: 700, tail: ['{"type":"item.completed","item":', ...xOk().slice(3)], split: true, writeO: J(ANSWER) });
   const rb = await mk('codex', [tb])(big, opts(`review:${tb.key}#1`));
   const recb = records(tb.dir).slice(-1)[0] || {};
-  const want = Buffer.from(fs.readFileSync(path.join(ROOT, 'agents', 'reviewer.md'), 'utf8').replace(/^---[\s\S]*?\n---\n/, '').trim() + '\n\n' + big);
+  const want = Buffer.from(fs.readFileSync(path.join(ROOT, 'agents', 'reviewer.md'), 'utf8').replace(/^---[\s\S]*?\n---\n/, '').trim() + '\n\n' + big + '\n\n' + hostSection('review', tb));
   ok('A1-23 X the 60 KB prompt reaches the CLI byte for byte through stdin', Buffer.byteLength(big) > 60000 && stdinOf(tb) && stdinOf(tb).equals(want), String(stdinOf(tb) && stdinOf(tb).length));
   ok('A1-23 X a 0.7 MB stream with lines cut between chunks and a broken line -> ok, the broken line is a note', rb && recb.outcome === 'ok'
     && fs.statSync(path.join(recb.callDir, 'events.jsonl')).size > 700000 && recb.notes.some((n) => /not JSON|unparsed|broken/i.test(n)), J(recb).slice(0, 600));
@@ -318,7 +318,7 @@ const seen = (name, x) => { OUTCOMES.push([name, x]); return x; };
   const [s1, s2] = await Promise.all([a1('1\n', opts(`review:${tsame.key}#1`)), a2('2\n', opts(`review:${tsame.key}#1`))]);
   const rs = records(tsame.dir);
   ok('A1-25 two adapters, one label, one second: two call folders, each with its own prompt.txt', s1 && s2 && rs.length === 2 && rs[0].callDir !== rs[1].callDir
-    && new Set(rs.map((r) => fs.readFileSync(path.join(r.callDir, 'prompt.txt'), 'utf8').slice(-2))).size === 2, J(rs.map((r) => r.callDir)));
+    && new Set(rs.map((r) => fs.readFileSync(path.join(r.callDir, 'prompt.txt'), 'utf8').split('## On this host (codex)')[0].trimEnd().slice(-1))).size === 2, J(rs.map((r) => r.callDir)));
 
   // ---- A1-35 descendants outside the group: not killed, not invented, the record says so
   x = await callX({ child: ['group', 'session'], lines: xOk(), writeO: J(ANSWER) });

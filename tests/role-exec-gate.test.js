@@ -10,7 +10,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { spawnSync } = require('child_process');
 const { ok, done } = require('./lib');
-const { createAgent } = require('../scripts/role-exec.js');
+const { createAgent, hostSection } = require('../scripts/role-exec.js');
 
 const ROOT = path.join(__dirname, '..');
 const CATALOG = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'role-exec', 'codex-models.json'), 'utf8'));
@@ -56,7 +56,8 @@ const call = (ag, t, prompt, stepId) => ag(prompt, { label: `review:${t.key}#1`,
   for (const [cell, host] of [['E11', 'claude'], ['E12', 'codex']]) {
     const t = task();
     const prompt = '\nthe first line of the prompt is empty, go\n' + 'prompt-é'.repeat(350000);
-    const want = crypto.createHash('sha256').update(prompt).digest('hex');
+    // on codex the host section follows the prompt (role-exec.js hostSection)
+    const want = crypto.createHash('sha256').update(host === 'codex' ? prompt + '\n\n' + hostSection('review', t) : prompt).digest('hex');
     const seen = [];
     const v = await call(mk(host, t, { onLaunch: (i) => {
       sleepMs(400);

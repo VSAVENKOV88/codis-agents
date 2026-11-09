@@ -431,9 +431,12 @@ const markScript = (f, name) => `#!/bin/sh\necho ${name} >> '${f.marks}'\ncat >/
     exe(path.join(H, 'clean'), `#!/bin/sh\necho filter >> '${f.marks}'\necho FILTERED\n`);
     exe(path.join(H, 'gpg'), markScript(f, 'gpg'));
     exe(path.join(H, 'ssh'), markScript(f, 'ssh'));
-    fs.mkdirSync(path.join(H, 'inc-hooks'));
-    exe(path.join(H, 'inc-hooks', 'reference-transaction'), markScript(f, 'include-reference-transaction'));
-    fs.writeFileSync(path.join(H, 'inc.cfg'), `[core]\n\thooksPath = ${path.join(H, 'inc-hooks')}\n\tfsmonitor = ${path.join(H, 'fsmon')}\n`);
+    // the hooks folder the include names lies outside the role's write places: one inside them refuses every request
+    // (tests/role-exec-codex-roles.test.js, S9), and this case is about the plumbing of a commit that goes through
+    const IH = path.join(f.d, 'inc-hooks');
+    fs.mkdirSync(IH);
+    exe(path.join(IH, 'reference-transaction'), markScript(f, 'include-reference-transaction'));
+    fs.writeFileSync(path.join(H, 'inc.cfg'), `[core]\n\thooksPath = ${IH}\n\tfsmonitor = ${path.join(H, 'fsmon')}\n`);
     fs.writeFileSync(path.join(f.wt, '.gitattributes'), '* filter=x\n');
     // attributes git reads without a worktree: info/attributes of the common git dir and core.attributesFile
     fs.writeFileSync(path.join(f.repo, '.git', 'info', 'attributes'), '* filter=x\n');
@@ -558,7 +561,12 @@ const markScript = (f, name) => `#!/bin/sh\necho ${name} >> '${f.marks}'\ncat >/
       const t0 = tip(f.wt);
       const r = await client(s, ['-m', 'm', '--', 'a.txt']);
       const named = /hook\.<name>/.test(name);
-      if (named || !has('codex')) {
+      if (/^OC-12a /.test(name)) {
+        // a hooks folder in the worktree is a folder the role writes: refused before any hook (S9)
+        ok(`${name} -> refused: the hooks folder lies in the role's write places, no commit, no hook ran`, r.j && r.j.status === 'refused'
+          && /lies in the role's write places/.test(r.j.why) && /not supported; it needs a separate task of the coordinator/.test(r.j.why)
+          && tip(f.wt) === t0 && hostileMarks(f) === '', JSON.stringify(r.j));
+      } else if (named || !has('codex')) {
         ok(`${name} -> refused "no safe check path", no commit, no hook ran`, r.j && r.j.status === 'refused' && /no safe check path/.test(r.j.why)
           && tip(f.wt) === t0 && hostileMarks(f) === '', JSON.stringify(r.j));
       } else {
@@ -820,11 +828,20 @@ setTimeout(() => process.exit(9), 20000);
     const lb = fs.readFileSync(path.join(f.tdir, 'calls.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).pop();
     ok('a task without branch -> prog with the commit channel refused before the launch, the record names the branch', vb === null && seen.length === n0
       && lb.outcome === 'refused' && /has no branch/.test(lb.error), JSON.stringify(lb));
-    // the real CLI is still refused for prog/test on codex (the sandbox profile of code writes: part A2a-3)
-    const real = createAgent(Object.assign({}, base, { launch: undefined }));
+    // without a launcher of the caller prog runs on the codex CLI of codex.bin, here a fake one (never the codex of the
+    // PATH): it is launched with the commit channel and its answer is taken
+    const fakeBin = path.join(f.d, 'fake-codex.js');
+    fs.writeFileSync(fakeBin, `#!/usr/bin/env node\nconst fs=require('fs');const a=process.argv.slice(2);process.stdin.resume();process.stdin.on('end',()=>{
+fs.writeFileSync(a[a.indexOf('-o')+1],JSON.stringify({status:'ready'}));fs.writeFileSync(${JSON.stringify(path.join(f.d, 'fake-ran'))},String(process.env.CODIS_COMMIT_BOX));
+process.stdout.write(JSON.stringify({type:'turn.completed',usage:{}})+'\\n');});\n`);
+    fs.chmodSync(fakeBin, 0o755);
+    const real = createAgent(Object.assign({}, base, { launch: undefined, codex: { home: chome, catalog: CATALOG, bin: fakeBin } }));
     const vr = await real('prompt', { label: 'prog:K#4', schema: SCHEMA, agentType: 'general-purpose' });
     const lr = fs.readFileSync(path.join(f.tdir, 'calls.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).pop();
-    ok('without a launcher prog on codex is still refused (A2)', vr === null && lr.outcome === 'refused' && /A2/.test(lr.error), JSON.stringify(lr));
+    let ranBox = null;
+    try { ranBox = fs.readFileSync(path.join(f.d, 'fake-ran'), 'utf8'); } catch { /* not launched */ }
+    ok('without a launcher prog on codex runs the CLI of codex.bin with the commit channel (A2a-3)', vr && vr.status === 'ready' && lr.outcome === 'ok'
+      && ranBox === path.join(lr.callDir, 'commit'), JSON.stringify(lr));
     // The record of the call (<task dir>/calls.jsonl) sits in a folder the role writes (owner's answer to G2): a link,
     // a FIFO or a hard link the role leaves there is never written through, and the adapter does not hang on it.
     const recFile = path.join(f.tdir, 'calls.jsonl');

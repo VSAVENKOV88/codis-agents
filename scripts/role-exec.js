@@ -24,10 +24,14 @@
 // outcome and no process (the hook check of a codex role). cfg.onRecord(rec) gets the record of every call before it is
 // appended to calls.jsonl, also when the file refuses it. cfg.preconditionsByConductor lets pre run on codex: the
 // conductor ran env-check.js on the host and the prompt carries its result, so pre needs no ps or sysctl of its own.
-// With cfg.commit a prog or test call on codex gets the commit channel (scripts/commit-service.js): a box in its call
+// prog and test on codex need cfg.commit and get the commit channel (scripts/commit-service.js): a box in its call
 // folder, the answers in commit.stateDir, CODIS_COMMIT_BOX and CODIS_COMMIT_ANSWERS in its environment, the service
 // open while the launcher runs and until a check it runs is stopped (its hooks run in codex sandbox with the rights of
-// the role); the record carries its summary.
+// the role); the record carries its summary. Their sandbox is the legacy workspace-write with the worktree as the
+// workspace root (-C, cwd) and the task folder as the one extra writable root, the network only for test
+// (scripts/role-roots.js), and npm_config_cache the npm cache of the call. Every role on codex gets the host section at
+// the end of its prompt (hostSection). An ok answer of prog/test is compared with the adapter's commits (compareAnswer):
+// a head or a commit the adapter did not make, or a branch moved behind it, ends the call as invalid-result.
 //
 // usage: node role-exec.js check --host codex [--bin <codex>] --home <run home> [--auth chatgpt|apiKeyFile]
 //          [--key-file <file>] [--model <slug>] [--effort <level>] [--versions <a,b>]
@@ -39,6 +43,7 @@ const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const { StringDecoder } = require('string_decoder');
 const { openCommitService } = require('./commit-service');
+const { realish, inside, overlap, roleRoots } = require('./role-roots');
 
 // The JSON Schema keywords the twelve schemas of role-chain.js use. Strict mode of the OpenAI API supports a subset of
 // JSON Schema; only these words are converted, and any other one is refused before a call, never guessed (A1-04).
@@ -75,12 +80,75 @@ const KINDS = {
 // The kinds of label that get the commit channel (cfg.commit): the roles that commit code or guards.
 const COMMIT_KINDS = new Set(['prog', 'test']);
 const COMMIT_CLIENT = path.join(__dirname, 'commit-req.js');
+const WAIT_STEP = path.join(__dirname, 'wait-step.js');
 // Refusals of the codex host by the kind of the label ('' when the kind runs); the claude host runs every kind. pre runs
-// only when the conductor checked the environment itself (preByConductor: cfg.preconditionsByConductor).
+// only when the conductor checked the environment itself (preByConductor: cfg.preconditionsByConductor). prog and test
+// run, with the commit channel (createAgent refuses them without cfg.commit).
 const CODEX_REFUSED = (kind, preByConductor) => (KINDS[kind] === 'service'
   ? `service step "${kind}" on codex: the conductor runs it as a child process (scripts/chain-run.js exec)`
   : kind === 'pre' && !preByConductor ? 'the preconditions run on the coordinator\'s host, outside the codex sandbox (slots and swap need ps and sysctl): run the chain through scripts/chain-run.js, which checks the environment itself'
-    : kind === 'prog' || kind === 'test' ? `the ${KINDS[kind]} on codex waits for part A2 (the sandbox for code writes and the wait for heavy commands)` : '');
+    : '');
+
+// The host section: the end of the prompt of every role on codex. It replaces the rules of the Workflow prompt that name
+// tools this host does not have (Bash run_in_background, Monitor, a blocking Bash loop) and, for prog and test, says how
+// a commit is made (the sandbox refuses git add and git commit) and what head and commits of the answer must name
+// (compareAnswer checks them).
+const HOST_HEADING = '## On this host (codex)';
+function hostSection(kind, t) {
+  const id = path.join(t.dir, 'wait-<name>');
+  const lines = [HOST_HEADING, '',
+    'This section replaces the rules about pauses, slots and git add above: this host has no Bash run_in_background, no Monitor and no blocking Bash loop.',
+    `- Waiting. Start a command that runs longer than a minute with \`node ${WAIT_STEP} start --id ${id} -- <command>\`, then wait for it with \`node ${WAIT_STEP} wait --id ${id} --max 270\` and repeat the wait until it prints "done":true. 270 s is the longest single wait, not a required interval: a wait that returns earlier is not the end of your role (the command ended, or it is still alive and you wait again). A turn that ends without a tool call ends your role: never end a turn with text like "Waiting.".`];
+  if (COMMIT_KINDS.has(kind)) {
+    lines.push(
+      `- Commits. The sandbox refuses git add, git commit and every write into the git folder: never run them. Commit only through \`node ${COMMIT_CLIENT} -m "<message>" -- <path>...\` (paths relative to the worktree): it prints one JSON line with the sha or the reason of a refusal; exit 3 is pending, then wait with \`node ${COMMIT_CLIENT} wait --id <id>\`. Wait for the sha of each commit before the next step: the red guard committed before the fix, the fix committed before any mutation. Restore a mutated file with \`git show HEAD:<path> > <path>\` (git checkout and git restore are refused here).`,
+      '- Your answer: `head` is the last sha the adapter gave you in this call (no commit in this call: `git rev-parse HEAD` at its start); `commits`, where your answer has it, names only the shas the adapter gave you in this call, never commits of an earlier call.',
+      '- Heavy commands. heavy.sh, medium.sh and guards-all.sh cannot take a memory slot inside this sandbox: their exit 77, 72 or 78 is the environment, answered as environment with the cause "needs the heavy channel (A2b)"; never run the work around the slot.',
+      '- An acceptance this sandbox cannot run (it needs the network, Docker or a stand) is the environment with its cause: never green or ready without it.',
+      '- A merge of the arc (a conflict round of the train) is impossible on this host (the git folder is read only): answer with status blocked and the cause.');
+  }
+  return lines.join('\n') + '\n';
+}
+
+const SHA_RE = /^[0-9a-f]{7,40}$/i;
+// A read-only git command in the worktree for the compare of an answer: git of cfg.commit (else the PATH), no fsmonitor,
+// none of the caller's GIT_* variables. The trimmed stdout, or null.
+function gitRead(bin, env, wt, args) {
+  const e = {};
+  for (const [k, v] of Object.entries(env || {})) if (!/^GIT_/.test(k)) e[k] = v;
+  e.LC_ALL = 'C';
+  const p = spawnSync(bin, ['-c', 'core.fsmonitor=false', '-C', wt].concat(args), { encoding: 'utf8', env: e, timeout: 60000 });
+  return p.status === 0 ? String(p.stdout).trim() : null;
+}
+// The ok answer v of prog/test against the adapter's commits of this call (sum.commits), the tip at its start and at its
+// end: head must be a prefix (7 hex digits or more) of the last sha the adapter committed, else of the start tip; every
+// sha of commits a prefix of one of them, or an ancestor of the start tip (a commit of an earlier call: a note); the tip
+// at the end equal to that same sha. head is compared when the schema has it, commits when the answer has the array.
+// An unknown start tip (the worktree has no readable HEAD) leaves only commits to compare: it must be empty.
+// -> {problems, notes}
+function compareAnswer(schema, v, sum, startTip, endTip, isAncestor) {
+  const problems = [], notes = [];
+  const shas = (sum.commits || []).map((c) => c.sha);
+  const last = shas.length ? shas[shas.length - 1] : startTip;
+  const prefixOf = (x, full) => typeof x === 'string' && SHA_RE.test(x) && !!full && full.startsWith(x.toLowerCase());
+  const commits = Array.isArray(v.commits) ? v.commits : [];
+  if (!last) {
+    notes.push('start tip unknown: head and the tip at the end of the call are not compared');
+    if (commits.length) problems.push(`commits names ${commits.map((c) => JSON.stringify(c)).join(', ')} but the start tip unknown: no commit of this call or an earlier one can be told`);
+    return { problems, notes };
+  }
+  const props = (schema && schema.properties) || {};
+  if (own(props, 'head') && !prefixOf(v.head, last)) {
+    problems.push(`head ${JSON.stringify(v.head)} is not the adapter's last commit ${last}${shas.length ? '' : ' (no commit in this call: the tip at its start)'}`);
+  }
+  for (const c of commits) {
+    if (shas.some((s) => prefixOf(c, s))) continue;
+    if (startTip && typeof c === 'string' && SHA_RE.test(c) && isAncestor(c, startTip)) { notes.push(`commits names ${c}, a commit of an earlier call (an ancestor of the start tip ${startTip})`); continue; }
+    problems.push(`commits names ${JSON.stringify(c)}: not a commit of the adapter in this call and not an ancestor of the start tip ${startTip}`);
+  }
+  if (endTip !== last) problems.push(`the branch tip at the end of the call is ${endTip || 'unreadable'}, not ${last}: the branch moved outside the adapter`);
+  return { problems, notes };
+}
 
 const types = (n) => [].concat(n && n.type !== undefined ? n.type : []);
 const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
@@ -199,24 +267,6 @@ function codexEnv(base, home, auth, key) {
 // because the JS realpathSync keeps the case it was given: on a case-insensitive disk two spellings of one folder would
 // compare as two folders.
 const real = (p) => { try { return fs.realpathSync.native(p); } catch { return path.resolve(p); } };
-// The real path of the longest existing prefix plus the rest: a folder that does not exist yet compares like the real one
-const realish = (p) => {
-  const abs = path.resolve(p);
-  let head = abs, rest = '';
-  for (;;) {
-    try { return path.join(fs.realpathSync.native(head), rest); } catch { /* go up */ }
-    const up = path.dirname(head);
-    if (up === head) return abs;
-    rest = path.join(path.basename(head), rest);
-    head = up;
-  }
-};
-const inside = (a, b) => a === b || a.startsWith(b.endsWith(path.sep) ? b : b + path.sep);
-// Two real paths where one lies in the other. The part of a path that does not exist yet has no name on disk to compare,
-// and a disk may ignore case and the form of Unicode, so both are ignored here: on a case-sensitive disk two folders that
-// differ only so are refused too, which costs a rename, while a missed overlap puts the state in a role's reach.
-const foldName = (p) => p.normalize('NFC').toLowerCase();
-const overlap = (a, b) => { const x = foldName(a), y = foldName(b); return inside(x, y) || inside(y, x); };
 const isPersonalCodex = (home) => real(home) === real(path.join(os.homedir(), '.codex'));
 const personalNo = (home) => `codex.home ${home} is the personal ~/.codex: the chains run in a separate home with its own login (CODEX_HOME=<home> codex login)`;
 
@@ -454,18 +504,21 @@ function createAgent(cfg) {
   if (c.host === 'codex' && isPersonalCodex(cx.home)) no(personalNo(cx.home));
   const cl = Object.assign({ bin: 'claude', permissionMode: 'auto', disallowedTools: CLAUDE_DISALLOWED }, c.claude || {});
   // The commit channel (p-codex A2a-1): prog and test on codex ask the adapter to commit (scripts/commit-req.js); the
-  // adapter keeps its answers, journal and private index in commit.stateDir, which no role may write: not under a task
-  // folder or worktree (or holding one), not under /tmp or the TMPDIR a role gets (the codex sandbox lets a role write
-  // both). The claude host gets the channel in part A2c.
+  // adapter keeps its answers, journal and private index in commit.stateDir, which no role may write: it may neither lie
+  // in nor hold any place a role reaches (roleRoots().reach of every task: the worktree, the task folder, /tmp and the
+  // TMPDIR a role gets). The claude host gets the channel in part A2c.
+  const roleTmp = (c.env || process.env).TMPDIR;
+  const rootsOf = (t) => roleRoots({ wt: t.wt, tdir: t.dir, tmpdir: roleTmp });
   const cm = c.commit === undefined || c.commit === null ? null : c.commit;
+  // git of the compare of an answer: commit.git, else the PATH (commit-service refuses a commit.git that is not absolute)
+  const gitBin = cm && typeof cm.git === 'string' && path.isAbsolute(cm.git) ? cm.git : 'git';
   if (cm) {
     if (typeof cm !== 'object') no('commit must be an object {stateDir, git?, gitVersions?, author?, codexVersions?, walkMaxEntries?, walkTimeoutMs?, walkMaxResultBytes?, walkMaxIgnoreBytes?, walkMaxReadBytes?}');
     for (const k of ['walkMaxEntries', 'walkTimeoutMs', 'walkMaxResultBytes', 'walkMaxIgnoreBytes', 'walkMaxReadBytes']) if (cm[k] !== undefined && !(Number.isFinite(cm[k]) && cm[k] > 0)) no(`commit.${k} must be a positive number, got ${JSON.stringify(cm[k])}`);
     if (c.host !== 'codex') no('commit on the claude host: the commit channel of claude -p comes with part A2c');
     if (typeof cm.stateDir !== 'string' || !path.isAbsolute(cm.stateDir)) no(`commit.stateDir is required and absolute, got ${JSON.stringify(cm.stateDir)}`);
     const sd = realish(cm.stateDir);
-    const roleTmp = (c.env || process.env).TMPDIR;
-    const roots = [].concat(...Object.values(tasks).map((t) => [t.dir, t.wt]), ['/tmp'], roleTmp ? [roleTmp] : []).map(realish);
+    const roots = [...new Set([].concat(...Object.values(tasks).map((t) => rootsOf(t).reach)))];
     for (const r of roots) {
       if (overlap(sd, r)) no(`commit.stateDir ${cm.stateDir} overlaps ${r}, a folder a role writes: the adapter's answers and journal must be out of the role's reach`);
     }
@@ -484,10 +537,11 @@ function createAgent(cfg) {
     base.t = t;
     if (typeof prompt !== 'string') return refuse('the prompt is not a string');
     const channel = !!cm && COMMIT_KINDS.has(lb.kind);
-    // prog and test on the real codex CLI wait for the sandbox profile of code writes (part A2a-3); a launcher of the
-    // caller with the commit channel runs them (the acceptance of the channel under codex sandbox)
     const refusal = CODEX_REFUSED(lb.kind, c.preconditionsByConductor === true);
-    if (c.host === 'codex' && refusal && !(channel && c.launch)) return refuse(refusal);
+    if (c.host === 'codex' && refusal) return refuse(refusal);
+    // a role on codex commits only through the adapter (its sandbox refuses git commit), so without the channel it
+    // could not hand over its work
+    if (c.host === 'codex' && COMMIT_KINDS.has(lb.kind) && !cm) return refuse(`the ${lb.role} on codex needs the commit channel (cfg.commit)`);
     if (channel && (typeof t.branch !== 'string' || !t.branch)) return refuse(`task ${lb.key} has no branch: the commit channel needs tasks[k].branch`);
     const at = o.agentType;
     let bodyRole = null;
@@ -503,6 +557,15 @@ function createAgent(cfg) {
     if (probs.length) return refuse(`schema: ${probs.join('; ')}`);
     const plan = Object.assign(base, { host: c.host, kind: lb.kind, phase: o.phase, schema: o.schema, cwd: t.dir, channel, stepId: o.stepId });
     if (c.host === 'codex') {
+      // prog/test: the worktree is the workspace root and the cwd, the task folder the one extra writable root, the
+      // network only for test; every other kind keeps -C <task folder> with no extra root and no network key
+      let sandbox = ['-s', 'workspace-write', '-C', t.dir];
+      if (channel) {
+        const r = rootsOf(t);
+        plan.cwd = r.cwd;
+        sandbox = ['-s', 'workspace-write', '-c', `sandbox_workspace_write.writable_roots=${JSON.stringify(r.extra)}`,
+          '-c', `sandbox_workspace_write.network_access=${lb.kind === 'test'}`, '-C', r.cwd];
+      }
       const alias = o.model === undefined ? 'default' : o.model;
       const slug = cx.models && own(cx.models, alias) ? cx.models[alias] : null;
       if (!slug) return refuse(`model ${alias} is not in the codex model table (codex.models: ${Object.keys(cx.models || {}).join(', ')})`);
@@ -517,13 +580,13 @@ function createAgent(cfg) {
       const body = roleFile ? fs.readFileSync(roleFile, 'utf8').replace(/^---[\s\S]*?\n---\n/, '') : null;
       return Object.assign(plan, {
         model: slug, effort, bin: cx.bin, strictSchema: strict(o.schema), home: cx.home, auth: cx.auth, keyFile: cx.keyFile,
-        stdin: body === null ? prompt : body.trim() + '\n\n' + prompt,
+        stdin: (body === null ? prompt : body.trim() + '\n\n' + prompt) + '\n\n' + hostSection(lb.kind, t),
         env: codexEnv(c.env || process.env, cx.home, cx.auth, key),
         // project_doc_max_bytes=0: Codex reads no project AGENTS.md at any -C, and the flag beats a trusted
         // .codex/config.toml of the project (measured on codex 0.166.0), so a role gets the project rules only from its
         // prompt. The instructions of the run home are not covered by it: check keeps them out of the home.
         argv: (callDir) => ['exec', '--json', '--ephemeral', '--output-schema', path.join(callDir, 'schema.json'), '-o', path.join(callDir, 'last.json'),
-          '-m', slug, '-c', `model_reasoning_effort=${effort}`, '-c', 'project_doc_max_bytes=0', '-s', 'workspace-write', '-C', t.dir, '--skip-git-repo-check', '-'],
+          '-m', slug, '-c', `model_reasoning_effort=${effort}`, '-c', 'project_doc_max_bytes=0'].concat(sandbox, ['--skip-git-repo-check', '-']),
       });
     }
     return Object.assign(plan, {
@@ -554,6 +617,7 @@ function createAgent(cfg) {
     const started = new Date();
     const t0 = process.hrtime.bigint();
     let plan, fin, res = null, svc = null, commitSum = null, svcStop = null;
+    const callNotes = []; // the adapter's own notes of the call (the compare of the answer)
     try { plan = prepare(prompt, opts); } catch (e) { plan = { label: opts && opts.label, refused: `internal error: ${e.message}` }; }
     if (plan.refused) fin = { outcome: 'refused', error: plan.refused };
     else if (stopping) fin = { outcome: 'signalled', error: `the adapter got ${stopping}: no new call starts` };
@@ -567,6 +631,13 @@ function createAgent(cfg) {
         fs.writeFileSync(path.join(plan.callDir, 'prompt.txt'), plan.stdin);
         if (plan.strictSchema) fs.writeFileSync(path.join(plan.callDir, 'schema.json'), JSON.stringify(plan.strictSchema, null, 1) + '\n');
         plan.argv = plan.argv(plan.callDir);
+        // the npm cache of the call, the folder the checks of its commits use too; an inherited one (any case of the
+        // name) never reaches the role
+        if (plan.channel) {
+          plan.env = Object.assign({}, plan.env);
+          for (const k of Object.keys(plan.env)) if (k.toLowerCase() === 'npm_config_cache') delete plan.env[k];
+          plan.env.npm_config_cache = path.join(plan.callDir, 'npm-cache');
+        }
       } catch (e) { fin = { outcome: 'crashed', error: `the call folder: ${e.message}` }; }
       if (!fin && c.beforeLaunch) {
         try {
@@ -592,6 +663,12 @@ function createAgent(cfg) {
           enter(svcStop);
           plan.commit = { box: svc.box, answers: svc.answers, client: COMMIT_CLIENT };
           plan.env = Object.assign({}, plan.env, { CODIS_COMMIT_BOX: svc.box, CODIS_COMMIT_ANSWERS: svc.answers });
+          // the tip at the start of the call: the service's (its branch) or, when the service refuses every request (a
+          // journal held or undetermined, no identity, no branch), the HEAD of the worktree read here before the launch
+          if (svc.startTip) { plan.startTip = svc.startTip; plan.startTipBy = 'service'; } else {
+            plan.startTip = gitRead(gitBin, c.env || process.env, plan.t.wt, ['rev-parse', '--verify', '-q', 'HEAD^{commit}']);
+            plan.startTipBy = plan.startTip ? 'adapter' : null;
+          }
         } catch (e) { fin = { outcome: 'crashed', error: `the commit channel: ${e.message}` }; }
       }
       if (!fin && c.launch && c.onLaunch) {
@@ -604,7 +681,22 @@ function createAgent(cfg) {
       }
       // close() waits for a running check: SIGTERM to its group, SIGKILL after killGraceMs; the signal handlers stay
       // on until then (svcStop is live), so a second signal does not kill the adapter with the check orphaned
-      if (svc) { try { commitSum = await svc.close(); } catch (e) { commitSum = { error: e.message }; } }
+      if (svc) {
+        try { commitSum = await svc.close(); } catch (e) { commitSum = { error: e.message }; }
+        commitSum.startTip = plan.startTip || null;
+        commitSum.startTipBy = plan.startTipBy || null;
+        if (plan.startTipBy !== 'service') commitSum.endTip = plan.startTipBy === 'adapter' ? gitRead(gitBin, c.env || process.env, plan.t.wt, ['rev-parse', '--verify', '-q', 'HEAD^{commit}']) : null;
+        // the answer of a role that ended ok against what the adapter committed (no compare after any other outcome)
+        if (fin.outcome === 'ok') {
+          if (commitSum.error || !Array.isArray(commitSum.commits)) fin = { outcome: 'invalid-result', error: `the answer cannot be compared: the summary of the commit channel is missing (${commitSum.error || 'no commits'})` };
+          else {
+            const isAncestor = (a, b) => gitRead(gitBin, c.env || process.env, plan.t.wt, ['merge-base', '--is-ancestor', a, b]) !== null;
+            const cmp = compareAnswer(plan.schema, fin.value, commitSum, commitSum.startTip, commitSum.endTip, isAncestor);
+            callNotes.push(...cmp.notes);
+            if (cmp.problems.length) fin = { outcome: 'invalid-result', error: `the answer does not match the adapter's commits: ${cmp.problems.join('; ')}` };
+          }
+        }
+      }
     }
     const ended = new Date();
     const r = res && typeof res === 'object' ? res : {};
@@ -616,7 +708,7 @@ function createAgent(cfg) {
       awakeSeconds: Number(process.hrtime.bigint() - t0) / 1e9, pid: r.pid === undefined ? null : r.pid,
       outcome: fin.outcome, rc: r.rc === undefined ? null : r.rc, signal: r.signal || null,
       error: fin.error ? String(fin.error).slice(0, 500) : null, usage: r.usage || null, costUSD: r.costUSD === undefined ? null : r.costUSD,
-      notes: Array.isArray(r.notes) ? r.notes : [], sessionId: r.sessionId || null, credentialExpiresAt: r.credentialExpiresAt || null,
+      notes: (Array.isArray(r.notes) ? r.notes : []).concat(callNotes), sessionId: r.sessionId || null, credentialExpiresAt: r.credentialExpiresAt || null,
       callDir: plan.callDir || null,
     };
     if (opts && opts.stepId) rec.stepId = opts.stepId;
@@ -781,4 +873,4 @@ if (require.main === module) {
   process.exit(r.ok ? 0 : 1);
 }
 
-module.exports = { realish, inside, overlap, procOf, createAgent, spawnRole, stopAll: gotSignal, CODEX_REFUSED, CEILING_MS, KILL_GRACE_MS, CLAUDE_DISALLOWED, strict, unstrict, validate, schemaProblems, parseLabel, check, KINDS, KEYWORDS, DEFAULT_CODEX_MODELS, CATALOG_FILE };
+module.exports = { realish, inside, overlap, procOf, createAgent, hostSection, spawnRole, stopAll: gotSignal, CODEX_REFUSED, CEILING_MS, KILL_GRACE_MS, CLAUDE_DISALLOWED, strict, unstrict, validate, schemaProblems, parseLabel, check, KINDS, KEYWORDS, DEFAULT_CODEX_MODELS, CATALOG_FILE };

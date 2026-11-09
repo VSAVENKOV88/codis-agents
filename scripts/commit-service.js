@@ -35,6 +35,8 @@
 // The checks (owner 2026-11-06, answers 1 to 6 and G7; owner 2026-11-07 on the walk): the hooks of a check (pre-commit,
 // prepare-commit-msg, commit-msg) are taken from the folder the user's git would use - the last core.hooksPath (a
 // relative one from the worktree root, ~ from the user's HOME), else <common git dir>/hooks; a hook.* key is refused.
+// A hooks folder in the role's write places (scripts/role-roots.js reach: the worktree, the task folder, /tmp, the
+// role's TMPDIR; <wt>/.git and <wt>/.codex do not count) refuses every request before any hook, with or without hooks.
 // Without such hooks the request is committed as above and nothing of the worktree outside it is looked at.
 // On both paths the named paths are checked against the recorded tip H0 and the file system: a path inside a gitlink or
 // under a tracked file is refused, so is another spelling of a tracked entry (the same dev and inode, and one name in
@@ -100,6 +102,7 @@ const path = require('path');
 const crypto = require('crypto');
 const net = require('net');
 const { spawn, spawnSync } = require('child_process');
+const rolePlaces = require('./role-roots');
 
 const O_NOFOLLOW_ANY = 0x20000000; // macOS <sys/fcntl.h>: no symbolic link in any component of the path
 const READ_FLAGS = fs.constants.O_RDONLY | fs.constants.O_NONBLOCK | O_NOFOLLOW_ANY;
@@ -117,6 +120,8 @@ const CHECK_HOOKS = ['pre-commit', 'prepare-commit-msg', 'commit-msg'];
 // codex versions whose sandbox was checked for the profile of a check (cfg.commit.codexVersions)
 const VERIFIED_CODEX_VERSIONS = ['0.166.0'];
 const CHECK_PROFILE = 'codis-check';
+// The refusal of a request whose hooks folder the role can write (owner 2026-11-09).
+const HOOKS_CHANGE = 'Changing the hooks of the check through the commit adapter is not supported; it needs a separate task of the coordinator.';
 // the pause between SIGTERM and SIGKILL of a check's group when the call ends (owner answer 2 of part A1)
 const KILL_GRACE_MS = 30 * 1000;
 const TAIL_CHARS = 4000;
@@ -280,7 +285,9 @@ const which = (bin, envPath) => {
 // Returns {box, answers, notes(), cancel(), close()}. Requests run one at a time; cancel() stops a running check
 // (SIGTERM to its group, SIGKILL after killGraceMs) and starts no new one; close() ends the call: it cancels the
 // running check, waits for it, cancels the requests still queued or in the box, and resolves to the summary
-// {commits, refused, nothing, cancelled, notes}. A request past its checks is carried through to its result first.
+// {commits, refused, nothing, cancelled, startTip, endTip, notes} (the tips of the branch at the start of the call -
+// null when every request is refused - and at its end, for the compare of the role's answer). startTip is also a field
+// of the service. A request past its checks is carried through to its result first.
 // Throws on arguments of the caller and when the adapter's own folders or journal cannot be set up (a full disk).
 function openCommitService(o) {
   const bad = (m) => { throw new Error(`commit-service: ${m}`); };
@@ -502,6 +509,8 @@ function openCommitService(o) {
   }
   let expected = broken ? null : tipNow();
   if (!broken && !expected) breakWith(`branch ${o.branch} does not exist in the worktree's repository`);
+  // the tip at the start of the call (null when every request is refused): the role's answer is compared with it
+  const startTip = broken ? null : expected;
 
   // ---- requests
   // Nothing is thrown: the status is decided already, and handle() writes the answer again while the file is missing.
@@ -1001,7 +1010,9 @@ function openCommitService(o) {
     if (path.isAbsolute(c)) { try { fs.accessSync(c, fs.constants.X_OK); return fs.statSync(c).isFile() ? c : null; } catch { return null; } }
     return which(c, userEnv.PATH);
   })();
-  const tdirReal = o.tdir ? (() => { try { return fs.realpathSync(o.tdir); } catch { return path.resolve(o.tdir); } })() : null;
+  // the role's places (scripts/role-roots.js, the same function as the argv of the role): the write roots of a check
+  // and every folder the role reaches
+  const places = rolePlaces.roleRoots({ wt: o.wt, tdir: o.tdir, tmpdir: userEnv.TMPDIR });
   const npmCache = o.npmCache || path.join(path.dirname(o.box), 'npm-cache');
   const locale = (v) => (typeof v === 'string' && /^[A-Za-z0-9_.@-]+$/.test(v) ? v : 'C');
   const checkEnv = (home) => {
@@ -1014,25 +1025,18 @@ function openCommitService(o) {
   // the profile: the role's write roots (the worktree, the task folder) and the message folder; .git and .codex of the
   // worktree read only. The npm cache never adds a root: its path lies in the call folder, which the role can replace
   // by a link at any time, so a root taken from it would be a folder of the role's choosing.
-  const roleRoots = () => [wtReal].concat(tdirReal ? [tdirReal] : []);
+  const roleRoots = () => places.check;
   // the npm cache must resolve (through its nearest existing folder) inside a root of the role; checked per request,
   // before the probe and the hooks: a cache elsewhere is refused instead of failing inside the sandbox
   const cacheOutside = () => {
-    let d = path.resolve(npmCache);
-    const rest = [];
-    for (;;) {
-      try { d = path.join(fs.realpathSync(d), ...rest); break; } catch {
-        if (path.dirname(d) === d) return `${npmCache} does not resolve`;
-        rest.unshift(path.basename(d)); d = path.dirname(d);
-      }
-    }
-    return roleRoots().some((x) => d === x || d.startsWith(x + path.sep)) ? null : `the npm cache ${npmCache} resolves to ${d}, outside the worktree and the task folder`;
+    const d = rolePlaces.realish(npmCache);
+    return roleRoots().some((x) => rolePlaces.within(d, x)) ? null : `the npm cache ${npmCache} resolves to ${d}, outside the worktree and the task folder`;
   };
   const profileOf = (msgDir) => {
     const p = { roots: roleRoots().concat(msgDir ? [msgDir] : []), network };
     if (inject.profile) inject.profile(p);
     const fsx = p.roots.map((r) => `${JSON.stringify(r)}="write"`)
-      .concat([path.join(wtReal, '.git'), path.join(wtReal, '.codex')].map((r) => `${JSON.stringify(r)}="read"`));
+      .concat(places.readOnly.map((r) => `${JSON.stringify(r)}="read"`));
     return { text: `permissions.${CHECK_PROFILE}={extends=":workspace",filesystem={${fsx.join(',')}},network={enabled=${p.network === true}}}`, roots: p.roots, network: p.network === true };
   };
   let homeN = 0;
@@ -1237,6 +1241,11 @@ function openCommitService(o) {
     try {
       const hk = checkHooks();
       if (hk.error) return done({ status: 'refused', why: `no safe check path: ${hk.error}` });
+      // A hooks folder the role can write would let it change the check of its own commit (an edited, added or removed
+      // hook), so every request is refused, with or without executable hooks in it; <wt>/.git and <wt>/.codex stay
+      // read only for the role and do not count.
+      const reach = rolePlaces.placeOf(hk.dir, places);
+      if (reach) return done({ status: 'refused', why: `no safe check path: the hooks folder ${rolePlaces.realish(hk.dir)} lies in the role's write places (${reach}). ${HOOKS_CHANGE}` });
       const checking = hk.hooks.length > 0;
       const pre = preflight(!checking);
       if (pre) return done({ status: 'refused', why: pre });
@@ -1416,10 +1425,12 @@ function openCommitService(o) {
 
   const cancel = () => { cancelling = true; if (running) running.cancel(); };
   let closingP = null;
-  const summary = () => Object.assign({}, sum, { notes: notes.slice() });
+  // the tip at the end of the call (null without a git dir): the role's answer is compared with it
+  const summary = () => Object.assign({}, sum, { startTip, endTip: gitDir ? tipNow() : null, notes: notes.slice() });
   return {
     box: o.box,
     answers,
+    startTip,
     notes: () => notes.slice(),
     cancel,
     close() {
