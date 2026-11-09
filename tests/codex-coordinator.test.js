@@ -5,10 +5,10 @@
 // Code", the same step for Codex under a heading "On Codex" next to it, and a Codex block names no Claude Code tool
 // except as a negation ("no Monitor on this host"). On Codex the coordinator's session runs in workspace-write with
 // execpolicy rules that let exactly these commands out of the sandbox: node <plugin>/scripts/chain-run.js,
-// node <plugin>/scripts/train.js, git and codex exec --sandbox read-only (owner 2026-11-09, answers (a) and G3), so
+// node <plugin>/scripts/train.js, git and codex exec --sandbox read-only, so
 // every such command of a Codex block is a plain argv with the literal plugin path - a variable, nohup, a redirection,
-// a pipe or & would not match the rule. The wait is a slice of 25 s (measured 2026-11-09: the shell tool of Codex
-// returns "still running" after about 30 s), for the coordinator and for a role (the host section of role-exec.js).
+// a pipe or & would not match the rule. The wait is a slice of 25 s (the shell tool of Codex returns "still running"
+// after about 30 s), for the coordinator and for a role (the host section of role-exec.js).
 // Cells (analyst.md, pass 2, and the brief's "cells after E2 and (a)"): L1, L2, L7*, L8, L9, L10, L12*, L13, L14', L15,
 // L17*, L18*, L22* (a)-(g), W1-W4, C1-C4, K1-K5, R1.
 const fs = require('fs');

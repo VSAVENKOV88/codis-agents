@@ -93,10 +93,13 @@ background task ends; the session keeps it alive, so do not end the session whil
 
 There is no background task on Codex, and a command still attached to a turn dies with the turn. Start
 `node <plugin>/scripts/train.js watch --detach`: it starts the watch as a process of its own session (under the rule
-for `train.js`, outside the sandbox: it dispatches trains) and prints `{pid, log}`. On every slice of a wait (skill
-`codis-agents:role-chain`, step 3) check whether that pid is alive; when it is gone, read its log and `train.js status`.
-The detached watch survives the session: a new session finds it in `train.js status` ("by watch pid N") and its log
-in `<sharedDir>/train/logs/`.
+for `train.js`, outside the sandbox: it dispatches trains) and prints `{pid, log}`; while a detached watch lives, the
+same command returns that watch (`{pid, log, running: true}`) and starts none. On every slice of a wait (skill
+`codis-agents:role-chain`, step 3) run `node <plugin>/scripts/train.js status`: the sandbox of this session cannot see
+a process outside it, `status` runs under its rule and names the watch - `detached watch pid N alive`, `... ended:`
+with its event (the verdicts without an addressee, or the halt), or `... gone without an event` (start it again). The
+detached watch survives the session: a new session finds it by the same `train.js status`, its log in
+`<sharedDir>/train/logs/`.
 
 ## On Codex: homes, sandbox and rules
 
@@ -230,7 +233,8 @@ goes by step 4.
    frontmatter, then the task - the copy, the original path and the sha256, the brief, the use cases, the specification,
    the worktree, the task keys, and: "This sandbox is read-only: write nothing and run no experiment that writes; a
    premise that needs one is `unverifiable (read-only sandbox)`. Return your run of the report in the field report and
-   the sha256 of the copy in analysisSha256."
+   the sha256 of the copy in analysisSha256." Remove a `last.json` left there by an earlier check of the same version,
+   so an answer is always the one of this run.
 2. Run it directly, under its rule: `codex exec --sandbox read-only --ephemeral --skip-git-repo-check --output-schema <plugin>/schemas/analysis-check.schema.json -o <check folder>/last.json -C <worktree> -m <model> "Read <check folder>/task.md and do what it says."`
    (`<model>`: `codex.models` of the project config for `roleModel`, never above the model of `opus`). When the shell
    tool answers "still running", poll it again in the same turn: do not end the turn while the checker runs.

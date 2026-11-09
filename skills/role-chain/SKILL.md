@@ -110,7 +110,7 @@ only starts it and watches it.
    basis in `status`, then `chain-run.js resolve`). Do not end your turn while the run lives: a turn that ends takes its own
    unfinished commands with it (the detached run survives, the watch does not).
 5. Esc, or closing Codex, cancel only the wait, never the run; a run stops only with
-   `node <plugin>/scripts/chain-run.js stop <runId>`. A new session takes the `runId` from the `run:` line of the brief
+   `node <plugin>/scripts/chain-run.js stop <runId>`. A new session takes the `runId` from the last `run:` line of the brief
    (or from `<sharedDir>/runs/.locks/<key>.lock` while the run lives) and goes on with `status`; a `status` that exits
    64 (unknown run) means the line is wrong: look in the lock, and never start a second run of the task for it (a
    live lock refuses it anyway).

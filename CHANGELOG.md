@@ -17,7 +17,9 @@ key and script, and this file says when and why each one changed. Versions befor
   `codex exec --sandbox read-only`), so every such command is a plain argv with the literal path of the installed copy.
   The analysis checker on Codex is `codex exec --sandbox read-only --output-schema schemas/analysis-check.schema.json`
   on a copy named by its sha256; a launch that fails is "analysis check not run", never a passed check.
-  New `train.js watch --detach` (the watch in a session of its own, `{pid, log}`). The host section of a codex role
+  New `train.js watch --detach` (the watch in a session of its own, `{pid, log}`, one at a time); `train.js status`
+  names each detached watch (alive, ended with its event, gone without one), since the coordinator's sandbox cannot
+  see that process. The host section of a codex role
   waits in slices of 25 s instead of 270 (the shell tool of Codex answers "still running" after about 30 s, measured on
   0.167.0). The rules name the coordinator's wait on Codex and that the conductor's roles read no `AGENTS.md`. README:
   the badge "Codex CLI: preview", "The coordinator on Codex" and "Preview on Codex: verified and limits".
