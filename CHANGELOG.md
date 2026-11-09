@@ -4,6 +4,19 @@ Every version of the codis-agents plugin, newest first. What the plugin does now
 [README.md](README.md); its [Technical reference](README.md#technical-reference) is the current state of every rule,
 key and script, and this file says when and why each one changed. Versions before 0.4.14 are in the git history.
 
+## 0.4.37 - 2026-11-09
+
+- **prog and test run on the codex CLI** (p-codex A2a-3a; owner 2026-11-09, hooks answer B). The adapter no longer
+  refuses prog and test on codex when `cfg.commit` is given: they run with `-C <worktree>`, the task folder as the only
+  extra writable root, the network on for test only, and a per-call npm cache; the commit channel (`commit-req.js`) is
+  their only way to commit. After the call the adapter compares the answer with the commit journal: `commits` must be
+  the commits of this call (an ancestor of the start tip is noted, not refused), `head` the branch tip, and the tip must
+  not move outside the channel (`invalid-result` otherwise); the start tip is the adapter's own when the service is
+  broken. Every codex role gets a host section at the end of its prompt (waiting through `wait-step.js`, the commit
+  client). Until part b, a request with a check refuses when the hooks folder lies in a place the role writes ("Changing
+  the hooks of the check through the commit adapter is not supported; it needs a separate task of the coordinator").
+  Verified on codex 0.166.0; the conductor connects the channel in part c.
+
 ## 0.4.36 - 2026-11-09
 
 - **stop: a conductor run stops on a signal** (p-codex-B1-b2b-2, UC-6). New `chain-run.js stop <run>`: SIGTERM to the
