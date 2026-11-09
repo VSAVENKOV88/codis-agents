@@ -96,7 +96,11 @@ only starts it and watches it.
    `sharedDir`, not inside a worktree (e.g. `<sharedDir>/<key>/chain-tasks.json` and `<sharedDir>/<key>/chain-owner.txt`).
 2. Start: `node <plugin>/scripts/chain-run.js start --host codex --tasks <tasks file> --owner <owner file> --codex-home <run home>`
    (add `--config <codis-agents.json>` when the config is not found from the working directory, and `--bin <codex>`
-   for a codex of a version the run home was checked with). The run home is the Codex home of the roles, prepared by
+   for a codex of a version the run home was checked with). The roles run `gpt-6-astra` with effort `high`; for
+   another model and effort of the whole run add `--codex-model <slug> --codex-effort <level>` (e.g. `gpt-6-luna` `low`
+   for a cheap acceptance run; only with `--host codex`). A slug outside the catalog of the run home or an effort the
+   model does not support stops every task before any role; `status` shows `codexModel` and `codexEffort`. Keep the
+   command a plain argv with the literal plugin path, so the coordinator's rule matches it. The run home is the Codex home of the roles, prepared by
    the owner (skill `codis-agents:coordinator`, "On Codex: homes, sandbox and rules"); it is never the `$CODEX_HOME` of
    this session. Roles on Claude Code from a Codex session: `--host claude [--bin claude]`. The answer is one JSON line
    `{runId, runDir, pid, tasks}`; exit 0 started, 64 arguments, the tasks or owner file or a refusal of the adapter,

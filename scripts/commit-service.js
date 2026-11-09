@@ -123,8 +123,11 @@ const JOURNAL_VERSION = 1;
 // a promisor remote, inherited variables); another version refuses until it is checked (cfg.commit.gitVersions).
 const VERIFIED_GIT_VERSIONS = ['2.50.0'];
 const CHECK_HOOKS = ['pre-commit', 'prepare-commit-msg', 'commit-msg'];
-// codex versions whose sandbox was checked for the profile of a check (cfg.commit.codexVersions)
-const VERIFIED_CODEX_VERSIONS = ['0.166.0'];
+// The verified codex versions: their sandbox was checked for the profile of a check (cfg.commit.codexVersions widens
+// it here), and scripts/role-exec.js takes this same array as the allowed list of `check`, so one list names them all.
+// 0.167.0 behaves as 0.166.0 in everything the plugin relies on (exec argv and --json events, codex sandbox, debug
+// models, the app-server hooks schema and trust hashes, measured 2026-11-09).
+const VERIFIED_CODEX_VERSIONS = Object.freeze(['0.166.0', '0.167.0']);
 const CHECK_PROFILE = 'codis-check';
 // The text of a refusal for a hooks folder in the role's write places that is untracked, named by the request or not
 // equal to the tip at the start of the call (owner 2026-11-09).
@@ -132,7 +135,7 @@ const HOOKS_CHANGE = 'Changing the hooks of the check through the commit adapter
 // the pause between SIGTERM and SIGKILL of a check's group when the call ends (owner answer 2 of part A1)
 const KILL_GRACE_MS = 30 * 1000;
 const TAIL_CHARS = 4000;
-// the variables codex sandbox 0.166.0 adds to the white list of the adapter (experiment E-A4)
+// the variables codex sandbox adds to the white list of the adapter (experiment E-A4; the same set on 0.166.0 and 0.167.0)
 const CODEX_ADDED = ['CODEX_MANAGED_BY_NPM', 'CODEX_MANAGED_PACKAGE_ROOT', 'CODEX_SANDBOX', 'CODEX_SANDBOX_NETWORK_DISABLED', 'PWD', 'OLDPWD', 'SHLVL', '_', '__CF_USER_TEXT_ENCODING'];
 const CONVERSION_ATTRS = ['text', 'eol', 'filter', 'crlf', 'ident', 'working-tree-encoding'];
 // The keys of the user's config that git's conversion reads: a check has an empty home, so they go as -c arguments.

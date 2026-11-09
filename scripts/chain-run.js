@@ -34,6 +34,12 @@
 // usage:
 //   chain-run.js start --host claude|codex --tasks <tasks.json> [--owner <file>] [--config <codis-agents.json>]
 //                [--bin <host CLI>] [--codex-home <dir>] [--codex-auth chatgpt|apiKeyFile] [--codex-key-file <file>]
+//                [--codex-model <slug>] [--codex-effort <level>]
+//     --codex-model and --codex-effort (only with --host codex; with --host claude exit 64) pick the model and effort of
+//     every role of the run: each model alias of the config and "default" map to the slug, the level is the effort of a
+//     call that names none (pre names low). Without them the adapter's defaults hold (gpt-6-astra, high). The conductor's
+//     host check (role-exec.js check --model --effort) refuses a slug outside the catalog of the run home or an effort
+//     the model does not support, and every task stops before any role.
 //     Checks the tasks file by its form (a JSON array of objects with a key; fields are strings, booleans, lists of
 //     strings or a plain object), the config (scripts/config.js json) and the adapter's refusals (task keys, the run
 //     home of codex) before anything is written; then makes the run folder <sharedDir>/runs/<run-id>/ and starts the
@@ -46,7 +52,7 @@
 //     Exit: 0 started; 64 arguments, tasks file, owner file, a refusal of the adapter or the place of the state; 65 the
 //     config is not found or invalid; 70 the conductor died before it was ready (the tail of its output on stderr).
 //   chain-run.js status <run-id|run folder> [--wait <s>] [--config <file>]
-//     Prints JSON {state: running|finished|dead, ...}; while the run is not finished each task has its open steps (open:
+//     Prints JSON {state: running|finished|dead, ...} (on codex with codexModel and codexEffort of run.json); while the run is not finished each task has its open steps (open:
 //     stepId, label, since, effect, pid, text as openStepText gives it) and journal {seq, snapshot, segments, torn, error}; a
 //     dead run also its unrecordedCalls, and unrecordedCallsError when calls.jsonl cannot be read.
 //     --wait blocks until the run ends or <s> seconds pass, at most
@@ -76,7 +82,7 @@
 // The run folder <sharedDir>/runs/<runId>/ (runId and every name in it come from the conductor; a task key is checked,
 // KEY_RE): request.json (what start was given), writer.lock (the one writer of the folder), journal/<key>/ (the journal and
 // its snapshot, scripts/chain-journal.js), run.json (runId, pid and start time of the conductor, host,
-// task keys, argv, plugin version), log.txt (the conductor's lines: "agent <label> started" and "agent <label> ok|null
+// task keys, argv, plugin version; on codex codexModel and codexEffort, the model and effort of the roles), log.txt (the conductor's lines: "agent <label> started" and "agent <label> ok|null
 // <s> s" for every role call, "exec <label> started" and "exec <label> ok|no-json|null <s> s" for every service step -
 // status names an open one with its start -, the hook checks, the script's log and phases, its own stderr),
 // tasks/<key>.json (the record of a task registered in this run: running while the conductor holds it, ended with its
@@ -125,7 +131,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
-const { createAgent, validate, realish, overlap, procOf, stopAll } = require('./role-exec.js');
+const { createAgent, validate, realish, overlap, procOf, stopAll, DEFAULT_CODEX_MODELS, DEFAULT_CODEX_EFFORT } = require('./role-exec.js');
+const { MODEL_ALIASES } = require('./config.js');
 const RR = require('./role-roots.js');
 const CJ = require('./chain-journal.js');
 const RS = require('./chain-resolve.js');
@@ -133,7 +140,7 @@ const RS = require('./chain-resolve.js');
 const ROOT = path.join(__dirname, '..');
 const MAX_WAIT = 270;
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-const USAGE = 'usage: chain-run.js start --host claude|codex --tasks <file> [--owner <file>] [--config <file>] [--bin <cli>] [--codex-home <dir>] [--codex-auth chatgpt|apiKeyFile] [--codex-key-file <file>]\n'
+const USAGE = 'usage: chain-run.js start --host claude|codex --tasks <file> [--owner <file>] [--config <file>] [--bin <cli>] [--codex-home <dir>] [--codex-auth chatgpt|apiKeyFile] [--codex-key-file <file>] [--codex-model <slug>] [--codex-effort <level>]\n'
   + '       chain-run.js status <run-id|run folder> [--wait <s>] [--config <file>]\n'
   + '       chain-run.js stop <run-id|run folder> [--config <file>]\n'
   + '       chain-run.js resolve <run-id|run folder> --task <key> --as ran|retry|abort [--step <n>] [--verdict <v>] [--head <sha>] --basis <seq:sha256> --note <text>\n'
@@ -313,8 +320,9 @@ function loadConfig(file) {
   try { return { config: JSON.parse(p.stdout) }; } catch (e) { return { error: `config.js json printed no JSON: ${e.message}` }; }
 }
 
-// The adapter's config of a run: host, the task table, the host CLI options from start; on codex the hook check before
-// each launch, pre allowed (the conductor checks the environment itself) and the commit channel of prog and test:
+// The adapter's config of a run: host, the task table, the host CLI options from start; on codex the model and effort
+// of start (--codex-model: every model alias of the config and "default" -> the slug; --codex-effort: the effort of a
+// call that names none; either left out keeps the adapter's default), the hook check before each launch, pre allowed (the conductor checks the environment itself) and the commit channel of prog and test:
 // the state folder of the project, the runId every event of a task's journal carries, and commitAuthor of the config
 // as author (left out: the adapter takes user.name/user.email of git; the conductor stops a task without either).
 function adapterCfg(host, args, ad, callsDir, log, runId) {
@@ -328,6 +336,8 @@ function adapterCfg(host, args, ad, callsDir, log, runId) {
     if (ad.bin) cfg.codex.bin = ad.bin;
     if (ad.codexAuth) cfg.codex.auth = ad.codexAuth;
     if (ad.codexKeyFile) cfg.codex.keyFile = ad.codexKeyFile;
+    if (ad.codexModel) cfg.codex.models = Object.fromEntries(MODEL_ALIASES.concat(['default']).map((k) => [k, ad.codexModel]));
+    if (ad.codexEffort) cfg.codex.effort = ad.codexEffort;
     cfg.preconditionsByConductor = true;
     cfg.beforeLaunch = hookGate({ home: ad.codexHome, bin: ad.bin || 'codex', note: log });
   } else if (ad.bin) cfg.claude = { bin: ad.bin };
@@ -888,9 +898,11 @@ function pluginVersion() {
 }
 function start(argv) {
   const { a, bad } = flagsOf(argv, { '--host': 'host', '--tasks': 'tasks', '--owner': 'owner', '--config': 'config', '--bin': 'bin',
-    '--codex-home': 'codexHome', '--codex-auth': 'codexAuth', '--codex-key-file': 'codexKeyFile' });
+    '--codex-home': 'codexHome', '--codex-auth': 'codexAuth', '--codex-key-file': 'codexKeyFile', '--codex-model': 'codexModel', '--codex-effort': 'codexEffort' });
   if (bad) usage(bad);
   if (a.host !== 'claude' && a.host !== 'codex') usage(`--host claude|codex, got ${JSON.stringify(a.host)}`);
+  const codexOnly = [['--codex-model', a.codexModel], ['--codex-effort', a.codexEffort]].filter(([, v]) => v !== undefined).map(([f]) => f);
+  if (a.host !== 'codex' && codexOnly.length) usage(`${codexOnly.join(' and ')}: only with --host codex`);
   if (!a.tasks) usage('--tasks <file> is required');
   let text;
   try { text = fs.readFileSync(a.tasks, 'utf8'); } catch (e) { usage(`the tasks file ${a.tasks}: ${e.code || e.message}`); }
@@ -901,7 +913,7 @@ function start(argv) {
   const lc = loadConfig(a.config);
   if (lc.error) { process.stderr.write(`${lc.error}\n`); process.exit(65); }
   const args = { owner, config: lc.config, tasks: pt.tasks };
-  const ad = { bin: a.bin, codexHome: a.codexHome, codexAuth: a.codexAuth, codexKeyFile: a.codexKeyFile };
+  const ad = { bin: a.bin, codexHome: a.codexHome, codexAuth: a.codexAuth, codexKeyFile: a.codexKeyFile, codexModel: a.codexModel, codexEffort: a.codexEffort };
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
   const runId = `${stamp}-${require('crypto').randomBytes(3).toString('hex')}`;
   const runDir = path.join(realish(lc.config.sharedDir), 'runs', runId);
@@ -964,9 +976,11 @@ async function conduct(runDirArg) {
   const args = req.args;
   const keys = args.tasks.map((t) => t.key);
   const me = { runId: req.runId, runDir, pid: process.pid, lstart: lstartOf(process.pid) };
-  writeJsonAtomic(path.join(runDir, 'run.json'), { runId: req.runId, pid: me.pid, lstart: me.lstart, host: req.host, tasks: keys, argv: req.argv,
-    pluginVersion: req.pluginVersion, startedAt: new Date().toISOString(), runDir });
-  note(`conductor ${req.runId} pid ${me.pid} host ${req.host} tasks ${keys.join(', ')}`);
+  // On codex the model and effort the roles run with: the ones of start, else the adapter's defaults.
+  const roleModel = req.host === 'codex' ? { codexModel: req.adapter.codexModel || DEFAULT_CODEX_MODELS.default, codexEffort: req.adapter.codexEffort || DEFAULT_CODEX_EFFORT } : {};
+  writeJsonAtomic(path.join(runDir, 'run.json'), Object.assign({ runId: req.runId, pid: me.pid, lstart: me.lstart, host: req.host, tasks: keys, argv: req.argv,
+    pluginVersion: req.pluginVersion, startedAt: new Date().toISOString(), runDir }, roleModel));
+  note(`conductor ${req.runId} pid ${me.pid} host ${req.host}${roleModel.codexModel ? ` model ${roleModel.codexModel} effort ${roleModel.codexEffort}` : ''} tasks ${keys.join(', ')}`);
   const table = taskTable(args);
   const stateDir = path.join(runDir, 'tasks');
   fs.mkdirSync(stateDir, { recursive: true });
@@ -1052,7 +1066,8 @@ async function conduct(runDirArg) {
   else if (runnable.length) {
     const flags = ['check', '--host', req.host].concat(req.adapter.bin ? ['--bin', req.adapter.bin] : [],
       req.host === 'codex' ? [].concat(req.adapter.codexHome ? ['--home', req.adapter.codexHome] : [], req.adapter.codexAuth ? ['--auth', req.adapter.codexAuth] : [],
-        req.adapter.codexKeyFile ? ['--key-file', req.adapter.codexKeyFile] : []) : ['--plugin-root', ROOT]);
+        req.adapter.codexKeyFile ? ['--key-file', req.adapter.codexKeyFile] : [], req.adapter.codexModel ? ['--model', req.adapter.codexModel] : [],
+        req.adapter.codexEffort ? ['--effort', req.adapter.codexEffort] : []) : ['--plugin-root', ROOT]);
     const ck = spawnSync(process.execPath, [path.join(__dirname, 'role-exec.js')].concat(flags), { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
     let cj = null;
     try { cj = JSON.parse(ck.stdout); } catch { /* below */ }
@@ -1160,12 +1175,14 @@ function snapshot(runDir) {
   const done = res();
   const decided = (k) => ({ basis: RS.basisOf(runDir, k), resolved: (() => { const d = RS.decisionsOf(runDir, k); return d.list.concat(d.abort ? [d.abort] : []).map(RS.decisionLine); })() });
   const keys0 = ((req.args && req.args.tasks) || []).map((t) => t.key);
-  if (done) return { state: 'finished', runId: done.runId, exitCode: done.exitCode, results: done.results, tasks: Object.fromEntries(keys0.map((k) => [k, decided(k)])) };
   const run = readJson(path.join(runDir, 'run.json'));
+  // the model and effort of the roles of a codex run, as run.json records them
+  const rm = run && run.codexModel ? { codexModel: run.codexModel, codexEffort: run.codexEffort } : {};
+  if (done) return Object.assign({ state: 'finished', runId: done.runId, exitCode: done.exitCode }, rm, { results: done.results, tasks: Object.fromEntries(keys0.map((k) => [k, decided(k)])) });
   // unknown counts as running: a conductor that cannot be told dead is not declared dead.
   const live = !!run && liveness({ pid: run.pid, lstart: run.lstart }).state !== 'gone';
   const again = live ? null : res();
-  if (again) return { state: 'finished', runId: again.runId, exitCode: again.exitCode, results: again.results, tasks: Object.fromEntries(keys0.map((k) => [k, decided(k)])) };
+  if (again) return Object.assign({ state: 'finished', runId: again.runId, exitCode: again.exitCode }, rm, { results: again.results, tasks: Object.fromEntries(keys0.map((k) => [k, decided(k)])) });
   const ls = logState(runDir);
   const keys = ((req.args && req.args.tasks) || []).map((t) => t.key);
   const table = req.args ? taskTable(req.args) : {};
@@ -1185,7 +1202,7 @@ function snapshot(runDir) {
       if (u.error) tasks[k].unrecordedCallsError = u.error;
     }
   }
-  const base = { runId: req.runId || path.basename(runDir), pid: run ? run.pid : null, startedAt: run ? run.startedAt : null, phase: ls.phase, tasks };
+  const base = Object.assign({ runId: req.runId || path.basename(runDir), pid: run ? run.pid : null, startedAt: run ? run.startedAt : null }, rm, { phase: ls.phase, tasks });
   return live ? Object.assign({ state: 'running' }, base)
     : Object.assign({ state: 'dead', note: 'the conductor is gone without results.json: its locks stay, and a start of its tasks is refused while the reconciliation finds an open step of a live or unknown process, a launched role without a result, a verdict whose use is not proven or damage' }, base);
 }

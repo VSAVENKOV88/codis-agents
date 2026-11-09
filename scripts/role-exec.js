@@ -42,7 +42,7 @@ const os = require('os');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const { StringDecoder } = require('string_decoder');
-const { openCommitService } = require('./commit-service');
+const { openCommitService, VERIFIED_CODEX_VERSIONS } = require('./commit-service');
 const { realish, inside, overlap, roleRoots } = require('./role-roots');
 
 // The JSON Schema keywords the twelve schemas of role-chain.js use. Strict mode of the OpenAI API supports a subset of
@@ -52,7 +52,8 @@ const KEYWORDS = new Set(['type', 'properties', 'required', 'items', 'enum', 'de
 // without a model. Owner 2026-11-05 (question 8): every role on codex runs gpt-6-astra with effort high.
 const DEFAULT_CODEX_MODELS = Object.freeze({ opus: 'gpt-6-astra', default: 'gpt-6-astra' });
 const DEFAULT_CODEX_EFFORT = 'high';
-const DEFAULT_CODEX_VERSIONS = ['0.166.0'];
+// The allowed codex versions of `check`: the verified list of the commit channel itself (one list, never a copy).
+const DEFAULT_CODEX_VERSIONS = VERIFIED_CODEX_VERSIONS;
 // The catalog of codex models (`codex debug models`), cached by `check` in the run home and read by the adapter.
 const CATALOG_FILE = 'codis-agents-models.json';
 const AGENT_PREFIX = 'codis-agents:';
@@ -585,7 +586,7 @@ function createAgent(cfg) {
         stdin: (body === null ? prompt : body.trim() + '\n\n' + prompt) + '\n\n' + hostSection(lb.kind, t),
         env: codexEnv(c.env || process.env, cx.home, cx.auth, key),
         // project_doc_max_bytes=0: Codex reads no project AGENTS.md at any -C, and the flag beats a trusted
-        // .codex/config.toml of the project (measured on codex 0.166.0), so a role gets the project rules only from its
+        // .codex/config.toml of the project (measured on codex 0.166.0 and 0.167.0), so a role gets the project rules only from its
         // prompt. The instructions of the run home are not covered by it: check keeps them out of the home.
         argv: (callDir) => ['exec', '--json', '--ephemeral', '--output-schema', path.join(callDir, 'schema.json'), '-o', path.join(callDir, 'last.json'),
           '-m', slug, '-c', `model_reasoning_effort=${effort}`, '-c', 'project_doc_max_bytes=0'].concat(sandbox, ['--skip-git-repo-check', '-']),
@@ -771,7 +772,7 @@ function binKind(file, env, problems) {
 }
 
 // The instruction channels of a run home that reach the model even with project_doc_max_bytes=0 (measured on codex
-// 0.166.0): AGENTS.md and AGENTS.override.md of the home, an empty one too, and the skills in skills/. A person puts
+// 0.166.0 and 0.167.0): AGENTS.md and AGENTS.override.md of the home, an empty one too, and the skills in skills/. A person puts
 // them there; Codex itself puts only skills/.system with its marker file. Every other entry is the state of Codex and
 // of the prepared home and is neither listed nor read: the home grows with use, so a list of allowed entries would turn
 // red after the first session. Instruction keys of config.toml, installed plugins and memories are not looked at
@@ -875,4 +876,4 @@ if (require.main === module) {
   process.exit(r.ok ? 0 : 1);
 }
 
-module.exports = { realish, inside, overlap, procOf, createAgent, hostSection, spawnRole, stopAll: gotSignal, CODEX_REFUSED, CEILING_MS, KILL_GRACE_MS, CLAUDE_DISALLOWED, strict, unstrict, validate, schemaProblems, parseLabel, check, KINDS, KEYWORDS, DEFAULT_CODEX_MODELS, CATALOG_FILE };
+module.exports = { realish, inside, overlap, procOf, createAgent, hostSection, spawnRole, stopAll: gotSignal, CODEX_REFUSED, CEILING_MS, KILL_GRACE_MS, CLAUDE_DISALLOWED, strict, unstrict, validate, schemaProblems, parseLabel, check, KINDS, KEYWORDS, DEFAULT_CODEX_MODELS, DEFAULT_CODEX_EFFORT, DEFAULT_CODEX_VERSIONS, CATALOG_FILE };

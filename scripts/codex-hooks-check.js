@@ -16,7 +16,7 @@
 //   2  refused before any start: no --codex-home, it is the personal ~/.codex (the same directory
 //      by device and inode: a link, a case variant, a firmlink), bad arguments
 //   3  not checked: codex cannot start, exits before the answer, no answer in --timeout-ms, an answer that is not JSON,
-//      a JSON-RPC error, a result off the schema of Codex 0.166.0, or another codexHome. The app-server protocol is
+//      a JSON-RPC error, a result off the schema of Codex 0.166.0 and 0.167.0 (the same schema), or another codexHome. The app-server protocol is
 //      marked experimental, so anything unexpected is a failure, never a pass.
 // The app-server is stopped when the check ends (SIGTERM to its process group, SIGKILL after KILL_GRACE_MS).
 //

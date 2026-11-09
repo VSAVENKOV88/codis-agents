@@ -53,7 +53,7 @@
 // it is kept and red (--discard-edits does not remove it); a foreign one there is kept and named.
 //
 // The budget: Codex silently cuts the AGENTS.md files it reads from the root down to its working directory at one
-// limit for the whole chain (measured on codex 0.166.0). The limit is the top-level project_doc_max_bytes of the root
+// limit for the whole chain (measured on codex 0.166.0 and 0.167.0). The limit is the top-level project_doc_max_bytes of the root
 // .codex/config.toml, 32768 without one; it counts only while the project is trusted in the Codex home, which is not
 // looked at, and neither is anything else of the home: a limit there loses to the project's, a personal AGENTS.md is
 // outside the sum. The file is read by a strict scan of its structure, never by a pattern on the text: the key in a

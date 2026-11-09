@@ -4,6 +4,23 @@ Every version of the codis-agents plugin, newest first. What the plugin does now
 [README.md](README.md); its [Technical reference](README.md#technical-reference) is the current state of every rule,
 key and script, and this file says when and why each one changed. Versions before 0.4.14 are in the git history.
 
+## 0.4.39 - 2026-11-09
+
+- **Codex 0.167.0 is verified** (p-codex-v167). It behaves as 0.166.0 in everything the plugin relies on: the argv of
+  `codex exec` and its `--json` events, `-o` with `--output-schema`, `project_doc_max_bytes`, `codex sandbox` with a
+  permission profile and the variables it adds, `codex debug models`, the app-server hooks schema and the trust hash
+  of the hook, the PreToolUse input, `codex plugin`. The verified versions are one list, `VERIFIED_CODEX_VERSIONS` of
+  `scripts/commit-service.js` (the probe of the commit channel's sandbox), and `role-exec.js check` takes that same
+  array as its allowed list (`DEFAULT_CODEX_VERSIONS`, exported, `===`): before, `check` and the commit channel each
+  had a list of their own, so a check green on 0.167 still refused every commit. The list is 0.166.0, 0.167.0.
+- **The model and effort of the roles of a conductor run** (p-codex-v167; owner 2026-11-09, wave 18 digest, point 2).
+  `chain-run.js start --host codex --codex-model <slug> --codex-effort <level>`: every model alias of the config and
+  `default` go to the slug, the level is the effort of a call that names none (`pre` keeps its `low`). Without them the
+  roles run `gpt-6-astra` with `high`, as before. The conductor's host check (`role-exec.js check --model --effort`)
+  refuses a slug outside the catalog of the run home or an effort the model does not support, and every task stops
+  before any role; with `--host claude` either flag is refused (exit 64). `run.json` records `codexModel` and
+  `codexEffort`, `status` shows them.
+
 ## 0.4.38 - 2026-11-09
 
 - **The hooks of a commit check against the tip at the start of the call** (p-codex A2a-3b; owner 2026-11-09, "hooks:

@@ -142,7 +142,7 @@ try {
     ok('M5 status shows codexModel and codexEffort of the run', sj && sj.codexModel === 'gpt-6-luna' && sj.codexEffort === 'low', s && s.stdout);
   }
 
-  // ---- M3, M5: the run without the flags keeps the defaults of 0.4.38
+  // ---- M3, M5: the run without the flags keeps the defaults of the adapter
   {
     const c = codexRun('m3', []);
     ok('M3 without the flags: done', c.r && c.r.status === 'done', J(c.r) + ' ' + c.out);
