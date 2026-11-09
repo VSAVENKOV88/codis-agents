@@ -6,6 +6,7 @@
 // fake codex of tests/fixtures/chain-run/bin (its catalog: gpt-6-astra low/high, gpt-6-luna low/medium); no model is called.
 //   M1 with the flags every role call runs with that slug and effort: argv -m / model_reasoning_effort, calls.jsonl;
 //   M2 a slug outside the catalog or an effort the model does not support stops the task before any role (the host check);
+//      an empty slug or effort is refused at start (exit 64, no run folder), never replaced by the defaults;
 //   M3 without the flags the defaults of the adapter: gpt-6-astra, effort high (pre keeps the low effort it names);
 //   M4 --host claude with either flag: usage, exit 64, no run folder;
 //   M5 run.json records the model and effort of the roles, status shows them;
@@ -125,6 +126,15 @@ try {
     const c = codexRun('c4', flag, 'claude');
     const after = fs.existsSync(path.join(SHARED, 'runs')) ? fs.readdirSync(path.join(SHARED, 'runs')).length : 0;
     ok(`M4 --host claude ${flag[0]}: exit 64 naming the flag, no run folder`, c.p.status === 64 && c.p.stderr.includes(flag[0]) && /only with --host codex/.test(c.p.stderr) && before === after, `${c.p.status} ${c.out}`);
+  }
+
+  // ---- M2: an empty slug or effort (an unset shell variable) is refused at start, never replaced by the defaults
+  for (const flags of [['--codex-model', ''], ['--codex-effort', ''], ['--codex-model', '', '--codex-effort', '']]) {
+    const before = fs.existsSync(path.join(SHARED, 'runs')) ? fs.readdirSync(path.join(SHARED, 'runs')).length : 0;
+    const c = codexRun('m2e', flags);
+    const after = fs.existsSync(path.join(SHARED, 'runs')) ? fs.readdirSync(path.join(SHARED, 'runs')).length : 0;
+    ok(`M2 empty ${flags.filter((x) => x).join(' and ')}: exit 64 naming the flag, no run folder, no role`,
+      c.p.status === 64 && c.p.stderr.includes(flags[0]) && /must not be empty/.test(c.p.stderr) && before === after && c.execs.length === 0, `${c.p.status} ${c.out}`);
   }
 
   // ---- M1, M5: the run with --codex-model gpt-6-luna --codex-effort low
