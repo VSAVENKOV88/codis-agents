@@ -10,9 +10,14 @@
 //     $FAKE_CLI_DIR/answers.json by the key "gp:" + the sorted property names of the schema (the n-th call of a key takes
 //     the n-th answer, then answers.default[key]); it writes the answer to the -o file and prints thread.started and
 //     turn.completed. {"$exit": n} exits n without a result. Trace lines {ev: "start", key, pid, cwd, ms, argv, prompt}
-//     and {ev: "end", key, pid, ms}.
+//     and {ev: "end", key, pid, ms}. {"$commits": [{path, content, message?}], "then": answer}: each file is written in
+//     the cwd and committed through scripts/commit-req.js (the commit channel the adapter gives prog and test), traced
+//     {ev: "commit", key, cwd, rc, out}; then the answer. In any answer the string "$C<n>" becomes the sha of the n-th
+//     commit and "$HEAD" the HEAD of the cwd at the start of the call.
 const fs = require('fs');
 const path = require('path');
+const { spawnSync } = require('child_process');
+const CLIENT = path.join(__dirname, '..', '..', '..', 'scripts', 'commit-req.js');
 
 const argv = process.argv.slice(2);
 const dir = process.env.FAKE_CLI_DIR;
@@ -75,7 +80,27 @@ function execRole() {
   process.stdin.on('data', (d) => { prompt += d; });
   process.stdin.on('end', () => {
     trace({ ev: 'start', key, cwd: process.cwd(), argv, prompt });
-    const a = dir ? take() : undefined;
+    let a = dir ? take() : undefined;
+    const startHead = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
+    const shas = [];
+    if (a && a.$commits) {
+      for (const c of a.$commits) {
+        fs.writeFileSync(path.join(process.cwd(), c.path), c.content);
+        const r = spawnSync(process.execPath, [CLIENT, '-m', c.message || 'm', '--', c.path], { env: process.env, encoding: 'utf8' });
+        let j = {};
+        try { j = JSON.parse(String(r.stdout).trim().split('\n').pop()); } catch { /* no answer */ }
+        trace({ ev: 'commit', key, cwd: process.cwd(), rc: r.status, out: String(r.stdout || '') + String(r.stderr || '') });
+        shas.push(j.sha || null);
+      }
+      a = a.then;
+    }
+    const sub = (x) => {
+      if (Array.isArray(x)) return x.map(sub);
+      if (x && typeof x === 'object') return Object.fromEntries(Object.entries(x).map(([k, v]) => [k, sub(v)]));
+      const m = typeof x === 'string' ? /^\$(?:C(\d+)|(HEAD))$/.exec(x) : null;
+      return m ? (m[2] ? startHead : shas[+m[1]]) : x;
+    };
+    a = sub(a);
     out({ type: 'thread.started', thread_id: `fake-${process.pid}` });
     if (a === undefined || (a && a.$exit !== undefined)) { trace({ ev: 'end', key }); process.exit(a === undefined ? 3 : a.$exit); }
     fs.writeFileSync(flag('-o'), JSON.stringify(a));
