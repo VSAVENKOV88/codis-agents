@@ -4,8 +4,23 @@ Every version of the codis-agents plugin, newest first. What the plugin does now
 [README.md](README.md); its [Technical reference](README.md#technical-reference) is the current state of every rule,
 key and script, and this file says when and why each one changed. Versions before 0.4.14 are in the git history.
 
-## Unreleased
+## 0.4.38 - 2026-11-09
 
+- **The hooks of a commit check against the tip at the start of the call** (p-codex A2a-3b; owner 2026-11-09, "hooks:
+  B"). Replaces the refusal of 0.4.37 for a hooks folder in a place the role writes. The location of the hooks folder at
+  the open of the commit service (P0) must stay the same before and after every pass, wherever it is configured
+  (`the hooks location changed during the call`). When P0 lies in the role's write places, the folder must be tracked
+  in the tip at the start of the call, no path of the request may lie in it, and every file in it on disk must equal
+  that tip by bytes and mode, nothing added or deleted; otherwise the request is refused before any hook, and before
+  each pass. Verified on the real codex sandbox (`tests/commit-hooks-place-cases.js`, H1-H9).
+- **The conductor connects the commit channel** (p-codex A2a-3c). Under `chain-run.js` the `commit.stateDir` of prog
+  and test on codex is `<sharedDir>/runs/.commit`, one per project, so a task's journal
+  (`<sharedDir>/runs/.commit/<key>/commits.jsonl`) lives across runs and every event carries the `runId` of its run
+  (older lines without it are read the same). New project key `commitAuthor` (`{name, email}`), else
+  `user.name`/`user.email` of git; without either the conductor stops a codex task before any role. A task whose
+  journal holds an `undetermined` step or is damaged stops under its lock; the coordinator reads it with
+  `chain-run.js status --commits` and settles it with `chain-run.js resolve --commits ... --as committed|refused`.
+  `start` refuses a `.commit` folder inside a write root of a role (exit 64).
 - **The coordinator on Codex, preview** (p-codex-D2, light; owner 2026-11-09, answers 1-5, (a), G2, G3, G6). The skills
   `role-chain`, `coordinator` and `brief` carry one text for both hosts: a step that needs a Claude Code tool stands
   under "On Claude Code", the same step for Codex under "On Codex" next to it (`tests/codex-coordinator.test.js` keeps
