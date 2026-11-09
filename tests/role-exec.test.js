@@ -218,8 +218,8 @@ const readCall = (plan, f) => { try { return fs.readFileSync(path.join(plan.call
   for (const [kind, role] of [['analyst', 'analyst'], ['usecases', 'analyst'], ['review', 'reviewer'], ['sec', 'security-reviewer']]) {
     answer = { rc: 0, output: JSON.stringify(sample(ST[kind === 'analyst' ? 'ANALYST_SCHEMA' : kind === 'usecases' ? 'USECASES_SCHEMA' : 'REVIEW_SCHEMA'], true)) };
     r = await call(X, `${kind}:K#1`);
-    const want = BODY[role].trim() + '\n\n' + `Task text for ${kind}:K#1.\n`;
-    ok(`A1-07 X ${kind}: stdin = body of agents/${role}.md (no frontmatter, trimmed) + "\\n\\n" + prompt`, r.plan && r.plan.stdin === want, r.plan && JSON.stringify(r.plan.stdin));
+    const want = BODY[role].trim() + '\n\n' + `Task text for ${kind}:K#1.\n` + '\n\n' + RX.hostSection(kind, TASKS.K);
+    ok(`A1-07 X ${kind}: stdin = body of agents/${role}.md (no frontmatter, trimmed) + "\\n\\n" + prompt + "\\n\\n" + the host section`, r.plan && r.plan.stdin === want, r.plan && JSON.stringify(r.plan.stdin));
     ok(`A1-38 X ${kind}: prompt.txt holds exactly the stdin bytes`, r.plan && readCall(r.plan, 'prompt.txt') === r.plan.stdin);
     ok(`A1-07 X ${kind}: the call ends ok with the object of the original schema`, r.res && typeof r.res === 'object' && !r.res.threw, JSON.stringify(r.res));
   }
@@ -229,7 +229,7 @@ const readCall = (plan, f) => { try { return fs.readFileSync(path.join(plan.call
   r = await call(XR, 'review:K#1', { prompt: 'You are the REVIEWER.\nline 2\n' });
   const realBody = fs.readFileSync(path.join(ROOT, 'agents', 'reviewer.md'), 'utf8').replace(/^---[\s\S]*?\n---\n/, '').trim();
   ok('A1-07 X review with the plugin\'s own agents/reviewer.md: stdin = body.trim() + "\\n\\n" + prompt, byte for byte',
-    r.plan && r.plan.stdin === realBody + '\n\nYou are the REVIEWER.\nline 2\n' && readCall(r.plan, 'prompt.txt') === r.plan.stdin);
+    r.plan && r.plan.stdin === realBody + '\n\nYou are the REVIEWER.\nline 2\n' + '\n\n' + RX.hostSection('review', TASKS.K) && readCall(r.plan, 'prompt.txt') === r.plan.stdin);
   ok('A1-03 X review: the answer comes back without fixBehaviourUnchanged: null', r.res && r.res.verdict === 'rejected' && !('fixBehaviourUnchanged' in r.res), JSON.stringify(r.res));
 
   // X argv: codex exec ... -m <model> -c model_reasoning_effort=<e> --output-schema <call>/schema.json -o <call>/last.json; schema = strict form
@@ -278,7 +278,7 @@ const readCall = (plan, f) => { try { return fs.readFileSync(path.join(plan.call
   answer = { rc: 0, output: JSON.stringify(sample(ST.REVIEW_SCHEMA, true)) };
   r = await call(X, 'review:K#1', { opts: { agentType: 'general-purpose' } });
   ok('A1-31(1) X review with general-purpose (agentTypePrefix ""): reviewer sandbox, no body, the prompt alone',
-    r.plan && r.plan.stdin === 'Task text for review:K#1.\n' && r.plan.role === 'reviewer' && r.res && r.res.verdict === 'done');
+    r.plan && r.plan.stdin === 'Task text for review:K#1.\n' + '\n\n' + RX.hostSection('review', TASKS.K) && r.plan.role === 'reviewer' && r.res && r.res.verdict === 'done');
 
   // refusals: nothing launched, null, one record line with outcome refused and the reason
   const refused = async (ag, label, why, extra, name) => {
@@ -295,10 +295,11 @@ const readCall = (plan, f) => { try { return fs.readFileSync(path.join(plan.call
   }
   await refused(X, 'diff:K:tester#retry', /service step/, {}, 'A1-09 X diff #retry');
   await refused(X, 'pre:K', /preconditions/, {}, 'A1-32 X pre');
-  await refused(X, 'prog:K#1', /A2/, {}, 'A1-31 X prog');
-  await refused(X, 'test:K#1', /A2/, {}, 'A1-31 X test');
-  await refused(X, 'prog:K#1', /A2/, { opts: { agentType: 'general-purpose' } }, 'A1-31(1) X prog with general-purpose');
-  await refused(X, 'test:K#1', /A2/, { opts: { agentType: 'general-purpose' } }, 'A1-31(1) X test with general-purpose');
+  // prog/test on codex need the commit channel (A2a-3a, S6); X has no cfg.commit
+  await refused(X, 'prog:K#1', /the programmer on codex needs the commit channel \(cfg\.commit\)/, {}, 'A1-31 X prog');
+  await refused(X, 'test:K#1', /the tester on codex needs the commit channel \(cfg\.commit\)/, {}, 'A1-31 X test');
+  await refused(X, 'prog:K#1', /needs the commit channel/, { opts: { agentType: 'general-purpose' } }, 'A1-31(1) X prog with general-purpose');
+  await refused(X, 'test:K#1', /needs the commit channel/, { opts: { agentType: 'general-purpose' } }, 'A1-31(1) X test with general-purpose');
   for (const H of [['X', X], ['C', C]]) {
     await refused(H[1], 'review:K#1', /agentType/, { opts: { agentType: 'foo:reviewer' } }, `A1-31(2) ${H[0]} foreign prefix`);
     await refused(H[1], 'review:K#1', /agentType/, { opts: { agentType: '' } }, `A1-31(2) ${H[0]} empty agentType`);

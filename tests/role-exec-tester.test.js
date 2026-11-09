@@ -162,8 +162,8 @@ ok('T3 strict(): no object or array of the output is an object of the input, at 
   const n0 = launched.length;
   await XP(prompt, { label: 'review:K#1', schema: S.REVIEW_SCHEMA, agentType: 'codis-agents:reviewer' });
   const p4 = launched[n0];
-  const want = body.trim() + '\n\n' + prompt;
-  ok('T4 X stdin = body.trim() + "\\n\\n" + prompt: the prompt keeps its edges, CRLF, tab, non-ASCII; the body keeps its "---" line',
+  const want = body.trim() + '\n\n' + prompt + '\n\n' + RX.hostSection('review', TASKS.K);
+  ok('T4 X stdin = body.trim() + "\\n\\n" + prompt + "\\n\\n" + the host section: the prompt keeps its edges, CRLF, tab, non-ASCII; the body keeps its "---" line',
     p4 && p4.stdin === want && p4.stdin.includes('\n---\n\nA rule after'), p4 && JSON.stringify(p4.stdin));
   ok('T4 prompt.txt holds exactly the UTF-8 bytes of stdin', p4 && fs.readFileSync(path.join(p4.callDir, 'prompt.txt')).equals(Buffer.from(want, 'utf8')));
   const CP = mk('claude', { top: { pluginRoot: PR } });
