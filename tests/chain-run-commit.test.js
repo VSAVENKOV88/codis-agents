@@ -249,6 +249,13 @@ process.stdout.write(JSON.stringify({ codex: CR.stateRootProblem(args, 'codex', 
     const why2 = String(c2.j && c2.j.tasks && c2.j.tasks.d2);
     ok('C1d a damaged journal: the task stops before any role, naming the file', /damaged/.test(why2) && why2.includes(path.join(JDIR, 'd2', 'commits.jsonl')) && !c2.execs.length, why2 + c2.out);
   }
+
+  // ---- the tester cells: tests/chain-run-commit-tester-cases.js, a child with its own tally, so README keeps counting
+  // test files (the restart after resolve --commits, a half git identity, the claude host, config and runId refusals)
+  {
+    const tc = spawnSync(process.execPath, [path.join(__dirname, 'chain-run-commit-tester-cases.js')], { encoding: 'utf8', timeout: 280000 });
+    ok('the tester cells of the commit channel under the conductor (tests/chain-run-commit-tester-cases.js) pass', tc.status === 0, `${tc.status} ${tc.signal || ''}\n${String(tc.stdout).split('\n').filter((l) => /FAIL/.test(l)).join('\n').slice(0, 3000)}${String(tc.stderr).slice(-800)}`);
+  }
 } catch (e) { ok(`no exception: ${e.stack}`, false); } finally {
   for (const g of groups) { try { process.kill(-g, 'SIGKILL'); } catch { /* gone */ } }
   fs.rmSync(W, { recursive: true, force: true });
