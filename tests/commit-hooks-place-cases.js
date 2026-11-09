@@ -82,11 +82,11 @@ function fixture(o) {
   return f;
 }
 let callN = 0;
-const service = (f) => {
+const service = (f, inject) => {
   const callDir = path.join(f.tdir, `c${++callN}`);
   fs.mkdirSync(callDir, { recursive: true });
   return openCommitService({ task: 'K', callId: `call-${callN}`, wt: f.wt, branch: 'task', box: path.join(callDir, 'commit'), stateDir: f.state, git: GIT,
-    codex: CODEX, network: false, tdir: f.tdir, userEnv: f.userEnv, killGraceMs: 1500, log: () => {} });
+    codex: CODEX, network: false, tdir: f.tdir, userEnv: f.userEnv, killGraceMs: 1500, log: () => {}, inject: inject || {} });
 };
 const put = (s, paths) => {
   const id = newId();
@@ -105,7 +105,7 @@ const answer = async (s, id) => {
 // one request for a.txt (plus o.paths) after o.before(f) ran on the open service; {a, marks, moved}
 const request = async (f, o) => {
   const x = o || {};
-  const s = service(f);
+  const s = service(f, x.inject);
   if (x.before) x.before(f);
   fs.writeFileSync(path.join(f.wt, 'a.txt'), `change ${fixN}\n`);
   const a = await answer(s, put(s, ['a.txt'].concat(x.paths || [])));
@@ -282,6 +282,15 @@ const moved = (r) => r.a && r.a.status === 'refused' && !r.moved && /^the hooks 
     const r = await request(f);
     ok('H8 after pass 1 the hooks location changed (the hook rewrote the include file): refused with the location text, not as a change outside the request, the hook ran once',
       moved(r) && r.a.why.includes('other-hooks') && r.marks.join() === 'pre-commit', J(r));
+  }
+
+  // ---- the gate before a pass: a write into the folder after the gate of the request (during the walk and the compare
+  // of the worktree; here at the snapshot) refuses before any hook
+  {
+    const f = fixture();
+    const r = await request(f, { inject: { afterSnapshot: () => fs.writeFileSync(path.join(f.hp, 'late.local'), 'x\n') } });
+    ok('H3b/H9 a file written into the hooks folder after the gate of the request, before pass 1: refused "added <path>", no hook ran',
+      differs(f, 'added', `${HP}/late.local`)(r) && !r.marks.length, J(r));
   }
 
   // ---- H9: pass 1 changed the hooks folder
