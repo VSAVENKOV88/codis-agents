@@ -794,6 +794,13 @@ agent('x',{label:'prog:K#1',schema:{type:'object',properties:{status:{type:'stri
     process.stdout.write((hp.stdout || '').replace(/\n+$/, '').replace(/^/gm, '  | ') + '\n');
     ok('the cells of the hooks folder against the tip (tests/commit-hooks-place-cases.js) pass', hp.status === 0, `exit ${hp.status} ${hp.signal || ''} ${(hp.stderr || '').slice(-500)}`);
   }
+  // ---- the tester's cells of the hooks folder (the second pass, a second request, case, links, the global config, P0
+  // unknown, the limit of the walk): tests/commit-hooks-place-tester-cases.js, a child with its own tally
+  {
+    const hp = spawnSync(process.execPath, [path.join(__dirname, 'commit-hooks-place-tester-cases.js')], { encoding: 'utf8', timeout: 300000 });
+    process.stdout.write((hp.stdout || '').replace(/\n+$/, '').replace(/^/gm, '  | ') + '\n');
+    ok('the tester\'s cells of the hooks folder against the tip (tests/commit-hooks-place-tester-cases.js) pass', hp.status === 0, `exit ${hp.status} ${hp.signal || ''} ${(hp.stderr || '').slice(-500)}`);
+  }
   // ---- the tester's cells (the order and set of the hooks, the message after stripspace, LANG/LC_ALL, nothing to
   // commit, mode and recreation of a named path, close with a queued request, non-executable hooks):
   // tests/commit-checks-tester-cases.js, a child with its own tally, so README keeps counting test files
