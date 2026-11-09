@@ -235,5 +235,7 @@ ok('R1 README Known gaps: no "part D2" and no "does not run on Codex yet"', !/pa
 const rrules = readme.split('\n').filter((l) => RULE_RE.test(l)).map((l) => JSON.parse(RULE_RE.exec(l)[1]));
 ok('R1 README: the same four rules as the coordinator skill', JSON.stringify(rrules) === JSON.stringify(want), JSON.stringify(rrules));
 ok('R1 README: the coordinator home config names writable_roots and the rules file', /writable_roots = \["<sharedDir>", "<worktreeRoot>"\]/.test(readme) && /rules\/codis-agents\.rules/.test(readme));
-ok('R1 CHANGELOG names the coordinator on Codex', /coordinator on Codex/i.test(read('CHANGELOG.md').split('\n## ').slice(0, 2).join('\n')));
+// the entry of the version that brought the coordinator on Codex (0.4.38), wherever later versions put it
+const entry0438 = (read('CHANGELOG.md').split('\n## ').find((s) => /^0\.4\.38 /.test(s)) || '');
+ok('R1 CHANGELOG (0.4.38) names the coordinator on Codex', /coordinator on Codex/i.test(entry0438), entry0438.slice(0, 200));
 done();
