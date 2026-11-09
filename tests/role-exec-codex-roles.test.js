@@ -189,8 +189,8 @@ const REVIEW_OK = { verdict: 'done', docsOnly: false, fixBehaviourUnchanged: nul
     ok('T1 the section: the red guard committed before the fix, the fix committed before the mutations, restore by git show HEAD:<path> > <path>',
       /red guard/.test(sect) && /mutation/.test(sect) && sect.includes('git show HEAD:<path> > <path>'), sect);
     ok('T1 the section: head is the last sha the adapter gave; commits only the shas of this call', /head/.test(sect) && /only the shas[^.]*this call/.test(sect), sect);
-    ok('T2 the section: wait-step.js start then wait --max 270, 270 s the longest single wait, an early return is not the end, a turn without a tool call ends the role',
-      sect.includes(`node ${WAIT_STEP} start`) && sect.includes('--max 270') && /longest single wait/.test(sect) && /returns earlier[^.]*not the end/.test(sect)
+    ok('T2 the section: wait-step.js start then wait --max 25 (the shell tool of codex returns "still running" after about 30 s, D2 G7), 25 s the longest single wait, an early return is not the end, a turn without a tool call ends the role',
+      sect.includes(`node ${WAIT_STEP} start`) && sect.includes('--max 25 ') && !sect.includes('--max 270') && /longest single wait/.test(sect) && /returns earlier[^.]*not the end/.test(sect)
       && /without a tool call ends your role/.test(sect) && /run_in_background/.test(sect) && /Monitor/.test(sect), sect);
     ok('T3 the section: 77/72/78 of heavy.sh, medium.sh, guards-all.sh -> environment (A2b); an acceptance the sandbox cannot run -> environment, never green; a merge of the arc -> blocked',
       /heavy\.sh/.test(sect) && /medium\.sh/.test(sect) && /guards-all\.sh/.test(sect) && /77/.test(sect) && /72/.test(sect) && /78/.test(sect) && /A2b/.test(sect)
