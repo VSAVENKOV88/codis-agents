@@ -140,9 +140,10 @@ ok('C2/G3 coordinator: exactly four rules - chain-run.js, train.js, git, codex e
 ok('C2/G3 coordinator: the rules go into $CODEX_HOME/rules/codis-agents.rules of the coordinator home; no rule for wait-step.js',
   /\$CODEX_HOME\/rules\/codis-agents\.rules/.test(homesF) && /no rule for `wait-step\.js`/.test(homesF), homesF.slice(0, 600));
 ok('G4 coordinator: the rules name the installed copy of the plugin (the path with its version), not a working clone', /installed copy/.test(homesF) && /<version>/.test(homesF));
-ok('C3 coordinator: CODEX_HOME of the coordinator home; ~/.codex only in a sentence that forbids it',
-  /CODEX_HOME=<coordinator home>/.test(co) && flat(co).split(/(?<=\.) /).filter((x) => /~\/\.codex\b/.test(x)).every((x) => /\b(never|not)\b/.test(x)),
-  flat(co).split(/(?<=\.) /).filter((x) => /~\/\.codex\b/.test(x)).join(' | '));
+// A clause: a line cut at . ; : (a list item ends with ";", so the items are apart).
+const clauses = co.split('\n').flatMap((l) => l.split(/(?<=[.;:])\s+/)).filter((x) => /~\/\.codex\b/.test(x));
+ok('C3 coordinator: CODEX_HOME of the coordinator home; ~/.codex only in a clause that forbids it',
+  /CODEX_HOME=<coordinator home>/.test(co) && clauses.length > 0 && clauses.every((x) => /\b(never|not)\b/.test(x)), clauses.join(' | '));
 // G4: every command of a Codex block that a rule should let out is a plain argv that the rule matches
 const allCodex = SKILLS.map((s) => hostText(skill[s], 'codex')).join('\n');
 const spans = [...allCodex.matchAll(/`([^`\n]+)`/g)].map((m) => m[1]).concat(allCodex.split('\n').map((l) => l.trim()))
