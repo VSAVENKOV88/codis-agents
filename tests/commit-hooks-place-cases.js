@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 'use strict';
 // The hooks folder of a check against the tip at the start of the call (p-codex A2a-3b, mechanism M1-B, owner
 // 2026-11-09 "hooks: B"): scripts/commit-service.js records the hooks location P0 when the service opens; every request
