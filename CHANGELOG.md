@@ -4,6 +4,26 @@ Every version of the codis-agents plugin, newest first. What the plugin does now
 [README.md](README.md); its [Technical reference](README.md#technical-reference) is the current state of every rule,
 key and script, and this file says when and why each one changed. Versions before 0.4.14 are in the git history.
 
+## Unreleased
+
+- **The coordinator on Codex, preview** (p-codex-D2, light; owner 2026-11-09, answers 1-5, (a), G2, G3, G6). The skills
+  `role-chain`, `coordinator` and `brief` carry one text for both hosts: a step that needs a Claude Code tool stands
+  under "On Claude Code", the same step for Codex under "On Codex" next to it (`tests/codex-coordinator.test.js` keeps
+  every Claude Code tool inside such a block); each skill names its plugin root (the folder two levels above it where
+  `CLAUDE_PLUGIN_ROOT` is not set) and starts its description with "For the coordinator session; a role of the chain
+  never runs it". On Codex the coordinator starts `chain-run.js start --host codex`, writes the `run:` line into the
+  brief and waits in slices of `status --wait 25`; Esc cancels only the wait. Its home runs in `workspace-write` with
+  `writable_roots = [sharedDir, worktreeRoot]` and four execpolicy rules (`chain-run.js`, `train.js`, `git`,
+  `codex exec --sandbox read-only`), so every such command is a plain argv with the literal path of the installed copy.
+  The analysis checker on Codex is `codex exec --sandbox read-only --output-schema schemas/analysis-check.schema.json`
+  on a copy named by its sha256; a launch that fails is "analysis check not run", never a passed check.
+  New `train.js watch --detach` (the watch in a session of its own, `{pid, log}`, one at a time); `train.js status`
+  names each detached watch (alive, ended with its event, gone without one), since the coordinator's sandbox cannot
+  see that process. The host section of a codex role
+  waits in slices of 25 s instead of 270 (the shell tool of Codex answers "still running" after about 30 s, measured on
+  0.167.0). The rules name the coordinator's wait on Codex and that the conductor's roles read no `AGENTS.md`. README:
+  the badge "Codex CLI: preview", "The coordinator on Codex" and "Preview on Codex: verified and limits".
+
 ## 0.4.37 - 2026-11-09
 
 - **prog and test run on the codex CLI** (p-codex A2a-3a; owner 2026-11-09, hooks answer B). The adapter no longer

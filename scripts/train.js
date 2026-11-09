@@ -91,9 +91,16 @@
 //             no entry and no result -> exit 66. A ride and an await write their waiter file and take (claimedAt) the
 //             result they print as their own; a ride takes it only when its exit code is that result's verdict.
 //        train.js status                      -> the halt, the lock (its train and arc) and the queue (each entry with
-//             "waiter pid N alive" or "no live waiter" when it has waiter files), then "verdicts without an addressee"
+//             "waiter pid N alive" or "no live waiter" when it has waiter files), the detached watches, then "verdicts
+//             without an addressee"
 //        train.js resume                      -> the coordinator: removes the halt; names the entries without a live waiter
 //        train.js ack --task <t> --head <sha> -> the coordinator takes a verdict by hand (claimedAt); no result -> exit 66
+//        train.js watch --detach [--poll <s>] -> starts the watch below as a process of its own session, its output in
+//             <sharedDir>/train/logs/watch-<time>.log, its record in <sharedDir>/train/watches/<pid>.json, prints
+//             {pid, log} and exits 0: the background of a coordinator whose shell tool has none (Codex, where a command
+//             still attached to a turn dies with the turn); while a detached watch lives it prints that one
+//             {pid, log, running: true} and starts none; status names each detached watch: alive, ended with its event,
+//             or gone without an event
 //        train.js watch [--poll <s>]          -> the coordinator's background wait: dispatches trains like any waiter (it
 //             is no waiter itself and takes nothing) and exits 0 with {orphans: [...]} on a verdict without an addressee
 //             that was not there when it started, or with {halt, entriesWithoutWaiter} on a halt that was not there
@@ -143,7 +150,7 @@ function project() {
   if (!r.config || r.errors.length) die(78, `project config ${file}: ${r.errors.join('; ')}`);
   const c = r.config, D = path.join(c.sharedDir, 'train');
   return { c, D, Q: path.join(D, 'queue'), RES: path.join(D, 'result'), LOGS: path.join(D, 'logs'), TR: path.join(D, 'trains'),
-    LOCK: path.join(D, 'lock'), HALT: path.join(D, 'halt'), W: path.join(D, 'waiters'), env: Object.assign({}, process.env, { CODIS_AGENTS_CONFIG: c.configPath }) };
+    LOCK: path.join(D, 'lock'), HALT: path.join(D, 'halt'), W: path.join(D, 'waiters'), WATCH: path.join(D, 'watches'), env: Object.assign({}, process.env, { CODIS_AGENTS_CONFIG: c.configPath }) };
 }
 
 const git = (P, cwd, args, opts = {}) => {
@@ -226,6 +233,33 @@ function superseded(P, task, head, r) {
   let names = [];
   try { names = fs.readdirSync(P.RES); } catch { /* none */ }
   return names.some((n) => { const m = RESULT.exec(n); return m && m[1] === task && m[2] !== head && later(readJ(path.join(P.RES, n))); });
+}
+// ---- the detached watches (watch --detach) ----
+// One record per detached watch, <sharedDir>/train/watches/<pid>.json {pid, procStart, log, at}. The coordinator on
+// Codex runs in a sandbox that cannot see a process outside it (kill -0 and ps answer "Operation not permitted"), so
+// status, run under its own rule, tells what became of each watch: alive (pid alive and its start within 2 s of
+// procStart), ended (the last line of its log is the JSON of its event, {orphans} or {halt}), or gone without an event.
+function detachedWatches(P) {
+  let names = [];
+  try { names = fs.readdirSync(P.WATCH).filter((n) => /^\d+\.json$/.test(n)); } catch { /* none yet */ }
+  const list = [];
+  for (const n of names) {
+    const w = readJ(path.join(P.WATCH, n));
+    if (!w || !Number.isInteger(w.pid) || w.pid <= 1) continue;
+    let event = null;
+    try { event = JSON.parse(fs.readFileSync(w.log, 'utf8').trim().split('\n').pop()); } catch { /* no event line */ }
+    const state = waiterLive(Object.assign({}, w, { state: 'waiting' })) ? 'alive' : event && (event.orphans || event.halt) ? 'ended' : 'gone';
+    list.push(Object.assign(w, { file: path.join(P.WATCH, n), state, event: state === 'ended' ? event : null }));
+  }
+  return list;
+}
+function watchLine(w) {
+  if (w.state === 'alive') return `detached watch pid ${w.pid} alive, log ${w.log}`;
+  if (w.state === 'gone') return `detached watch pid ${w.pid} gone without an event, log ${w.log}: start it again with train.js watch --detach`;
+  const e = w.event;
+  const what = e.orphans ? `orphans ${e.orphans.map((o) => `${o.task} ${o.head}`).join(', ')}`
+    : `halt ${e.halt.reason || '-'}, entries without a waiter ${(e.entriesWithoutWaiter || []).map((x) => `${x.task} ${x.head}`).join(', ') || '-'}`;
+  return `detached watch pid ${w.pid} ended: ${what}, log ${w.log}`;
 }
 // The verdicts without an addressee: [{task, head, result, r}].
 function orphans(P) {
@@ -760,10 +794,29 @@ async function awaitEntry(P, task, head, poll) {
 async function main() {
   const [cmd, ...rest] = process.argv.slice(2);
   CMD = cmd;
-  const USAGE = 'usage: train.js enqueue --task <t> --branch <b> --head <sha> --base <arc> [--dir <folder>] | ride (the same) | run | await --task <t> --head <sha> [--poll <s>] | status | resume | ack --task <t> --head <sha> | watch [--poll <s>]';
+  const USAGE = 'usage: train.js enqueue --task <t> --branch <b> --head <sha> --base <arc> [--dir <folder>] | ride (the same) | run | await --task <t> --head <sha> [--poll <s>] | status | resume | ack --task <t> --head <sha> | watch [--detach] [--poll <s>]';
   if (!['enqueue', 'ride', 'run', 'await', 'status', 'resume', 'ack', 'watch'].includes(cmd)) die(64, USAGE);
-  const a = args(rest);
+  const detach = cmd === 'watch' && rest.includes('--detach');
+  const list = detach ? rest.filter((x) => x !== '--detach') : rest;
+  const a = args(list);
   const P = project();
+  if (detach) {
+    // one detached watch at a time: a live one is returned as it is; the records of the others are dropped (their
+    // logs stay)
+    const ws = detachedWatches(P), live = ws.find((w) => w.state === 'alive');
+    if (live) { out({ pid: live.pid, log: live.log, running: true }); return 0; }
+    for (const w of ws) fs.rmSync(w.file, { force: true });
+    fs.mkdirSync(P.LOGS, { recursive: true });
+    fs.mkdirSync(P.WATCH, { recursive: true });
+    const log = path.join(P.LOGS, `watch-${new Date().toISOString().replace(/[-:.]/g, '')}-${process.pid}.log`);
+    const fd = fs.openSync(log, 'a');
+    const child = spawn(process.execPath, [__filename, 'watch', ...list], { detached: true, stdio: ['ignore', fd, fd], env: process.env });
+    fs.closeSync(fd);
+    child.unref();
+    writeAtomic(path.join(P.WATCH, `${child.pid}.json`), { pid: child.pid, procStart: procStart(child.pid), log, at: new Date().toISOString() });
+    out({ pid: child.pid, log });
+    return 0;
+  }
   const poll = 1000 * (Number(a.poll || process.env.CODIS_TRAIN_POLL) || 10);
   if (cmd === 'enqueue') { out(enqueue(P, a, USAGE)); return 0; }
   if (cmd === 'ride') {
@@ -812,6 +865,7 @@ async function main() {
       const note = !s.files ? '' : s.live.length ? ` - waiter pid ${s.live.join(', ')} alive` : ' - no live waiter: its verdict comes without an addressee';
       console.log(`  ${e.task} ${e.branch} ${e.head} -> ${e.base} (since ${e.enqueuedAt})${note}`);
     }
+    for (const w of detachedWatches(P)) console.log(watchLine(w));
     const os_ = orphans(P);
     if (os_.length) {
       console.log(`verdicts without an addressee: ${os_.length} (no live ride took them: relaunch the task alone - its ride takes the ready verdict - or take it by hand with train.js ack --task <t> --head <sha>)`);

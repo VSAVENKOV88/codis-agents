@@ -1,9 +1,14 @@
 ---
 name: brief
-description: Write or update a BRIEF.md for a codis-agents task - the owner's words verbatim, scope, the acceptance scenario in the real environment, the matrix or split, open questions. Use when the owner asks to prepare, write or update a brief, or before starting the role chain on a new task.
+description: For the coordinator session; a role of the chain never runs it. Write or update a BRIEF.md for a codis-agents task - the owner's words verbatim, scope, the acceptance scenario in the real environment, the matrix or split, open questions. Use when the owner asks to prepare, write or update a brief, or before starting the role chain on a new task.
 ---
 
 # Write a task brief
+
+**Plugin root.** `${CLAUDE_PLUGIN_ROOT}` below is the root of this plugin. Claude Code sets it; where it is empty or not
+expanded (Codex), the root is the folder two levels above this `SKILL.md` (the installed copy,
+`$CODEX_HOME/plugins/cache/<marketplace>/codis-agents/<version>`). On Codex write that absolute path literally into every
+command, with no variable: the rules of the coordinator's home match only the literal path.
 
 A brief is the one document every role reads. It lives at `<sharedDir>/<task>/BRIEF.md` (`sharedDir` from
 `.claude/codis-agents.json`; `node "${CLAUDE_PLUGIN_ROOT}/scripts/config.js" get sharedDir`). Only the coordinator
