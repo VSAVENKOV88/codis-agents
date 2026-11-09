@@ -1,11 +1,14 @@
 # Multi-agent work: process rules
 
 These are the rules of the codis-agents process. A project imports them from its `CLAUDE.md`
-(`@<plugin>/rules/multi-agent.md`, or a copy) so that the coordinator session follows them.
+(`@<plugin>/rules/multi-agent.md`, or a copy) so that the coordinator session follows them; a coordinator on Codex gets
+them from the project `AGENTS.md` that `scripts/agents-md.js` generates from it.
 
 Workflow agents do **not** see `CLAUDE.md`: a rule reaches a role only through its prompt. Lines marked
 `<!-- role:<id> -->` are therefore carried into every role prompt by `workflows/role-chain.js` (`RULE_LIST`, same id),
-and `tests/role-chain.test.js` fails when a marked line has no rule or a role prompt lacks one.
+and `tests/role-chain.test.js` fails when a marked line has no rule or a role prompt lacks one. The roles of the
+conductor on Codex (`scripts/chain-run.js`) do not see the project `AGENTS.md` either (their argv carries
+`-c project_doc_max_bytes=0`): the prompt is their only source of the rules.
 
 ## Roles
 
@@ -168,7 +171,8 @@ Larger changes run as a chain of agents, each in its own role:
   Why (plugin audit 2026-10-24, P2 and P3): two service agents per tester round each paid a system prompt and the tool
   descriptions for one deterministic command, and the security reviewer waited for the reviewer and its post-check
   although both only read.
-- **Do not resume a multi-task workflow run with `resumeFromRunId`.** Cached agent results replay by call order; with
+- **Do not resume a multi-task workflow run with `resumeFromRunId`** (the Claude Code Workflow only; the conductor has
+  no resume of a run). Cached agent results replay by call order; with
   tasks in parallel the order differs, so results land in the wrong task (after a pause one task's programmer HEAD
   became another task's base, and the post-check stopped both chains on files their testers never touched). Relaunch
   each unfinished task alone, with `start` pointing to its report and the step it stopped at.
@@ -239,7 +243,7 @@ Larger changes run as a chain of agents, each in its own role:
 
 ## Waiting, context and cost
 
-- **Never sit idle longer than 270 s at a time.** Prompt caches of workflow agents expire after about 5 minutes; after a longer pause the whole context is written again (such pauses were 21 % of all token spend before this rule, 7.4 % after it). Start anything long with Bash `run_in_background`, then wait for it with a blocking Bash loop of at most 270 s (`until <its log's final line, or the process has died>; do sleep 3; done`, timeout 270000) and repeat it. 270 s is the longest single wait, not a required interval: a tool that returns earlier (the command ended) does not end the role, which goes on with its work or waits again (on both hosts; a role on codex waits with `scripts/wait-step.js`, as the host section of its prompt says); a role (a workflow agent) that ends a turn without a tool call ends its role - Monitor does not wake a workflow agent (its events arrive only as an attachment to the next request, and a turn of text makes none), so never end a turn with text like `Waiting.` (the coordinator's own session has a user turn and keeps Monitor). An agent with no output for 10 minutes is killed. A long deterministic step (the selection of a task's guards after a programmer round, with `guardSubsetCommand`) is waited for by the workflow's wait step, a cheap agent, not by a role. A role waits for its own heavy commands itself, in slices, while its process is alive in the slot queue or running, and does not end its work to wait: the chain has no status "continue after the wait" (a role returns only its verdict), and a handover would not pay (in a long episode a role spends about 0.37-0.43M per hour of waiting, while a fresh role costs 0.13-0.33M to read in plus about 0.06M per handover, and the waiting itself remains). <!-- role:pauses -->
+- **Never sit idle longer than 270 s at a time.** Prompt caches of workflow agents expire after about 5 minutes; after a longer pause the whole context is written again (such pauses were 21 % of all token spend before this rule, 7.4 % after it). Start anything long with Bash `run_in_background`, then wait for it with a blocking Bash loop of at most 270 s (`until <its log's final line, or the process has died>; do sleep 3; done`, timeout 270000) and repeat it. 270 s is the longest single wait, not a required interval: a tool that returns earlier (the command ended) does not end the role, which goes on with its work or waits again (on both hosts; a role on codex waits with `scripts/wait-step.js`, as the host section of its prompt says); a role (a workflow agent) that ends a turn without a tool call ends its role - Monitor does not wake a workflow agent (its events arrive only as an attachment to the next request, and a turn of text makes none), so never end a turn with text like `Waiting.` (the coordinator's own session has a user turn and keeps Monitor on Claude Code; on Codex the coordinator waits with `chain-run.js status <runId> --wait` in the slices its skill names). An agent with no output for 10 minutes is killed. A long deterministic step (the selection of a task's guards after a programmer round, with `guardSubsetCommand`) is waited for by the workflow's wait step, a cheap agent, not by a role. A role waits for its own heavy commands itself, in slices, while its process is alive in the slot queue or running, and does not end its work to wait: the chain has no status "continue after the wait" (a role returns only its verdict), and a handover would not pay (in a long episode a role spends about 0.37-0.43M per hour of waiting, while a fresh role costs 0.13-0.33M to read in plus about 0.06M per handover, and the waiting itself remains). <!-- role:pauses -->
 - **Context about 200k is a cost signpost, not a limit.** Every call re-reads the whole context, so a step at 400k costs twice a step at 200k. Past ~200k an agent finishes its current stage instead of starting a new large one; if much work remains, it writes the report with its next step and hands over to a fresh agent; if the task is nearly done, it finishes itself. <!-- role:context -->
 - Size the task so one programmer can finish it (see "Split the task") rather than relying on the handover.
 - After a run, `scripts/chain-cost.js` computes the cost of each task from the transcripts and flags tasks above twice
@@ -251,7 +255,7 @@ Larger changes run as a chain of agents, each in its own role:
 
 ## Machine and environment
 
-- **Heavy work goes through memory slots, not one shared lock.** Light (read-only agents, guards without a bundler, browser or tsc): no slot. Medium (<= 0.85 GB: tsc, a plugin build, one bundler build without a browser): `scripts/medium.sh <cmd>`. Heavy (~1 GB+: browser and bundler guards, full guard runs, measurements, docker image builds and test stacks): `scripts/heavy.sh <cmd>` and `scripts/guards-all.sh <worktree>`, started by a role (a workflow agent) only through Bash `run_in_background`, never as a blocking call (the Bash timeout kills the waiter, the slot's trap drops its ticket, and it rejoins the queue at the end), then waited for by a separate blocking Bash loop of at most 270 s (`until <its log's final line, or the process has died>; do sleep 3; done`, timeout 270000), not by Monitor and not by ending the turn - a turn without a tool call ends the role. <!-- role:slots -->
+- **Heavy work goes through memory slots, not one shared lock.** Light (read-only agents, guards without a bundler, browser or tsc): no slot. Medium (<= 0.85 GB: tsc, a plugin build, one bundler build without a browser): `scripts/medium.sh <cmd>`. Heavy (~1 GB+: browser and bundler guards, full guard runs, measurements, docker image builds and test stacks): `scripts/heavy.sh <cmd>` and `scripts/guards-all.sh <worktree>`, started by a role (a workflow agent) only through Bash `run_in_background`, never as a blocking call (the Bash timeout kills the waiter, the slot's trap drops its ticket, and it rejoins the queue at the end), then waited for by a separate blocking Bash loop of at most 270 s (`until <its log's final line, or the process has died>; do sleep 3; done`, timeout 270000), not by Monitor and not by ending the turn - a turn without a tool call ends the role. A role on Codex follows the host section of its prompt instead, and on Codex the coordinator waits for the conductor with `chain-run.js status <runId> --wait`. <!-- role:slots -->
 - **Every slot hold is journaled**, so the queue for a slot can be told from the job itself: one line per hold in
   `<lockDir>/journal.tsv` (request, acquire, release, class, slot, pid, worktree, short command, exit code; a failed
   write never stops the slot). `scripts/slot-journal.js --since <2d>` gives queue wait and hold, total and median, per

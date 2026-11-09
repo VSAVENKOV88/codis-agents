@@ -94,6 +94,9 @@
 //             "waiter pid N alive" or "no live waiter" when it has waiter files), then "verdicts without an addressee"
 //        train.js resume                      -> the coordinator: removes the halt; names the entries without a live waiter
 //        train.js ack --task <t> --head <sha> -> the coordinator takes a verdict by hand (claimedAt); no result -> exit 66
+//        train.js watch --detach [--poll <s>] -> starts the watch below as a process of its own session, its output in
+//             <sharedDir>/train/logs/watch-<time>.log, prints {pid, log} and exits 0: the background of a coordinator
+//             whose shell tool has none (Codex, where a command still attached to a turn dies with the turn)
 //        train.js watch [--poll <s>]          -> the coordinator's background wait: dispatches trains like any waiter (it
 //             is no waiter itself and takes nothing) and exits 0 with {orphans: [...]} on a verdict without an addressee
 //             that was not there when it started, or with {halt, entriesWithoutWaiter} on a halt that was not there
@@ -760,10 +763,22 @@ async function awaitEntry(P, task, head, poll) {
 async function main() {
   const [cmd, ...rest] = process.argv.slice(2);
   CMD = cmd;
-  const USAGE = 'usage: train.js enqueue --task <t> --branch <b> --head <sha> --base <arc> [--dir <folder>] | ride (the same) | run | await --task <t> --head <sha> [--poll <s>] | status | resume | ack --task <t> --head <sha> | watch [--poll <s>]';
+  const USAGE = 'usage: train.js enqueue --task <t> --branch <b> --head <sha> --base <arc> [--dir <folder>] | ride (the same) | run | await --task <t> --head <sha> [--poll <s>] | status | resume | ack --task <t> --head <sha> | watch [--detach] [--poll <s>]';
   if (!['enqueue', 'ride', 'run', 'await', 'status', 'resume', 'ack', 'watch'].includes(cmd)) die(64, USAGE);
-  const a = args(rest);
+  const detach = cmd === 'watch' && rest.includes('--detach');
+  const list = detach ? rest.filter((x) => x !== '--detach') : rest;
+  const a = args(list);
   const P = project();
+  if (detach) {
+    fs.mkdirSync(P.LOGS, { recursive: true });
+    const log = path.join(P.LOGS, `watch-${new Date().toISOString().replace(/[-:.]/g, '')}-${process.pid}.log`);
+    const fd = fs.openSync(log, 'a');
+    const child = spawn(process.execPath, [__filename, 'watch', ...list], { detached: true, stdio: ['ignore', fd, fd], env: process.env });
+    fs.closeSync(fd);
+    child.unref();
+    out({ pid: child.pid, log });
+    return 0;
+  }
   const poll = 1000 * (Number(a.poll || process.env.CODIS_TRAIN_POLL) || 10);
   if (cmd === 'enqueue') { out(enqueue(P, a, USAGE)); return 0; }
   if (cmd === 'ride') {

@@ -1,12 +1,18 @@
 ---
 name: role-chain
-description: Run the codis-agents role chain (preconditions, analyst, programmer, tester, reviewer, security reviewer) on one or more tasks that already have a BRIEF.md and a worktree. Use when the owner asks to start, run or restart the role chain, the agents, or a task through programmer/tester/reviewer.
+description: For the coordinator session; a role of the chain never runs it. Run the codis-agents role chain (preconditions, analyst, programmer, tester, reviewer, security reviewer) on one or more tasks that already have a BRIEF.md and a worktree. Use when the owner asks to start, run or restart the role chain, the agents, or a task through programmer/tester/reviewer.
 ---
 
 # Run the role chain
 
-The chain itself is the workflow `codis-agents:role-chain` (`${CLAUDE_PLUGIN_ROOT}/workflows/role-chain.js`). The
-workflow reads no files, so this skill collects everything it needs and passes it in `args`.
+**Plugin root.** `${CLAUDE_PLUGIN_ROOT}` below is the root of this plugin. Claude Code sets it; where it is empty or not
+expanded (Codex), the root is the folder two levels above this `SKILL.md` (the installed copy,
+`$CODEX_HOME/plugins/cache/<marketplace>/codis-agents/<version>`). On Codex write that absolute path literally into every
+command, with no variable (`<plugin>` below): the rules of the coordinator's home match only the literal path.
+
+The chain itself is `workflows/role-chain.js`. On Claude Code it runs as the workflow `codis-agents:role-chain`; on
+Codex, or with roles on another host, the conductor `scripts/chain-run.js` runs the same script as a detached process
+(step 3). The script reads no files, so this skill collects everything it needs and passes it in.
 
 ## 1. Read the project config
 
@@ -60,7 +66,9 @@ Check before starting: `BRIEF.md` exists in the task folder, the worktree is on 
 marker (and the `analysis` file exists), and the brief has no unanswered question on which acceptance depends. If something is missing, write it into the brief as a question for
 the owner and ask, instead of starting.
 
-## 3. Start the workflow
+## 3. Start the chain
+
+### On Claude Code: the Workflow
 
 ```
 Workflow({ name: "codis-agents:role-chain", args: {
@@ -72,6 +80,42 @@ Workflow({ name: "codis-agents:role-chain", args: {
 
 `args.agentTypePrefix: ""` runs every role as `general-purpose` instead of the plugin's role agents (a fallback if the
 role agents are unavailable).
+
+Roles on Codex from a Claude Code session: start the conductor as in the block below (`--host codex`) and wait in
+blocking Bash slices of `node "${CLAUDE_PLUGIN_ROOT}/scripts/chain-run.js" status <runId> --wait 270` (rule "Pauses").
+Before a Workflow start of a task that ran under the conductor, `node "${CLAUDE_PLUGIN_ROOT}/scripts/chain-run.js"
+resolve --list --task <k>` must show no live conductor run of it (its lock `<sharedDir>/runs/.locks/<k>.lock`); a task
+that moves between the Workflow and the conductor carries `prior` (and `priorReason` under the conductor).
+
+### On Codex, or roles on another host: the conductor
+
+There is no Workflow and no Monitor on Codex. The conductor runs the same chain as a detached process; this session
+only starts it and watches it.
+
+1. Write the tasks (a JSON array of the objects of step 2) and the owner's words, verbatim, into two files inside
+   `sharedDir`, not inside a worktree (e.g. `<sharedDir>/<key>/chain-tasks.json` and `<sharedDir>/<key>/chain-owner.txt`).
+2. Start: `node <plugin>/scripts/chain-run.js start --host codex --tasks <tasks file> --owner <owner file> --codex-home <run home>`
+   (add `--config <codis-agents.json>` when the config is not found from the working directory, and `--bin <codex>`
+   for a codex of a version the run home was checked with). The run home is the Codex home of the roles, prepared by
+   the owner (skill `codis-agents:coordinator`, "On Codex: homes, sandbox and rules"); it is never the `$CODEX_HOME` of
+   this session. Roles on Claude Code from a Codex session: `--host claude [--bin claude]`. The answer is one JSON line
+   `{runId, runDir, pid, tasks}`; exit 0 started, 64 arguments, the tasks or owner file or a refusal of the adapter,
+   65 the config, 70 the conductor died before it was ready (its tail on stderr).
+3. Right away, before the first slice, write into the brief of every task of the run the line
+   `run: <runId> <runDir> pid <pid> host codex <date>`.
+4. Wait in slices: `node <plugin>/scripts/chain-run.js status <runId> --wait 25`, again while it exits 3. 25 s is the
+   slice (measured 2026-11-09 on codex 0.167.0, `codex exec`: the shell tool answers "still running" after about
+   30 s). A slice that answers "still running", is cut or returns early is not the end and not the death of the run:
+   run the next slice; only exit 0 or 4 ends the wait - 0 finished (its `results.json` holds the verdicts), 4 dead (the
+   basis in `status`, then `chain-run.js resolve`). Do not end your turn while the run lives: a turn that ends takes its own
+   unfinished commands with it (the detached run survives, the watch does not).
+5. Esc, or closing Codex, cancel only the wait, never the run; a run stops only with
+   `node <plugin>/scripts/chain-run.js stop <runId>`. A new session takes the `runId` from the `run:` line of the brief
+   (or from `<sharedDir>/runs/.locks/<key>.lock` while the run lives) and goes on with `status`; a `status` that exits
+   64 (unknown run) means the line is wrong: look in the lock, and never start a second run of the task for it (a
+   live lock refuses it anyway).
+6. The results go by the common section "After the run" below. The cost of a conductor run is
+   `node <plugin>/scripts/chain-cost.js --journal <task folder>`.
 
 ## 4. After the run
 
@@ -117,12 +161,22 @@ role agents are unavailable).
   name the same, and so does a train step that could not run (the ride killed, the Mac asleep) when `train.js status`
   lists its entry; 65 -> refused (a protected base
   or not a branch). The base must be a branch of the repository, not a commit.
+- Accepted branches are merged by the coordinator; pushing, merging into a protected branch and tagging stay the
+  owner's call.
+
+### On Claude Code: cost and resume
+
 - Cost: `node "${CLAUDE_PLUGIN_ROOT}/scripts/chain-cost.js" <directory with the run's agent transcripts>...` prints the
   input-equivalent cost per task and flags tasks above twice `medianTaskIE`; give it the transcript directories of all
   runs of a split feature, and it sums the parts that carry the same `feature` and flags the feature above
   `featureIELimit` (default 3 x `medianTaskIE`). Add `--journal <task folder>` for the tasks whose roles ran through the role adapter (`scripts/role-exec.js`, its `calls.jsonl`): their calls are added to the same task key, and the line names its sources. Put the lines into the report to the owner.
-- An interrupted run with several tasks is never resumed with `resumeFromRunId`: cached agent results replay by call
-  order, which differs between parallel tasks, so results land in the wrong task. Relaunch each unfinished task alone,
-  with `start` pointing to its report and the step it stopped at.
-- Accepted branches are merged by the coordinator; pushing, merging into a protected branch and tagging stay the
-  owner's call.
+- An interrupted Workflow run with several tasks is never resumed with `resumeFromRunId`: cached agent results replay
+  by call order, which differs between parallel tasks, so results land in the wrong task. Relaunch each unfinished task
+  alone, with `start` pointing to its report and the step it stopped at.
+
+### On Codex: cost and resume
+
+- Cost: `node <plugin>/scripts/chain-cost.js --journal <task folder>...` (a conductor run has no Workflow transcripts;
+  the role adapter's `calls.jsonl` is its source). Put the lines into the report to the owner.
+- The conductor has no resume of a run: a task is relaunched with `start` and `prior`, or with the `resumeAt`, `head`
+  and `prior` of a decision of `chain-run.js resolve`.

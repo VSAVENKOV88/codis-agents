@@ -25,7 +25,7 @@ spawnSync('git', ['init', '-q', '-b', 'main', main]);
 spawnSync('git', ['-C', main, '-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'init']);
 const cfgFile = path.join(T, 'cfg.json');
 fs.writeFileSync(cfgFile, JSON.stringify({ repoDir: main, worktreeRoot: path.join(T, 'wts'), sharedDir: shared, protectedBranches: ['main'],
-  guardCommand: 'true', worktreeSetup: { scan: [], skip: [], link: [] }, slots: { lockDir: path.join(T, 'slots'), legacyLock: path.join(T, 'guards.lock') } }));
+  guardCommand: 'cd {wt} && true', worktreeSetup: { scan: [], skip: [], link: [] }, slots: { lockDir: path.join(T, 'slots'), legacyLock: path.join(T, 'guards.lock') } }));
 const env = Object.assign({}, process.env, { CODIS_AGENTS_CONFIG: cfgFile, CODIS_TRAIN_POLL: '0.2' });
 const tr = (...a) => spawnSync(process.execPath, [TRAIN, ...a], { cwd: T, encoding: 'utf8', env, timeout: 30000 });
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };

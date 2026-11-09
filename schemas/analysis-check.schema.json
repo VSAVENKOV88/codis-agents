@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "properties": {
+    "analysisSha256": { "type": "string" },
+    "tasks": { "type": "array", "items": { "type": "string" } },
+    "verdict": { "type": "string", "enum": ["ready", "changes-needed"] },
+    "significantGaps": { "type": "integer" },
+    "report": { "type": "string" }
+  },
+  "required": ["analysisSha256", "tasks", "verdict", "significantGaps", "report"],
+  "additionalProperties": false
+}

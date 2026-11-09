@@ -103,7 +103,7 @@ ok('W1 role-chain, Codex: repeat status <runId> --wait 25 while it exits 3, the 
   /`node <plugin>\/scripts\/chain-run\.js status <runId> --wait 25`/.test(rcCodex) && /exits 3/.test(rcCodex) && /measured 2026-11-09[^.]*0\.167\.0/.test(rcCodex), rcCodex.slice(0, 400));
 ok('L22 (d) role-chain, Codex: no --wait 270 and no run_in_background', !/--wait 270/.test(rcCodex) && !/run_in_background/.test(rcCodex));
 ok('W2 role-chain, Codex: "still running", a cut or an early slice is not the end of the run; only 0 or 4 end the wait; the turn does not end while the run lives',
-  /still running/.test(rcCodex) && /not the end/.test(rcCodex) && /only exit 0[^.]*4/.test(rcCodex) && /do not end (your|the) turn/.test(rcCodex), rcCodex);
+  /still running/.test(rcCodex) && /not the end/.test(rcCodex) && /only exit 0[^.]*4/.test(rcCodex) && /[Dd]o not end (your|the) turn/.test(rcCodex), rcCodex);
 ok('W3 role-chain, Codex: Esc and closing Codex cancel only the wait; a run stops only with chain-run.js stop',
   /Esc/.test(rcCodex) && /cancel only the wait/.test(rcCodex) && /chain-run\.js stop <runId>/.test(rcCodex));
 ok('W4 role-chain, Codex: the line "run: <runId> <runDir> pid <pid> host codex <date>" into the brief before the first slice; a new session finds the run by it or by .locks/<key>.lock',
@@ -146,7 +146,7 @@ ok('C3 coordinator: CODEX_HOME of the coordinator home; ~/.codex only in a sente
 // G4: every command of a Codex block that a rule should let out is a plain argv that the rule matches
 const allCodex = SKILLS.map((s) => hostText(skill[s], 'codex')).join('\n');
 const spans = [...allCodex.matchAll(/`([^`\n]+)`/g)].map((m) => m[1]).concat(allCodex.split('\n').map((l) => l.trim()))
-  .filter((c) => /^(node <plugin>\/scripts\/(chain-run|train)\.js|git |codex exec)/.test(c));
+  .filter((c) => /^(node <plugin>\/scripts\/(chain-run|train)\.js|git |codex exec )/.test(c));
 const argv = (c) => (c.match(/"[^"]*"|\S+/g) || []).map((t) => t.replace(/^"|"$/g, ''));
 const matches = (c) => want.some((p) => p.every((t, i) => argv(c)[i] === t));
 const special = (c) => /\$|\bnohup\b|[|&;]|\bsetsid\b|^[A-Z_]+=/.test(c.replace(/<[^<>]*>/g, 'X').replace(/"[^"]*"/g, 'X')) || /[<>]/.test(c.replace(/<[^<>]*>/g, 'X'));
@@ -183,7 +183,11 @@ ok('K5 coordinator, Codex: the task tells the checker its sandbox is read-only -
 ok('K5 coordinator: the steps snapshot before and after stay common (outside the host blocks)', /\*\*Snapshot before\.\*\*/.test(chk) && /\*\*Snapshot after\.\*\*/.test(chk));
 const sch = (() => { try { return JSON.parse(read('schemas/analysis-check.schema.json')); } catch { return null; } })();
 const RE = require('../scripts/role-exec');
-ok('K3 schemas/analysis-check.schema.json: a strict schema (its strict form is itself)', !!sch && !RE.schemaProblems(sch).length && JSON.stringify(RE.strict(sch)) === JSON.stringify(sch), JSON.stringify(sch));
+// codex exec takes the file as it is (--output-schema), so it is in the strict form already: the strict form of its
+// source (the same schema without additionalProperties) is the file itself.
+const strip = (x) => JSON.parse(JSON.stringify(x, (k, v) => (k === 'additionalProperties' ? undefined : v)));
+ok('K3 schemas/analysis-check.schema.json: a strict schema (the strict form of its source is the file itself)', !!sch && !RE.schemaProblems(strip(sch)).length
+  && JSON.stringify(RE.strict(strip(sch))) === JSON.stringify(sch), JSON.stringify(sch));
 ok('K3 the schema: analysisSha256, tasks[], verdict ready|changes-needed, significantGaps integer, report string',
   !!sch && JSON.stringify(Object.keys(sch.properties || {}).sort()) === JSON.stringify(['analysisSha256', 'report', 'significantGaps', 'tasks', 'verdict'])
   && JSON.stringify(sch.properties.verdict.enum) === JSON.stringify(['ready', 'changes-needed']) && sch.properties.significantGaps.type === 'integer'

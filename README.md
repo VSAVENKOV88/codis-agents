@@ -2,7 +2,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT"></a>
   <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-0.4.35-informational" alt="Version 0.4.35"></a>
   <a href="https://claude.com/claude-code"><img src="https://img.shields.io/badge/Claude%20Code-plugin-D97757" alt="Claude Code plugin"></a>
-  <a href="#codex-cli"><img src="https://img.shields.io/badge/Codex%20CLI-coming%20soon-lightgrey" alt="Codex CLI: coming soon"></a>
+  <a href="#codex-cli"><img src="https://img.shields.io/badge/Codex%20CLI-preview-yellow" alt="Codex CLI: preview"></a>
 </p>
 
 # Agents work. The graph checks. You decide.
@@ -224,7 +224,7 @@ input-equivalent tokens (IE, see the [Glossary](#glossary)) are marked as such.
 
 | Step | Command |
 |---|---|
-| 1. Add the marketplace | `claude plugin marketplace add VSAVENKOV88/codis-agents` (or a local clone: `claude plugin marketplace add /path/to/codis-agents`) |
+| 1. Add the marketplace | `claude plugin marketplace add VSAVENKOV88/codis-agents` (or a local clone: `claude plugin marketplace add /path/to/codis-agents`); Codex CLI (preview): steps 1-2 with `codex plugin` in a home of your own, step 5 by `agentsMd`, and the coordinator's home, sandbox and rules - [Codex CLI](#codex-cli) |
 | 2. Install the plugin, then restart the session | `claude plugin install codis-agents@codis-agents` |
 | 3. Turn it on for a project | copy `examples/codis-agents.example.json` to `<project>/.claude/codis-agents.json`; set where worktrees and task folders live and how your tests run |
 | 4. Check the project config | `node /path/to/codis-agents/scripts/config.js check` |
@@ -249,7 +249,7 @@ codis-agents/
  ├── scripts/      39 scripts: memory slots, guard runs and selection, the train, post-checks, remote runner, cost
 ├── examples/     example project and machine configs
 ├── schemas/      their JSON schemas
-└── tests/        172 test files of the plugin itself (npm test)
+└── tests/        174 test files of the plugin itself (npm test)
 ```
 
 Every file, script and config key is described in the [Technical reference](#technical-reference).
@@ -461,7 +461,7 @@ writes that into the report's section Closure. A task with `noAnalysis` gets no 
 | `scripts/wait-step.js` | a long deterministic step (the selection of a task's guards after a programmer round, `guards-all.sh --select`) run detached by the workflow between role agents; `wait` blocks at most 270 s and reports JSON |
 | `scripts/wt-setup.sh` | creates a task worktree and clones (not symlinks) git-ignored data into it; `--detach <name> <commit>` makes it detached, with no branch (the train) |
 | `scripts/merge-only.js` | `<before> <head> --base <arc> [--wt <dir>] [--files <glob>]... [--guards <glob>]...`: is a train conflict round only the merge of the arc with docs resolved? One merge commit, first parent `before`, second parent an ancestor of the arc, and every file `git merge-tree --write-tree` names as conflicted, and every file where it differs from that automatic merge of its parents, matches the globs (`mergeOnlyFiles`), and none of them is a guard: a file of `--guards` (the project's `guardFiles`, passed by the workflow; without it the key's default) is a guard, not docs, even under a docs glob; JSON `{mergeOnly, reason, files}`, exit 0 yes, 1 no (also without globs), 2 an error |
-| `scripts/train.js` | the train dispatcher (p-train): ready branches queue in `<sharedDir>/train/queue` (`enqueue`); one train at a time under a mkdir lock (a dead holder's lock is broken, its worktree removed); a train is the arc head plus every ready branch merged by `git merge-tree`/`commit-tree` into `refs/runs/train/<id>` (a conflicting passenger gets `conflict` with its files, the others ride), run by `guards-all.sh` as it is in a detached temporary worktree with cloned ignored data, removed afterwards; green moves the arc branch to the train commit (compare-and-swap, or `merge --ff-only` in the worktree where it is checked out and has no tracked changes, else `green-unmerged`), results in `<sharedDir>/train/result`; the arc moved during the run: no verdict, the next train; the environment (also a log without its tally), a git error halt the queue until `resume`; a red train is attributed: its repeated new reds run again alone (`guards-all.sh --guards`) on the bare arc head (red there: `arc-red`, the queue halts) and on "arc + X" for every passenger (red: X gets `red`, the others ride the next train); green on each alone is a seam - of two: the earlier rides, the later gets `seam` naming it; of three: the pairs (at most three runs) name the pair; an attribution that could not run, a guard now red now green, or more than three passengers halt for the coordinator; `await` waits for one entry and dispatches while it waits; `ride` (the chain after the review, p-train-c3) is enqueue + await with the verdict as its exit code - 0 green, 10 green-unmerged, 11 red, 12 seam (after the partner's own result; a halt of the partner's train gives that halt's code: 14, 15 or 75), 13 conflict, 14 arc-red, 15 coordinator (a halt for the coordinator: several red pairs, a guard now red now green, more than three passengers, one passenger green alone), 75 the queue halted by the environment, 74 the queue unavailable, 65 refused before the queue (a protected base or not a branch); a relaunch attaches to its entry or result; the lock holder is alive while any process of its process group lives (`scripts/train-lock.js`, the one reading of the lock for `train.js` and the session hook); `lock/owner.json` is `{pid, child, pgid, train, base, wt, since}`, `base` written as soon as the train has chosen its arc, and `status` prints `lock: train <id> for arc <base> by pid ...` (`by watch pid ...` when `train.js watch` holds it; or `lock: free`); a dead train's worktree and attribution refs are removed; a ride or an await of its own entry writes its waiter file `<sharedDir>/train/waiters/<task>-<head>-<pid>.json` `{pid, procStart, state, at}` (procStart = now - `LC_ALL=C ps -o etime=`, so a reused pid is no waiter), marked `claimed` or `left` on its exit, and takes (`claimedAt`) the result it returns as its own; a result not taken, with waiter files and none of them a live waiting process, not superseded by a later head of the task (`enqueuedAt`), is a verdict without an addressee: `status` names it after its halt/lock/queue lines (green: the merged sha and arc; green-unmerged: the ref to merge; conflict: the files; seam: the partner) and marks queue entries `waiter pid N alive` or `no live waiter`; `resume` names the entries without a live waiter; `train.js ack --task <t> --head <sha>` takes a verdict by hand (66 without a result); `train.js watch` is the coordinator's background wait: it dispatches like any waiter and exits with `{orphans}` on a verdict without an addressee that was not there when it started, or with `{halt, entriesWithoutWaiter}` on a new halt that leaves an entry whose waiters are gone without reporting it; the coordinator does not end its session while `status` shows a live lock of `watch` (`by watch pid N (alive)`), and a version with waiters is installed between waves with the plugin of the remote runner |
+| `scripts/train.js` | the train dispatcher (p-train): ready branches queue in `<sharedDir>/train/queue` (`enqueue`); one train at a time under a mkdir lock (a dead holder's lock is broken, its worktree removed); a train is the arc head plus every ready branch merged by `git merge-tree`/`commit-tree` into `refs/runs/train/<id>` (a conflicting passenger gets `conflict` with its files, the others ride), run by `guards-all.sh` as it is in a detached temporary worktree with cloned ignored data, removed afterwards; green moves the arc branch to the train commit (compare-and-swap, or `merge --ff-only` in the worktree where it is checked out and has no tracked changes, else `green-unmerged`), results in `<sharedDir>/train/result`; the arc moved during the run: no verdict, the next train; the environment (also a log without its tally), a git error halt the queue until `resume`; a red train is attributed: its repeated new reds run again alone (`guards-all.sh --guards`) on the bare arc head (red there: `arc-red`, the queue halts) and on "arc + X" for every passenger (red: X gets `red`, the others ride the next train); green on each alone is a seam - of two: the earlier rides, the later gets `seam` naming it; of three: the pairs (at most three runs) name the pair; an attribution that could not run, a guard now red now green, or more than three passengers halt for the coordinator; `await` waits for one entry and dispatches while it waits; `ride` (the chain after the review, p-train-c3) is enqueue + await with the verdict as its exit code - 0 green, 10 green-unmerged, 11 red, 12 seam (after the partner's own result; a halt of the partner's train gives that halt's code: 14, 15 or 75), 13 conflict, 14 arc-red, 15 coordinator (a halt for the coordinator: several red pairs, a guard now red now green, more than three passengers, one passenger green alone), 75 the queue halted by the environment, 74 the queue unavailable, 65 refused before the queue (a protected base or not a branch); a relaunch attaches to its entry or result; the lock holder is alive while any process of its process group lives (`scripts/train-lock.js`, the one reading of the lock for `train.js` and the session hook); `lock/owner.json` is `{pid, child, pgid, train, base, wt, since}`, `base` written as soon as the train has chosen its arc, and `status` prints `lock: train <id> for arc <base> by pid ...` (`by watch pid ...` when `train.js watch` holds it; or `lock: free`); a dead train's worktree and attribution refs are removed; a ride or an await of its own entry writes its waiter file `<sharedDir>/train/waiters/<task>-<head>-<pid>.json` `{pid, procStart, state, at}` (procStart = now - `LC_ALL=C ps -o etime=`, so a reused pid is no waiter), marked `claimed` or `left` on its exit, and takes (`claimedAt`) the result it returns as its own; a result not taken, with waiter files and none of them a live waiting process, not superseded by a later head of the task (`enqueuedAt`), is a verdict without an addressee: `status` names it after its halt/lock/queue lines (green: the merged sha and arc; green-unmerged: the ref to merge; conflict: the files; seam: the partner) and marks queue entries `waiter pid N alive` or `no live waiter`; `resume` names the entries without a live waiter; `train.js ack --task <t> --head <sha>` takes a verdict by hand (66 without a result); `train.js watch` is the coordinator's background wait: it dispatches like any waiter and exits with `{orphans}` on a verdict without an addressee that was not there when it started, or with `{halt, entriesWithoutWaiter}` on a new halt that leaves an entry whose waiters are gone without reporting it; `watch --detach` starts it as a process of its own session with its output in `<sharedDir>/train/logs/watch-<time>.log` and prints `{pid, log}` (the coordinator on Codex, whose shell has no background task); the coordinator does not end its session while `status` shows a live lock of `watch` (`by watch pid N (alive)`), and a version with waiters is installed between waves with the plugin of the remote runner |
 | `scripts/corpus-sync.js` | the project's corpus on the remote runner (machine key `remote`), one way only: `manifest` (paths, sizes, mtimes and sha256 of the git-ignored data under `worktreeSetup.scan` into `<sharedDir>/corpus-manifest.json`; the main checkout is only read, `git status --no-optional-locks`), `sync` (the delta by rsync into `<root>/corpus`, chosen by sha256 and sent with `--ignore-times`, deletions inside the donor only; "corpus up to date <id>" when nothing differs), `status`, `copy <name>` (a run's own copy at `<root>/wt/<name>`, an earlier copy of that name removed first, time and size printed), `wipe-list` and `wipe --confirm <token>` (two commands: the second removes exactly the list the first showed). Never sent: `.env*` (an ignored entry git names is left out; a `.env*` inside ignored data refuses the sync before any transfer, exit 65, files named), `sessions/` at any depth and in any case (`Sessions/` is the same folder on a case-insensitive disk; refused before transfer like a `.env*`, and dropped by rsync's filters too), `node_modules`, `dist`, `.deps`, the `skip` and `link` globs, symbolic links. An empty source never empties the donor; an rsync cut off leaves the donor `incomplete` and `copy` refuses until a full sync (69, "environment: ...") |
 | `scripts/guards-remote.js` | the full guard run on the remote runner, called by `guards-all.sh` when the machine file has `remote` and the project config `remoteRun`: committed HEAD only (tracked changes: 78), pushed over the pinned ssh into `<root>/repo.git` at `refs/runs/<name>/<sha>` (not when the runner has it), the runner's plugin of the same version and its `env-check.js` first; the runner prepares `<root>/wt/<name>` and runs its own `guards-all.sh --local` detached from ssh; here no slot is held while waiting ("waiting for remote run <id> on <host> ..." every `SLOT_SAY` s, one journal line of class `remote`); the log comes back with the header "ran on runner <host>, HEAD <sha>, workers N" and a meta with env `remote:<host>`; the guards of `remoteRun.localPattern` run here afterwards in a heavy slot, the worse exit code wins; environment problems exit 69 with the first log line `environment: <reason>` |
 | `scripts/guards-remote-host.js` | the runner's half of `guards-remote.js`, sent over ssh to `node -` with `corpus-remote.js` bundled; the job of a run is that bundle in `<root>/runs/<name>/` started in its own session: worktree (`git worktree add --detach`), its own copy of the donor (under `corpus.lock`; a copy that changes a file the commit holds is refused, 69, the paths named: only the committed HEAD runs; a `.env*` the commit does not hold is refused right after it, before any project code), dependencies from `<root>/deps/<hash>` (installed once per hash in a medium slot, then read-only (`a-w`) with its manifest in `<hash>.ok`; a reuse that no longer matches the manifest is installed again: `u+w`, removed, installed, `a-w`; linked straight to their real paths), the `prepare` commands, again a refusal of any `.env*` the commit does not hold, then `guards-all.sh`; what the runner sends back is shown here without control characters; a start of the same name and SHA while it lives (or before its result was fetched) attaches to it |
@@ -482,7 +482,7 @@ writes that into the report's section Closure. A task with `noAnalysis` gets no 
 | `scripts/env-check.js` | free disk and swap headroom for the preconditions, floors `minFreeDiskGB` and `swapMinMB` of the machine file (the command line wins; 0 - off, said in notes); a swap that cannot be measured (a codex sandbox refuses `sysctl`) is a problem `swap not checked: <reason>` when the floor is on the command line (`--min-swap-mb`, as the chain passes it), a note otherwise; `--worktree <dir>`: the task worktree is not the main working copy |
 | `scripts/git-hooks/` | `pre-push` (protected branches and tags) and `pre-commit` (cloud conflict copies, extra checks) |
 | `scripts/config.js` | finds, validates and resolves the project config; `config.js smoke` runs one guard on every path that narrows a guard command (`scripts/config-smoke.js`) |
-| `examples/`, `schemas/` | an example project config and its JSON schema |
+| `examples/`, `schemas/` | an example project config and its JSON schema; `schemas/analysis-check.schema.json`, the answer of the analysis checker on Codex (`codex exec --output-schema`) |
 
 ## Install
 
@@ -552,12 +552,80 @@ project sets; `untrusted` - no project `AGENTS.md` at all; `codex exec` in a git
 itself. Claude Code does not read the generated `AGENTS.md` by default; with `claude-md-and-agents-md` it would get the
 same rules twice (from `CLAUDE.md` and from `AGENTS.md`).
 
+#### The coordinator on Codex
+
+The skills `role-chain`, `coordinator` and `brief` carry one text for both hosts: a step that needs a tool only Claude
+Code has stands under "On Claude Code", the same step for Codex under "On Codex" next to it. On Codex the coordinator
+starts the conductor (`scripts/chain-run.js`) and watches it; there is no Workflow and no Monitor. Three Codex homes,
+never mixed: the coordinator home (your session, `CODEX_HOME=<coordinator home> codex`), the run home of the roles
+(`--codex-home` of `chain-run.js start`) and the personal `~/.codex`, which no procedure touches. In each of the two
+homes you run `codex login`, install the plugin, trust its hook in `/hooks` and run `codex-hooks-check.js`; the run home
+also passes `role-exec.js check`. The coordinator home gets a `config.toml` and a rules file:
+
+```toml
+sandbox_mode = "workspace-write"
+approval_policy = "on-request"
+
+[sandbox_workspace_write]
+writable_roots = ["<sharedDir>", "<worktreeRoot>"]
+
+[projects."<main repository root>"]
+trust_level = "trusted"
+```
+
+`$CODEX_HOME/rules/codis-agents.rules`, with `<plugin>` the absolute path of the installed copy (it holds the version,
+so rewrite the file after every update):
+
+```
+prefix_rule(pattern=["node", "<plugin>/scripts/chain-run.js"], decision="allow")
+prefix_rule(pattern=["node", "<plugin>/scripts/train.js"], decision="allow")
+prefix_rule(pattern=["git"], decision="allow")
+prefix_rule(pattern=["codex", "exec", "--sandbox", "read-only"], decision="allow")
+```
+
+Everything else of the session runs in the sandbox (no network, writes only in the project and `writable_roots`). The
+four rules let out, without a window, exactly the conductor and the train (network, writes outside the project), git
+(the git folder) and the read-only analysis checker (network); a rule matches only a plain argv with the literal path,
+so the skills write those commands that way, and `codex execpolicy check --rules <file> -- <command>` shows whether one
+matches. The `git` rule lets any git command out, as on Claude Code; the session hook refuses `git add -A`, pushes into
+protected branches and tags. The coordinator waits in slices of `chain-run.js status <runId> --wait 25` (the shell tool
+of Codex answers "still running" after about 30 s, measured on 0.167.0); Esc or closing Codex cancel only the wait, and
+a new session finds the run by the `run:` line the skill writes into the brief. A train verdict without an addressee
+is watched by `train.js watch --detach`. The analysis checker runs as `codex exec --sandbox read-only --output-schema
+schemas/analysis-check.schema.json` on a copy of the analysis named by its sha256; a launch that fails is "analysis
+check not run", never a passed check.
+
+#### Preview on Codex: verified and limits
+
+Verified:
+- install from `.claude-plugin/` and the session hook under Codex, with the trust check (p-codex-D1a, D1b, 0.166.0);
+- the roles analyst, usecases and review on codex through the role adapter, and prog and test with the commit channel
+  (p-codex-A1, A2, A2a-3a, 0.166.0);
+- the coordinator's sandbox with the four rules: an allowed command runs outside the sandbox without a window, its
+  detached child keeps the network and writes outside the project; a command without a rule stays in the sandbox
+  (p-codex-D2, measured 2026-11-09 on 0.167.0);
+- the slice of 25 s: the shell tool of `codex exec` answers "still running" after about 30 s, and a command still
+  attached to a turn dies with it (p-codex-D2, 2026-11-09, 0.167.0).
+
+Limits:
+- the whole chain on Codex (programmer, tester, review and the train with a coordinator on Codex) is not yet accepted:
+  that is the integration acceptance of part A2a-3c; "supported" comes after A2a-3c and a full run on Codex;
+- the heavy channel (memory slots, full guard runs from a role on codex) is part A2b: a role answers `environment`;
+- a role on codex has no network (except test) and no Docker for its acceptance;
+- the coordinator waits by polling in slices; a long run costs one model turn per slice, and the length of one Codex
+  turn over hours is not measured;
+- the cost of the coordinator's own Codex session is not counted (`chain-cost.js --journal` counts the roles);
+- nothing in the code refuses a run home equal to the coordinator home; the skill and `role-exec.js check` keep them
+  apart;
+- a rule whose argument has shell special characters may not match and asks in the window.
+
 Things that bite on first use:
 
-- A plugin installed in the middle of a session gives its skills, workflows and agents only after a session restart.
+- A plugin installed in the middle of a session gives its skills, workflows and agents only after a session restart
+  (on Codex too: start a new session after `codex plugin add`).
 - `scripts/wt-setup.sh` is a zsh script: run it directly (its shebang is zsh) or with `zsh`, not with `bash`, which fails
   on its zsh syntax.
-- A Workflow started by `scriptPath` (for example a modified copy of the role-chain workflow) takes the script only
+- Claude Code: a Workflow started by `scriptPath` (for example a modified copy of the role-chain workflow) takes the script only
   from the working directory or the session's scratchpad; anything else is refused. The plugin's own workflow is
   started by name.
 
@@ -713,8 +781,8 @@ If the project keeps its own hooks directory as `core.hooksPath` instead, call t
 1. Write a brief: `<sharedDir>/<task>/BRIEF.md` with the owner's words verbatim and dated, the scope, and the
    acceptance as a scenario in the real environment (skill `codis-agents:brief`).
 2. Create the worktree: `<plugin>/scripts/wt-setup.sh <name> <branch> [base]` (base: the default branch when left out).
-3. Ask Claude to run the role chain on the task (skill `codis-agents:role-chain`). The skill resolves the config and
-   starts the workflow:
+3. Ask the coordinator to run the role chain on the task (skill `codis-agents:role-chain`). The skill resolves the
+   config and, on Claude Code, starts the workflow:
 
 ```js
 Workflow({ name: "codis-agents:role-chain", args: {
@@ -723,6 +791,14 @@ Workflow({ name: "codis-agents:role-chain", args: {
   tasks: [{ key: "q2", title: "Queue retries", wt: "q2", branch: "b-q2", kind: "defect", analystFirst: true,
             base: "b-arc", accept: "Add -> the item builds with no tab open; log and screenshot attached" }]
 } })
+```
+
+On Codex, or with roles on another host, the skill starts the conductor with the same tasks in a file and waits for it
+(`--host claude` for roles on Claude Code):
+
+```sh
+node <plugin>/scripts/chain-run.js start --host codex --tasks <tasks.json> --owner <owner.txt> --codex-home <run home>
+node <plugin>/scripts/chain-run.js status <runId> --wait 25     # again while it exits 3; 0 finished, 4 dead
 ```
 
 Every task carries exactly one of `analystFirst`, `analysis`, `noAnalysis`: `analystFirst: true` runs the analyst
@@ -1155,8 +1231,12 @@ fallback to another slot directory: a second directory would be a second queue t
   installed plugin, an update included, so after each update the hook stays silent until `/hooks` again
   (`scripts/codex-hooks-check.js` tells whether it runs, see [Install](#install); nothing calls it for you yet - the
   conductor's preconditions are part B). Like under Claude Code the hook is fail-open: no `node` in
-  `PATH`, its timeout of 10 s or an exception lets the command run. The role chain itself does not run on Codex yet
-  (its skills start a Claude Code Workflow; part D2); the git `pre-push` hook stays the second layer for pushes.
+  `PATH`, its timeout of 10 s or an exception lets the command run. The git `pre-push` hook stays the second layer
+  for pushes.
+- The coordinator on Codex (p-codex-D2, preview). Its skills run the conductor, and its session needs the home, the
+  sandbox and the four rules of [Codex CLI](#codex-cli); what is verified and what is not is listed there ("Preview on
+  Codex"). The `git` rule lets every git command out of the sandbox, as on Claude Code, and a hint planted in a file the
+  session reads could call one; a run home equal to the coordinator home is refused by no code.
 - The check of the analysis before the start (0.4.18) is a coordinator rule: the chain's preconditions do not read
   the report `<name of the analysis>.check.md`, so a task launched without the check, or with gaps left open, still
   starts; a deterministic check of the report (its header, its verdict, every significant gap closed, the analysis unchanged since) is a later
