@@ -23,7 +23,9 @@ const BIN = path.join(__dirname, 'fixtures', 'chain-run', 'bin');
 const W = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'chain-run-t-')));
 const SHARED = path.join(W, 's'), WTR = path.join(W, 'r');
 const CFG = path.join(W, 'codis-agents.json');
-fs.writeFileSync(CFG, JSON.stringify({ repoDir: path.join(W, 'repo'), sharedDir: SHARED, worktreeRoot: WTR, guardCommand: 'true {wt}', testerWritable: ['-run\\.js$'] }));
+// commitAuthor: on codex the conductor needs an author for the commit channel (the machine may have no git identity).
+fs.writeFileSync(CFG, JSON.stringify({ repoDir: path.join(W, 'repo'), sharedDir: SHARED, worktreeRoot: WTR, guardCommand: 'true {wt}', testerWritable: ['-run\\.js$'],
+  commitAuthor: { name: 'codis-agents', email: 'agents@example.com' } }));
 // One repository; every task's worktree is a detached worktree of its one commit (SHA0), which the fake roles name as head.
 const REPO = path.join(W, 'repo');
 const git = (...a) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t'].concat(a), { encoding: 'utf8' });
@@ -289,11 +291,13 @@ function cleanup() {
       && !fs.existsSync(lockOf('w14')), log14.slice(-600));
 
     // ---- P5 on codex, A7-A9, A12, A13: the hook check of the run home before each codex role
-    const codexRun = (key, scenario) => {
-      const fdc = fake({});
+    // answers: of the fake codex; onBranch: the worktree on the branch of the task (the commit channel commits there).
+    const codexRun = (key, scenario, answers, onBranch) => {
+      const fdc = fake(answers || {});
       const home = path.join(W, `codex-home-${key}`);
       fs.mkdirSync(home);
       if (scenario) fs.writeFileSync(path.join(home, 'fake-hooks.json'), JSON.stringify(scenario));
+      if (onBranch) git('-C', REPO, 'worktree', 'add', '-q', '-b', `b-${key}`, path.join(WTR, `w-${key}`), SHA0);
       const pc = cr(['start', '--host', 'codex', '--codex-home', home, '--tasks', tasksFile([task(key)]), '--owner', OWNER, '--config', CFG], envOf(fdc, { TMPDIR: RTMP }));
       let cj = null;
       try { cj = JSON.parse(pc.stdout); groups.add(cj.pid); } catch { /* below */ }
@@ -306,13 +310,19 @@ function cleanup() {
     ok('A8 codex, no hook of the plugin in the run home: the check (exit 1) keeps pre from starting, no codex exec; the result names the outcome of the adapter',
       c.r && c.r.status === 'stopped' && c.recs.length === 1 && c.recs[0].outcome === 'hook-untrusted' && c.recs[0].host === 'codex' && !c.execs.length && c.hooks.length === 1
         && c.r.adapter && c.r.adapter[0].outcome === 'hook-untrusted' && c.r.adapter[0].cause === 'hook-untrusted' && c.r.environment === undefined, JSON.stringify(c.r) + JSON.stringify(c.recs) + c.out);
-    c = codexRun('x2', { trust: 'trusted' });
-    ok('A7 A12 codex, the hook trusted: one check before pre (the run home, the task folder), pre runs as a codex exec in the task folder',
-      c.hooks.length === 1 && c.hooks[0].home === c.home && c.hooks[0].cwd === path.join(SHARED, 'x2') && c.execs.length === 1 && c.execs[0].key === 'gp:blockingQuestions,ok,problems'
+    const K_PROG = 'gp:acceptance,changedFiles,commits,fullRun,head,mutations,questions,status,summary';
+    c = codexRun('x2', { trust: 'trusted' }, {
+      [K_PROG]: [{ $commits: [{ path: 'c.js', content: '2\n', message: 'the fix' }], then: Object.assign({}, PROG, { changedFiles: ['c.js'], commits: ['$C0'], head: '$C0' }) }],
+      'gp:environment,head,summary,verdict': [Object.assign({}, GREEN, { head: '$HEAD' })], 'gp:docsOnly,fixBehaviourUnchanged,summary,verdict': [DONE] }, true);
+    const wx2 = path.join(WTR, 'w-x2');
+    ok('A7 A12 codex, the hook trusted: a check before pre (the run home, the task folder), pre runs as a codex exec in the task folder',
+      c.hooks.length >= 1 && c.hooks[0].home === c.home && c.hooks[0].cwd === path.join(SHARED, 'x2') && c.execs.length >= 1 && c.execs[0].key === 'gp:blockingQuestions,ok,problems'
         && c.execs[0].cwd === path.join(SHARED, 'x2'), JSON.stringify(c.hooks) + JSON.stringify(c.execs.map((e) => [e.key, e.cwd])));
-    ok("A13 A13' then the programmer on codex is refused by the adapter (part A2) without a hook check: stopped, adapter names it with cause refused",
-      c.r && c.r.status === 'stopped' && /programmer returned no result/.test(c.r.why) && c.r.adapter && c.r.adapter.length === 1 && c.r.adapter[0].label === 'prog:x2#1'
-        && c.r.adapter[0].outcome === 'refused' && c.r.adapter[0].cause === 'refused', JSON.stringify(c.r));
+    const tipX2 = git('-C', wx2, 'rev-parse', 'refs/heads/b-x2').stdout.trim();
+    const cm = traceOf(path.join(W, `fake${nFake}`)).filter((e) => e.ev === 'commit');
+    ok('A13 C4 then the programmer on codex runs in its worktree with the commit channel, commits through commit-req.js; the tester and the reviewer follow: done',
+      c.r && c.r.status === 'done' && c.execs.map((e) => e.key).join('>') === `gp:blockingQuestions,ok,problems>${K_PROG}>gp:environment,head,summary,verdict>gp:docsOnly,fixBehaviourUnchanged,summary,verdict`
+        && c.execs[1].cwd === wx2 && cm.length === 1 && cm[0].rc === 0 && tipX2 !== SHA0 && cm[0].out.includes(tipX2) && !c.r.adapter, JSON.stringify(c.r) + JSON.stringify(cm) + c.out);
     c = codexRun('x3', { mode: 'exit' });
     ok('A9 codex, the check could not run (exit 3): pre not started, outcome hook-unverified, cause unknown',
       c.r && c.r.status === 'stopped' && !c.execs.length && c.r.adapter && c.r.adapter[0].outcome === 'hook-unverified' && c.r.adapter[0].cause === 'unknown', JSON.stringify(c.r));

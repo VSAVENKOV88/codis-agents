@@ -18,7 +18,9 @@ const BIN = path.join(__dirname, 'fixtures', 'chain-run', 'bin');
 const W = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'chain-run-jt-')));
 const SHARED = path.join(W, 's'), WTR = path.join(W, 'r'), REPO = path.join(W, 'repo');
 const CFG = path.join(W, 'codis-agents.json');
-const baseCfg = { repoDir: REPO, sharedDir: SHARED, worktreeRoot: WTR, guardCommand: 'true {wt}', testerWritable: ['-run\\.js$'] };
+// commitAuthor: on codex the conductor needs an author for the commit channel (the machine may have no git identity).
+const baseCfg = { repoDir: REPO, sharedDir: SHARED, worktreeRoot: WTR, guardCommand: 'true {wt}', testerWritable: ['-run\\.js$'],
+  commitAuthor: { name: 'codis-agents', email: 'agents@example.com' } };
 fs.writeFileSync(CFG, JSON.stringify(baseCfg));
 const git = (...a) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t'].concat(a), { encoding: 'utf8' });
 fs.mkdirSync(REPO);
@@ -338,23 +340,24 @@ process.stdin.on('end', () => {
     // ---- the codex host: the launch through the gate comes before the role, a refusal of the hook leaves no launch
     const RTMP = path.join(W, 'rtmp');
     fs.mkdirSync(RTMP);
-    const codexRun = (key, scenario) => {
+    const codexRun = (key, scenario, extra) => {
       const fdc = fake({});
       const home = path.join(W, `codex-home-${key}`);
       fs.mkdirSync(home);
       if (scenario) fs.writeFileSync(path.join(home, 'fake-hooks.json'), JSON.stringify(scenario));
-      const pc = cr(['start', '--host', 'codex', '--codex-home', home, '--tasks', tasksFile([task(key)]), '--owner', OWNER, '--config', CFG], envOf(fdc, { TMPDIR: RTMP }));
+      const pc = cr(['start', '--host', 'codex', '--codex-home', home, '--tasks', tasksFile([task(key, extra)]), '--owner', OWNER, '--config', CFG], envOf(fdc, { TMPDIR: RTMP }));
       let cj = null;
       try { cj = JSON.parse(pc.stdout); pids.add(cj.pid); } catch { /* below */ }
       const sj = cj ? status(cj.runDir, 60, 90000).j : null;
       return { r: sj && sj.results && sj.results[0], ev: cj ? events(path.join(cj.runDir, 'journal', key)) : [], execs: traceOf(fdc).filter((e) => e.ev === 'start'), out: pc.stdout + pc.stderr };
     };
     const stepOf = (evs, label) => { const i = evs.find((e) => e.type === 'intent' && e.label === label); return i ? evs.filter((e) => e.stepId === i.stepId) : []; };
-    let cx = codexRun('cx1', { trust: 'trusted' });
+    // a task without a branch: the adapter refuses its programmer statically ("has no branch")
+    let cx = codexRun('cx1', { trust: 'trusted' }, { branch: undefined });
     let pre = stepOf(cx.ev, 'pre:cx1');
     ok('E12 through the conductor on codex: pre has intent, launch through the gate (pid is the CLI, its own group, a start time), result', pre.map((e) => e.type).join('>') === 'intent>launch>result' && pre[1].gated === true && pre[1].pid === cx.execs[0].pid && pre[1].pgid === pre[1].pid && !!pre[1].lstart, JSON.stringify(pre) + JSON.stringify(cx.execs.map((e) => e.pid)) + cx.out);
     const prg = stepOf(cx.ev, 'prog:cx1#1');
-    ok('... a static refusal of the adapter: intent and result refused, no launch, no process', prg.map((e) => e.type).join('>') === 'intent>result' && prg[1].outcome === 'refused', JSON.stringify(prg));
+    ok('... a static refusal of the adapter: intent and result refused, no launch, no process', prg.map((e) => e.type).join('>') === 'intent>result' && prg[1].outcome === 'refused' && cx.execs.length === 1, JSON.stringify(prg));
     cx = codexRun('cx2', null);
     pre = stepOf(cx.ev, 'pre:cx2');
     ok('a hook that does not run: pre has intent and result hook-untrusted, no launch, the CLI never ran', pre.map((e) => e.type).join('>') === 'intent>result' && pre[1].outcome === 'hook-untrusted' && !cx.execs.length, JSON.stringify(pre));
