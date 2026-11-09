@@ -123,7 +123,7 @@ const JOURNAL_VERSION = 1;
 // a promisor remote, inherited variables); another version refuses until it is checked (cfg.commit.gitVersions).
 const VERIFIED_GIT_VERSIONS = ['2.50.0'];
 const CHECK_HOOKS = ['pre-commit', 'prepare-commit-msg', 'commit-msg'];
-// The verified codex versions: their sandbox was checked for the profile of a check (cfg.commit.codexVersions widens
+// The verified codex versions: their sandbox was checked for the profile of a check (cfg.commit.codexVersions replaces
 // it here), and scripts/role-exec.js takes this same array as the allowed list of `check`, so one list names them all.
 // 0.167.0 behaves as 0.166.0 in everything the plugin relies on (exec argv and --json events, codex sandbox, debug
 // models, the app-server hooks schema and trust hashes, measured 2026-11-09).

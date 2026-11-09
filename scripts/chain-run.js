@@ -39,7 +39,8 @@
 //     every role of the run: each model alias of the config and "default" map to the slug, the level is the effort of a
 //     call that names none (pre names low). Without them the adapter's defaults hold (gpt-6-astra, high). The conductor's
 //     host check (role-exec.js check --model --effort) refuses a slug outside the catalog of the run home or an effort
-//     the model does not support, and every task stops before any role.
+//     the model does not support, and every task stops before any role. An empty value is a usage error (exit 64): an
+//     unset shell variable would otherwise run every role on the defaults.
 //     Checks the tasks file by its form (a JSON array of objects with a key; fields are strings, booleans, lists of
 //     strings or a plain object), the config (scripts/config.js json) and the adapter's refusals (task keys, the run
 //     home of codex) before anything is written; then makes the run folder <sharedDir>/runs/<run-id>/ and starts the
@@ -903,6 +904,8 @@ function start(argv) {
   if (a.host !== 'claude' && a.host !== 'codex') usage(`--host claude|codex, got ${JSON.stringify(a.host)}`);
   const codexOnly = [['--codex-model', a.codexModel], ['--codex-effort', a.codexEffort]].filter(([, v]) => v !== undefined).map(([f]) => f);
   if (a.host !== 'codex' && codexOnly.length) usage(`${codexOnly.join(' and ')}: only with --host codex`);
+  const codexEmpty = [['--codex-model', a.codexModel], ['--codex-effort', a.codexEffort]].filter(([, v]) => v === '').map(([f]) => f);
+  if (codexEmpty.length) usage(`${codexEmpty.join(' and ')}: must not be empty`);
   if (!a.tasks) usage('--tasks <file> is required');
   let text;
   try { text = fs.readFileSync(a.tasks, 'utf8'); } catch (e) { usage(`the tasks file ${a.tasks}: ${e.code || e.message}`); }
