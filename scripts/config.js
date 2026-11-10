@@ -762,18 +762,27 @@ function load(file, opts = {}) {
 }
 
 const q = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
-// The slot lines; c is a resolved project config, or {slots} of the machine alone (config.js shell with no project).
+// The slot lines; c is a resolved project config (swap threshold in preconditions.swapMinMB), or the values of the
+// machine file alone with {machine: {path, exists}} (config.js shell with no project; swapMinMB on the top level).
+// SLOT_SWAP_MIN_MB is the machine file's swapMinMB, the floor env-check reads too, so the slots and the preconditions
+// judge swap by one number; a value in the environment still wins (`:=`). _SLOT_SWAP_FROM names where the threshold
+// came from for the refusal of slots.zsh; it is set only when the environment gives no threshold.
 function shellLines(c) {
   const v = {
     SLOTS_DIR: c.slots.lockDir, SLOT_LEGACY_LOCK: c.slots.legacyLock, SLOT_MEDIUM_N: c.slots.medium, SLOT_HEAVY_N: c.slots.heavy,
     SLOT_TOTAL_MAX: c.slots.total, GUARDS_JOBS_ALONE: c.slots.jobsAlone, GUARDS_JOBS_SHARED: c.slots.jobsShared,
+    SLOT_SWAP_MIN_MB: c.preconditions ? c.preconditions.swapMinMB : c.swapMinMB,
   };
+  const mf = c.machine || {};
+  const from = mf.exists ? `swapMinMB in the machine file ${mf.path}`
+    : `the default${c.configPath ? `, or preconditions.minSwapGB of the project config ${c.configPath}` : ''}; no machine file at ${mf.path}`;
   if (c.guardExclusive) Object.assign(v, {
     GUARDS_EXCL_GLOB: c.guardExclusive.glob.join('\n'), GUARDS_EXCL_MARKER: c.guardExclusive.marker,
     CODIS_REPO_DIR: c.repoDir, CODIS_WORKTREE_ROOT: c.worktreeRoot, CODIS_SHARED_DIR: c.sharedDir,
   });
   // An empty value still has to win over the built-in default, hence `=` for empties instead of `:=`.
-  return Object.entries(v).map(([k, x]) => (x === '' ? `[[ -v ${k} ]] || ${k}=''` : `: \${${k}:=${q(x)}}`)).join('\n');
+  return [`[[ -n \${SLOT_SWAP_MIN_MB-} ]] || _SLOT_SWAP_FROM=${q(from)}`]
+    .concat(Object.entries(v).map(([k, x]) => (x === '' ? `[[ -v ${k} ]] || ${k}=''` : `: \${${k}:=${q(x)}}`))).join('\n');
 }
 
 module.exports = { find, load, resolve, placeholderErrors, FILLS, migrate, branches, anonUrl, remoteHead, pushBranches, shellLines, machinePath, loadMachine, MACHINE_SPEC, MACHINE_SLOT_SPEC, REMOTE_SPEC, REMOTE_RUN_SPEC, DEP_SPEC, EXTRA_SPEC, MACHINE_VERSION, SPEC, SLOT_SPEC, RERUN_SPEC, EXCL_SPEC, EXCL_DEFAULT, STAND_SPEC, STAND_REQUIRED, WT_SPEC, PROBE_SPEC, HOOKS_SPEC, STANDING_SPEC, PRE_SPEC, ROLES, MODEL_ALIASES, MODEL_ROLES, expand };
@@ -795,7 +804,7 @@ if (require.main === module) {
     // A job outside any project (a scratchpad) still queues in the machine's slots.
     const m = loadMachine();
     if (m.errors.length) { for (const e of m.errors) console.error('codis-agents config: ' + e); process.exit(m.missing ? 78 : 1); }
-    console.log(shellLines(m.values));
+    console.log(shellLines(Object.assign({}, m.values, { machine: { path: m.path, exists: m.exists } })));
     process.exit(0);
   }
   if (!file) { console.error(`codis-agents: no ${FILE} found (set CODIS_AGENTS_CONFIG or create it in the project root)`); process.exit(1); }

@@ -16,6 +16,8 @@
 H=${SLOTS_H:-${0:A:h:h}/scripts}
 zmodload zsh/datetime
 T=$(mktemp -d "${${TMPDIR:-/tmp}%/}/slots-prio.XXXXXX")
+# no machine file of the box (a runner's swapMinMB would change the thresholds the cases rely on), as under tests/run.js
+export XDG_CONFIG_HOME=$T/no-xdg; unset CODIS_AGENTS_MACHINE
 export SLOTS_DIR=$T/slots SLOT_LEGACY_LOCK=$T/guards.lock SLOT_POLL=0.3 SLOT_SAY=1 SLOT_THIRD_WINDOW=1 SLOT_HIST_GAP=2
 # Run inside an outer slot (heavy.sh node tests/run.js) the outer slots.zsh has exported its own lock, journal and
 # counts: without this the test would wait on (and write to) the real ones.
