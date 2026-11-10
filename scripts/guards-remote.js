@@ -6,7 +6,9 @@
 //      tests HEAD only"), nothing is contacted.
 //   2. ssh with only remote.key and only the remote.knownHosts file, StrictHostKeyChecking=yes, no ssh config file,
 //      BatchMode, ConnectTimeout (scripts/corpus-sync.js#sshOpts); a host key that does not match is never accepted.
-//      The runner's plugin must be this plugin's version, and the runner's own env-check.js must pass.
+//      The runner's plugin must be this plugin's version, and the runner's own env-check.js must pass; before that
+//      check the runner sweeps the run copies under <root>/wt (all but live runs and the 3 newest finished ones,
+//      guards-remote-host.js#sweep), and its line "runner: swept ..." is printed here and kept as the log's second line.
 //   3. The commit goes by git push over that same ssh into <root>/repo.git at refs/runs/<name>/<sha> - not a branch and
 //      not a tag, so the pre-push hook lets it through and no push is ever forced; a commit the runner has is not sent.
 //   4. The runner prepares <root>/wt/<name> and runs its own guards-all.sh there, detached from ssh; new reds rerun alone
@@ -103,6 +105,24 @@ function remoteOp(r, op, input) {
   return deep(res);
 }
 
+// The line of the runner's sweep of run copies (preflight's sweep, guards-remote-host.js#sweep), printed here and kept as
+// the second line of the log: the runner's stderr is dropped on success, so its answer is the only way it reaches a
+// role. A runner without the field (an older plugin) - null, no line.
+function sweepLine(s) {
+  if (!s || typeof s !== 'object') return null;
+  if (s.busy) return 'runner: no sweep of run copies this time: another sweep holds wt.sweep.lock';
+  const list = (a) => (Array.isArray(a) ? a : []);
+  const why = (a) => list(a).map((x) => `${x && x.name} (${x && x.why})`).join(', ');
+  const gb = ((Number(s.bytes) || 0) / 1024 ** 3).toFixed(1);
+  let l = `runner: swept ${list(s.removed).length} run copies (${gb} GB) in ${Number(s.seconds) || 0} s`
+    + `${list(s.removed).length ? ': ' + list(s.removed).join(', ') : ''}; kept the ${s.keep} newest finished: ${list(s.kept).join(', ') || 'none'}`;
+  if (list(s.live).length) l += `; live: ${list(s.live).join(', ')}`;
+  if (list(s.skipped).length) l += `; skipped: ${why(s.skipped)}`;
+  if (list(s.notRemoved).length) l += `; not removed: ${why(s.notRemoved)}`;
+  if (s.error) l += `; the sweep stopped: ${s.error}`;
+  return l;
+}
+
 function gitState(wt) {
   const h = spawnSync('git', ['-C', wt, 'rev-parse', 'HEAD'], { encoding: 'utf8' });
   if (h.status !== 0) return { head: null, clean: false };
@@ -193,6 +213,8 @@ function run(c, wt, log, name, qfile, opts) {
     if (pf.version !== VERSION) throw env(`the plugin on the runner is version ${pf.version} (${pf.plugin}${pf.commit ? ` at ${pf.commit.slice(0, 7)}` : ''}), this machine's is ${VERSION} - update the runner's plugin to the same version; no run`);
     if (!pf.envCheck || !pf.envCheck.ok) throw env(`the runner's env-check failed: ${JSON.stringify(pf.envCheck)}`);
     say(`remote runner ${r.host}: plugin ${pf.version}, node ${pf.node}, ${pf.cpus} CPUs; env-check ok`);
+    const swept = sweepLine(pf.sweep);
+    if (swept) { say(swept); said.push(swept); }
     const h = remoteOp(r, 'has', { sha });
     if (!h.has) {
       const url = `${r.user}@${r.host}:${(r.root.startsWith('~/') ? r.root.slice(2) : r.root).replace(/\/+$/, '')}/repo.git`;
@@ -249,7 +271,7 @@ function run(c, wt, log, name, qfile, opts) {
       said.length = 0; said.push(...tail(f.out, 60).split('\n'));
       throw env(why);
     }
-    fs.writeFileSync(log, `ran on runner ${r.host}, HEAD ${sha}, workers ${f.workers === null ? '?' : f.workers} (run ${id}, plugin ${pf.version})\n${f.log}`);
+    fs.writeFileSync(log, `ran on runner ${r.host}, HEAD ${sha}, workers ${f.workers === null ? '?' : f.workers} (run ${id}, plugin ${pf.version})\n${swept ? swept + '\n' : ''}${f.log}`);
     if (f.rerun !== null) fs.writeFileSync(G.rerunLog(log), f.rerun);
     // 7. the runner subtracted the quarantine read-only; its flaky guards are written here
     const flaky = qfile ? G.flakyInLog(f.log) : [];
@@ -340,7 +362,7 @@ function main(argv) {
   return run(l.config, wt, log, name, qfile, { subset, selected, priority });
 }
 
-module.exports = { run, partHere, PART_MARK, runnerConfig, sameQuarantine, attachedOther, BUNDLE, VERSION };
+module.exports = { run, partHere, PART_MARK, runnerConfig, sameQuarantine, attachedOther, sweepLine, BUNDLE, VERSION };
 
 if (require.main === module) {
   try { process.exitCode = main(process.argv.slice(2)); } catch (e) {
