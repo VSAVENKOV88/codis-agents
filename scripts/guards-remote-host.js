@@ -9,7 +9,11 @@
 //   repo.git/              a bare repository; each run's commit arrives by git push at refs/runs/<name>/<sha> (never a
 //                          branch or a tag, so nothing is ever forced)
 //   wt/<name>/             the run's git worktree (git worktree add --detach <sha>) with its own copy of the donor and
-//                          links into the dependency cache; the next run of that name replaces it
+//                          links into the dependency cache; the next run of that name replaces it, and the sweep of
+//                          every preflight (sweep below) removes it once it is neither live nor among the KEEP_RUNS
+//                          newest finished runs - each copy holds a whole donor, and run names are mostly unique
+//                          (train-<id>), so nothing else would ever remove it
+//   wt.sweep.lock          one sweep at a time; a second one skips
 //   deps/<hash>/           a dependency cache directory (remoteRun.deps): the dependency files, then what their install
 //                          command made; <hash> = sha256 of the base names and contents of the files, the command, the
 //                          node major version, platform and arch; read-only (a-w) after its install, then <hash>.ok
@@ -83,7 +87,9 @@ function pluginDir(p) {
 }
 
 const OPS = {
-  // The plugin's version on the runner and, when it is the caller's, the runner's own environment check.
+  // The plugin's version on the runner and, when it is the caller's, the sweep of run copies (sweep) and then the
+  // runner's own environment check: the sweep goes first, so a disk filled by old copies is freed before env-check
+  // judges its free space (a job that never starts could never free it).
   preflight(R, input) {
     const dir = pluginDir(input.plugin);
     const pkg = readJSON(path.join(dir, 'package.json'));
@@ -92,6 +98,7 @@ const OPS = {
     const out = { version: pkg.version, commit: commit.status === 0 ? commit.stdout.trim() : null, plugin: dir, node: process.version, cpus: os.cpus().length };
     if (pkg.version !== input.version) return out;
     notLink(R.root); fs.mkdirSync(R.root, { recursive: true });
+    out.sweep = sweep(R);
     const e = spawnSync(process.execPath, [path.join(dir, 'scripts', 'env-check.js'), '--path', R.root], { encoding: 'utf8' });
     try { out.envCheck = JSON.parse(e.stdout); } catch { out.envCheck = { ok: false, problems: [`env-check.js gave no answer (exit ${e.status}): ${tail(e.stderr, 3)}`] }; }
     return out;
@@ -359,6 +366,96 @@ function noSecrets(wt, sha, after) {
   if (secrets.length) throw env(`.env* in the run's worktree that the commit ${sha.slice(0, 12)} does not hold (after ${after}): ${secrets.join(', ')} - refused before any guard`);
 }
 
+// The sweep of run copies under wt/ (owner 2026-11-09/10: no copies piling up; keep the 3 newest finished runs for a
+// look at a red run, remove orphans; the donor, deps, repo.git, runs/ and live runs are never touched). For each entry E:
+//   - a name a run never has (NAME, no .., not *.lock): left alone, named under skipped;
+//   - runs/E/run.json with a live job (alive: pid and its start time): kept, not counted;
+//   - no runs/E/run.json (an orphan: a corpus-sync copy, a leftover of an older version or of a cut removal): removed;
+//   - otherwise finished (rc, or a dead job without one): the KEEP_RUNS newest by rc's at (else run.json's startedAt -
+//     never the directory's mtime: cp -a of the donor gives every copy the donor's mtime) are kept, older removed.
+// A removal is decided again under runs/E.lock, the lock a start of E writes run.json under, taken without waiting: a
+// start holding it, or a run.json that changed or came alive since, leaves E as it is (skipped). The removal never
+// follows a link: an entry that is a link is unlinked; a directory is removed by git worktree remove --force when it is a
+// worktree (a locked one - a git worktree add still running - is skipped), then write bits back by lstat and rmSync,
+// which removes links inside and never follows them. What cannot be removed is named under notRemoved and the run goes
+// on. wt/ a link is refused (69), as the job refuses it.
+const KEEP_RUNS = 3;
+const held = (e) => e instanceof Stop && / is held by another job /.test(e.message);
+function sweep(R) {
+  notLink(R.wt);
+  const empty = { keep: KEEP_RUNS, removed: [], kept: [], live: [], skipped: [], notRemoved: [], bytes: 0, seconds: 0 };
+  if (!fs.existsSync(R.wt)) return empty;
+  try {
+    return withLock(path.join(R.root, 'wt.sweep.lock'), { timeoutS: 0 }, () => sweepLocked(R, empty));
+  } catch (e) {
+    if (held(e)) return { busy: true };
+    return Object.assign(empty, { error: e && e.message || String(e) });
+  }
+}
+function sweepLocked(R, res) {
+  const t0 = Date.now(), finished = [], doomed = [];
+  notLink(R.runs);
+  for (const n of fs.readdirSync(R.wt).sort()) {
+    if (!NAME.test(n) || n.includes('..') || n.endsWith('.lock')) { res.skipped.push({ name: n, why: 'not a run name' }); continue; }
+    const run = readJSON(path.join(R.runs, n, 'run.json'));
+    if (!run) { doomed.push({ name: n, id: null }); continue; }
+    if (alive(run)) { res.live.push(n); continue; }
+    const rc = readJSON(path.join(R.runs, n, 'rc'));
+    const at = Date.parse((rc && rc.at) || run.startedAt);
+    finished.push({ name: n, id: run.id, at: Number.isFinite(at) ? at : 0 });
+  }
+  finished.sort((a, b) => b.at - a.at || (a.name < b.name ? -1 : 1));
+  res.kept = finished.slice(0, KEEP_RUNS).map((f) => f.name);
+  doomed.push(...finished.slice(KEEP_RUNS).reverse());
+  let gone = 0;
+  for (const d of doomed) {
+    const wt = path.join(R.wt, d.name);
+    try {
+      withLock(path.join(R.runs, `${d.name}.lock`), { timeoutS: 0 }, () => {
+        const run = readJSON(path.join(R.runs, d.name, 'run.json'));
+        if ((run ? run.id : null) !== d.id || (run && alive(run))) { res.skipped.push({ name: d.name, why: 'started again during the sweep' }); return; }
+        try {
+          const r = removeCopy(R, wt);
+          if (r.locked) { res.skipped.push({ name: d.name, why: `a locked git worktree (${r.locked})` }); return; }
+          res.removed.push(d.name); res.bytes += r.bytes; gone++;
+        } catch (e) { res.notRemoved.push({ name: d.name, why: e && e.message || String(e) }); }
+      });
+    } catch (e) {
+      if (held(e)) res.skipped.push({ name: d.name, why: `a start of ${d.name} holds runs/${d.name}.lock` });
+      else res.notRemoved.push({ name: d.name, why: e && e.message || String(e) });
+    }
+  }
+  if (gone && fs.existsSync(path.join(R.repo, 'HEAD'))) git(['--git-dir', R.repo, 'worktree', 'prune']);
+  res.seconds = Math.round((Date.now() - t0) / 100) / 10;
+  return res;
+}
+// Removes one run copy, never through a link. -> {bytes} (the sizes of its files), or {locked: reason} untouched.
+function removeCopy(R, wt) {
+  const st = fs.lstatSync(wt);
+  if (!st.isDirectory()) { fs.unlinkSync(wt); return { bytes: 0 }; }
+  let bytes = 0;
+  const dirs = [];
+  (function walk(p) {
+    let names = [];
+    try { names = fs.readdirSync(p); } catch { /* unreadable: its write bit below, rmSync reports what stays */ }
+    for (const n of names) {
+      let s;
+      try { s = fs.lstatSync(path.join(p, n)); } catch { continue; }
+      if (s.isDirectory()) { dirs.push([path.join(p, n), s.mode]); walk(path.join(p, n)); } else if (s.isFile()) bytes += s.size;
+    }
+  })(wt);
+  let isWt = false;
+  try { isWt = fs.lstatSync(path.join(wt, '.git')).isFile(); } catch { /* not a worktree */ }
+  if (isWt) {
+    const r = git(['--git-dir', R.repo, 'worktree', 'remove', '--force', wt]);
+    if (r.status !== 0 && /locked/.test(r.stderr)) return { locked: tail(r.stderr, 1) };
+    if (!fs.existsSync(wt)) return { bytes };
+  }
+  for (const [d, mode] of [[wt, st.mode], ...dirs]) if ((mode & 0o700) !== 0o700) { try { fs.chmodSync(d, (mode | 0o700) & 0o7777); } catch { /* rmSync reports */ } }
+  fs.rmSync(wt, { recursive: true, force: true });
+  return { bytes };
+}
+
 function cli(op, input) {
   let res, code = 0;
   try {
@@ -373,7 +470,7 @@ function cli(op, input) {
   process.exitCode = code;
 }
 
-module.exports = { cli, OPS, layout, alive, pstart, depsCache, writeQuarantine };
+module.exports = { cli, OPS, layout, alive, pstart, depsCache, writeQuarantine, sweep, KEEP_RUNS };
 
 // The job: node host.js job <job.json>
 if (require.main === module && process.argv[2]) {

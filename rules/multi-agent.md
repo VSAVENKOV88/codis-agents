@@ -305,6 +305,9 @@ Larger changes run as a chain of agents, each in its own role:
   environment, and a result is never reused across environments. A red of the environment (runner unreachable, host
   key mismatch, another plugin version there, a push refused, dependencies failing, the run vanished) is exit 69 with
   the first log line `environment: <reason>`; there is no fallback to this machine.
+  Every remote run first sweeps the runner's run copies (each a whole copy of the donor): live runs and the 3 newest
+  finished ones stay, older ones and orphans go, never through a link and never the donor, the dependency cache, the
+  repository or the run logs. Why: on 2026-11-09 198 copies (440 GB) filled the runner's disk and a train stopped with 69.
   Why: full runs held a heavy slot of a 16 GB machine for about 37 % of a task's calendar; a runner with its own memory
   takes them, and a red found on its Linux must stay red there, not turn green alone on the Mac.
   The dependency cache is read-only after its install, and a reuse checks it against the manifest written then (paths,

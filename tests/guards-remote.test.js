@@ -322,6 +322,7 @@ process.exit(r.status === null ? 255 : r.status);
     const workers = /^workers(?: at start)?: (\d+)/m.exec(read(path.join(R, 'runs', 'xw', 'out.txt')) || '');
     ok('B2a-22: the log starts "ran on runner example.org, HEAD <sha>, workers N" (N of the runner)', workers && log.split('\n')[0].startsWith(`ran on runner example.org, HEAD ${sha}, workers ${workers[1]}`), log.split('\n')[0]);
     ok('B2a-22: the log keeps the runner\'s tally', /^TOTAL: 2 green/m.test(log));
+    ok('R28 (p-runner-cleanup): the runner\'s sweep line is printed here and is the log\'s second line', /^runner: swept \d+ run copies/m.test(all) && /^runner: swept \d+ run copies \([\d.]+ GB\)/.test(log.split('\n')[1] || ''), log.split('\n').slice(0, 3).join(' | '));
     const m1 = meta('xw');
     ok('B2a-22: meta v1 with env remote:example.org, head = HEAD here, rc = the final code', m1.v === 1 && m1.env === 'remote:example.org' && m1.head === sha && m1.headEnd === sha && m1.cleanStart && m1.cleanEnd && m1.rc === 1, JSON.stringify(m1));
     ok('B2a-16: the run directory on the runner holds its rc, out and log', fs.existsSync(path.join(R, 'runs', 'xw', 'rc')) && fs.existsSync(path.join(R, 'runs', 'xw', 'out.txt')) && fs.existsSync(path.join(R, 'runs', 'xw', 'guards-xw.txt')));
