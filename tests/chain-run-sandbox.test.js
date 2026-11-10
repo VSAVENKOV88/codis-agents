@@ -148,6 +148,75 @@ try {
     ok('B6 status of a name that is neither a run nor a task key: exit 64 with the list of all runs, as before',
       q.status === 64 && /no run nokey in /.test(q.stderr) && /runs: [^\n]*20990103T000000Z-cccccc/.test(q.stderr) && !/runs of task/.test(q.stderr), q.stderr);
   }
+
+  // ---- tester cells (p-codex-D2b-2, test.md): the codex host, an empty answer of ps, the order of the refusals, the
+  // brief of a task with its own dir, damaged requests among the runs, an exact key, stop <key>, why of another cause.
+  {
+    const S2 = path.join(W, 's2'), R2 = path.join(S2, 'runs');
+    const CFG2 = path.join(W, 'cfg2.json');
+    fs.writeFileSync(CFG2, JSON.stringify({ repoDir: path.join(W, 'repo'), sharedDir: S2, worktreeRoot: WTR, guardCommand: 'true {wt}' }));
+    const START2 = ['start', '--host', 'claude', '--bin', '/usr/bin/false', '--tasks', TASKS, '--config', CFG2];
+    const BIN = path.join(__dirname, 'fixtures', 'chain-run', 'bin');
+
+    // T1 C3 on the real host of the finding: start --host codex inside the sandbox refuses with 69 before any run folder
+    const home = path.join(W, 'codex-home-t1');
+    fs.mkdirSync(home);
+    fs.writeFileSync(path.join(home, 'fake-hooks.json'), JSON.stringify({ trust: 'trusted' }));
+    // the roles' TMPDIR apart from the state folder (a TMPDIR above sharedDir is refused earlier, exit 64)
+    const RTMP = path.join(W, 'rtmp');
+    fs.mkdirSync(RTMP);
+    const t1 = cr(['start', '--host', 'codex', '--codex-home', home, '--tasks', TASKS, '--config', CFG2],
+      Object.assign(baseEnv(), { PATH: `${NOPS}${path.delimiter}${BIN}${path.delimiter}${process.env.PATH}`, CODEX_SANDBOX: 'seatbelt', TMPDIR: RTMP }));
+    ok('T1 C3 --host codex, ps refused, CODEX_SANDBOX=seatbelt: exit 69 naming CODEX_SANDBOX and the plain argv, no run folder',
+      t1.status === 69 && t1.stderr.includes('CODEX_SANDBOX=seatbelt') && t1.stderr.includes(`node ${CR} start`) && !entries(R2).length, `${t1.status} ${t1.stdout}${t1.stderr} ${J(entries(R2))}`);
+
+    // T2 C3: ps that exits 0 and prints nothing is no answer either
+    const EMPTYPS = path.join(W, 'emptyps');
+    fs.mkdirSync(EMPTYPS);
+    fs.writeFileSync(path.join(EMPTYPS, 'ps'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    const t2 = cr(START2, envWith(EMPTYPS, null));
+    ok('T2 C3 ps exits 0 with no start time: exit 69, no run folder, no CODEX_SANDBOX', t2.status === 69 && !entries(R2).length && !/CODEX_SANDBOX/.test(t2.stderr), `${t2.status} ${t2.stderr}`);
+
+    // T3 the arguments are judged first: a usage error inside the sandbox stays 64, a config error 65
+    const t3 = cr(['start', '--host', 'claude', '--tasks', path.join(W, 'none.json'), '--config', CFG2], envWith(NOPS, 'seatbelt'));
+    ok('T3 start with a missing tasks file inside the sandbox: exit 64 (the arguments), not 69', t3.status === 64 && !/ps does not answer/.test(t3.stderr), `${t3.status} ${t3.stderr}`);
+    const t3b = cr(['start', '--host', 'claude', '--tasks', TASKS, '--config', path.join(W, 'nocfg.json')], envWith(NOPS, 'seatbelt'));
+    ok('T3 start with a missing config inside the sandbox: exit 65, not 69', t3b.status === 65, `${t3b.status} ${t3b.stderr}`);
+
+    // B6 runs of the tester: a task with its own dir, a request with its own sharedDir, damaged requests, a near key
+    const mk = (id, req) => { const d = path.join(R2, id); fs.mkdirSync(d, { recursive: true }); fs.writeFileSync(path.join(d, 'request.json'), typeof req === 'string' ? req : JSON.stringify(req)); };
+    const OWN = path.join(W, 'own-dir');
+    const OTHER = path.join(W, 'other-shared');
+    mk('20990201T000000Z-111111', { runId: 'x', host: 'codex', args: { config: { sharedDir: OTHER, worktreeRoot: WTR }, tasks: [{ key: 'kd' }] } });
+    mk('20990202T000000Z-222222', '{not json');
+    mk('20990203T000000Z-333333', { runId: 'y', host: 'codex' });
+    mk('20990204T000000Z-444444', { runId: 'z', host: 'codex', args: { tasks: [null, 'kd', { key: 'kd2' }] } });
+    mk('20990205T000000Z-555555', { runId: 'w', host: 'codex', args: { config: { sharedDir: OTHER, worktreeRoot: WTR }, tasks: [{ key: 'kd', dir: OWN }] } });
+    const b1 = cr(['status', 'kd', '--config', CFG2]);
+    const m1 = /runs of task kd[^:]*: ([^\n;]*)/.exec(b1.stderr);
+    ok('T4 B6 damaged requests among the runs: status <key> still exits 64 with the runs of the key only, newest first',
+      b1.status === 64 && !!m1 && m1[1].split(/,\s*/).join(',') === '20990205T000000Z-555555,20990201T000000Z-111111', `${b1.status} ${b1.stderr}`);
+    ok('T5 B6 the newest run names the task dir: the brief is <dir>/BRIEF.md', b1.stderr.includes(path.join(OWN, 'BRIEF.md')), b1.stderr);
+    fs.rmSync(path.join(R2, '20990205T000000Z-555555'), { recursive: true, force: true });
+    const b2 = cr(['status', 'kd', '--config', CFG2]);
+    ok('T5 B6 a request with its own config and no dir: the brief is <sharedDir of that run>/<key>/BRIEF.md', b2.status === 64 && b2.stderr.includes(path.join(OTHER, 'kd', 'BRIEF.md')), b2.stderr);
+    const b3 = cr(['status', 'k', '--config', CFG2]);
+    ok('T6 B6 a key that only begins the keys of runs (k vs kd, kd2): no runs of task, the list of all runs as before', b3.status === 64 && !/runs of task/.test(b3.stderr) && /runs: /.test(b3.stderr), b3.stderr);
+    const b4 = cr(['stop', 'kd', '--config', CFG2]);
+    ok('T7 B6 stop <key>: exit 64 listing the runs of the key, no signal sent', b4.status === 64 && /runs of task kd/.test(b4.stderr), `${b4.status} ${b4.stderr}`);
+
+    // T8 C6: a conductor unknown for another cause (pid lives, no start time recorded) - why names that cause, never the sandbox
+    const id8 = '20990301T000000Z-888888';
+    mk(id8, { runId: id8, host: 'codex', args: { tasks: [] } });
+    fs.writeFileSync(path.join(R2, id8, 'run.json'), JSON.stringify({ runId: id8, pid: process.pid }));
+    const t8 = cr(['status', path.join(R2, id8)], Object.assign(baseEnv(), { CODEX_SANDBOX: 'seatbelt' }));
+    let j8 = null; try { j8 = JSON.parse(t8.stdout); } catch { /* below */ }
+    ok('T8 C6 unknown for want of a recorded start time with CODEX_SANDBOX set: running (3), why names the start time, not the sandbox',
+      t8.status === 3 && !!j8 && /no start time was recorded/.test(j8.why || '') && !/CODEX_SANDBOX/.test(j8.why || ''), `${t8.status} ${J(j8)}`);
+
+    // T9 C1: bash -lc is named next to sh -c in both skills (X1 of the analysis)
+    ok('T9 C1 bash -lc named in role-chain step 2 and coordinator homes', /`bash -lc`/.test(s2) && /`bash -lc`/.test(homes), '');
+  }
 } finally {
   try { fs.rmSync(W, { recursive: true, force: true }); } catch { /* best effort */ }
 }
