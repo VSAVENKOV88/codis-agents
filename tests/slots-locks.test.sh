@@ -19,7 +19,8 @@
 #           root in a container over a shared slot directory) - a slot file, admit.lock, the slot directory itself - is
 #           a refusal: one line naming the path, code 77, within seconds, the command never runs (zsystem flock reads a
 #           failed open as "busy", so the job waited forever); a lock turning unwritable while the job waits is refused on
-#           the next poll; 12. a slot directory that cannot be created is the same refusal (code 77, one line).
+#           the next poll; 12. a slot directory that cannot be created is the same refusal (code 77, one line);
+#        13. with CODEX_SANDBOX set both refusals say the role sandbox does not include the slot directory (A2b).
 H=${SLOTS_H:-${0:A:h:h}/scripts}
 zmodload zsh/datetime zsh/system
 T=$(mktemp -d "${${TMPDIR:-/tmp}%/}/slots-locks.XXXXXX"); T=${T:A}
@@ -216,6 +217,30 @@ rm -f $T/12.ran; : > $T/s12-file
 SLOTS_DIR=$T/s12-file/slots SLOT_MEDIUM_N=1 tm 10 "$H/medium.sh" zsh -c 'touch '$T'/12.ran' > $T/12.out 2> $T/12.err; rc=$?
 ok '12. a slot directory that cannot be created: medium.sh refused with code 77 within 10 s, the command did not run' '(( rc == 77 )) && [[ ! -e $T/12.ran ]]' "$rc $(tail -2 $T/12.out; tail -2 $T/12.err)"
 ok '12. ... one line on stderr naming the slot directory' '[[ $(wc -l < $T/12.err | tr -d " ") == 1 ]] && grep -qF -- "$T/s12-file/slots " $T/12.err' "$(tail -3 $T/12.err)"
+
+# 13. inside the codex sandbox (codex sets CODEX_SANDBOX) a role writes only its worktree, task folder and /tmp: both
+#     refusals (an unwritable slot directory, one that cannot be created) say that the role sandbox does not include the
+#     slot directory and that heavy steps on codex wait for A2b, instead of the hint about the owner or mode; without
+#     the variable the line is as before (p-codex-D2b-2)
+d=$T/s13-ro; mkdir -p $d; chmod 555 $d
+for c13 in ro file; do
+  [[ $c13 == ro ]] && sd=$d || sd=$T/s12-file/slots
+  if [[ $c13 == ro && -w $d ]]; then print -r -- "  note 13. ro: this user writes a read-only folder (root) - nothing to refuse"; continue; fi
+  for sb in seatbelt ''; do
+    rm -f $T/13.ran
+    if [[ -n $sb ]]; then CODEX_SANDBOX=$sb SLOTS_DIR=$sd SLOT_MEDIUM_N=1 tm 10 "$H/medium.sh" zsh -c 'touch '$T'/13.ran' > $T/13.out 2> $T/13.err
+    else ( unset CODEX_SANDBOX; SLOTS_DIR=$sd SLOT_MEDIUM_N=1 tm 10 "$H/medium.sh" zsh -c 'touch '$T'/13.ran' ) > $T/13.out 2> $T/13.err; fi
+    rc=$?
+    ok "13. $c13${sb:+, CODEX_SANDBOX=$sb}: code 77, one line, the command did not run" '(( rc == 77 )) && [[ ! -e $T/13.ran && $(wc -l < $T/13.err | tr -d " ") == 1 ]]' "$rc $(tail -3 $T/13.err)"
+    if [[ -n $sb ]]; then
+      ok "13. $c13, CODEX_SANDBOX=$sb: the line names it, says the role sandbox does not include the slot directory and heavy steps on codex wait for A2b" \
+        'grep -qF -- "CODEX_SANDBOX=$sb" $T/13.err && grep -qF -- "the role sandbox does not include the slot directory" $T/13.err && grep -qF -- "heavy steps on codex wait for A2b" $T/13.err' "$(tail -3 $T/13.err)"
+    else
+      ok "13. $c13, no CODEX_SANDBOX: no word of the role sandbox" '! grep -q "CODEX_SANDBOX\|role sandbox" $T/13.err' "$(tail -3 $T/13.err)"
+    fi
+  done
+done
+chmod 755 $d
 
 print -r -- "
 $pass passed, $fail failed"

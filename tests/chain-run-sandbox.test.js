@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 // The run of a task found by its key, and a plain argv for the conductor on Codex (p-codex-D2b-2, cells B1-B6 and
-// C1-C7 of the analysis of p-codex-D2b, plus the refusal of a slot inside the codex sandbox).
+// C1-C7 of the analysis of p-codex-D2b).
 // Inside the codex sandbox ps does not answer (it is refused there), so a conductor started by a command that did not
 // match the execpolicy rule of the coordinator home (a `node -e` wrapper, `sh -c`, `env`, a node flag, another path to
 // node, a relative path) cannot name itself in the lock of a task. The fact decides, never the variable: start refuses
@@ -18,13 +18,12 @@
 //   C5    the conductor that cannot read its own start time: the block names CODEX_SANDBOX and the plain argv;
 //   C6    status with no answer of ps: running (exit 3) with a field why naming ps and CODEX_SANDBOX;
 //   C7    ps refused or missing without CODEX_SANDBOX: the same refusal without naming it;
-//   S     a slot directory the process cannot write, with CODEX_SANDBOX set: the refusal (exit 77, one line) says the
-//         role sandbox does not include the slot directory and heavy steps on codex wait for A2b.
+// The refusal of a slot inside the codex sandbox is case 13 of tests/slots-locks.test.sh (a hermetic slot test).
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const { ok, skip, has, done } = require('./lib');
+const { ok, done } = require('./lib');
 
 const ROOT = path.join(__dirname, '..');
 const CR = path.join(ROOT, 'scripts', 'chain-run.js');
@@ -153,37 +152,4 @@ try {
   try { fs.rmSync(W, { recursive: true, force: true }); } catch { /* best effort */ }
 }
 
-// ---- S: the refusal of a slot inside the codex sandbox
-if (!has('zsh')) skip('S the refusal of a slot inside the codex sandbox', 'zsh not found');
-else {
-  const T = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'slot-sandbox-')));
-  try {
-    const ro = path.join(T, 'ro');
-    fs.mkdirSync(ro, { mode: 0o555 });
-    fs.chmodSync(ro, 0o555);
-    fs.writeFileSync(path.join(T, 'file'), '');
-    const env = (dir, sandbox) => {
-      const e = baseEnv();
-      for (const k of Object.keys(e)) if (/^(SLOT_|GUARDS_)/.test(k)) delete e[k];
-      return Object.assign(e, { SLOTS_DIR: dir, SLOT_LEGACY_LOCK: '', SLOT_MEDIUM_N: '1' }, sandbox ? { CODEX_SANDBOX: sandbox } : {});
-    };
-    let writable = false;
-    try { fs.accessSync(ro, fs.constants.W_OK); writable = true; } catch { /* the usual case */ }
-    const cases = [['a read-only slot directory', ro], ['a slot directory under a regular file', path.join(T, 'file', 'slots')]];
-    for (const [what, dir] of cases) {
-      if (dir === ro && writable) { skip(`S ${what}`, 'this user writes a read-only folder (root)'); continue; }
-      for (const sandbox of ['seatbelt', null]) {
-        const p = spawnSync(path.join(ROOT, 'scripts', 'medium.sh'), ['touch', path.join(T, 'ran')], { encoding: 'utf8', env: env(dir, sandbox), timeout: 30000 });
-        const lines = p.stderr.split('\n').filter(Boolean);
-        ok(`S ${what}${sandbox ? ', CODEX_SANDBOX set' : ''}: exit 77, one line, the command did not run`, p.status === 77 && lines.length === 1 && !fs.existsSync(path.join(T, 'ran')), `${p.status} ${p.stderr}`);
-        ok(`S ${what}${sandbox ? ', CODEX_SANDBOX set: the line says the role sandbox does not include the slot directory and heavy steps wait for A2b' : ': no word of the role sandbox'}`,
-          sandbox ? /CODEX_SANDBOX=seatbelt/.test(p.stderr) && /the role sandbox does not include the slot directory/.test(p.stderr) && /heavy steps on codex wait for A2b/.test(p.stderr)
-            : !/CODEX_SANDBOX|role sandbox/.test(p.stderr), p.stderr);
-      }
-    }
-  } finally {
-    try { fs.chmodSync(path.join(T, 'ro'), 0o755); } catch { /* none */ }
-    try { fs.rmSync(T, { recursive: true, force: true }); } catch { /* best effort */ }
-  }
-}
 done();
