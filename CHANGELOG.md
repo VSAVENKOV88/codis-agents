@@ -4,6 +4,23 @@ Every version of the codis-agents plugin, newest first. What the plugin does now
 [README.md](README.md); its [Technical reference](README.md#technical-reference) is the current state of every rule,
 key and script, and this file says when and why each one changed. Versions before 0.4.14 are in the git history.
 
+## 0.4.41 - 2026-11-10
+
+- **The remote runner sweeps its run copies** (p-runner-cleanup). Every preflight of the runner, before its env-check
+  (so a disk filled by copies is freed before its floor is judged), sweeps `<root>/wt`: live runs (pid and start time)
+  stay and are not counted, the 3 newest finished runs stay, older ones and orphans without `runs/<name>/run.json` are
+  removed. Each removal is decided again under the run's lock taken without waiting, a locked git worktree is skipped,
+  a link is unlinked and never followed, what cannot be removed is named and the run goes on; one sweep at a time. The
+  result is a field of preflight's answer, and `guards-remote.js` prints it as the log's second line ("runner: swept
+  ..."). Why: copies were removed only by the next run of the same name, and train names are unique - 198 copies,
+  440 GB on 2026-11-09.
+- **The selection and the train refuse a branch whose roles ran on Codex** (p-codex-train-guard). The conductor marks
+  every task it runs with roles on Codex `requiresIsolation` (a tasks file may not set the field); before the
+  selection wait step and before the ride such a task stops with status `coordinator` and the reason "train and
+  selection for codex role branches wait for A2b isolation", and `train.js enqueue`/`ride --requires-isolation` exits
+  65 before the queue. Why: a selection or a train runs the code of the branch with the rights of this machine or of
+  the runner, and until A2b nothing isolates a branch written by roles on Codex.
+
 ## 0.4.40 - 2026-11-10
 
 - **Slots take the swap floor from the machine file** (p-runner-swap). `config.js shell` now passes `swapMinMB` of the

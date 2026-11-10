@@ -1,6 +1,6 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT"></a>
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-0.4.40-informational" alt="Version 0.4.40"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-0.4.41-informational" alt="Version 0.4.41"></a>
   <a href="https://claude.com/claude-code"><img src="https://img.shields.io/badge/Claude%20Code-plugin-D97757" alt="Claude Code plugin"></a>
   <a href="#codex-cli"><img src="https://img.shields.io/badge/Codex%20CLI-preview-yellow" alt="Codex CLI: preview"></a>
 </p>
@@ -249,7 +249,7 @@ codis-agents/
  ├── scripts/      39 scripts: memory slots, guard runs and selection, the train, post-checks, remote runner, cost
 ├── examples/     example project and machine configs
 ├── schemas/      their JSON schemas
-└── tests/        180 test files of the plugin itself (npm test)
+└── tests/        181 test files of the plugin itself (npm test)
 ```
 
 Every file, script and config key is described in the [Technical reference](#technical-reference).
