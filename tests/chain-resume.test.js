@@ -13,7 +13,9 @@ const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 const CFG = { sharedDir: '/s', worktreeRoot: '/r', scriptsDir: '/p/scripts', reportLanguage: 'English', testerWritable: ['-run\\.js$'] };
 const ONE = Object.assign({}, CFG, { guardSubsetCommand: 'true {wt}' });
 const HB = 'b'.repeat(40), HP = 'a'.repeat(40);
-const T = { key: 'x', title: 'X', dir: '/d', wt: '/w', branch: 'b', gdir: 'w', accept: 'acc', kind: 'tail', noAnalysis: 'one-line fix' };
+// requiresIsolation false: what the conductor sets on the claude host (scripts/chain-run.js runScript); without it a task
+// under exec requires isolation and is refused the selection and the train (tests/isolation-refusal.test.js).
+const T = { key: 'x', title: 'X', dir: '/d', wt: '/w', branch: 'b', gdir: 'w', accept: 'acc', kind: 'tail', noAnalysis: 'one-line fix', requiresIsolation: false };
 const PRE = { ok: true, problems: [], blockingQuestions: [] };
 const PROG = { status: 'ready', changedFiles: ['src/a.js'], commits: ['c'], head: HP, mutations: 'm', fullRun: 'r', questions: [], summary: 's' };
 
