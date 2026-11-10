@@ -4,6 +4,23 @@ Every version of the codis-agents plugin, newest first. What the plugin does now
 [README.md](README.md); its [Technical reference](README.md#technical-reference) is the current state of every rule,
 key and script, and this file says when and why each one changed. Versions before 0.4.14 are in the git history.
 
+## 0.4.40 - 2026-11-10
+
+- **Slots take the swap floor from the machine file** (p-runner-swap). `config.js shell` now passes `swapMinMB` of the
+  machine file to the slot scripts as `SLOT_SWAP_MIN_MB` when a project config is found, so the slots and `env-check`
+  use one threshold; an explicit `SLOT_SWAP_MIN_MB` in the environment still wins, and without a machine file the
+  default 4000 stays. Why: a runner with `swapMinMB 3000` in its machine file still queued every slot at 4000 - a train
+  waited 1 h 45 min behind "swap: capacity 3988 MB < 4000" with 29 GB of free memory. Without a project config the slot
+  scripts still read no machine file (Known gaps).
+- **The conductor on Codex finds runs by task key and refuses inside the sandbox** (p-codex-D2b-2). `chain-run.js start`
+  run inside a Codex sandbox (`CODEX_SANDBOX` set, `ps` not answering) refuses with 69 before any run folder exists and
+  names the sandbox; `status <key>` lists the runs of that task with their brief path; `status` adds a `why` field to a
+  blocked step; the slot scripts name the sandbox when the slot directory is not writable from a role. The coordinator
+  and role-chain skills name the brief path `<sharedDir>/<key>/BRIEF.md`, its `run:` line and require a plain argv for
+  `chain-run.js` (an `node -e`, `sh -c` or `env` wrapper does not match the execpolicy rule and lands in the sandbox).
+  Why: in the live acceptance of 0.4.38 a coordinator on Codex wrapped `chain-run.js` in `node -e`, ran it inside the
+  sandbox and failed on `ps -o lstart`, and could not find a run by the task's name.
+
 ## 0.4.39 - 2026-11-09
 
 - **Codex 0.167.0 is verified** (p-codex-v167). It behaves as 0.166.0 in everything the plugin relies on: the argv of
