@@ -19,6 +19,8 @@
 H=${0:A:h:h}/scripts
 zmodload zsh/datetime
 T=$(mktemp -d "${${TMPDIR:-/tmp}%/}/slots-linux.XXXXXX"); T=${T:A}
+# no machine file of the box (a runner's swapMinMB would change the thresholds the cases rely on), as under tests/run.js
+export XDG_CONFIG_HOME=$T/no-xdg; unset CODIS_AGENTS_MACHINE
 export SLOTS_DIR=$T/slots SLOT_LEGACY_LOCK= SLOT_POLL=0.2 SLOT_SAY=1 SLOT_THIRD_WINDOW=1 SLOT_HIST_GAP=2
 # hermetic inside an outer slot (heavy.sh node tests/run.js): drop what the outer slots.zsh exported, and the thresholds
 # set outside (SLOT_SWAP_MIN_MB=0 on Linux): the cases rely on the defaults on the fake machine.

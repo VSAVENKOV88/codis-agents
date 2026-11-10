@@ -27,7 +27,8 @@
 #
 # THRESHOLDS COME FROM MEASUREMENT (16 GB macOS machine, ~20k samples every 15 s over five days):
 #  * macOS swap grows in 1 GB files under /System/Volumes/VM, so "free" in vm.swapusage is only what is left in the
-#    current files. Swap capacity = that rest + free space of the VM volume (df). Any slot needs SLOT_SWAP_MIN_MB = 4000:
+#    current files. Swap capacity = that rest + free space of the VM volume (df). Any slot needs SLOT_SWAP_MIN_MB (swapMinMB
+#    of the machine file, read through the project config; the variable wins; 4000 by default):
 #    the ceiling is 4 slots x ~1 GB (bundler + Chromium is about 1 GB), so even if everything goes to swap there is room.
 #    4000, not 4096 (owner 2026-10-21): a 4 GiB Linux swap shows SwapTotal 4194300 kB = 4095 MB (its header page).
 #  * The extra heavy slot: memory_pressure "free percentage" >= SLOT_THIRD_FREE_PCT (50) as the MINIMUM over a window,
@@ -43,7 +44,8 @@
 #    take tens of seconds; the window covers several swings. History is written only while somebody waits for the
 #    extra slot (every SLOT_POLL), so the window must be covered by samples with no gap > SLOT_HIST_GAP (30 s);
 #    otherwise the answer is "unknown" and the extra slot is refused until history accumulates.
-# All thresholds and sources come from the environment, so tests/slots-check.sh can check them on a fake machine.
+# All thresholds and sources can be set in the environment (it wins over the machine file), so tests/slots-check.sh can
+# check them on a fake machine.
 # LINUX (proc(5); the table is at "Machine measurement" below; not measured on hardware): swap capacity is SwapFree,
 # swap-out the pswpout counter x PAGESIZE. A swap smaller than the threshold (SwapTotal / 1024 < SLOT_SWAP_MIN_MB, no
 # swap at all included) is a refusal at once, with the numbers, code 78 (SwapFree never exceeds SwapTotal, so waiting
@@ -81,6 +83,9 @@ _SLOTS_HERE=${${(%):-%x}:A:h}
 # A project config that exists but does not validate is a refusal, never a silent default: falling back to
 # ~/.cache/codis-agents/slots made a second, separate queue whose waiters did not see the first one's (one unknown key
 # in the config was enough), and the memory ceiling of the machine no longer held. No config at all keeps the defaults.
+# The project's lines (scripts/config.js shellLines) carry the machine file's values, the swap threshold included, and
+# set _SLOT_SWAP_FROM (where the threshold comes from, for the refusal below) unless the environment gives one.
+_SLOT_SWAP_FROM=
 if _slot_cfgf=$(node "$_SLOTS_HERE/config.js" path 2>/dev/null); then
   if _slot_cfg=$(node "$_SLOTS_HERE/config.js" shell "$_slot_cfgf" 2>/dev/null); then eval "$_slot_cfg"
   else
@@ -97,7 +102,9 @@ unset _slot_cfg _slot_cfgf
 : ${SLOT_HEAVY_N:=2}
 : ${SLOT_POLL:=5}                 # pause between attempts, s
 : ${SLOT_SAY:=30}                 # "waiting for slot ..." at least this often, s (an agent silent for 10 min is killed)
+[[ -n $SLOT_SWAP_MIN_MB ]] || _SLOT_SWAP_FROM=${_SLOT_SWAP_FROM:-"the default; without a project config no machine file is read"}
 : ${SLOT_SWAP_MIN_MB:=4000}
+: ${_SLOT_SWAP_FROM:="the environment variable SLOT_SWAP_MIN_MB"}
 _SLOT_THIRD_SET=${SLOT_THIRD_FREE_PCT:+1}   # set explicitly - the extra heavy slot is on on Linux too (see _slot_pick)
 : ${SLOT_THIRD_FREE_PCT:=50}
 : ${SLOT_THIRD_SWAP_GROW_MB:=256}
@@ -429,9 +436,9 @@ slot_run() {
     local swmb=$(( _SLOT_MI[SwapTotal] / 1024 ))
     local mem="MemTotal ${_SLOT_MI[MemTotal]:+$(( _SLOT_MI[MemTotal] / 1024 ))} MB, MemAvailable ${_SLOT_MI[MemAvailable]:+$(( _SLOT_MI[MemAvailable] / 1024 ))} MB"
     if (( _SLOT_MI[SwapTotal] == 0 )); then
-      print -u2 -r -- "codis-agents slots: refused - this machine has no swap (SwapTotal 0 kB in $SLOT_PROC/meminfo; $mem), but every slot needs swap capacity SLOT_SWAP_MIN_MB = $SLOT_SWAP_MIN_MB MB and would wait forever; on a machine without swap run with SLOT_SWAP_MIN_MB=0 (swap check off), or add swap"
+      print -u2 -r -- "codis-agents slots: refused - this machine has no swap (SwapTotal 0 kB in $SLOT_PROC/meminfo; $mem), but every slot needs swap capacity SLOT_SWAP_MIN_MB = $SLOT_SWAP_MIN_MB MB ($_SLOT_SWAP_FROM) and would wait forever; on a machine without swap set swapMinMB 0 in the machine file or run with SLOT_SWAP_MIN_MB=0 (swap check off), or add swap"
     else
-      print -u2 -r -- "codis-agents slots: refused - the swap of this machine is smaller than the threshold (SwapTotal ${_SLOT_MI[SwapTotal]} kB = $swmb MB in $SLOT_PROC/meminfo; $mem), but every slot needs swap capacity SLOT_SWAP_MIN_MB = $SLOT_SWAP_MIN_MB MB and would wait forever (SwapFree never exceeds SwapTotal); set SLOT_SWAP_MIN_MB to $swmb or less (0 switches the swap check off), or add swap"
+      print -u2 -r -- "codis-agents slots: refused - the swap of this machine is smaller than the threshold (SwapTotal ${_SLOT_MI[SwapTotal]} kB = $swmb MB in $SLOT_PROC/meminfo; $mem), but every slot needs swap capacity SLOT_SWAP_MIN_MB = $SLOT_SWAP_MIN_MB MB ($_SLOT_SWAP_FROM) and would wait forever (SwapFree never exceeds SwapTotal); set SLOT_SWAP_MIN_MB to $swmb or less (swapMinMB in the machine file, or the variable, which wins; 0 switches the swap check off), or add swap"
     fi
     rm -f $got; _slot_journal $treq - $(_slot_now) $class - $kind 78 "${jcmd[@]}"; return 78
   fi

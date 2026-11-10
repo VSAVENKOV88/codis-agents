@@ -249,7 +249,7 @@ codis-agents/
  ├── scripts/      39 scripts: memory slots, guard runs and selection, the train, post-checks, remote runner, cost
 ├── examples/     example project and machine configs
 ├── schemas/      their JSON schemas
-└── tests/        177 test files of the plugin itself (npm test)
+└── tests/        178 test files of the plugin itself (npm test)
 ```
 
 Every file, script and config key is described in the [Technical reference](#technical-reference).
@@ -641,9 +641,9 @@ zsh's own `zsystem flock` on macOS and Linux and need `ps` and `pgrep` (procps; 
 exit 72); the exclusive guard lock needs `lockf(1)` (macOS) or `flock(1)` (Linux, util-linux). The memory and swap
 readings come from `sysctl`, `memory_pressure`, `vm_stat` and `df` on macOS and from `/proc/meminfo`, `/proc/vmstat`
 and `getconf PAGESIZE` on Linux (`SLOT_OS` and `SLOT_PROC` override the source; the Linux readings are checked on a
-fake machine and in a container, not on Linux hardware). A Linux machine without swap needs `SLOT_SWAP_MIN_MB=0`, and one
-with less swap than 4000 MB a lower `SLOT_SWAP_MIN_MB` (a 4 GiB swap file, 4095 MB, fits the default): with the default
-threshold the slot scripts refuse at once (exit 78) and say so.
+fake machine and in a container, not on Linux hardware). A Linux machine without swap needs `swapMinMB 0` in its machine
+file (or `SLOT_SWAP_MIN_MB=0`), and one with less swap than 4000 MB a lower `swapMinMB` (a 4 GiB swap file, 4095 MB,
+fits the default): with the default threshold the slot scripts refuse at once (exit 78) and say so.
 The workflow, agents, hooks and post-checks work anywhere. `wt-setup.sh` clones ignored data with a copy-on-write clone (`cp -c` on macOS) and, where that is refused,
 with `cp -r --reflink=auto` (GNU), then a plain copy. On a machine without zsh (Linux, CI) `npm test` stays green and
 the zsh tests are skipped with "skipped: zsh not found" in their line and in the final tally.
@@ -739,7 +739,7 @@ exit 78, `check` exit 1). Example: `examples/machine.example.json`, schema `sche
 | `configVersion` | format version (1); newer than the plugin reads - refused with "update the plugin"; left out - a note |
 | `source` | where the numbers come from (a measurement on which machine) |
 | `slots` | `medium` (2), `heavy` (2), `total` (4), `jobsAlone` (6), `jobsShared` (3) - positive integers; `lockDir` (`~/.cache/codis-agents/slots`) and `legacyLock` (empty) - absolute or `~`; `extraHeavy` - `false` (the extra heavy slot off) or `{freePct, swapGrowMB, windowS}` (0-100, >= 0, > 0); left out - decided by OS. The slot scripts read `extraHeavy` from U2a-2 on; until then they take `SLOT_THIRD_FREE_PCT`, `SLOT_THIRD_SWAP_GROW_MB`, `SLOT_THIRD_WINDOW` from the environment |
-| `swapMinMB` | swap floor in MB for the preconditions (4000: a 4 GiB swap passes); 0 switches the swap check off. The slot scripts read it from U2a-2 on; until then they take `SLOT_SWAP_MIN_MB` from the environment (default 4000), so a machine without swap also sets `SLOT_SWAP_MIN_MB=0` |
+| `swapMinMB` | swap floor in MB for the preconditions and the slot scripts (4000: a 4 GiB swap passes); 0 switches the swap check off. The slot scripts read it through the project config (`config.js shell` gives it as `SLOT_SWAP_MIN_MB`); `SLOT_SWAP_MIN_MB` in the environment wins, an empty one does not count; a job with no project config reads no machine file and keeps 4000 (Known gaps) |
 | `minFreeDiskGB` | free disk in GB the preconditions require on the worktree and task folder volumes (10); 0 switches it off |
 | `maxDockerChains` | chains with acceptance in Docker at once (2) |
 | `coordinatorContextK` | the coordinator's context signpost in thousands of tokens (700) |
@@ -1064,8 +1064,8 @@ wake a workflow agent. The role agents also carry `disallowedTools: Monitor` in 
 - **medium** (tsc, one bundler build without a browser): `slots.medium` slots (2);
 - **heavy** (browsers, full guard runs, image builds): `slots.heavy` slots (2), one more only while the minimum free
   memory over a 5-minute window stays at 50 % or more and swap does not grow;
-- medium + heavy together at most `slots.total` (4); no slot at all while swap capacity is under 4000 MB
-  (`SLOT_SWAP_MIN_MB`; 0 switches the swap check off);
+- medium + heavy together at most `slots.total` (4); no slot at all while swap capacity is under `swapMinMB` of the
+  machine file (4000 MB by default; `SLOT_SWAP_MIN_MB` in the environment wins; 0 switches the swap check off);
 - waiters queue in arrival order; a full guard run first in the queue is never starved by single jobs;
 - the train goes first: `scripts/train.js` runs its full guard run and the attribution of a red train with
   `guards-all.sh --priority` (`SLOT_PRIORITY=1` in `slots.zsh`), and such a ticket is ahead of every waiting heavy job
@@ -1104,7 +1104,8 @@ On Linux the extra heavy slot is off unless `SLOT_THIRD_FREE_PCT` is set explici
 (`SwapTotal / 1024 < SLOT_SWAP_MIN_MB`, no swap at all included) is a refusal at once with the numbers (exit 78), not an
 endless wait: `SwapFree` never exceeds `SwapTotal`, and Linux swap does not grow by itself. A 4 GiB swap file shows
 `SwapTotal 4194300 kB` = 4095 MB (the header page), so the default is 4000, not 4096 (owner 2026-10-21): such a
-swap gets the slot. The refusal names the value of `SLOT_SWAP_MIN_MB` that fits. A swap at least the threshold but filled up is a wait, as on macOS. A reading that cannot be taken (an
+swap gets the slot. The refusal names the threshold, where it comes from (`swapMinMB` and the path of the machine file,
+the environment, or the default) and the value that fits. A swap at least the threshold but filled up is a wait, as on macOS. A reading that cannot be taken (an
 unreadable source, an unknown OS) gives one line "swap not measured (...) - not checked" and the slot; the extra heavy
 slot is then refused as "memory not measured". Inside a container `/proc/meminfo` shows the memory of the host.
 
@@ -1372,6 +1373,11 @@ fallback to another slot directory: a second directory would be a second queue t
   is relative, and `guards-result.js` refuses any value that is not a string ("the reason of ... is not a string"), so
   with a nested file (for example `{note, checked, known: {...}}`) nothing is subtracted and the runner's exit code
   stands. A project that keeps its known reds in a nested format points `guardBaseline` at a separate flat file.
+
+- The slot scripts read the machine file only through a project config (`slots.zsh` calls `config.js shell` when
+  `config.js path` finds one): a job with no project config at all (a scratchpad) gets neither `swapMinMB` nor
+  `slots.lockDir` of the machine file, but 4000 MB and `~/.cache/codis-agents/slots`, unless the environment sets
+  them. Every job of the chain and of the remote runner runs with a project config.
 
 ## Tests
 
