@@ -149,9 +149,15 @@ prefix_rule(pattern=["codex", "exec", "--sandbox", "read-only"], decision="allow
    the project, git writes into the git folder, and the analysis checker needs the network (it runs read-only itself).
    There is no rule for `wait-step.js`: it would let any command out. A rule matches only a plain argv that starts with
    its pattern - the literal path, no variable, no `nohup`, no `VAR=` in front, no `&`, no redirection - so the
-   commands of the Codex blocks are written that way; anything else runs in the sandbox or asks in the window.
+   commands of the Codex blocks are written that way; anything else runs in the sandbox or asks in the window. None of
+   these forms matches either (measured with `codex execpolicy check` on 0.167.0): a `node -e` wrapper, `sh -c` or
+   `bash -lc`, `env` in front, a node flag before the script, any other path to node, a relative script path.
    `node <plugin>/scripts/chain-run.js` resolves `node` by the PATH of the session; `codex exec` is called by its name.
    Check a rule with `codex execpolicy check --rules <rules file> -- <command>` (the answer names `"decision":"allow"`).
+   Inside the sandbox `ps` is refused, so a conductor started there cannot name itself in the lock of a task:
+   `chain-run.js start` refuses with exit 69 and names `CODEX_SANDBOX`. After such a refusal, or any other that names
+   the sandbox, run `codex execpolicy check --rules <rules file> -- <command>` on the command and run it again as a
+   plain argv; never wrap it to get around the rule.
 
 The `git` rule lets every git command out (`reset --hard`, `push --force` into a working branch too), as on Claude
 Code; the session hook of the plugin refuses `git add -A`, a push into a protected branch and tags.

@@ -816,7 +816,15 @@ with `--host codex`; with `--host claude` they are refused, exit 64): every mode
 host check (`role-exec.js check --model --effort`) refuses a slug outside the catalog of the run home
 (`codis-agents-models.json`, from `codex debug models`) or an effort the model does not support, and every task stops
 before any role. `run.json` records `codexModel` and `codexEffort` (the defaults without the flags), and `status`
-shows them. The command stays a plain argv, so the coordinator's execpolicy rule for `chain-run.js` matches it.
+shows them. The command stays a plain argv, so the coordinator's execpolicy rule for `chain-run.js` matches it; a
+`node -e` wrapper, `sh -c`, `env` in front, a node flag before the script, another path to node or a relative script
+path does not match and runs in the sandbox, where `ps` is refused. The conductor names itself in the lock of every task
+by its start time (`ps -o lstart`), so `start` refuses with exit 69 when `ps` gives none, before any run folder,
+request or lock exists, and names `CODEX_SANDBOX` when that variable is set (the refusal rests on the answer of `ps`;
+the variable only names the cause). A conductor that still cannot read its start time stops every task before any role
+with the same cause, and `status` of a conductor whose liveness `ps` cannot tell answers `running` (exit 3) with a field
+`why` that names it. `status <key>` with a task key in place of a run id exits 64 and lists the runs whose request
+names that key, newest first, with the brief `<sharedDir>/<key>/BRIEF.md` whose `run:` lines name them.
 
 Every task carries exactly one of `analystFirst`, `analysis`, `noAnalysis`: `analystFirst: true` runs the analyst
 first; `analysis: "<path>"` reuses an existing analyst or diagnosis report (checked by the preconditions, named in the
@@ -1121,7 +1129,9 @@ writable for the user: `zsystem flock` opens the file for writing and a failed o
 `admit.lock`, `queue.lock` or the directory left unwritable (by `sudo heavy.sh`, or by root in a container over a shared
 slot directory) is a refusal with one line naming the path (exit 77), never an endless wait; so is a slot directory
 whose `admit.lock`, `queue/` or `queue.lock` cannot be created or opened for writing (a directory under a regular file,
-or outside the write roots of a sandbox such as a check of a commit under `codex sandbox`).
+or outside the write roots of a sandbox such as a check of a commit under `codex sandbox`). With `CODEX_SANDBOX` set (a
+role or a check on codex) the line says that the role sandbox does not include the slot directory and that heavy steps
+on codex wait for part A2b, in place of the hint about the owner or mode.
 
 Every slot hold appends one line to the slot journal, `<slots.lockDir>/journal.tsv` (`SLOT_JOURNAL` overrides it, empty
 turns it off): request, acquire and release times, class, slot, kind, pid, exit code, worktree and a short command with
@@ -1194,7 +1204,7 @@ fallback to another slot directory: a second directory would be a second queue t
 - The role adapter `scripts/role-exec.js` (p-codex, parts A1a and A1b) runs one role on a host CLI under the conductor
   `scripts/chain-run.js` (a chain started as a Workflow keeps its `agent()`); no role on codex
   can take memory slots: inside the codex sandbox `heavy.sh` and `medium.sh` refuse at once (exit 77 or 72 with the
-  reason) until the conductor takes slots for them (part A2b).
+  reason; exit 77 names `CODEX_SANDBOX` and A2b) until the conductor takes slots for them (part A2b).
   Processes a role moves into a session of their own (the PTY commands of codex) are not tracked by the adapter; the
   death of the adapter itself by SIGKILL leaves its role processes and no record (part B).
 - Project rules of a role on codex (`-c project_doc_max_bytes=0` and `role-exec.js check` of the run home) do not cover:
