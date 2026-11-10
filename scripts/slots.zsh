@@ -164,7 +164,13 @@ _slot_unwritable() {
   return 1
 }
 _slot_unwritable_say() {
-  print -u2 -r -- "slot_run: refused - $SLOT_BAD is not writable for this user (uid $UID): a slot lock is opened for writing, so it would count as busy forever; fix its owner or mode (left by sudo or by root in a container?)"
+  print -u2 -r -- "slot_run: refused - $SLOT_BAD is not writable for this user (uid $UID): a slot lock is opened for writing, so it would count as busy forever${$(_slot_sandbox_why):-; fix its owner or mode (left by sudo or by root in a container?)}"
+}
+# Inside the codex sandbox (codex sets CODEX_SANDBOX) a role writes only its worktree, its task folder and /tmp: the slot
+# directory is outside, whatever its owner or mode, and a role takes no slot until the conductor takes it for the role
+# (part A2b). The refusal says so instead of pointing at the owner or mode; the refusal itself rests on the failed write.
+_slot_sandbox_why() {
+  [[ -n $CODEX_SANDBOX ]] && print -r -- "; this process runs in the codex sandbox (CODEX_SANDBOX=$CODEX_SANDBOX): the role sandbox does not include the slot directory; heavy steps on codex wait for A2b"
 }
 # A temporary file from a template (BSD and GNU mktemp).
 _slot_tmp() { mktemp "${${TMPDIR:-/tmp}%/}/$1.XXXXXX" }
@@ -441,7 +447,7 @@ slot_run() {
   # is read only whatever its mode) - is the same refusal as an unwritable lock: zsystem flock would read the failed
   # open as "busy" and the job would wait forever.
   if ! { : >> $SLOTS_DIR/admit.lock && mkdir -p $SLOTS_DIR/queue && : >> $SLOTS_DIR/queue.lock } 2>/dev/null; then
-    print -u2 -r -- "slot_run: refused - $SLOTS_DIR cannot be written by this process (admit.lock, queue/ or queue.lock cannot be created or opened for writing): a slot lock that cannot be opened would count as busy forever; inside a sandbox the slot directory is not among its write roots"
+    print -u2 -r -- "slot_run: refused - $SLOTS_DIR cannot be written by this process (admit.lock, queue/ or queue.lock cannot be created or opened for writing): a slot lock that cannot be opened would count as busy forever${$(_slot_sandbox_why):-; inside a sandbox the slot directory is not among its write roots}"
     rm -f $got; _slot_journal $treq - $(_slot_now) $class - $kind 77 "${jcmd[@]}"; return 77
   fi
   # The trap is set before the holder starts: a signal between the command start and `wait` would otherwise kill only

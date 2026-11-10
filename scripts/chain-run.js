@@ -182,6 +182,12 @@ function lstartOf(pid) {
   return s || null;
 }
 const normL = (v) => (typeof v === 'string' && v.trim() ? v.trim().replace(/\s+/g, ' ') : null);
+// The cause of a ps that gives nothing, for a refusal: codex sets CODEX_SANDBOX inside its sandbox, where ps is refused,
+// and a command that misses the execpolicy rule of the coordinator home runs there. The variable only names the cause;
+// every decision rests on the fact that ps gave no answer (a container without procps gives the same refusal unnamed).
+const psCause = (env) => (env && env.CODEX_SANDBOX ? `; this process runs in the codex sandbox (CODEX_SANDBOX=${env.CODEX_SANDBOX}), where ps is refused` : '');
+// The form of the start that the rule matches: node, the literal path of this script, then the arguments.
+const PLAIN_ARGV = `start it as a plain argv, node ${__filename} start ..., with no node -e, sh -c, env, node flag, other path to node or relative path, so the execpolicy rule of the coordinator home lets it out of the sandbox`;
 // Every process as {pid, pgid, lstart, command}, or null when ps does not answer.
 function psTable() {
   const p = spawnSync('ps', ['-A', '-o', 'pid=,pgid=,lstart=,command='], { encoding: 'utf8', env: Object.assign({}, process.env, { LC_ALL: 'C' }), maxBuffer: 64 * 1024 * 1024 });
@@ -923,6 +929,12 @@ function start(argv) {
   try { createAgent(adapterCfg(a.host, args, ad, runDir, () => {}, runId)); } catch (e) { process.stderr.write(`chain-run: ${e.message}\n`); process.exit(64); }
   const where = stateRootProblem(args, a.host, process.env);
   if (where) { process.stderr.write(`chain-run: ${where}\n`); process.exit(64); }
+  // The conductor names itself in the lock of every task by its start time; without it no task could be taken, so the
+  // start is refused before any run folder, request or lock exists (69: the environment, not the arguments).
+  if (!lstartOf(process.pid)) {
+    process.stderr.write(`chain-run: refused - ps does not answer (ps -o lstart= -p ${process.pid} gave no start time)${psCause(process.env)}: the conductor could not name itself in the lock of a task; ${PLAIN_ARGV}\n`);
+    process.exit(69);
+  }
   const logFile = path.join(runDir, 'log.txt');
   let fd;
   try {
@@ -996,7 +1008,7 @@ async function conduct(runDirArg) {
   for (const t of args.tasks) {
     const dir = table[t.key].dir;
     const lockFile = lockFileOf(runsDir, t.key);
-    if (!me.lstart) { block(t.key, 'the conductor cannot read its own start time (ps -o lstart): the lock of the task cannot name it'); continue; }
+    if (!me.lstart) { block(t.key, `the conductor cannot read its own start time (ps -o lstart)${psCause(process.env)}: the lock of the task cannot name it; ${PLAIN_ARGV}`); continue; }
     const noAuthor = req.host === 'codex' ? authorProblem(args.config, table[t.key].wt) : null;
     if (noAuthor) { block(t.key, noAuthor); continue; }
     try {
@@ -1151,6 +1163,16 @@ function runDirOf(arg, configFile) {
   if (fs.existsSync(path.join(dir, 'request.json'))) return { dir };
   let ids = [];
   try { ids = fs.readdirSync(runs).filter((n) => !n.startsWith('.')).sort(); } catch { /* none */ }
+  // A task key in place of a run id: the runs whose request names that task, newest first (a run id begins with its
+  // start time), and the brief where every start writes its run: line.
+  const reqs = ids.map((id) => ({ id, req: readJson(path.join(runs, id, 'request.json')) }))
+    .filter((r) => r.req && r.req.args && Array.isArray(r.req.args.tasks) && r.req.args.tasks.some((t) => t && t.key === arg)).reverse();
+  if (reqs.length) {
+    let brief = path.join(lc.config.sharedDir, arg, 'BRIEF.md');
+    // the task folder as the run named it (its dir, or <sharedDir of that run>/<key>); a request without its config: the default
+    if (isPlain(reqs[0].req.args.config)) { const t = taskTable(reqs[0].req.args)[arg]; if (typeof t.dir === 'string') brief = path.join(t.dir, 'BRIEF.md'); }
+    return { error: `no run ${arg} in ${runs}; ${arg} is a task key - runs of task ${arg}, newest first: ${reqs.map((r) => r.id).join(', ')}; the brief ${brief} carries a line run: <runId> ... for every start; go on with chain-run.js status <runId>` };
+  }
   return { error: `no run ${arg} in ${runs}; runs: ${ids.join(', ') || 'none'}` };
 }
 function logState(runDir) {
@@ -1182,8 +1204,10 @@ function snapshot(runDir) {
   // the model and effort of the roles of a codex run, as run.json records them
   const rm = run && run.codexModel ? { codexModel: run.codexModel, codexEffort: run.codexEffort } : {};
   if (done) return Object.assign({ state: 'finished', runId: done.runId, exitCode: done.exitCode }, rm, { results: done.results, tasks: Object.fromEntries(keys0.map((k) => [k, decided(k)])) });
-  // unknown counts as running: a conductor that cannot be told dead is not declared dead.
-  const live = !!run && liveness({ pid: run.pid, lstart: run.lstart }).state !== 'gone';
+  // unknown counts as running: a conductor that cannot be told dead is not declared dead; the field why names the cause.
+  const lv = run ? liveness({ pid: run.pid, lstart: run.lstart }) : null;
+  const live = !!lv && lv.state !== 'gone';
+  const why = lv && lv.state === 'unknown' ? { why: `${lv.why}${/^ps does not answer/.test(lv.why) ? psCause(process.env) : ''}` } : {};
   const again = live ? null : res();
   if (again) return Object.assign({ state: 'finished', runId: again.runId, exitCode: again.exitCode }, rm, { results: again.results, tasks: Object.fromEntries(keys0.map((k) => [k, decided(k)])) });
   const ls = logState(runDir);
@@ -1205,7 +1229,7 @@ function snapshot(runDir) {
       if (u.error) tasks[k].unrecordedCallsError = u.error;
     }
   }
-  const base = Object.assign({ runId: req.runId || path.basename(runDir), pid: run ? run.pid : null, startedAt: run ? run.startedAt : null }, rm, { phase: ls.phase, tasks });
+  const base = Object.assign({ runId: req.runId || path.basename(runDir), pid: run ? run.pid : null, startedAt: run ? run.startedAt : null }, rm, why, { phase: ls.phase, tasks });
   return live ? Object.assign({ state: 'running' }, base)
     : Object.assign({ state: 'dead', note: 'the conductor is gone without results.json: its locks stay, and a start of its tasks is refused while the reconciliation finds an open step of a live or unknown process, a launched role without a result, a verdict whose use is not proven or damage' }, base);
 }

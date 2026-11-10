@@ -100,13 +100,19 @@ only starts it and watches it.
    another model and effort of the whole run add `--codex-model <slug> --codex-effort <level>` (e.g. `gpt-6-luna` `low`
    for a cheap acceptance run; only with `--host codex`). A slug outside the catalog of the run home or an effort the
    model does not support stops every task before any role; `status` shows `codexModel` and `codexEffort`. Keep the
-   command a plain argv with the literal plugin path, so the coordinator's rule matches it. The run home is the Codex home of the roles, prepared by
+   command a plain argv - `node`, the literal plugin path, then the arguments - so the coordinator's rule matches it;
+   none of these forms matches a rule and each runs in the sandbox: a `node -e` wrapper, `sh -c` or `bash -lc`, `env`
+   or `VAR=` in front, a node flag before the script, any other path to node, a relative script path, a variable,
+   `nohup`, `&`, a redirection. The run home is the Codex home of the roles, prepared by
    the owner (skill `codis-agents:coordinator`, "On Codex: homes, sandbox and rules"); it is never the `$CODEX_HOME` of
    this session. Roles on Claude Code from a Codex session: `--host claude [--bin claude]`. The answer is one JSON line
    `{runId, runDir, pid, tasks}`; exit 0 started, 64 arguments, the tasks or owner file or a refusal of the adapter,
-   65 the config, 70 the conductor died before it was ready (its tail on stderr).
-3. Right away, before the first slice, write into the brief of every task of the run the line
-   `run: <runId> <runDir> pid <pid> host codex <date>`.
+   65 the config, 69 `ps` does not answer, so the conductor could not name itself in the lock of a task (it names
+   `CODEX_SANDBOX` when the command ran in the sandbox; no run folder is made: start it again as a plain argv), 70 the
+   conductor died before it was ready (its tail on stderr).
+3. Right away, before the first slice, write into the brief of every task of the run (`<sharedDir>/<key>/BRIEF.md`)
+   the line `run: <runId> <runDir> pid <pid> host codex <date>`: for every start that printed its JSON line, even a run
+   that ended at once.
 4. Wait in slices: `node <plugin>/scripts/chain-run.js status <runId> --wait 25`, again while it exits 3. 25 s is the
    slice (measured 2026-11-09 on codex 0.167.0, `codex exec`: the shell tool answers "still running" after about
    30 s). A slice that answers "still running", is cut or returns early is not the end and not the death of the run:
@@ -114,10 +120,15 @@ only starts it and watches it.
    basis in `status`, then `chain-run.js resolve`). Do not end your turn while the run lives: a turn that ends takes its own
    unfinished commands with it (the detached run survives, the watch does not).
 5. Esc, or closing Codex, cancel only the wait, never the run; a run stops only with
-   `node <plugin>/scripts/chain-run.js stop <runId>`. A new session takes the `runId` from the last `run:` line of the brief
-   (or from `<sharedDir>/runs/.locks/<key>.lock` while the run lives) and goes on with `status`; a `status` that exits
-   64 (unknown run) means the line is wrong: look in the lock, and never start a second run of the task for it (a
-   live lock refuses it anyway).
+   `node <plugin>/scripts/chain-run.js stop <runId>`. A new session that has only the task key never looks for folders
+   by a similar name: the brief is `<sharedDir>/<key>/BRIEF.md` (the task's `dir` when it names one), with `sharedDir`
+   from `node <plugin>/scripts/config.js json`. The `runId` is in the last `run:` line of that brief; the earlier `run:`
+   lines are history, and a run they name is never started again for them. While the run lives,
+   `<sharedDir>/runs/.locks/<key>.lock` names its `runId`. Without a `run:` line,
+   `node <plugin>/scripts/chain-run.js status <key>` exits 64 and lists the runs whose request names that key, newest
+   first (the decisions on its dead runs: `node <plugin>/scripts/chain-run.js resolve --list --task <key>`). Then go
+   on with `status <runId>`; a `status` that exits 64 for a `runId` means the line is wrong: look in the lock, and
+   never start a second run of the task for it (a live lock refuses it anyway).
 6. The results go by the common section "After the run" below. The cost of a conductor run is
    `node <plugin>/scripts/chain-cost.js --journal <task folder>`.
 
