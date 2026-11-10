@@ -221,6 +221,10 @@ try {
   const readme = read(path.join(ROOT, 'README.md')), host = read(path.join(ROOT, 'scripts', 'guards-remote-host.js'));
   ok('README: guards-remote-host.js names the sweep of run copies (3 newest finished kept, live never)', /\| `scripts\/guards-remote-host\.js` \|[^\n]*sweep[^\n]*3[^\n]*live/.test(readme));
   ok('host: the layout comment no longer says only "the next run of that name replaces it"', !/the next run of that name replaces it\n/.test(host) && /sweep/.test(host.split('\nconst fs')[0]));
+
+  // ---- the tester cells: tests/runner-cleanup-tester-cases.js, a child with its own tally, so README keeps counting test files
+  const tc = spawnSync(process.execPath, [path.join(__dirname, 'runner-cleanup-tester-cases.js')], { encoding: 'utf8', timeout: 120000 });
+  ok('the tester cells of the sweep (tests/runner-cleanup-tester-cases.js) pass', tc.status === 0, `${tc.status} ${tc.signal || ''}\n${(tc.stdout || '').split('\n').filter((l) => /FAIL/.test(l)).join('\n')}${(tc.stderr || '').slice(-800)}`);
 } catch (e) {
   if (e !== null) ok('no exception', false, e && e.stack);
 }
