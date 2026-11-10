@@ -6,8 +6,9 @@
 //          under the conductor (exec) a task without the field requires isolation; a task that requires it stops with
 //          status coordinator at the first selection wait step or at the ride, before the step runs (no run step at all);
 //          requiresIsolation false and the Workflow runtime without the field run the selection and the train as before.
-//   C1-C3  scripts/chain-run.js: requiresIsolationOf(host) (codex -> true, claude -> false, anything else -> true) and
-//          runScript, which sets it on every task over whatever args carried; parseTasks refuses the field from a tasks file.
+//   C1-C4  scripts/chain-run.js: requiresIsolationOf(host) (codex -> true, claude -> false, anything else -> true) and
+//          runScript on the claude and on the codex host, which sets it on every task over whatever args carried;
+//          parseTasks refuses the field from a tasks file.
 //   T1-T5  scripts/train.js enqueue and ride --requires-isolation: exit 65 before the queue, nothing queued, the fake
 //          guard command never called; without the flag the same branch rides as before (green, the guard called).
 const fs = require('fs');
@@ -97,8 +98,9 @@ async function roleChain() {
 }
 
 // The conductor's wiring: requiresIsolationOf (the host of the run -> the field) and runScript, which applies it to
-// every task, with a plugin root whose role-chain.js only echoes the field of each task (a run on the claude host; a
-// codex run needs a commit state folder out of every role's reach, which a temporary folder is not).
+// every task, with a plugin root whose role-chain.js only echoes the field of each task. A run on the codex host needs
+// its commit state folder (<sharedDir>/runs/.commit) out of every role's reach, which /tmp and TMPDIR are not, so its
+// sharedDir is a temporary folder inside the plugin checkout, removed at exit.
 async function conductor() {
   const fn = typeof CR.requiresIsolationOf === 'function' ? CR.requiresIsolationOf : () => 'missing';
   ok('C1 the host codex requires isolation; claude does not; any other or no host does (no data - isolation)',
@@ -115,6 +117,16 @@ async function conductor() {
   ok('C2 runScript on the claude host: every task gets requiresIsolation false', !x.threw && x.results[0] && x.results[0].seen === false, JSON.stringify(x));
   x = await run({ requiresIsolation: true });
   ok('C2 runScript: a requiresIsolation in the args is replaced by the one of the host of the run', !x.threw && x.results[0] && x.results[0].seen === false, JSON.stringify(x));
+  const st = fs.mkdtempSync(path.join(ROOT, '.isolation-state-'));
+  process.on('exit', () => { try { fs.rmSync(st, { recursive: true, force: true }); } catch { /* best effort */ } });
+  const codex = (extra) => CR.runScript({ host: 'codex', pluginRoot: plug, adapter: { codexHome: path.join(W, 'codex-home') },
+    args: { owner: 'o', config: Object.assign({}, config, { sharedDir: st }), tasks: tasks.map((t) => Object.assign({}, t, extra)) },
+    callsDir: path.join(W, 'calls-codex'), note: () => {}, log: () => {} });
+  x = await codex();
+  ok('C4 runScript on the codex host: every task gets requiresIsolation true', !x.threw && x.results[0] && x.results[0].seen === true, JSON.stringify(x));
+  x = await codex({ requiresIsolation: false });
+  ok('C4 runScript on the codex host: a requiresIsolation false in the args is replaced by true', !x.threw && x.results[0] && x.results[0].seen === true, JSON.stringify(x));
+  fs.rmSync(st, { recursive: true, force: true });
   const pt = CR.parseTasks(JSON.stringify([Object.assign({}, tasks[0], { requiresIsolation: false })]));
   ok('C3 parseTasks: a tasks file cannot set requiresIsolation (the conductor sets it from the host of its run)', !!pt.error && /requiresIsolation/.test(pt.error), JSON.stringify(pt));
 }
