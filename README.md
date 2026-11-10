@@ -618,6 +618,11 @@ Limits:
 - the whole chain on Codex (programmer, tester, review and the train with a coordinator on Codex) is not yet accepted:
   that is the integration acceptance of part A2a-3c; "supported" comes after A2a-3c and a full run on Codex;
 - the heavy channel (memory slots, full guard runs from a role on codex) is part A2b: a role answers `environment`;
+- a branch whose roles ran on codex requires isolation, and until A2b the conductor runs neither the selection wait step
+  nor the train on it: the task stops with status `coordinator` and the reason "train and selection for codex role
+  branches wait for A2b isolation" before the step, nothing run (`requiresIsolation`, set by `chain-run.js` from the
+  host of its run - `false` only on claude -, never by a tasks file; `train.js enqueue`/`ride --requires-isolation`
+  exit 65 before the queue);
 - a role on codex has no network (except test) and no Docker for its acceptance;
 - the coordinator waits by polling in slices; a long run costs one model turn per slice, and the length of one Codex
   turn over hours is not measured;
@@ -850,7 +855,8 @@ the newest run, or follows an `abort`, holds). For a feature, `useCasesFirst: tr
 analyst write only the use cases with their open questions and stops the task with status `use-cases-review`; after
 the review with the owner the coordinator relaunches it with `useCases` and `analystFirst`.
 Each task ends `done`, `use-cases-review` or `stopped` with the reason, the open questions, a proposed split or the
-review findings.
+review findings, or `coordinator` when its branch requires isolation (its roles ran on codex) and reached the selection
+or the train before A2b: the reason names A2b, the result carries `isolation: "A2b"` and `head`, nothing ran on it.
 
 On codex the conductor gives `prog` and `test` the commit channel (`scripts/commit-service.js`): its state folder is
 `<sharedDir>/runs/.commit`, one per project, so the journal of a task, `<sharedDir>/runs/.commit/<key>/commits.jsonl`,
@@ -1006,7 +1012,7 @@ No automatic `resume` is computed for a stopped task: the coordinator follows th
   `train.js resume`; 74 (queue unavailable), 75 (the queue halted by the environment of a train) and 124 (the step's
   deadline) are `environment` - the queue stands until the coordinator, the entry stays and its verdict comes later
   without an addressee: `train.js status` names it, `train.js watch` (the coordinator's background wait) ends on it, a
-  relaunch of the task alone takes it, `train.js ack` takes it by hand; 65 - refused before the queue (a protected base or not a branch); 64 - refused arguments,
+  relaunch of the task alone takes it, `train.js ack` takes it by hand; 65 - refused before the queue (a protected base or not a branch, or `--requires-isolation`: a branch whose roles ran on codex, until A2b); 64 - refused arguments,
   among them `head is not a full sha: <value>`. The head is the full sha: the workflow resolves an abbreviated head of a
   role (hex digits, at least 4, gitrevisions(7)) right after the role's answer with one cheap service step
   (`git rev-parse --verify -q '<h>^{commit}'`), so the post-checks, the selection, the result file and the ride all use

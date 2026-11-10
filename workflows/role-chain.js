@@ -113,6 +113,17 @@ const ONE_RUN = typeof CFG.guardSubsetCommand === 'string' && CFG.guardSubsetCom
 // train-only.md, 80 tasks): a selection found a real finding in 21 % of tasks while every task waited for it (a median of
 // 32 min, 84-125 min under load); the runner at 6 tasks 94 % -> 65 %.
 const INNER = ONE_RUN && CFG.innerSelect !== false
+// A branch whose roles ran on codex requires isolation (task field requiresIsolation, set by the conductor from the host
+// of its run, scripts/chain-run.js requiresIsolationOf; a tasks file cannot set it). Until A2b isolates the checks of
+// such a branch, the workflow runs neither the selection wait step nor the train ride on it: both execute the code of the
+// branch with the rights of this machine or of the remote runner. Under the conductor (exec) a task without the field
+// requires isolation (no data - isolation); under the Workflow runtime the roles are Claude agents and only an explicit
+// field other than false counts. The refusal comes before the step, so nothing runs; the task ends with status
+// coordinator (isolationStop: progStep's callers pass its object to stop() as extra, which keeps that status).
+const ISOLATION_WHY = 'train and selection for codex role branches wait for A2b isolation'
+const needsIsolation = (t) => (typeof exec === 'function' ? t.requiresIsolation !== false : t.requiresIsolation !== undefined && t.requiresIsolation !== false)
+const isolationStop = (t, step, head) => ({ fail: `${step}: ${ISOLATION_WHY} - branch ${t.branch} head ${head} requires isolation (its roles ran on codex); nothing was run on it, the coordinator decides`,
+  status: 'coordinator', isolation: 'A2b', head })
 const baseArg = (t) => (nonBlankS(t.base) ? sq(t.base.trim()) : '<the branch or commit this task started from>')
 const selectRun = (t) => `${SCRIPTS}/guards-all.sh --select ${baseArg(t)} ${sq(t.gdir)}`
 // The tester's selection (p-tester-select, measured 2026-11-01: the repeated selection of the whole task took a median of
@@ -730,6 +741,7 @@ async function progStep(t, st, task, n, report, sameStops, mergeCheck) {
   let merged = p, tag = n
   for (let k = 0; ; k++) {
     if (st.selAt && st.head === st.selAt) { log(`${t.title}: the selection on ${st.head} is done - not repeated`); return { p: merged } }
+    if (needsIsolation(t)) return isolationStop(t, `selection after programmer ${tag}`, st.head)
     const sel = await selectStep(t, tag)
     if (sel.fail) return sel
     st.sel = sel; st.selAt = st.head
@@ -1127,6 +1139,7 @@ const trainTask = (t, v, res) => {
 }
 async function ride(t, st, review) {
   if (!ONE_RUN) return { task: t.key, status: 'done', review }
+  if (needsIsolation(t)) { const z = isolationStop(t, 'train 1', st.head); return stop(t, z.fail, { status: z.status, isolation: z.isolation, head: z.head, review }) }
   const results = []
   for (let n = 1; ; n++) {
     const head = st.head, step = `train-${n}`, res = resultOf(t, head)
