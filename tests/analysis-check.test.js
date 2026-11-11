@@ -141,13 +141,13 @@ if (!fs.existsSync(SCRIPT)) done();
   ok('A6 the output says a changes-needed needs its Closure lines and a later ready does not cancel it', /does not cancel/.test(c4.all), c4.all.slice(0, 600));
   const p5 = prep(c, ['t1'], ['--again', 'third']);
   writeAnswer(oFile(p5), answer(c.sha, ['t1'], 'ready', 0));
-  // A23: the same codex exec again after run 3 was collected rewrites runs/3.json
+  // A23: the same codex exec again after run 3 was collected rewrites runs/3.json: both answers are in its journal
   collect(c, ['--run', '3', '--exit', '0']);
   writeAnswer(oFile(p5), answer(c.sha, ['t1'], 'changes-needed', 2));
   const c5 = collect(c);
   const r3 = runOf(c5.out, 3);
-  ok('A23 runs/3.json changed after it was collected: named, both verdicts shown', !!r3 && /changed after it was collected/.test(JSON.stringify(r3))
-    && r3.verdict === 'changes-needed' && r3.collected && r3.collected.verdict === 'ready', JSON.stringify(r3));
+  ok('A23 runs/3.json rewritten after it was collected: run 3 has two answers, both shown, "now answer 2 of 2"', !!r3 && Array.isArray(r3.answers)
+    && r3.answers.map((x) => `${x.verdict}${x.significantGaps}`).join(',') === 'ready0,changes-needed2' && /now answer 2 of 2/.test(JSON.stringify(r3)), JSON.stringify(r3));
 }
 
 // ---- A13: --again never passes a pending run ----
@@ -398,9 +398,12 @@ let raceA23 = Promise.resolve();
     writeAnswer(oFile(p), answer(c.sha, ['t1'], 'changes-needed', 2));
     const col = collect(c);
     const k = col.out && col.out.keys && col.out.keys.t1;
-    ok('A23xA6 a third answer of the run: all three are verdicts of t1, the unappended one named', !!k && k.verdicts.length === 3
+    ok('A23xA6 a third answer of the run: all three are verdicts of t1, the run names its three answers', !!k && k.verdicts.length === 3
       && k.verdicts.map((x) => `${x.verdict}${x.significantGaps}`).sort().join(',') === 'changes-needed1,changes-needed2,ready0'
-      && /changed again after its later answer was appended/.test(col.all), JSON.stringify(k));
+      && /3 answers/.test(col.all), JSON.stringify(k));
+    collect(c, ['--run', '1', '--append']);
+    ok('B13 the third answer is appended by the next --append; the two appended before are not written again',
+      JSON.stringify(verdictsInReport(c.report)) === JSON.stringify(['Verdict: changes-needed', 'Verdict: ready', 'Verdict: changes-needed']), JSON.stringify(verdictsInReport(c.report)));
   }
   // a race of four --append on a rewritten run still writes each answer once
   {
@@ -414,6 +417,232 @@ let raceA23 = Promise.resolve();
       const v = verdictsInReport(c.report).sort();
       ok('A23xA6 a race of four --append on a rewritten run writes each answer once', JSON.stringify(v) === JSON.stringify(['Verdict: changes-needed', 'Verdict: ready']), JSON.stringify(v));
     });
+  }
+}
+
+// ---- B1-B16: the journal of answers of a run, runs/<n>.answers/<k>.json (mechanism M2.2) ----
+// Every valid answer any command saw is recorded once; the verdicts of a run are its journal, not the file now.
+{
+  const jdir = (c, n) => path.join(c.S, 'analysis-checks', c.sha, 'runs', `${n || 1}.answers`);
+  const jlist = (c, n) => (fs.existsSync(jdir(c, n)) ? fs.readdirSync(jdir(c, n)).filter((f) => /^\d+\.json$/.test(f)).sort() : []);
+  const vs = (o, t) => ((o && o.keys && o.keys[t || 't1']) || { verdicts: [] }).verdicts.map((x) => `${x.verdict}${x.significantGaps}`).sort().join(',');
+  const verdictsInReport = (f) => (fs.existsSync(f) ? fs.readFileSync(f, 'utf8').match(/^Verdict: .*$/mg) || [] : []);
+  const A = (c) => answer(c.sha, ['t1'], 'changes-needed', 1);
+  const B = (c) => answer(c.sha, ['t1'], 'changes-needed', 2);
+  const C = (c) => answer(c.sha, ['t1'], 'ready', 0);
+  // run 1 prepared, answer A written and seen by collect --exit 0
+  const seenA = () => { const c = fresh(); const p = prep(c); writeAnswer(oFile(p), A(c)); collect(c, ['--run', '1', '--exit', '0']); return { c, p }; };
+
+  {
+    const c = fresh();
+    const p = prep(c);
+    writeAnswer(oFile(p), A(c));
+    const p2 = prep(c);
+    ok('B1 prepare sees answer A (no collect before): it refuses with the changes-needed and records A in the journal', p2.code === 3
+      && /changes-needed/.test((p2.out && p2.out.refused) || '') && JSON.stringify(jlist(c)) === '["1.json"]', p2.all.slice(0, 300));
+    writeAnswer(oFile(p), C(c));
+    const col = collect(c);
+    ok('B1 then rewritten by B: both verdicts of t1, twoVerdicts', vs(col.out) === 'changes-needed1,ready0' && col.out.keys.t1.twoVerdicts === true, JSON.stringify(col.out && col.out.keys));
+  }
+  {
+    const { c, p } = seenA();
+    const entry = (() => { try { return JSON.parse(fs.readFileSync(path.join(jdir(c), '1.json'), 'utf8')); } catch { return {}; } })();
+    ok('B2 a journal entry is {sha256, at, answer}: the sha256 of the bytes of runs/1.json and the whole answer', entry.sha256 === sha(fs.readFileSync(oFile(p)))
+      && typeof entry.at === 'string' && entry.answer && entry.answer.report === A(c).report, JSON.stringify(entry).slice(0, 300));
+    writeAnswer(oFile(p), B(c));
+    const c2 = collect(c);
+    ok('B2 rewritten by a valid B of the same key: both verdicts, twoVerdicts, "now answer 2 of 2"', vs(c2.out) === 'changes-needed1,changes-needed2'
+      && c2.out.keys.t1.twoVerdicts === true && /now answer 2 of 2/.test(c2.all), c2.all.slice(0, 600));
+    writeAnswer(oFile(p), C(c));
+    const c3 = collect(c);
+    ok('B3 rewritten again by C before any --append: three verdicts, the middle one kept', vs(c3.out) === 'changes-needed1,changes-needed2,ready0', JSON.stringify(c3.out && c3.out.keys));
+    writeAnswer(oFile(p), A(c));
+    const c4 = collect(c);
+    ok('B5 rewritten back to A: the journal does not grow, "now answer 1 of 3"', jlist(c).length === 3 && /now answer 1 of 3/.test(c4.all), jlist(c).join(',') + c4.all.slice(0, 300));
+  }
+  {
+    const { c, p } = seenA();
+    writeAnswer(oFile(p), A(c));
+    collect(c);
+    prep(c);
+    ok('B4 the same bytes again, seen by collect and prepare: one entry, one verdict', jlist(c).length === 1 && vs(collect(c).out) === 'changes-needed1', jlist(c).join(','));
+  }
+  const bads = (c) => [
+    ['not JSON', 'oops'], ['an empty file', ''], ['another analysisSha256', JSON.stringify(answer('0'.repeat(64), ['t1'], 'ready', 0))],
+    ['not the schema', JSON.stringify({ analysisSha256: c.sha, tasks: ['t1'], verdict: 'ready', report: reportText(c.sha, ['t1'], 'ready', 0) })],
+    ['a report header that disagrees', JSON.stringify(answer(c.sha, ['t1'], 'ready', 0, { report: reportText(c.sha, ['t1'], 'changes-needed', 1) }))],
+  ];
+  for (const [name] of bads({ sha: '' })) {
+    const { c, p } = seenA();
+    fs.writeFileSync(oFile(p), bads(c).find((x) => x[0] === name)[1]);
+    const col = collect(c);
+    const r = runOf(col.out, 1);
+    ok(`B6 A seen, then runs/1.json rewritten by ${name}: run 1 stays a result, t1 keeps the changes-needed, the file named "now not a verdict"`,
+      !!r && r.state === 'result' && vs(col.out) === 'changes-needed1' && /now not a verdict/.test(JSON.stringify(r)), JSON.stringify(r));
+    const again = prep(c);
+    const ab = prep(c, ['t1'], ['--abandon', '1', '--reason', 'x']);
+    ok(`B6 (${name}) prepare refuses with the changes-needed; --abandon 1 refused "has a result"`, again.code === 3 && /changes-needed/.test((again.out && again.out.refused) || '')
+      && ab.code === 3 && /has a result/.test(ab.all), `${again.code} ${ab.code} ${ab.all.slice(0, 200)}`);
+  }
+  {
+    const { c, p } = seenA();
+    collect(c, ['--run', '1', '--append']);
+    fs.writeFileSync(oFile(p), 'garbage');
+    const col = collect(c);
+    ok('B7 A appended, then runs/1.json rewritten by garbage: the report holds A once, t1 has exactly one verdict', verdictsInReport(c.report).length === 1
+      && vs(col.out) === 'changes-needed1' && col.out.reportRuns === 1 && col.out.appendedHere === 1, JSON.stringify(col.out && col.out.keys));
+    ok('B7 prepare refuses (3)', prep(c).code === 3);
+  }
+  {
+    const { c, p } = seenA();
+    writeAnswer(oFile(p), answer(c.sha, ['t2'], 'ready', 0));
+    const col = collect(c);
+    ok('B8 A for t1 rewritten by an answer for t2: collect without --task shows t1 [changes-needed] and t2 [ready]', vs(col.out, 't1') === 'changes-needed1'
+      && vs(col.out, 't2') === 'ready0' && /answer 2: asked for t1; the checker named t2/.test(col.all), JSON.stringify(col.out && col.out.keys) + col.all.slice(0, 400));
+    ok('B8 prepare --task t1 and --task t2 both refuse', prep(c, ['t1']).code === 3 && prep(c, ['t2']).code === 3);
+  }
+  {
+    const { c, p } = seenA();
+    fs.unlinkSync(oFile(p));
+    const col = collect(c);
+    const r = runOf(col.out, 1);
+    ok('B9 A seen, then runs/1.json removed: run 1 a result (not pending), "is gone"', !!r && r.state === 'result' && /is gone/.test(JSON.stringify(r)) && vs(col.out) === 'changes-needed1', JSON.stringify(r));
+    const again = prep(c);
+    const ab = prep(c, ['t1'], ['--abandon', '1', '--reason', 'x']);
+    ok('B9 prepare refuses by the result, not as pending; --abandon refused', again.code === 3 && !/never run it again/.test((again.out && again.out.refused) || '')
+      && ab.code === 3 && /has a result/.test(ab.all), (again.out && again.out.refused) || again.all.slice(0, 200));
+  }
+  {
+    const c = fresh();
+    const p = prep(c);
+    writeAnswer(oFile(p), A(c));
+    collect(c);
+    const e1 = collect(c, ['--run', '1', '--exit', '1']);
+    const r = runOf(e1.out, 1);
+    ok('B10 A seen without --exit, then --exit 1: A stays the verdict, the late exit named', e1.code === 0 && !!r && r.state === 'result' && vs(e1.out) === 'changes-needed1'
+      && /exit 1 recorded after answer 1/.test(JSON.stringify(r)), JSON.stringify(r));
+    ok('B10 prepare refuses (3)', prep(c).code === 3);
+    writeAnswer(oFile(p), C(c));
+    collect(c);
+    ok('B10 after a recorded exit other than 0 no new answer is recorded', jlist(c).length === 1, jlist(c).join(','));
+  }
+  {
+    const c = fresh();
+    const p = prep(c);
+    writeAnswer(oFile(p), A(c));
+    collect(c, ['--run', '1', '--exit', '2']);
+    ok('B11 exit 2 recorded before any command saw the answer: not-run, nothing in the journal', runOf(collect(c).out, 1).state === 'not-run' && jlist(c).length === 0, jlist(c).join(','));
+  }
+  {
+    const { c, p } = seenA();
+    writeAnswer(oFile(p), B(c));
+    collect(c);
+    const ap = collect(c, ['--run', '1', '--append']);
+    ok('B12 --append of a run with two unappended answers: both appended, in the order they were seen, one marker each', ap.code === 0
+      && JSON.stringify(verdictsInReport(c.report)) === JSON.stringify(['Verdict: changes-needed', 'Verdict: changes-needed'])
+      && /Significant gaps: 1\n[\s\S]*Significant gaps: 2\n/.test(fs.readFileSync(c.report, 'utf8'))
+      && fs.existsSync(path.join(jdir(c), '1.appended')) && fs.existsSync(path.join(jdir(c), '2.appended')), ap.all.slice(0, 400));
+    const rep = fs.readFileSync(c.report, 'utf8');
+    const ap2 = collect(c, ['--run', '1', '--append']);
+    ok('B12 a second --append: "already appended", the report unchanged', ap2.code === 0 && /already appended/.test(ap2.all) && fs.readFileSync(c.report, 'utf8') === rep, ap2.all.slice(0, 300));
+  }
+  for (const [name, spoil] of [['garbage', (f) => fs.writeFileSync(f, 'garbage')], ['removed', (f) => fs.unlinkSync(f)]]) {
+    const { c, p } = seenA();
+    spoil(oFile(p));
+    const ap = collect(c, ['--run', '1', '--append']);
+    ok(`B14 A seen, not appended, runs/1.json ${name}: --append writes A (exit 0)`, ap.code === 0 && JSON.stringify(verdictsInReport(c.report)) === '["Verdict: changes-needed"]', ap.all.slice(0, 300));
+  }
+  {
+    // (a) the entry 1.json another observer wrote holds the same answer; (b) it holds another one
+    const { c: ca, p: pa } = (() => { const c = fresh(); const p = prep(c); return { c, p }; })();
+    writeAnswer(oFile(pa), A(ca));
+    fs.mkdirSync(jdir(ca), { recursive: true });
+    fs.writeFileSync(path.join(jdir(ca), '1.json'), JSON.stringify({ sha256: sha(fs.readFileSync(oFile(pa))), at: 'x', answer: A(ca) }));
+    collect(ca);
+    ok('B15 (a) an entry with the same sha256 written by another observer: nothing added', JSON.stringify(jlist(ca)) === '["1.json"]', jlist(ca).join(','));
+    const c = fresh();
+    const p = prep(c);
+    writeAnswer(oFile(p), C(c));
+    fs.mkdirSync(jdir(c), { recursive: true });
+    const other = JSON.stringify({ sha256: sha(JSON.stringify(A(c))), at: 'x', answer: A(c) });
+    fs.writeFileSync(path.join(jdir(c), '1.json'), other);
+    const col = collect(c);
+    ok('B15 (b) an entry with another answer: the new one is answer 2, entry 1 unchanged, both verdicts', JSON.stringify(jlist(c)) === '["1.json","2.json"]'
+      && fs.readFileSync(path.join(jdir(c), '1.json'), 'utf8') === other && vs(col.out) === 'changes-needed1,ready0', jlist(c).join(',') + JSON.stringify(col.out && col.out.keys));
+  }
+  {
+    // B16: the marker of an appended answer names report run 1, but run 1 of the report is a run written elsewhere at
+    // the same time; the run written from here is run 2. The foreign run is a verdict; ours is not counted twice.
+    const c = fresh();
+    const p = prep(c);
+    writeAnswer(oFile(p), C(c));
+    collect(c, ['--run', '1', '--exit', '0']);
+    fs.writeFileSync(c.report, reportText(c.sha, ['t1'], 'changes-needed', 1, '| G1 | x | yes | y | 2 |'));
+    collect(c, ['--run', '1', '--append']);
+    const mk = path.join(jdir(c), '1.appended');
+    const m = fs.existsSync(mk) ? JSON.parse(fs.readFileSync(mk, 'utf8')) : {};
+    if (fs.existsSync(mk)) fs.writeFileSync(mk, JSON.stringify(Object.assign(m, { reportRun: 1 })));
+    const col = collect(c);
+    ok('B16 a report run written elsewhere is a verdict although the marker names its ordinal; ours is excluded by its text', vs(col.out) === 'changes-needed1,ready0'
+      && col.out.reportRuns === 2 && col.out.appendedHere === 1, JSON.stringify(col.out && col.out.keys) + ` ${col.out && col.out.appendedHere}`);
+    // the coordinator writes the section Closure of the appended run: it stays a run written from here
+    fs.writeFileSync(c.report, fs.readFileSync(c.report, 'utf8').replace(/<left empty by the checker>\n\nNext step: start\n$/, 'G0 - none, layer 2\n\nNext step: wave\n'));
+    const col2 = collect(c);
+    ok('B16 the Closure section written into the appended run keeps it a run written from here', col2.out && col2.out.appendedHere === 1 && vs(col2.out) === 'changes-needed1,ready0',
+      JSON.stringify(col2.out && col2.out.keys));
+  }
+
+  // The invariant of M2.2 over sequences of events: a verdict any command once showed for a key stays in every later
+  // output, and prepare for a key with a verdict refuses. Events: valid answers A, B, C of t1, D of t2, the same bytes
+  // again, five answers that are not verdicts, the file removed, a late --exit 1. Observers: prepare, collect, --append.
+  let AC = null;
+  try { AC = require(SCRIPT); } catch { /* red above */ }
+  if (AC && AC.main) {
+    const mainOf = (args) => { const r = AC.main(args); return { code: r.code, out: r.out || {} }; };
+    const shownOf = (out) => { const s = {}; for (const [t, x] of Object.entries((out && out.keys) || {})) s[t] = new Set(x.verdicts.map((v) => `${v.verdict}${v.significantGaps}`)); return s; };
+    const EV = ['A', 'B', 'C', 'D', 'same', 'notjson', 'empty', 'othersha', 'schema', 'header', 'delete', 'exit1'];
+    const OBS = ['prepare', 'collect', 'append'];
+    const fails = {};
+    for (const obs of OBS) fails[obs] = [];
+    for (const obs of OBS) {
+      for (const e2 of EV) {
+        for (const e3 of EV) {
+          const c = fresh();
+          const base = ['--shared', c.S, '--analysis', c.A];
+          const p = mainOf(['prepare', ...base, '--task', 't1', '--worktree', c.WT, '--model', 'm1']);
+          const file = p.out.argv[p.out.argv.indexOf('-o') + 1];
+          const answers = { A: A(c), B: B(c), C: C(c), D: answer(c.sha, ['t2'], 'changes-needed', 3) };
+          const event = (ev) => {
+            if (answers[ev]) writeAnswer(file, answers[ev]);
+            else if (ev === 'same') { if (fs.existsSync(file)) fs.writeFileSync(file, fs.readFileSync(file)); }
+            else if (ev === 'delete') { if (fs.existsSync(file)) fs.unlinkSync(file); }
+            else if (ev === 'exit1') mainOf(['collect', ...base, '--run', '1', '--exit', '1']);
+            else fs.writeFileSync(file, bads(c).find((x) => x[0] === { notjson: 'not JSON', empty: 'an empty file', othersha: 'another analysisSha256', schema: 'not the schema', header: 'a report header that disagrees' }[ev])[1]);
+          };
+          const observe = () => (obs === 'prepare' ? mainOf(['prepare', ...base, '--task', 't1', '--worktree', c.WT, '--model', 'm1'])
+            : mainOf(['collect', ...base, ...(obs === 'append' ? ['--run', '1', '--append'] : [])]));
+          const ever = {};
+          for (const ev of ['A', e2, e3]) {
+            event(ev);
+            const o = observe();
+            const now = shownOf(o.out);
+            for (const [t, set] of Object.entries(ever)) {
+              const lost = [...set].filter((v) => !(now[t] && now[t].has(v)));
+              if (lost.length) fails[obs].push(`A,${e2},${e3} after ${ev}: ${t} lost ${lost.join(',')}`);
+            }
+            for (const [t, set] of Object.entries(now)) { ever[t] = ever[t] || new Set(); set.forEach((v) => ever[t].add(v)); }
+            for (const t of Object.keys(ever)) {
+              if (!ever[t].size) continue;
+              const pr = mainOf(['prepare', ...base, '--task', t, '--worktree', c.WT, '--model', 'm1']);
+              if (pr.code !== 3) fails[obs].push(`A,${e2},${e3} after ${ev}: prepare --task ${t} exit ${pr.code}`);
+            }
+          }
+          fs.rmSync(c.S, { recursive: true, force: true });
+        }
+      }
+      ok(`invariant M2.2 (observer ${obs}): over A x ${EV.length} x ${EV.length} event sequences no verdict once shown is lost, and prepare for its key refuses`,
+        fails[obs].length === 0, fails[obs].slice(0, 6).join('\n'));
+    }
   }
 }
 

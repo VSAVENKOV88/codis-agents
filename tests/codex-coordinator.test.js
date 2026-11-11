@@ -210,6 +210,14 @@ ok('A6 rule Waves: a later ready of the same version does not cancel a changes-n
 const readmeGaps = flat((read('README.md').match(/\n## Known gaps\n([\s\S]*?)\n## /) || ['', ''])[1]);
 ok('A17 README Known gaps: a second codex exec of the same prepared run is not told from the first',
   /second `codex exec` of the same prepared run/.test(readmeGaps), '');
+// B17 (mechanism M2.2): every answer a command saw is kept in the journal of the run; only a rewrite nobody saw is lost
+ok('B17 README Known gaps: only an answer rewritten before any prepare or collect saw it is lost',
+  /rewritten before any `prepare` or `collect` saw it/.test(readmeGaps), readmeGaps.slice(Math.max(0, readmeGaps.indexOf('second `codex exec`') - 100), readmeGaps.indexOf('second `codex exec`') + 700));
+const acRow = flat(read('README.md').split('\n').find((l) => l.startsWith('| `scripts/analysis-check.js`')) || '');
+ok('B17 README scripts table: the journal runs/<n>.answers/<k>.json, every answer seen is a verdict', /`runs\/<n>\.answers\/<k>\.json`/.test(acRow) && /every answer/.test(acRow), acRow);
+ok('B17 coordinator, Codex step 3: a second codex exec that rewrote an answer prepare or collect had seen',
+  /a second `codex exec` that rewrote an answer `prepare` or `collect` had seen/.test(chkCodex), chkCodex.slice(Math.max(0, chkCodex.indexOf('Two verdicts') - 50), chkCodex.indexOf('Two verdicts') + 400));
+ok('B17 no slots of the earlier round named: .collected, .appendedlater', ![read('README.md'), co, read('scripts/analysis-check.js')].some((t) => /\.collected\b|appendedlater/.test(t)));
 const sch = (() => { try { return JSON.parse(read('schemas/analysis-check.schema.json')); } catch { return null; } })();
 const RE = require('../scripts/role-exec');
 // codex exec takes the file as it is (--output-schema), so it is in the strict form already: the strict form of its
