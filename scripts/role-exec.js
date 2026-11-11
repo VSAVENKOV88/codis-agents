@@ -29,7 +29,10 @@
 // open while the launcher runs and until a check it runs is stopped (its hooks run in codex sandbox with the rights of
 // the role); the record carries its summary. Their sandbox is the legacy workspace-write with the worktree as the
 // workspace root (-C, cwd) and the task folder as the one extra writable root, the network only for test
-// (scripts/role-roots.js), and npm_config_cache the npm cache of the call. Every role on codex gets the host section at
+// (scripts/role-roots.js), and npm_config_cache the npm cache of the call. With cfg.heavy they also get the heavy channel
+// (scripts/heavy-service.js, part A2b-1b): a box "heavy" in the call folder, CODIS_HEAVY_BOX and CODIS_HEAVY_ANSWERS,
+// the service open as long as the commit channel, its runs stopped when the call ends or the adapter is signalled; the
+// record carries its summary (heavy). Every role on codex gets the host section at
 // the end of its prompt (hostSection). An ok answer of prog/test is compared with the adapter's commits (compareAnswer):
 // a head or a commit the adapter did not make, or a branch moved behind it, ends the call as invalid-result.
 //
@@ -43,6 +46,7 @@ const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const { StringDecoder } = require('string_decoder');
 const { openCommitService, VERIFIED_CODEX_VERSIONS } = require('./commit-service');
+const { openHeavyService } = require('./heavy-service');
 const { realish, inside, overlap, roleRoots } = require('./role-roots');
 
 // The JSON Schema keywords the twelve schemas of role-chain.js use. Strict mode of the OpenAI API supports a subset of
@@ -81,6 +85,7 @@ const KINDS = {
 // The kinds of label that get the commit channel (cfg.commit): the roles that commit code or guards.
 const COMMIT_KINDS = new Set(['prog', 'test']);
 const COMMIT_CLIENT = path.join(__dirname, 'commit-req.js');
+const HEAVY_CLIENT = path.join(__dirname, 'heavy-req.js');
 const WAIT_STEP = path.join(__dirname, 'wait-step.js');
 // Refusals of the codex host by the kind of the label ('' when the kind runs); the claude host runs every kind. pre runs
 // only when the conductor checked the environment itself (preByConductor: cfg.preconditionsByConductor). prog and test
@@ -93,9 +98,11 @@ const CODEX_REFUSED = (kind, preByConductor) => (KINDS[kind] === 'service'
 // The host section: the end of the prompt of every role on codex. It replaces the rules of the Workflow prompt that name
 // tools this host does not have (Bash run_in_background, Monitor, a blocking Bash loop) and, for prog and test, says how
 // a commit is made (the sandbox refuses git add and git commit) and what head and commits of the answer must name
-// (compareAnswer checks them).
+// (compareAnswer checks them). With the heavy channel (o.heavy: cfg.heavy, scripts/heavy-service.js) prog and test are
+// told how to run a heavy command through it; without it a slot refusal is the environment.
 const HOST_HEADING = '## On this host (codex)';
-function hostSection(kind, t) {
+function hostSection(kind, t, o) {
+  const heavy = !!(o && o.heavy);
   const id = path.join(t.dir, 'wait-<name>');
   const lines = [HOST_HEADING, '',
     'This section replaces the rules about pauses, slots and git add above: this host has no Bash run_in_background, no Monitor and no blocking Bash loop.',
@@ -104,7 +111,8 @@ function hostSection(kind, t) {
     lines.push(
       `- Commits. The sandbox refuses git add, git commit and every write into the git folder: never run them. Commit only through \`node ${COMMIT_CLIENT} -m "<message>" -- <path>...\` (paths relative to the worktree): it prints one JSON line with the sha or the reason of a refusal; exit 3 is pending, then wait with \`node ${COMMIT_CLIENT} wait --id <id>\`. Wait for the sha of each commit before the next step: the red guard committed before the fix, the fix committed before any mutation. Restore a mutated file with \`git show HEAD:<path> > <path>\` (git checkout and git restore are refused here).`,
       '- Your answer: `head` is the last sha the adapter gave you in this call (no commit in this call: `git rev-parse HEAD` at its start); `commits`, where your answer has it, names only the shas the adapter gave you in this call, never commits of an earlier call.',
-      '- Heavy commands. heavy.sh, medium.sh and guards-all.sh cannot take a memory slot inside this sandbox: their exit 77, 72 or 78 is the environment, answered as environment with the cause "needs the heavy channel (A2b)"; never run the work around the slot.',
+      heavy ? `- Heavy commands (tsc, a bundler, a guard with vite, anything that takes a memory slot): never run heavy.sh or medium.sh yourself (inside this sandbox they cannot take a slot). Ask the adapter: \`node ${HEAVY_CLIENT} [--kind <kind>] -- <argv>\` (cwd: the current folder, inside the worktree) runs <argv> in a memory slot, in a sandbox with your write roots and only the loopback network, and prints one JSON line {id, state, rc, log, tail}; while state is not final wait with \`node ${HEAVY_CLIENT} wait --id <id> --max 25\`, stop it with \`node ${HEAVY_CLIENT} cancel --id <id>\`. rc is the code of the command, log its whole output. One run at a time: a second request waits behind the first. A state refused, cancelled-before-start or undetermined whose why starts with "environment:" is the environment, answered as environment with that cause. guards-all.sh is refused there (environment: guard runs come with A2b-1c); Docker and the stand too. A guard that needs a browser or a file watcher (vite with its watcher) does not work in that sandbox: its red is the environment, named with the guard and the line of its log, never a red of the product.`
+        : '- Heavy commands. heavy.sh, medium.sh and guards-all.sh cannot take a memory slot inside this sandbox: their exit 77, 72 or 78 is the environment, answered as environment with the cause "needs the heavy channel (A2b)"; never run the work around the slot.',
       '- An acceptance this sandbox cannot run (it needs the network, Docker or a stand) is the environment with its cause: never green or ready without it.',
       '- A merge of the arc (a conflict round of the train) is impossible on this host (the git folder is read only): answer with status blocked and the cause.');
   }
@@ -257,7 +265,7 @@ function codexEnv(base, home, auth, key) {
   const env = Object.assign({}, base);
   delete env.CODEX_API_KEY; delete env.OPENAI_API_KEY;
   // the commit channel is given per call (prog and test with cfg.commit); an inherited one never reaches a role
-  delete env.CODIS_COMMIT_BOX; delete env.CODIS_COMMIT_ANSWERS;
+  delete env.CODIS_COMMIT_BOX; delete env.CODIS_COMMIT_ANSWERS; delete env.CODIS_HEAVY_BOX; delete env.CODIS_HEAVY_ANSWERS;
   env.CODEX_HOME = home;
   if (auth === 'apiKeyFile' && key) env.CODEX_API_KEY = key;
   return env;
@@ -527,6 +535,18 @@ function createAgent(cfg) {
     }
   }
 
+  // The heavy channel (p-codex A2b-1b, scripts/heavy-service.js): prog and test on codex with the commit channel ask the
+  // adapter to run heavy commands in a memory slot. cfg.heavy {kinds?: {<kind>: medium | heavy}} turns it on; its
+  // journal lies in commit.stateDir, out of the role's reach like the commit journal.
+  const hv = c.heavy === undefined || c.heavy === null ? null : c.heavy;
+  if (hv) {
+    if (typeof hv !== 'object' || Array.isArray(hv)) no('heavy must be an object {kinds?}');
+    if (c.host !== 'codex') no('heavy on the claude host: a role of Claude takes its slots with heavy.sh itself');
+    if (!cm) no('heavy needs commit: the journal of the heavy channel lies in commit.stateDir');
+    const k = hv.kinds === undefined ? {} : hv.kinds;
+    if (!k || typeof k !== 'object' || Array.isArray(k) || Object.values(k).some((v) => v !== 'medium' && v !== 'heavy')) no('heavy.kinds must map a kind to "medium" or "heavy"');
+  }
+
   // {refused} or the plan of the call.
   function prepare(prompt, opts) {
     const o = opts && typeof opts === 'object' ? opts : {};
@@ -583,7 +603,7 @@ function createAgent(cfg) {
       const body = roleFile ? fs.readFileSync(roleFile, 'utf8').replace(/^---[\s\S]*?\n---\n/, '') : null;
       return Object.assign(plan, {
         model: slug, effort, bin: cx.bin, strictSchema: strict(o.schema), home: cx.home, auth: cx.auth, keyFile: cx.keyFile,
-        stdin: (body === null ? prompt : body.trim() + '\n\n' + prompt) + '\n\n' + hostSection(lb.kind, t),
+        stdin: (body === null ? prompt : body.trim() + '\n\n' + prompt) + '\n\n' + hostSection(lb.kind, t, { heavy: !!hv && channel }),
         env: codexEnv(c.env || process.env, cx.home, cx.auth, key),
         // project_doc_max_bytes=0: Codex reads no project AGENTS.md at any -C, and the flag beats a trusted
         // .codex/config.toml of the project (measured on codex 0.166.0 and 0.167.0), so a role gets the project rules only from its
@@ -619,7 +639,7 @@ function createAgent(cfg) {
   return async function agent(prompt, opts) {
     const started = new Date();
     const t0 = process.hrtime.bigint();
-    let plan, fin, res = null, svc = null, commitSum = null, svcStop = null;
+    let plan, fin, res = null, svc = null, commitSum = null, svcStop = null, heavy = null, heavySum = null, heavyStop = null;
     const callNotes = []; // the adapter's own notes of the call (the compare of the answer)
     try { plan = prepare(prompt, opts); } catch (e) { plan = { label: opts && opts.label, refused: `internal error: ${e.message}` }; }
     if (plan.refused) fin = { outcome: 'refused', error: plan.refused };
@@ -674,6 +694,18 @@ function createAgent(cfg) {
           }
         } catch (e) { fin = { outcome: 'crashed', error: `the commit channel: ${e.message}` }; }
       }
+      if (!fin && plan.channel && hv) {
+        // the heavy channel lives as long as the role's process; a signal of the adapter stops its runs (TERM, the pause,
+        // KILL) and the call waits for them in close()
+        try {
+          heavy = openHeavyService({ task: plan.key, callId: path.basename(plan.callDir), role: plan.kind, wt: plan.t.wt, tdir: plan.t.dir,
+            box: path.join(plan.callDir, 'heavy'), stateDir: cm.stateDir, runId: cm.runId, kinds: hv.kinds || {}, userEnv: c.env || process.env,
+            codex: cx.bin, codexVersions: hv.codexVersions, killGraceMs: graceMs, emptyWaitMs: graceMs, npmCache: path.join(plan.callDir, 'npm-cache'), inject: hv.inject, log });
+          heavyStop = () => heavy.cancel('signalled');
+          enter(heavyStop);
+          plan.env = Object.assign({}, plan.env, { CODIS_HEAVY_BOX: heavy.box, CODIS_HEAVY_ANSWERS: heavy.answers });
+        } catch (e) { fin = { outcome: 'crashed', error: `the heavy channel: ${e.message}` }; }
+      }
       if (!fin && c.launch && c.onLaunch) {
         try { c.onLaunch({ label: plan.label, key: plan.key, stepId: plan.stepId, callDir: plan.callDir, host: plan.host, pid: null, pgid: null, lstart: null, substitute: true }); } catch (e) {
           fin = { outcome: 'not-registered', error: `the launch could not be registered, the launcher was not run: ${e.message}` };
@@ -682,6 +714,8 @@ function createAgent(cfg) {
       if (!fin) {
         try { res = await launch(plan); fin = settle(plan, res); } catch (e) { fin = { outcome: 'crashed', error: `the launcher threw: ${e.message}` }; }
       }
+      // the heavy runs of the call end with it (a run still going is stopped: "the call ended")
+      if (heavy) { try { heavySum = await heavy.close(); } catch (e) { heavySum = { error: e.message }; } }
       // close() waits for a running check: SIGTERM to its group, SIGKILL after killGraceMs; the signal handlers stay
       // on until then (svcStop is live), so a second signal does not kill the adapter with the check orphaned
       if (svc) {
@@ -716,6 +750,7 @@ function createAgent(cfg) {
     };
     if (opts && opts.stepId) rec.stepId = opts.stepId;
     if (commitSum) rec.commit = Object.assign({ box: svc.box, answers: svc.answers }, commitSum);
+    if (heavySum) rec.heavy = Object.assign({ box: heavy.box, answers: heavy.answers }, heavySum);
     if (c.onRecord) { try { c.onRecord(rec); } catch (e) { log(`role-exec: ${rec.label}: onRecord threw: ${e.message}`); } }
     try {
       const dir = plan.t ? plan.t.dir : c.callsDir;
@@ -724,6 +759,7 @@ function createAgent(cfg) {
     } catch (e) { log(`role-exec: ${rec.label}: the record of the call could not be written: ${e.message}`); }
     if (fin.outcome !== 'ok') log(`role-exec: ${rec.label} ${fin.outcome}: ${rec.error || ''}`);
     if (svcStop) leave(svcStop); // after the record: a signal that came meanwhile ends the adapter only now
+    if (heavyStop) leave(heavyStop);
     return fin.outcome === 'ok' ? fin.value : null;
   };
 }

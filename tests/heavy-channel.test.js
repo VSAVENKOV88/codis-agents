@@ -328,9 +328,11 @@ const groupAlive = (g) => { try { process.kill(-g, 0); return true; } catch (e) 
     const d = setup();
     const jdir = path.join(d.state, 'K');
     fs.mkdirSync(jdir, { recursive: true });
-    const live = spawn('/bin/sh', ['-c', 'sleep 30'], { detached: true, stdio: 'ignore' });
+    // a group of its own whose parent is gone (as the gate of a dead adapter): launchd reaps it, so no zombie of this
+    // test keeps it alive
+    const live = { pid: +spawnSync('/bin/sh', ['-c', 'perl -e \'setpgrp(0,0); exec @ARGV\' sleep 30 >/dev/null 2>&1 & echo $!'], { encoding: 'utf8' }).stdout.trim() };
     kids.add(live.pid);
-    await sleep(200);
+    await sleep(300);
     const lst = RX.procOf(live.pid).lstart;
     const dead = spawnSync('/bin/sh', ['-c', 'echo $$']).stdout.toString().trim();
     const rf = (n) => path.join(jdir, 'heavy-runs', n);
@@ -369,12 +371,14 @@ const groupAlive = (g) => { try { process.kill(-g, 0); return true; } catch (e) 
     kids.add(g2.pid);
     await sleep(300);
     const ix = id32();
+    n = fs.readFileSync(jf, 'utf8').split('\n').filter(Boolean).length;
     fs.appendFileSync(jf, line({ ev: 'queued', id: ix, hash: 'h', kind: null, cls: 'heavy', argv: ['x'] }) + '\n' + JSON.stringify({ v: 1, n: ++n, ts: 'x', call: 'old', ev: 'running', id: ix, pgid: g2.pid, lstart: 'Mon Jan  1 00:00:00 2001', slot: '/x/heavy.0.lock', log: '/x', started: '/x', rcFile: '/x' }) + '\n');
     const rv2 = spawnSync(process.execPath, [CHAIN, 'resolve', '--heavy', d.state, '--task', 'K', '--run', ix, 'stop'], { encoding: 'utf8' });
     ok('B\'28 resolve --heavy stop when the leader is gone: refused, "leader gone: the slot stays held by the marker until the group ends"', rv2.status !== 0 && /leader gone: the slot stays held by the marker until the group ends/.test(rv2.stdout + rv2.stderr) && groupAlive(g2.pid), rv2.stdout + rv2.stderr);
     try { process.kill(-g2.pid, 'SIGKILL'); } catch { /* gone */ }
     // damage inside and an undetermined run
     const jf2 = path.join(T, 'damaged.jsonl');
+    n = 0;
     fs.writeFileSync(jf2, line({ ev: 'queued', id: ids.a, hash: 'h', kind: null, cls: 'heavy', argv: ['x'] }) + '\nnot json\n' + line({ ev: 'done', id: ids.a, rc: 0 }) + '\n');
     ok('B\'27 a damaged line inside: the start check refuses with the path and the line', /damaged at line 2/.test(HS.journalProblem(jf2) || '') && (HS.journalProblem(jf2) || '').includes(jf2), HS.journalProblem(jf2));
     const jf3 = path.join(T, 'undetermined.jsonl');

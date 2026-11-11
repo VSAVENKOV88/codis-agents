@@ -1540,4 +1540,4 @@ function openCommitService(o) {
   };
 }
 
-module.exports = { openCommitService, readNoFollow, pathProblem, requestProblem, VERIFIED_GIT_VERSIONS, VERIFIED_CODEX_VERSIONS, KILL_GRACE_MS, MAX_REQUEST_BYTES, POLL_MS, JOURNAL_VERSION };
+module.exports = { openCommitService, readNoFollow, CODEX_ADDED, pathProblem, requestProblem, VERIFIED_GIT_VERSIONS, VERIFIED_CODEX_VERSIONS, KILL_GRACE_MS, MAX_REQUEST_BYTES, POLL_MS, JOURNAL_VERSION };
