@@ -71,6 +71,10 @@
 //   chain-run.js resolve ... | resolve --list ... | resolve --commits ...; chain-run.js status --commits <dir> --task <k>
 //     The coordinator's decisions on what a dead run left (scripts/chain-resolve.js, its header and USAGE). status
 //     prints per task its basis and its decisions; a refused start prints the basis of every run it names.
+//   chain-run.js status --heavy <state folder> --task <k>; chain-run.js resolve --heavy <state folder> --task <k> --run <id> stop
+//     The runs of the heavy channel of a codex task (scripts/heavy-service.js): their states from the journal, a run left
+//     without its adapter judged by its group; resolve stops such a group when its leader is the recorded process. A
+//     codex task whose heavy journal holds a run running without adapter, an undetermined run or damage does not start.
 //   chain-run.js run <run folder>
 //     The conductor itself (started by `start`; it reads <run folder>/request.json). Exit: 0 every task done; 3 a task
 //     is not done; 4 the chain script threw, or results.json could not be written; 5 the run folder already has its writer;
@@ -137,6 +141,7 @@ const { MODEL_ALIASES } = require('./config.js');
 const RR = require('./role-roots.js');
 const CJ = require('./chain-journal.js');
 const RS = require('./chain-resolve.js');
+const HS = require('./heavy-service.js');
 
 const ROOT = path.join(__dirname, '..');
 const MAX_WAIT = 270;
@@ -145,7 +150,8 @@ const USAGE = 'usage: chain-run.js start --host claude|codex --tasks <file> [--o
   + '       chain-run.js status <run-id|run folder> [--wait <s>] [--config <file>]\n'
   + '       chain-run.js stop <run-id|run folder> [--config <file>]\n'
   + '       chain-run.js resolve <run-id|run folder> --task <key> --as ran|retry|abort [--step <n>] [--verdict <v>] [--head <sha>] --basis <seq:sha256> --note <text>\n'
-  + '       chain-run.js resolve --list [--task <key>] [--config <file>]; resolve --commits ...; status --commits <dir> --task <key>';
+  + '       chain-run.js resolve --list [--task <key>] [--config <file>]; resolve --commits ...; status --commits <dir> --task <key>\n'
+  + '       chain-run.js status --heavy <state folder> --task <key>; resolve --heavy <state folder> --task <key> --run <id> stop [--note <text>]';
 
 const readJson = CJ.readJsonSafe;
 const writeJsonAtomic = CJ.writeAtomic;
@@ -322,6 +328,28 @@ function commitJournalProblem(config, key) {
 }
 
 // config.js json as the role-chain skill runs it: {config} or {error}.
+// The heavy journal of a task before its roles (scripts/heavy-service.js journalProblem): a run whose group lives
+// without its adapter, an undetermined run or a damaged journal makes the heavy channel refuse every request of the
+// task, so the task waits for resolve --heavy. Text, or null.
+const heavyJournalProblem = (config, key) => HS.journalProblem(path.join(commitStateDir(config), key, 'heavy.jsonl'));
+// chain-run.js status --heavy <state folder> --task <key>: the runs of the heavy channel of a task, from its journal.
+function statusHeavy(argv) {
+  const { a, bad } = flagsOf(argv.slice(2), { '--task': 'task' });
+  if (bad || !argv[1] || !a.task) usage('status --heavy <state folder> --task <key>');
+  process.stdout.write(JSON.stringify(HS.status(path.resolve(argv[1]), a.task), null, 1) + '\n');
+}
+// chain-run.js resolve --heavy <state folder> --task <key> --run <id> stop [--note <text>]: the coordinator stops a run
+// left without its adapter (its leader checked by pid and start time). Exit 0 stopped, 1 refused.
+async function resolveHeavy(argv) {
+  const { a, bad } = flagsOf(argv.slice(2).filter((x) => x !== 'stop'), { '--task': 'task', '--run': 'run', '--note': 'note' });
+  if (bad || !argv[1] || !a.task || !a.run || !argv.includes('stop')) usage('resolve --heavy <state folder> --task <key> --run <id> stop [--note <text>]');
+  const ms = (k) => (/^\d+$/.test(process.env[k] || '') ? +process.env[k] : undefined);
+  const r = await HS.resolveStop(path.resolve(argv[1]), a.task, a.run, { note: a.note, graceMs: ms('CODIS_HEAVY_KILL_GRACE_MS'), waitMs: ms('CODIS_HEAVY_EMPTY_WAIT_MS') });
+  process.stdout.write(JSON.stringify(r) + '\n');
+  if (!r.ok) process.stderr.write(`chain-run: resolve --heavy refused: ${r.why}\n`);
+  process.exit(r.ok ? 0 : 1);
+}
+
 function loadConfig(file) {
   const p = spawnSync(process.execPath, [path.join(__dirname, 'config.js'), 'json'].concat(file ? [file] : []), { encoding: 'utf8' });
   if (p.status !== 0) return { error: (p.stderr || p.stdout || `config.js exit ${p.status}`).trim() };
@@ -340,6 +368,10 @@ function adapterCfg(host, args, ad, callsDir, log, runId) {
     cfg.commit = { stateDir: commitStateDir(config) };
     if (runId !== undefined) cfg.commit.runId = runId;
     if (config.commitAuthor) cfg.commit.author = { name: config.commitAuthor.name, email: config.commitAuthor.email };
+    // the heavy channel of prog and test (scripts/heavy-service.js): the class of a kind from slots.kinds of the config,
+    // and the config's own path (configPath of config.js json), whose slot directory the holder queues in; a config
+    // without its path (not loaded by config.js) gets no channel, so no holder queues by a lookup from the worktree
+    if (typeof config.configPath === 'string') cfg.heavy = { config: config.configPath, kinds: (config.slots && config.slots.kinds) || {} };
     cfg.codex = { home: ad.codexHome };
     if (ad.bin) cfg.codex.bin = ad.bin;
     if (ad.codexAuth) cfg.codex.auth = ad.codexAuth;
@@ -1028,6 +1060,9 @@ async function conduct(runDirArg) {
         // the commit journal of the task, read under its lock: no other conductor runs the task meanwhile
         const cj = !rc.reasons.length && req.host === 'codex' ? commitJournalProblem(args.config, t.key) : null;
         if (cj) rc.reasons.push({ why: cj, kind: 'commits' });
+        // the heavy journal of the task: a run left running without its adapter, an undetermined run or damage
+        const hj = !rc.reasons.length && req.host === 'codex' ? heavyJournalProblem(args.config, t.key) : null;
+        if (hj) rc.reasons.push({ why: hj, kind: 'heavy' });
         return Object.assign(rc, { text: rc.reasons.length ? refusalText(rc, ctx) : null });
       });
       if (!got.ok) { block(t.key, got.why); continue; }
@@ -1242,6 +1277,7 @@ function snapshot(runDir) {
 function status(argv) {
   const id = argv[0];
   if (id === '--commits') return RS.statusCommits(argv);
+  if (id === '--heavy') return statusHeavy(argv);
   if (!id || id.startsWith('--')) usage('status <run-id|run folder>');
   const { a, bad } = flagsOf(argv.slice(1), { '--wait': 'wait', '--config': 'config' });
   if (bad) usage(bad);
@@ -1265,13 +1301,14 @@ function status(argv) {
 }
 
 // Before the command line: resolve (scripts/chain-resolve.js) takes these functions at call time.
-module.exports = { requiresIsolationOf, authorProblem, commitJournalProblem, commitStateDir, beginStop, StopError, lockData, liveText, read3, openStepVerdict, lockFileOf, loadConfig, runDirOf, refusalText, makeSteps, stepExec, openStepText, stateRootProblem, runScript, makePipeline, taskTable, parseTasks, lstartOf, liveness, reconcile, acquireTask, unrecordedCalls, takeLock, releaseLock, execStep, hookGate, adapterCfg, logState, CAUSE_KNOWN, MAX_WAIT };
+module.exports = { requiresIsolationOf, authorProblem, commitJournalProblem, heavyJournalProblem, commitStateDir, beginStop, StopError, lockData, liveText, read3, openStepVerdict, lockFileOf, loadConfig, runDirOf, refusalText, makeSteps, stepExec, openStepText, stateRootProblem, runScript, makePipeline, taskTable, parseTasks, lstartOf, liveness, reconcile, acquireTask, unrecordedCalls, takeLock, releaseLock, execStep, hookGate, adapterCfg, logState, CAUSE_KNOWN, MAX_WAIT };
 
 if (require.main === module) {
   const [cmd, ...rest] = process.argv.slice(2);
   if (cmd === 'start') start(rest);
   else if (cmd === 'status') status(rest);
   else if (cmd === 'stop') stopCmd(rest);
+  else if (cmd === 'resolve' && rest[0] === '--heavy') resolveHeavy(rest).catch((e) => { process.stderr.write(`chain-run: ${e.stack}\n`); process.exit(4); });
   else if (cmd === 'resolve') RS.main(rest);
   else if (cmd === 'run' && rest.length === 1) conduct(path.resolve(rest[0])).catch((e) => { process.stderr.write(`chain-run: the conductor failed: ${e.stack}\n`); process.exit(4); });
   else usage(`unknown command ${JSON.stringify(cmd)}`);

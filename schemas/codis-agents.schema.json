@@ -58,7 +58,8 @@
         "lockDir": { "type": "string", "description": "Directory for slot lock files and the waiting queue." },
         "legacyLock": { "type": "string", "description": "Optional single lock file of an older setup; while held it counts as one heavy slot." },
         "jobsAlone": { "type": "integer", "minimum": 1, "description": "Guard workers of all full runs together; a lone full run gets all of them." },
-        "jobsShared": { "type": "integer", "minimum": 1, "description": "Worker cap for a full run while another heavy slot is busy." }
+        "jobsShared": { "type": "integer", "minimum": 1, "description": "Worker cap for a full run while another heavy slot is busy." },
+        "kinds": { "type": "object", "additionalProperties": { "enum": ["medium", "heavy"] }, "description": "Class of a heavy command a role on codex runs through the heavy channel, by its kind (heavy-req.js --kind); a kind not listed, or no kind, is heavy. Example: {\"tsc\": \"medium\"}." }
       }
     },
     "reportLanguage": { "type": "string", "description": "Language of role reports (prompts stay in English)." },

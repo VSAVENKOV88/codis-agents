@@ -113,6 +113,10 @@ const REQUIRED = ['repoDir', 'worktreeRoot', 'sharedDir'];
 const SLOT_SPEC = {
   medium: ['number', 2], heavy: ['number', 2], total: ['number', 4], lockDir: ['path', '~/.cache/codis-agents/slots'],
   legacyLock: ['path', ''], jobsAlone: ['number', 6], jobsShared: ['number', 3],
+  // The class of a heavy command a role on codex runs through the heavy channel (scripts/heavy-service.js), by its kind:
+  // {<kind>: "medium" | "heavy"}; a kind not here, or no kind, is heavy (owner decision 1 of p-codex-A2b). A project
+  // key, not a machine one: the kinds are the project's work.
+  kinds: ['object', null],
 };
 const WT_SPEC = { scan: ['string[]', []], skip: ['string[]', []], link: ['string[]', []] };
 // Rerun of new reds one by one after a full run (scripts/guards-result.js explains why): command ({wt}, {name}),
@@ -204,6 +208,7 @@ function remoteErrors(r, errs) {
   }
 }
 const MACHINE_SLOT_SPEC = Object.assign({}, SLOT_SPEC, { extraHeavy: ['any', null] });
+delete MACHINE_SLOT_SPEC.kinds; // the kinds of work are the project's
 const EXTRA_SPEC = { freePct: ['number', 50], swapGrowMB: ['number', 256], windowS: ['number', 300] };
 // Machine keys a project config may still carry (until config.js migrate): project key -> machine key, and the
 // conversion of the project's value into the machine's unit.
@@ -381,6 +386,11 @@ function resolve(raw, opts = {}) {
   const c = level(SPEC, proj, '', errors);
   for (const k of REQUIRED) if (!c[k]) errors.push(`${k}: required`);
   c.slots = level(SLOT_SPEC, c.slots, 'slots.', errors);
+  const kinds = c.slots.kinds || {};
+  for (const [k, v] of Object.entries(kinds)) {
+    if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(k)) errors.push(`slots.kinds.${k}: a kind is a plain name (a-z, 0-9, _ and -)`);
+    if (v !== 'medium' && v !== 'heavy') errors.push(`slots.kinds.${k}: expected "medium" or "heavy", not ${JSON.stringify(v)}`);
+  }
   for (const k of ['medium', 'heavy', 'total', 'jobsAlone', 'jobsShared']) {
     if (!(Number.isInteger(c.slots[k]) && c.slots[k] >= 1)) errors.push(`slots.${k}: expected a positive integer`);
   }
@@ -410,7 +420,7 @@ function resolve(raw, opts = {}) {
     }
     if (given.length && !m.errors.length) warnings.push(`warning: machine settings in ${here} (${given.map(([pk]) => pk).join(', ')}) and no machine file at ${m.path}: the project's values apply - run config.js migrate to see the move, with --write to make it`);
   }
-  c.slots = merged.slots;
+  c.slots = Object.assign(merged.slots, { kinds });
   c.preconditions = { minFreeDiskGB: merged.minFreeDiskGB, swapMinMB: merged.swapMinMB };
   c.maxDockerChains = mv.maxDockerChains;
   c.coordinatorContextK = mv.coordinatorContextK;
