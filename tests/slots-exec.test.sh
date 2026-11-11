@@ -66,11 +66,13 @@ tm() { local s=$1 p; shift; "$@" & p=$!; BG+=$p; bwait $p $(( s * 10 )) }
 busy() { [[ -e $1 ]] || return 1; ( zsystem flock -t 0 -f _f $1 ) 2>/dev/null; (( $? == 1 )) }
 # galive <pgid> - the group lives (kill 0 succeeds, or EPERM)
 galive() { perl -MPOSIX -e 'exit(kill(0, -$ARGV[0]) || $!+0 == POSIX::EPERM() ? 0 : 1)' $1 }
-# lead <command...> & - the command in a process group of its own (as wait-step.js and guards-remote-host.js start jobs)
-lead() { perl -e 'setpgrp(0,0) or die "setpgrp: $!"; exec { $ARGV[0] } @ARGV or die "exec: $!"' "$@" }
+# lead <command...> & - the command in a process group of its own (as wait-step.js and guards-remote-host.js start
+# jobs), always in the background: the subshell of `&` becomes perl and then the command, so $! is the command's pid and
+# its group; INT and QUIT back to their defaults (a job of a non-interactive shell starts with them ignored)
+lead() { exec perl -e '$SIG{INT} = $SIG{QUIT} = "DEFAULT"; setpgrp(0,0) or die "setpgrp: $!"; exec { $ARGV[0] } @ARGV or die "exec: $!"' "$@" }
 holder_of() { pgrep -P $1 -f slot-holder 2>/dev/null | head -1 }
 markers() { print -r -- $SLOTS_DIR/*.exec.*(N:t) }
-jline() { grep -c $'\t'"$1"$'\t' $SLOT_JOURNAL 2>/dev/null || print 0 }
+jline() { local n; n=$(grep -c $'\t'"$1"$'\t' $SLOT_JOURNAL 2>/dev/null); print -r -- ${n:-0} }
 
 [[ -f $H/slots.zsh ]] || { print -r -- "  FAIL no $H/slots.zsh"; exit 1; }
 

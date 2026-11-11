@@ -107,7 +107,7 @@ try {
     for (const [k, v] of Object.entries(process.env)) if (!/^(SLOT_|SLOTS_|GUARDS_|CODIS_|CLAUDE_PROJECT_DIR$)/.test(k)) env0[k] = v;
     // the knobs of slots.zsh by name (tests/slots-hermetic.test.js reads this list): none comes from the caller
     for (const k of ['GUARDS_EXCLUSIVE_LOCK', 'GUARDS_EXCL_GLOB', 'GUARDS_EXCL_MARKER', 'GUARDS_JOBS_ALONE', 'GUARDS_JOBS_SHARED', 'SLOTS_DIR', 'SLOT_EXCL_TOOLS', 'SLOT_HEAVY_N',
-      'SLOT_HIST_GAP', 'SLOT_JOURNAL', 'SLOT_KIND', 'SLOT_LABEL', 'SLOT_LEGACY_LOCK', 'SLOT_MEDIUM_N', 'SLOT_OS', 'SLOT_POLL', 'SLOT_PROC', 'SLOT_RETRY_RC', 'SLOT_PRIORITY', 'SLOT_SAY',
+      'SLOT_HIST_GAP', 'SLOT_JOURNAL', 'SLOT_KIND', 'SLOT_LABEL', 'SLOT_LEGACY_LOCK', 'SLOT_MEDIUM_N', 'SLOT_OS', 'SLOT_POLL', 'SLOT_PROC', 'SLOT_RETRY_RC', 'SLOT_PRIORITY', 'SLOT_KILL_GRACE', 'SLOT_EMPTY_WAIT', 'SLOT_EXEC_NOTE', 'CODIS_SLOT_HELD', 'SLOT_SAY',
       'SLOT_SWAP_MIN_MB', 'SLOT_THIRD_FREE_PCT', 'SLOT_THIRD_SWAP_GROW_MB', 'SLOT_THIRD_WINDOW', 'SLOT_TOTAL_MAX']) delete env0[k];
     const cf = path.join(T, 'case.json');
     fs.writeFileSync(cf, JSON.stringify({ repoDir: path.join(T, 'main'), worktreeRoot: T, sharedDir: path.join(T, 'shared'),

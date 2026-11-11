@@ -2,7 +2,8 @@
 # Tester checks of the slot locks without lockf(1) (task U1a), on a TEMPORARY slot directory and a fake machine.
 # Run by tests/slots-u1a.test.js (macOS and Linux). Exit code 0 - holds.
 # Cases (cells of the U1a matrix the programmer's tests do not reach):
-#   A3. kill -9 of a holder while another heavy.sh WAITS for that slot: the waiter takes it and runs its command;
+#   A3. kill -9 of a holder while another heavy.sh WAITS for that slot: the command left behind keeps the slot by its
+#       exec marker (slots.zsh), the waiter takes the same slot only once that command has ended;
 #   A8. reverse direction of the exclusive lock: while an exclusive guard runs under heavy.sh, a flock(2) probe of the
 #       project runner (lockf -t 0 on macOS, flock -n on Linux) sees the lock busy; free again after the guard;
 #   A1. the command's standard input passes through the holder (`print x | heavy.sh cat`), heavy and medium;
@@ -21,7 +22,7 @@ export XDG_CONFIG_HOME=$T/no-xdg; unset CODIS_AGENTS_MACHINE
 export SLOTS_DIR=$T/slots SLOT_LEGACY_LOCK= SLOT_POLL=0.2 SLOT_SAY=1 SLOT_THIRD_WINDOW=1 SLOT_HIST_GAP=2
 # hermetic inside an outer slot (heavy.sh node tests/run.js): drop what the outer slots.zsh exported
 # The thresholds are dropped too (README: SLOT_SWAP_MIN_MB=0 on Linux): the cases rely on the defaults on the fake machine.
-unset GUARDS_EXCLUSIVE_LOCK SLOT_JOURNAL SLOT_MEDIUM_N SLOT_HEAVY_N SLOT_TOTAL_MAX GUARDS_JOBS_ALONE GUARDS_JOBS_SHARED SLOT_EXCL_TOOLS SLOT_PATH SLOT_LABEL SLOT_KIND SLOT_RETRY_RC SLOT_PRIORITY SLOT_SWAP_MIN_MB SLOT_THIRD_FREE_PCT SLOT_THIRD_SWAP_GROW_MB SLOT_PROC GUARDS_EXCL_GLOB GUARDS_EXCL_MARKER
+unset GUARDS_EXCLUSIVE_LOCK SLOT_JOURNAL SLOT_MEDIUM_N SLOT_HEAVY_N SLOT_TOTAL_MAX GUARDS_JOBS_ALONE GUARDS_JOBS_SHARED SLOT_EXCL_TOOLS SLOT_PATH SLOT_LABEL SLOT_KIND SLOT_RETRY_RC SLOT_PRIORITY SLOT_KILL_GRACE SLOT_EMPTY_WAIT SLOT_EXEC_NOTE CODIS_SLOT_HELD SLOT_SWAP_MIN_MB SLOT_THIRD_FREE_PCT SLOT_THIRD_SWAP_GROW_MB SLOT_PROC GUARDS_EXCL_GLOB GUARDS_EXCL_MARKER
 # the fake machine below is a macOS one, on Linux too: the readings follow SLOT_OS, not the box
 export SLOT_OS=darwin
 mkdir -p $T/shared $T/wts $T/g
@@ -61,7 +62,7 @@ xbusy() { if [[ -x /usr/bin/lockf ]]; then /usr/bin/lockf -k -t 0 $1 true 2>/dev
 [[ -f $H/slots.zsh ]] || { print -r -- "  FAIL no $H/slots.zsh"; exit 1; }
 
 # A3. one heavy slot (SLOT_HEAVY_N=1, free 20 %: no extra one); the first holds it, the second waits in the queue;
-#     kill -9 of the first holder - the second takes the slot and runs
+#     kill -9 of the first holder - the second waits while the command left behind lives, then takes the slot
 (
   export SLOT_HEAVY_N=1
   "$H/heavy.sh" zsh -c 'print -r -- $PPID > '$T'/a3.ppid; print -r -- $$ > '$T'/a3.cmd; print -r -- $SLOT_PATH > '$T'/a3.slot
@@ -75,10 +76,12 @@ waitfor 'grep -q "waiting for slot heavy" $T/a3b.out' 50
 ok 'A3. (setup) the second heavy.sh waits while the first holds the only heavy slot' 'grep -q "waiting for slot heavy" $T/a3b.out && [[ ! -s $T/a3b.slot ]]' "$(tail -2 $T/a3b.out)"
 kill -9 $(<$T/a3.ppid) 2>/dev/null
 BG+=$(<$T/a3a.pid) BG+=$(<$T/a3b.pid)
+sleep 1.5
+ok 'A3. kill -9 of the holder: the waiting heavy.sh does not run while the command left behind lives' '[[ ! -s $T/a3b.slot ]] && kill -0 $(<$T/a3.cmd) 2>/dev/null' "slot $(<$T/a3b.slot 2>/dev/null); $(tail -2 $T/a3b.out)"
+stop $(<$T/a3.cmd)
 waitfor '[[ -s $T/a3b.slot ]]' 100
-ok 'A3. kill -9 of the holder: the waiting heavy.sh takes the same slot and runs' '[[ -s $T/a3b.slot && $(<$T/a3b.slot) == $(<$T/a3.slot) ]]' "slot $(<$T/a3.slot 2>/dev/null) -> $(<$T/a3b.slot 2>/dev/null); $(tail -2 $T/a3b.out)"
-ok 'A3. ... while the command left behind by the killed holder still lives' 'kill -0 $(<$T/a3.cmd) 2>/dev/null'
-stop $(<$T/a3.cmd); bwait $(<$T/a3b.pid) >/dev/null 2>&1
+ok 'A3. ... that command ended: the waiting heavy.sh takes the same slot and runs' '[[ -s $T/a3b.slot && $(<$T/a3b.slot) == $(<$T/a3.slot) ]]' "slot $(<$T/a3.slot 2>/dev/null) -> $(<$T/a3b.slot 2>/dev/null); $(tail -2 $T/a3b.out)"
+bwait $(<$T/a3b.pid) >/dev/null 2>&1
 
 # A8. reverse direction: an exclusive guard under heavy.sh holds a flock(2) lock that the project runner sees
 print -r -- '// guards:exclusive — test: shares a fixed resource

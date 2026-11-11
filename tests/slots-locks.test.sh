@@ -8,7 +8,7 @@
 # of those utilities too (SLOT_EXCL_TOOLS, first found); with none - one refusal line, code 72.
 # Cases: 1. the holder is a waiting zsh, the command its child; the slot is held while the command runs; the code
 #           passes through (7); 2. the command opening and closing its own slot file does not drop the slot;
-#        3. kill -9 of the holder frees the slot, the command left behind does not hold it; 4. a holder that loses the
+#        3. kill -9 of the holder drops its lock, the command left behind keeps the slot by its exec marker; 4. a holder that loses the
 #           race for the file exits 75 WITHOUT running the command, slot_run says so and queues again, the command runs
 #           once later; 5. GNU mktemp (templates need XXX) - heavy.sh, medium.sh, an exclusive guard and guards-all.sh
 #           work; 6. no ps or no pgrep - sourcing slots.zsh is refused with one line and code 72, the command never
@@ -30,7 +30,7 @@ export SLOTS_DIR=$T/slots SLOT_LEGACY_LOCK= SLOT_POLL=0.2 SLOT_SAY=1 SLOT_THIRD_
 # Run inside an outer slot (heavy.sh node tests/run.js) the outer slots.zsh has exported its own lock, journal and
 # counts: without this the test would wait on (and write to) the real ones.
 # The thresholds are dropped too (README: SLOT_SWAP_MIN_MB=0 on Linux): the cases rely on the defaults on the fake machine.
-unset GUARDS_EXCLUSIVE_LOCK SLOT_JOURNAL SLOT_MEDIUM_N SLOT_HEAVY_N SLOT_TOTAL_MAX GUARDS_JOBS_ALONE GUARDS_JOBS_SHARED SLOT_EXCL_TOOLS SLOT_PATH SLOT_LABEL SLOT_KIND SLOT_RETRY_RC SLOT_PRIORITY SLOT_SWAP_MIN_MB SLOT_THIRD_FREE_PCT SLOT_THIRD_SWAP_GROW_MB SLOT_PROC GUARDS_EXCL_GLOB GUARDS_EXCL_MARKER
+unset GUARDS_EXCLUSIVE_LOCK SLOT_JOURNAL SLOT_MEDIUM_N SLOT_HEAVY_N SLOT_TOTAL_MAX GUARDS_JOBS_ALONE GUARDS_JOBS_SHARED SLOT_EXCL_TOOLS SLOT_PATH SLOT_LABEL SLOT_KIND SLOT_RETRY_RC SLOT_PRIORITY SLOT_KILL_GRACE SLOT_EMPTY_WAIT SLOT_EXEC_NOTE CODIS_SLOT_HELD SLOT_SWAP_MIN_MB SLOT_THIRD_FREE_PCT SLOT_THIRD_SWAP_GROW_MB SLOT_PROC GUARDS_EXCL_GLOB GUARDS_EXCL_MARKER
 # the fake machine below is a macOS one, on Linux too: the readings follow SLOT_OS, not the box
 export SLOT_OS=darwin
 mkdir -p $T/wts/xo $T/shared $T/g
@@ -100,7 +100,7 @@ waitfor '[[ -s $T/2.slot ]]'
 ok '2. the command opened and closed its slot file - the slot is still held' 'busy $(<$T/2.slot)' "$(<$T/2.out)"
 touch $T/rel.2; bwait $P
 
-# 3. kill -9 of the holder: the slot is free, the command left behind does not hold it
+# 3. kill -9 of the holder: its lock is dropped; the command left behind keeps the slot by its exec marker until it ends
 "$H/heavy.sh" zsh -c 'print -r -- $PPID > '$T'/3.ppid; print -r -- $$ > '$T'/3.cmd; print -r -- $SLOT_PATH > '$T'/3.slot
   while [[ ! -e '$T'/rel.3 && ! -e '$T'/rel.ALL ]]; do sleep 0.05; done' > $T/3.out 2>&1 & P=$!; BG+=$P
 waitfor '[[ -s $T/3.slot ]]'
@@ -108,8 +108,8 @@ s3=$(<$T/3.slot); c3=$(<$T/3.cmd)
 ok '3. (setup) the slot is held' 'busy $s3'
 kill -9 $(<$T/3.ppid); bwait $P 2>/dev/null
 waitfor '! busy $s3' 30
-ok '3. kill -9 of the holder - the slot is free' '! busy $s3'
-ok '3. ... while the command it left behind is still alive (it does not hold the slot)' 'kill -0 $c3 2>/dev/null'
+ok '3. kill -9 of the holder - its lock is dropped' '! busy $s3'
+ok '3. ... the command it left behind lives and its exec marker <slot>.exec.<its group> remains' 'kill -0 $c3 2>/dev/null && [[ -e $s3.exec.$c3 ]]' "$(print -r -- $s3.exec.*(N:t))"
 stop $c3
 
 # 4. a holder that loses the race for the file exits 75 without running the command; slot_run queues again

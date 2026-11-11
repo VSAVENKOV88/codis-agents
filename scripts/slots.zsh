@@ -6,13 +6,33 @@
 #          heavy  - SLOT_HEAVY_N slots (default 2), one more only while free memory holds and swap does not grow;
 #          medium + heavy together (with the optional legacy lock) <= SLOT_TOTAL_MAX (default 4).
 # A slot is a file <SLOTS_DIR>/<class>.<i>.lock held with `zsystem flock` (fcntl, zsh/system; the same on macOS and
-# Linux) for the whole command. The HOLDER is a small zsh that takes the lock (-t 0: busy - exit 75, "lost the race"),
-# writes the got-file, runs the command as its CHILD, waits for it and exits with its code. Measured on macOS
-# (experiments E1-E3 of the U1 analysis): the holder dies (kill -9 too) - the kernel drops the lock, and the command it
-# leaves behind does not hold the slot (neither did the children of lockf -k before); the command opening and closing
-# its slot file in its own process does not drop the lock (fcntl locks belong to the process that took them). Rule:
-# the holder never opens its own slot file in its own process after taking the lock - closing any descriptor of that
-# file drops an fcntl lock (man zshmodules); so the command is never exec-ed in place of the holder.
+# Linux) for the whole command. The HOLDER (scripts/slot-holder.zsh) leads a process group of its own, takes the lock
+# (-t 0: busy - exit 75, "lost the race"), writes the got-file, runs the command as its CHILD in a process group of its
+# own, waits for it and exits with its code. Measured on macOS (experiments E1-E3 of the U1 analysis): the holder dies
+# (kill -9 too) - the kernel drops the lock; the command opening and closing its slot file in its own process does not
+# drop the lock (fcntl locks belong to the process that took them). Rule: the holder never opens its own slot file in
+# its own process after taking the lock - closing any descriptor of that file drops an fcntl lock (man zshmodules); so
+# the command is never exec-ed in place of the holder.
+# EXEC MARKER: the command's group is named by the file <slot>.exec.<pgid>, written before the command's first
+# instruction (scripts/slot-group.pl run) and removed only once the group is gone. A slot is busy while its lock is
+# held, OR a marker names a group that lives (kill(-pgid, 0) succeeds or fails with EPERM - perl tells EPERM from ESRCH,
+# zsh cannot), OR a marker's name does not end in a group number. So a command left behind by a dead holder, and any
+# member of its group, keeps the slot until it ends (measured in A2b-0, c5c/c5d). Several markers per slot are allowed
+# (slot-hold.sh's loop and the group the adapter of a codex role starts in it). A marker of a dead group is removed by
+# the waiter that takes the slot, under admit.lock, before its holder starts. Only this version reads markers: a waiter
+# of an older copy on the same slot directory sees the lock alone (README, Known gaps).
+# STOP: only the holder stops the command. slot_run's trap (INT/TERM/HUP to the caller, or to its process group) sends
+# TERM to the holder and waits for it; the holder sends TERM and CONT to the command's group, waits SLOT_KILL_GRACE s for
+# it to be gone, KILLs it and waits up to SLOT_EMPTY_WAIT s more; the slot is given only after that. The same stop runs
+# when the command has exited and members of its group remain. A group not gone after KILL keeps its marker (the slot
+# stays busy until it ends). KILL without a TERM before it (kill -9 of the caller or of the holder) does not stop the
+# command: it runs on in its slot, under its marker, to its end (README, Known gaps). Both pauses default to the pause of
+# the roles, 30 s (scripts/role-exec.js KILL_GRACE_MS; owner 2026-11-11 "по рекомендации, 30 с").
+# NESTED: CODIS_SLOT_HELD="<class> <slot file>" (set by the adapter of a codex role for the commands it runs in a held
+# slot) lets heavy.sh / medium.sh run without a second ticket: only when the slot file lies in this SLOTS_DIR (another
+# directory - a test with its own slots - is an ordinary queue), a marker <slot>.exec.<my group> exists and the class
+# fits (a held heavy slot serves medium and heavy, a held medium slot medium only); else 64 at once, never the queue (a
+# ticket behind the held slot would wait for itself). The group comes from perl (the codex sandbox refuses ps).
 # The slot is chosen under a short admission lock (zsystem flock on admit.lock), so two waiters cannot count the same
 # "free" and overshoot the ceiling.
 # The EXCLUSIVE lock (GUARDS_EXCLUSIVE_LOCK, guards marked `guards:exclusive`) is different: it is a flock(2) lock by
@@ -20,8 +40,9 @@
 # on Linux flock(2) and fcntl locks do not see each other. slot_exclusive_run takes it with the first executable of
 # SLOT_EXCL_TOOLS (default /usr/bin/lockf /usr/bin/flock /bin/flock; a name ending in "flock" is called as flock(1),
 # anything else as lockf(1)); none - one refusal line, code 72.
-# Requirements checked when this file is sourced: ps and pgrep (procps: live queue tickets, stopping a command tree);
-# missing - one refusal line, code 72 (EX_OSFILE), never a silent cleaning of every ticket as dead.
+# Requirements checked when this file is sourced: ps and pgrep (procps: live queue tickets, the helper loops of
+# guards-all.sh) and perl (process groups, scripts/slot-group.pl); missing - one refusal line, code 72 (EX_OSFILE),
+# never a silent cleaning of every ticket as dead.
 # Temporary files use a template with XXXXXX in ${TMPDIR:-/tmp} (BSD and GNU mktemp alike; GNU refuses `-t name`).
 # Legacy: while SLOT_LEGACY_LOCK (a single shared lock of an older setup) is held, it counts as one busy heavy slot.
 #
@@ -72,14 +93,16 @@
 
 zmodload zsh/system zsh/datetime
 _SLOTS_HERE=${${(%):-%x}:A:h}
-# ps (start time of a waiter: is its ticket alive) and pgrep (the command tree on TERM) - procps on Linux.
+# ps (start time of a waiter: is its ticket alive) and pgrep (helper loops of guards-all.sh) - procps on Linux; perl
+# (process groups and their markers, scripts/slot-group.pl).
 () {
   local t miss=()
-  for t in ps pgrep; do (( $+commands[$t] )) || miss+=$t; done
+  for t in ps pgrep perl; do (( $+commands[$t] )) || miss+=$t; done
   (( ${#miss} )) || return 0
-  print -u2 -r -- "codis-agents slots: refused - ${(j: and :)miss} not found in PATH (ps tells live queue tickets from dead ones, pgrep stops a command tree); install procps (Debian/Ubuntu: apt-get install procps)"
+  print -u2 -r -- "codis-agents slots: refused - ${(j: and :)miss} not found in PATH (ps tells live queue tickets from dead ones, pgrep stops helper loops, perl leads and probes the process group of a slot's command); install procps (Debian/Ubuntu: apt-get install procps) and perl"
   return 72
 } || return 72
+_SLOT_GROUP=$_SLOTS_HERE/slot-group.pl
 # A project config that exists but does not validate is a refusal, never a silent default: falling back to
 # ~/.cache/codis-agents/slots made a second, separate queue whose waiters did not see the first one's (one unknown key
 # in the config was enough), and the memory ceiling of the machine no longer held. No config at all keeps the defaults.
@@ -102,6 +125,8 @@ unset _slot_cfg _slot_cfgf
 : ${SLOT_HEAVY_N:=2}
 : ${SLOT_POLL:=5}                 # pause between attempts, s
 : ${SLOT_SAY:=30}                 # "waiting for slot ..." at least this often, s (an agent silent for 10 min is killed)
+: ${SLOT_KILL_GRACE:=30}          # stop of a slot's command: TERM, this pause, KILL (s; = role-exec.js KILL_GRACE_MS)
+: ${SLOT_EMPTY_WAIT:=30}          # ... then at most this long for its group to be gone (s); not gone - its marker stays
 [[ -n $SLOT_SWAP_MIN_MB ]] || _SLOT_SWAP_FROM=${_SLOT_SWAP_FROM:-"the default; without a project config no machine file is read"}
 : ${SLOT_SWAP_MIN_MB:=4000}
 : ${_SLOT_SWAP_FROM:="the environment variable SLOT_SWAP_MIN_MB"}
@@ -123,7 +148,7 @@ _SLOT_THIRD_SET=${SLOT_THIRD_FREE_PCT:+1}   # set explicitly - the extra heavy s
 : ${GUARDS_EXCL_MARKER:=//}
 # Exported so that child shells (which source this file again, possibly from another directory) agree.
 [[ -v SLOT_JOURNAL ]] || SLOT_JOURNAL=$SLOTS_DIR/journal.tsv
-export GUARDS_EXCLUSIVE_LOCK SLOTS_DIR SLOT_JOURNAL SLOT_LEGACY_LOCK SLOT_MEDIUM_N SLOT_HEAVY_N SLOT_TOTAL_MAX GUARDS_JOBS_ALONE GUARDS_JOBS_SHARED
+export GUARDS_EXCLUSIVE_LOCK SLOTS_DIR SLOT_JOURNAL SLOT_LEGACY_LOCK SLOT_MEDIUM_N SLOT_HEAVY_N SLOT_TOTAL_MAX GUARDS_JOBS_ALONE GUARDS_JOBS_SHARED SLOT_KILL_GRACE SLOT_EMPTY_WAIT
 mkdir -p "$SLOTS_DIR" 2>/dev/null   # a directory that cannot be created is refused by slot_run (code 77)
 _SLOT_HEAVY_MAX=$(( SLOT_HEAVY_N + 1 ))
 
@@ -154,9 +179,29 @@ _slot_journal() {
 # Epoch seconds with milliseconds; no printf (it writes "," under a locale with a decimal comma).
 _slot_now() { local t=${EPOCHREALTIME/,/.}; print -r -- ${t%%.*}.${${t#*.}[1,3]} }
 
-# Busy: an fcntl lock is held on the file. The probe runs in a subshell (its own process): taking and dropping the lock
-# there never touches a lock of this process. zsystem flock -t 0: 0 - free (taken, dropped on exit), 1 - busy.
-_slot_busy() { [[ -n $1 && -e $1 ]] || return 1; ( zsystem flock -t 0 -f _slot_probe_fd "$1" ) 2>/dev/null; (( $? == 1 )) }
+# Busy: an fcntl lock is held on the file, or an exec marker of the slot holds it (_slot_marked). The probe runs in a
+# subshell (its own process): taking and dropping the lock there never touches a lock of this process. zsystem flock
+# -t 0: 0 - free (taken, dropped on exit), 1 - busy.
+_slot_busy() {
+  SLOT_MARK=
+  [[ -n $1 && -e $1 ]] || return 1
+  ( zsystem flock -t 0 -f _slot_probe_fd "$1" ) 2>/dev/null; (( $? == 1 )) && return 0
+  _slot_marked "$1"
+}
+# _slot_marked <slot> - 0 when an exec marker holds the slot, with the reason in SLOT_MARK: a marker whose name does not
+# end in a group number (cannot be read - busy, to be safe), or one naming a group that lives. Markers exist only
+# while commands run, so perl is started only then.
+_slot_marked() {
+  local f g gs=()
+  for f in $1.exec.*(N); do
+    g=${f##*.exec.}
+    [[ $g == <2-> ]] || { SLOT_MARK="unreadable exec marker ${f:t}"; return 0 }
+    gs+=$g
+  done
+  (( ${#gs} )) && perl $_SLOT_GROUP alive $gs || return 1
+  SLOT_MARK="${1:t} held by the exec marker of a live process group (${(j:, :)gs})"
+  return 0
+}
 # A lock this user cannot open for writing -> its path in $SLOT_BAD (return 0). zsystem flock opens the file for
 # writing, and a failed open returns 1 - the same code as "busy": a slot file left by sudo (or by root in a container
 # over a shared slot directory) counted as busy forever, an unwritable admit.lock was "admission lock busy" forever, and
@@ -283,9 +328,10 @@ _slot_third_stats() {
 # Busy medium/heavy counts go to $SLOT_M / $SLOT_H (the queues need them: "last slot of the ceiling", see slot_run).
 _slot_pick() {
   local class=$1 m=0 h=0 legacy=0 f i
-  SLOT_PICK= SLOT_WHY=
-  for i in {1..$SLOT_MEDIUM_N}; do _slot_busy $SLOTS_DIR/medium.$i.lock && (( m++ )); done
-  for i in {1..$_SLOT_HEAVY_MAX}; do _slot_busy $SLOTS_DIR/heavy.$i.lock && (( h++ )); done
+  SLOT_PICK= SLOT_WHY= SLOT_MARKS=
+  # slots held by a marker are named in the waiting line (SLOT_MARKS): no holder may be alive for them
+  for i in {1..$SLOT_MEDIUM_N}; do _slot_busy $SLOTS_DIR/medium.$i.lock && { (( m++ )); [[ -n $SLOT_MARK ]] && SLOT_MARKS+="; $SLOT_MARK"; }; done
+  for i in {1..$_SLOT_HEAVY_MAX}; do _slot_busy $SLOTS_DIR/heavy.$i.lock && { (( h++ )); [[ -n $SLOT_MARK ]] && SLOT_MARKS+="; $SLOT_MARK"; }; done
   _slot_busy "$SLOT_LEGACY_LOCK" && legacy=1
   (( h += legacy ))
   SLOT_M=$m SLOT_H=$h
@@ -426,10 +472,11 @@ slot_whole_why() { print -r -- "full run without {jobs}: the runner sets its own
 # slot_run <class> <command...> - waits for a slot (in the queue by ticket), holds it for the command, returns its code.
 slot_run() {
   local class=$1; shift
-  local got slot fd holder rc why t0=$EPOCHSECONDS said=0
+  [[ $class == (medium|heavy) ]] || { print -u2 "slot_run: class must be medium|heavy, not \"$class\""; return 64; }
+  if [[ -n $CODIS_SLOT_HELD ]]; then _slot_nested $class "$@"; local nrc=$?; (( nrc != 200 )) && return $nrc; fi
+  local got slot fd holder rc why t0=$EPOCHSECONDS said=0 nap= hrc
   got=$(_slot_tmp slotgot) || { print -u2 -r -- "slot_run: no temporary file in ${TMPDIR:-/tmp} (mktemp failed)"; return 73; }
   local kind=${SLOT_KIND:-single} retry=${SLOT_RETRY_RC:-} qnum= qf= pos=0 m h o treq=$(_slot_now) tacq= jslot= jcmd=( "$@" )
-  [[ $class == (medium|heavy) ]] || { print -u2 "slot_run: class must be medium|heavy, not \"$class\""; return 64; }
   local prio=
   case ${SLOT_PRIORITY:-0} in 0) ;; 1) prio=priority;; *) print -u2 -r -- "slot_run: SLOT_PRIORITY must be 0 or 1, not \"$SLOT_PRIORITY\""; return 64;; esac
   if _slot_unwritable; then _slot_unwritable_say; rm -f $got; _slot_journal $treq - $(_slot_now) $class - $kind 77 "${jcmd[@]}"; return 77; fi
@@ -457,12 +504,11 @@ slot_run() {
     print -u2 -r -- "slot_run: refused - $SLOTS_DIR cannot be written by this process (admit.lock, queue/ or queue.lock cannot be created or opened for writing): a slot lock that cannot be opened would count as busy forever${$(_slot_sandbox_why):-; inside a sandbox the slot directory is not among its write roots}"
     rm -f $got; _slot_journal $treq - $(_slot_now) $class - $kind 77 "${jcmd[@]}"; return 77
   fi
-  # The trap is set before the holder starts: a signal between the command start and `wait` would otherwise kill only
-  # us (the command an orphan outside the slot). No holder - remove the ticket and exit; a holder - stop the whole
-  # command tree: collect the descendants first (while the holder lives they are its children), then TERM from the
-  # leaves up to the holder. Killing the holder first sent its children to launchd and they ran on outside the slot.
+  # The trap is set before the holder starts. No holder - stop the pause, remove the ticket and exit 143 at once; a
+  # holder - TERM to it (it stops the command's group, see the header) and the code below waits for it: the slot is
+  # given only after the group is gone. A second signal sends TERM again, which changes nothing.
   local killed=0
-  trap 'killed=1; if [[ -n $holder ]]; then _slot_kill_tree $holder; else [[ -n $qf ]] && rm -f $qf; rm -f $got; _slot_journal $treq - $(_slot_now) $class - $kind 143 "${jcmd[@]}"; exit 143; fi' INT TERM HUP
+  trap 'killed=1; if [[ -n $holder ]]; then kill -TERM $holder 2>/dev/null; else [[ -n $nap ]] && kill $nap 2>/dev/null; [[ -n $qf ]] && rm -f $qf; rm -f $got; _slot_journal $treq - $(_slot_now) $class - $kind 143 "${jcmd[@]}"; exit 143; fi' INT TERM HUP
   : > $SLOTS_DIR/queue.lock
   _slot_q_take "" $class $kind $prio && { qf=$SLOT_QF; qnum=$(( 10#${qf:t} )); }   # the number is given on arrival
   while true; do
@@ -481,7 +527,7 @@ slot_run() {
         elif _slot_q_where $qf $class; pos=$SLOT_QPOS; (( pos > 1 )); then
           why="$(( pos - 1 )) ahead; the first is ticket ${SLOT_QHEAD}"
         else
-          _slot_admit $class $kind $prio; slot=$SLOT_PICK; why=$SLOT_WHY
+          _slot_admit $class $kind $prio; slot=$SLOT_PICK; why=$SLOT_WHY; [[ -n $slot ]] || why+=$SLOT_MARKS
           m=$SLOT_M h=$SLOT_H
           if [[ -n $slot && -n $SLOT_QOTHER ]] && (( m + h + 1 >= SLOT_TOTAL_MAX )); then
             o=( ${=SLOT_QOTHER} )
@@ -492,12 +538,13 @@ slot_run() {
           fi
         fi
         if [[ -n $slot ]]; then
+          # the slot was found free under admit.lock: every marker left on it names a dead group (and a half-written
+          # one a dead writer) - removed before the holder starts, so it never meets a marker of its own command
+          rm -f $slot.exec.*(N) $slot.exectmp.*(N)
           : > $got; : >> $slot   # zsystem flock does not create the file; created here, never by the holder
-          # The holder: lock (-t 0, busy -> 75), got-file, the command as a child, its code. kind/retry/priority are not for the children.
-          SLOT_KIND= SLOT_RETRY_RC= SLOT_PRIORITY= SLOT_LABEL= SLOT_PATH=$slot zsh -c 'zmodload zsh/system zsh/datetime
-            zsystem flock -t 0 -f _slot_fd "$2" 2>/dev/null || exit 75
-            t=${EPOCHREALTIME/,/.}; print -r -- $$ ${t%%.*}.${${t#*.}[1,3]} > "$1"; shift 2
-            "$@"; exit $?' slot-holder "$got" "$slot" "$@" 0<&0 &
+          # The holder (scripts/slot-holder.zsh, in a group of its own): lock (-t 0, busy -> 75), got-file, the command
+          # in a group of its own, its code. kind/retry/priority are not for the children.
+          SLOT_KIND= SLOT_RETRY_RC= SLOT_PRIORITY= SLOT_LABEL= SLOT_PATH=$slot perl $_SLOT_GROUP lead zsh $_SLOTS_HERE/slot-holder.zsh "$got" "$slot" "$@" 0<&0 &
           holder=$!
           while [[ ! -s $got ]] && kill -0 $holder 2>/dev/null; do sleep 0.1; done
           if [[ -s $got ]]; then
@@ -515,8 +562,15 @@ slot_run() {
             zsystem flock -u $fd
             break
           fi
-          wait $holder 2>/dev/null; holder=   # lost the race for the file (75: held by a waiter without a ticket) - again
-          why="slot $slot was taken first"
+          wait $holder 2>/dev/null; hrc=$?; holder=
+          if (( killed || hrc != 75 )); then
+            # signalled before the command started, or the holder could not start (no group): nothing ran
+            (( killed )) && hrc=143
+            (( hrc == 143 )) || print -u2 -r -- "slot_run: the slot holder exited $hrc before the command started"
+            zsystem flock -u $fd; [[ -n $qf ]] && rm -f $qf; rm -f $got
+            _slot_journal $treq - $(_slot_now) $class - $kind $hrc "${jcmd[@]}"; trap - INT TERM HUP; return $hrc
+          fi
+          why="slot $slot was taken first"   # lost the race for the file (75: held by a waiter without a ticket) - again
         fi
         zsystem flock -u $fd
       else why="admission lock busy"; fi
@@ -524,10 +578,12 @@ slot_run() {
         print -r -- "waiting for slot $class, position ${pos} in queue ($(( EPOCHSECONDS - t0 )) s): $why"
         said=$EPOCHSECONDS
       fi
-      sleep $SLOT_POLL
+      # in the background, so that a signal stops the wait at once (the trap kills the pause)
+      sleep $SLOT_POLL & nap=$!; wait $nap; nap=
     done
-    wait $holder; rc=$?
-    (( killed )) && { wait $holder 2>/dev/null; rc=143; }
+    # a trapped signal interrupts `wait`: wait again while the holder lives (it is stopping the command)
+    while true; do wait $holder; rc=$?; kill -0 $holder 2>/dev/null || break; done
+    (( killed )) && rc=143
     holder=
     _slot_journal $treq $tacq $(_slot_now) $class $jslot $kind $rc "${jcmd[@]}"
     treq=$(_slot_now)
@@ -540,8 +596,25 @@ slot_run() {
   return $rc
 }
 
-_slot_tree() { local c; for c in $(pgrep -P $1); do _slot_tree $c; done; print -r -- $1 }
-_slot_kill_tree() { local p; for p in $(_slot_tree $1); do kill -TERM $p 2>/dev/null; done }
+# _slot_nested <class> <command...> - the command inside a slot this process already holds (CODIS_SLOT_HELD, see the
+# header): its code, or 64 (refused), or 200 - the variable names a slot of another directory and does not apply.
+_slot_nested() {
+  local class=$1 hc=${CODIS_SLOT_HELD%% *} hp=${CODIS_SLOT_HELD#* } mg nreq rc; shift
+  [[ $hp != $CODIS_SLOT_HELD && ${hp:h:A} == ${SLOTS_DIR:A} ]] || return 200
+  mg=$(perl $_SLOT_GROUP pgrp 2>/dev/null)
+  if [[ $mg != <2-> || ! -e $hp.exec.$mg ]]; then
+    print -u2 -r -- "slot_run: refused - CODIS_SLOT_HELD=$CODIS_SLOT_HELD, but ${hp:t} has no exec marker of my process group ${mg:-?}: a second ticket would wait behind the held slot forever"
+    return 64
+  fi
+  if [[ $hc != (medium|heavy) || ( $hc == medium && $class == heavy ) ]]; then
+    print -u2 -r -- "slot_run: refused - the held $hc slot ${hp:t} is too small a class for $class (CODIS_SLOT_HELD=$CODIS_SLOT_HELD)"
+    return 64
+  fi
+  nreq=$(_slot_now)
+  SLOT_PATH=$hp "$@"; rc=$?
+  _slot_journal $nreq $nreq $(_slot_now) $class ${${hp:t:r}##*.} nested $rc "$@"
+  return $rc
+}
 
 # Is a command argument a guard file marked exclusive (a guard that shares a fixed port, a temp dir or a docker project
 # with others and must run alone): its file name matches one of GUARDS_EXCL_GLOB, and it has a line
