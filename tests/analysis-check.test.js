@@ -9,7 +9,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
-const { spawnSync } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const { ok, done } = require('./lib');
 
 const ROOT = path.join(__dirname, '..');
@@ -349,6 +349,59 @@ if (!fs.existsSync(SCRIPT)) done();
 ok('usage: an unknown command exits 64', run(['nope']).code === 64);
 ok('usage: prepare without --task exits 64', run(['prepare', '--shared', TMP, '--analysis', path.join(TMP, 'x.md'), '--worktree', TMP, '--model', 'm']).code === 64);
 
+// ---- A23 x A6: an answer rewritten after it was collected is a second verdict of the version; both are appended ----
+let raceA23 = Promise.resolve();
+{
+  const verdictsInReport = (f) => (fs.existsSync(f) ? fs.readFileSync(f, 'utf8').match(/^Verdict: .*$/mg) || [] : []);
+  // (b) collected changes-needed, rewritten to ready, then one --append: both answers go into the report, oldest first
+  {
+    const c = fresh();
+    const p = prep(c);
+    writeAnswer(oFile(p), answer(c.sha, ['t1'], 'changes-needed', 1));
+    collect(c, ['--run', '1', '--exit', '0']);
+    writeAnswer(oFile(p), answer(c.sha, ['t1'], 'ready', 0));
+    const ap = collect(c, ['--run', '1', '--append']);
+    ok('A23xA6 (b) --append of a rewritten run appends the collected answer and the later one, oldest first', ap.code === 0
+      && JSON.stringify(verdictsInReport(c.report)) === JSON.stringify(['Verdict: changes-needed', 'Verdict: ready'])
+      && (fs.readFileSync(c.report, 'utf8').match(/^Saved-by: coordinator$/mg) || []).length === 2, JSON.stringify(verdictsInReport(c.report)) + ap.all.slice(0, 400));
+    const k = ap.out && ap.out.keys && ap.out.keys.t1;
+    ok('A23xA6 (b) t1 has exactly two verdicts (the report runs written from here are not counted again)', !!k && k.twoVerdicts === true
+      && k.verdicts.length === 2 && k.verdicts.map((x) => x.verdict).sort().join(',') === 'changes-needed,ready', JSON.stringify(k));
+    const ap2 = collect(c, ['--run', '1', '--append']);
+    ok('A23xA6 (b) a second --append writes nothing', ap2.code === 0 && verdictsInReport(c.report).length === 2, JSON.stringify(verdictsInReport(c.report)));
+  }
+  // (a) changes-needed appended before the rewrite: a later --append adds the ready
+  {
+    const c = fresh();
+    const p = prep(c);
+    writeAnswer(oFile(p), answer(c.sha, ['t1'], 'changes-needed', 1));
+    collect(c, ['--run', '1', '--exit', '0']);
+    collect(c, ['--run', '1', '--append']);
+    writeAnswer(oFile(p), answer(c.sha, ['t1'], 'ready', 0));
+    const ap = collect(c, ['--run', '1', '--append']);
+    ok('A23xA6 (a) --append after a rewrite of an appended answer appends the later answer', ap.code === 0
+      && JSON.stringify(verdictsInReport(c.report)) === JSON.stringify(['Verdict: changes-needed', 'Verdict: ready']), JSON.stringify(verdictsInReport(c.report)) + ap.all.slice(0, 400));
+    const k = ap.out && ap.out.keys && ap.out.keys.t1;
+    ok('A23xA6 (a) t1 has exactly two verdicts and the strict note', !!k && k.twoVerdicts === true && k.verdicts.length === 2
+      && /t1: two verdicts of one version/.test(ap.all), JSON.stringify(k));
+    const again = prep(c);
+    ok('A23xA6 (a) prepare refuses and names the changes-needed', again.code === 3 && /changes-needed/.test((again.out && again.out.refused) || ''), again.all.slice(0, 400));
+  }
+  // a race of four --append on a rewritten run still writes each answer once
+  {
+    const c = fresh();
+    const p = prep(c);
+    writeAnswer(oFile(p), answer(c.sha, ['t1'], 'changes-needed', 1));
+    collect(c, ['--run', '1', '--exit', '0']);
+    writeAnswer(oFile(p), answer(c.sha, ['t1'], 'ready', 0));
+    const kids = [1, 2, 3, 4].map(() => spawn(process.execPath, [SCRIPT, 'collect', '--shared', c.S, '--analysis', c.A, '--run', '1', '--append'], { stdio: 'ignore' }));
+    raceA23 = Promise.all(kids.map((k) => new Promise((res) => k.on('close', res)))).then(() => {
+      const v = verdictsInReport(c.report).sort();
+      ok('A23xA6 a race of four --append on a rewritten run writes each answer once', JSON.stringify(v) === JSON.stringify(['Verdict: changes-needed', 'Verdict: ready']), JSON.stringify(v));
+    });
+  }
+}
+
 // ---- the tester cells: tests/analysis-check-tester-cases.js, a child with its own tally, so README keeps counting test files ----
 {
   const tc = spawnSync(process.execPath, [path.join(__dirname, 'analysis-check-tester-cases.js')], { encoding: 'utf8', timeout: 120000 });
@@ -356,4 +409,4 @@ ok('usage: prepare without --task exits 64', run(['prepare', '--shared', TMP, '-
     `exit ${tc.status} ${tc.signal || ''} ${(tc.stdout || '').split('\n').filter((l) => /FAIL/.test(l)).join('\n').slice(-1500)} ${(tc.stderr || '').slice(-500)}`);
 }
 
-done();
+raceA23.then(() => done());
