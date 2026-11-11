@@ -412,6 +412,18 @@ const groupAlive = (g) => { try { process.kill(-g, 0); return true; } catch (e) 
     ok('B\'30 createAgent: the prompt of prog with cfg.heavy ends with the heavy-req.js lines', !!p1 && /heavy-req\.js[^\n]*-- <argv>/.test(p1.stdin));
   }
 
+  // ---- the conductor: slots.kinds reaches the adapter; the start check reads the heavy journal of the task
+  {
+    const CR = require(CHAIN);
+    const shared = path.join(T, 'shared');
+    const cfg = CR.adapterCfg('codex', { config: { sharedDir: shared, worktreeRoot: T, slots: { kinds: { tsc: 'medium' } } }, tasks: [] }, { codexHome: path.join(T, 'ch') }, path.join(T, 'calls'), () => {});
+    ok('chain-run adapterCfg: codex gets cfg.heavy with the kinds of slots.kinds', !!cfg.heavy && cfg.heavy.kinds.tsc === 'medium', JSON.stringify(cfg.heavy));
+    const hk = path.join(CR.commitStateDir({ sharedDir: shared }), 'K');
+    fs.mkdirSync(hk, { recursive: true });
+    fs.writeFileSync(path.join(hk, 'heavy.jsonl'), JSON.stringify({ v: 1, n: 1, ts: 'x', id: id32(), ev: 'undetermined', why: 'x' }) + '\n');
+    ok('chain-run heavyJournalProblem: the heavy journal of the task in the commit state folder, an undetermined run refuses the start', /undetermined/.test(CR.heavyJournalProblem({ sharedDir: shared }, 'K') || ''), CR.heavyJournalProblem({ sharedDir: shared }, 'K'));
+  }
+
   // ---- B'30: the host section; config slots.kinds
   {
     const t = { dir: '/x/task' };
