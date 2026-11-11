@@ -11,7 +11,10 @@
 //   TB6 a new call after a dead adapter whose command ended (rc file there): the run is closed as done (recovered),
 //       the stale marker removed, and the new call runs requests;
 //   TB7 the probe fails: every request refused "environment: no safe executor", no holder in the slot queue;
-//   TB8 an id of an earlier call sent again in a new call: no second run, the answer names its state.
+//   TB8 an id of an earlier call sent again in a new call: no second run, the answer names its state;
+//   TB9-TB12 the run's config (o.config) against the worktree's and the environment's: the holder and the nested heavy.sh
+//       use the run's slot directory (TB9), the conductor passes an absolute configPath (TB10), the exclusive check reads
+//       the run's guardExclusive (TB11), and the nested heavy.sh takes the exclusive lock by it (TB12, B'12).
 // Like the parent: real slot-hold.sh and heavy.sh on a slot directory of the test, the executor outside codex sandbox,
 // the pauses at 2 s, a fake machine; the conductor with the fake codex of tests/fixtures/chain-run/bin (no model).
 const fs = require('fs');
@@ -245,5 +248,88 @@ const writeJournal = (d, id, run, extra) => {
       why.includes(path.join(hj, 'heavy.jsonl')) && why.includes(id) && /resolve --heavy/.test(why) && !trace.some((e) => e.ev === 'start'), `${why} | ${p.stdout} ${p.stderr}`.slice(0, 2000));
     ok('TB3 the result is stopped with that reason; the heavy journal is not changed', !!r && r.status === 'stopped' && /resolve --heavy/.test(String(r.why)) && fs.readFileSync(path.join(hj, 'heavy.jsonl'), 'utf8') === before, J(r));
   } else ok('TB3 needs git', false, 'git not found');
+
+  // ---- TB9-TB12: the run's config (o.config) against what a lookup from the worktree or the adapter's environment finds
+  // A case of its own: no SLOTS_DIR / SLOT_JOURNAL in the adapter's environment, CODIS_AGENTS_CONFIG names another config,
+  // HOME is the case's own (no machine file), the run's config has its own guardExclusive (glob *.guard.sh, marker #).
+  const cfgCase = (wtCfg) => {
+    const d = setup();
+    for (const k of ['SLOTS_DIR', 'SLOT_JOURNAL', 'XDG_CONFIG_HOME', 'CLAUDE_PROJECT_DIR', 'CODIS_AGENTS_MACHINE']) delete d.env[k];
+    d.env.HOME = path.join(d.root, 'home');
+    fs.mkdirSync(d.env.HOME);
+    const write = (f, o) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, JSON.stringify(Object.assign({ repoDir: d.root, worktreeRoot: d.root, sharedDir: d.root }, o))); return f; };
+    const c = { run: path.join(d.root, 'run-slots'), other: path.join(d.root, 'other-slots'), wtSlots: path.join(d.root, 'wt-slots') };
+    c.runCfg = write(path.join(d.root, 'run-cfg', 'codis-agents.json'), { slots: { lockDir: c.run, kinds: { tsc: 'medium' } }, guardExclusive: { glob: ['*.guard.sh'], marker: '#' } });
+    d.env.CODIS_AGENTS_CONFIG = write(path.join(d.root, 'other-cfg', 'codis-agents.json'), { slots: { lockDir: c.other } });
+    if (wtCfg) write(path.join(d.wt, '.claude', 'codis-agents.json'), Object.assign({ slots: { lockDir: c.wtSlots } }, wtCfg === true ? {} : wtCfg));
+    const holds = (dir) => { try { return fs.readFileSync(path.join(dir, 'journal.tsv'), 'utf8').split('\n').filter(Boolean).map((l) => l.split('\t')).filter((l) => l[6] === 'hold'); } catch { return []; } };
+    c.counts = () => ({ run: holds(c.run).length, other: holds(c.other).length, wt: holds(c.wtSlots).length, fallback: holds(path.join(d.env.HOME, '.cache', 'codis-agents', 'slots')).length });
+    // an exclusive guard of the run's config: it reports whether the exclusive lock is held while it runs
+    fs.writeFileSync(path.join(d.wt, 'port.guard.sh'), '# guards:exclusive — a fixed port\nif /usr/bin/lockf -t 0 "$GUARDS_EXCLUSIVE_LOCK" true; then echo LOCK-FREE; else echo LOCK-HELD; fi\n');
+    return { d, c };
+  };
+  const openCfg = (d, call, config, kinds) => HS.openHeavyService({ task: 'K', callId: call, role: 'prog', wt: d.wt, tdir: d.tdir, box: boxOf(d, call), stateDir: d.state,
+    config, kinds: kinds || {}, userEnv: d.env, killGraceMs: 2000, emptyWaitMs: 2000, pollMs: 200,
+    inject: { probe: async () => ({}), executor: (spec) => Object.assign({}, spec, { bin: spec.inner[0], args: spec.inner.slice(1) }) } });
+  const logOf = (d, id) => { const r = journal(d).find((e) => e.id === id && e.ev === 'running'); try { return r ? fs.readFileSync(r.log, 'utf8') : ''; } catch { return ''; } };
+  const clsOf = (d, id) => { const q = journal(d).find((e) => e.id === id && e.ev === 'queued'); return q ? q.cls : null; };
+
+  // TB9: the worktree has a config of its own (another lockDir): the holder and the nested heavy.sh of the executor both
+  // use the slot of the run's config; nothing queues in the worktree's or the environment's directory
+  {
+    const { d, c } = cfgCase(true);
+    const svc = openCfg(d, 'prog-1', c.runCfg);
+    const a = (await req(d, 'prog-1', ['--max', '20', '--', 'node', '-e', 'console.log("SP " + process.env.SLOT_PATH)'])).j;
+    const sp = (/SP (\S+)/.exec(logOf(d, a && a.id)) || [])[1] || '';
+    ok('TB9 the worktree names another lockDir: the hold line is in the lockDir of the run\'s config, none in the worktree\'s, the environment\'s or <HOME>/.cache',
+      a && a.state === 'done' && c.counts().run === 1 && !c.counts().wt && !c.counts().other && !c.counts().fallback, `${J(a)} ${J(c.counts())}`);
+    ok('TB9 the nested heavy.sh of the executor runs in the held slot of the run\'s directory (SLOT_PATH), not in a slot of the worktree\'s config',
+      path.dirname(sp) === c.run && !fs.existsSync(c.wtSlots), `${sp} | ${logOf(d, a && a.id).slice(0, 400)}`);
+    await svc.close();
+  }
+
+  // TB10: the conductor's config path: config.js json of a relative --config, and of CODIS_AGENTS_CONFIG, gives an absolute
+  // configPath, and adapterCfg passes exactly it as cfg.heavy.config
+  {
+    const CR = require(CHAIN);
+    const W = path.join(T, 'cfgpath');
+    fs.mkdirSync(path.join(W, 'sub'), { recursive: true });
+    const f = path.join(W, 'sub', 'codis-agents.json');
+    fs.writeFileSync(f, JSON.stringify({ repoDir: W, worktreeRoot: W, sharedDir: W, slots: { kinds: { tsc: 'medium' } } }));
+    const cwd0 = process.cwd();
+    process.chdir(W);
+    const rel = CR.loadConfig(path.join('sub', 'codis-agents.json'));
+    process.chdir(cwd0);
+    const saved = process.env.CODIS_AGENTS_CONFIG;
+    process.env.CODIS_AGENTS_CONFIG = f;
+    const viaEnv = CR.loadConfig();
+    if (saved === undefined) delete process.env.CODIS_AGENTS_CONFIG; else process.env.CODIS_AGENTS_CONFIG = saved;
+    const hv = (r) => (r && r.config ? (CR.adapterCfg('codex', { config: r.config, tasks: [] }, { codexHome: path.join(W, 'ch') }, path.join(W, 'calls'), () => {}).heavy || null) : null);
+    ok('TB10 a relative --config and CODIS_AGENTS_CONFIG: configPath is the absolute file, and cfg.heavy.config of the adapter is that path with the kinds',
+      !!hv(rel) && hv(rel).config === f && hv(rel).kinds.tsc === 'medium' && !!hv(viaEnv) && hv(viaEnv).config === f, J([rel.error, viaEnv.error, hv(rel), hv(viaEnv)]));
+  }
+
+  // TB11: the exclusive check before the queue reads the run's config: a guard marked by its guardExclusive is heavy
+  // with a kind mapped to medium, while the environment's config (default guardExclusive) would not mark it
+  {
+    const { d, c } = cfgCase(false);
+    const svc = openCfg(d, 'prog-1', c.runCfg, { tsc: 'medium' });
+    const a = (await req(d, 'prog-1', ['--kind', 'tsc', '--max', '20', '--', 'zsh', 'port.guard.sh'])).j;
+    ok('TB11 a guard marked exclusive by the run\'s config, kind tsc (medium): its class is heavy', a && a.state === 'done' && clsOf(d, a.id) === 'heavy', `${J(a)} cls ${clsOf(d, a && a.id)}`);
+    const b = (await req(d, 'prog-1', ['--kind', 'tsc', '--max', '20', '--', 'true'])).j;
+    ok('TB11 ... and an unmarked command of kind tsc stays medium', b && b.state === 'done' && clsOf(d, b.id) === 'medium', `${J(b)} cls ${clsOf(d, b && b.id)}`);
+    await svc.close();
+  }
+
+  // TB12: the executor's nested heavy.sh takes the exclusive lock for a guard marked by the run's config, also when the
+  // worktree holds no config (the case of B'10: the run's config lies elsewhere); control - a worktree with the same config
+  for (const [name, wtCfg] of [['the worktree has no config', false], ['the worktree has the same guardExclusive', { guardExclusive: { glob: ['*.guard.sh'], marker: '#' } }]]) {
+    const { d, c } = cfgCase(wtCfg);
+    const svc = openCfg(d, 'prog-1', c.runCfg);
+    const a = (await req(d, 'prog-1', ['--max', '20', '--', 'zsh', 'port.guard.sh'])).j;
+    const out = logOf(d, a && a.id);
+    ok(`TB12 ${name}: the exclusive guard of the run's config runs under the exclusive lock (B'12)`, a && a.state === 'done' && /LOCK-HELD/.test(out), `${J(a)} | ${out.slice(0, 400)}`);
+    await svc.close();
+  }
   done();
 })().catch((e) => { ok('the tester cases ran to their end', false, e.stack); done(); });
