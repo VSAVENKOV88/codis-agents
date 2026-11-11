@@ -349,4 +349,11 @@ if (!fs.existsSync(SCRIPT)) done();
 ok('usage: an unknown command exits 64', run(['nope']).code === 64);
 ok('usage: prepare without --task exits 64', run(['prepare', '--shared', TMP, '--analysis', path.join(TMP, 'x.md'), '--worktree', TMP, '--model', 'm']).code === 64);
 
+// ---- the tester cells: tests/analysis-check-tester-cases.js, a child with its own tally, so README keeps counting test files ----
+{
+  const tc = spawnSync(process.execPath, [path.join(__dirname, 'analysis-check-tester-cases.js')], { encoding: 'utf8', timeout: 120000 });
+  ok('the tester cells of analysis-check.js (tests/analysis-check-tester-cases.js) pass', tc.status === 0,
+    `exit ${tc.status} ${tc.signal || ''} ${(tc.stdout || '').split('\n').filter((l) => /FAIL/.test(l)).join('\n').slice(-1500)} ${(tc.stderr || '').slice(-500)}`);
+}
+
 done();
