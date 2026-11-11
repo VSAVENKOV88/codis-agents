@@ -358,5 +358,12 @@ const g = /^: \$\{SLOT_KILL_GRACE:=(\d+)\}/m.exec(s), e = /^: \$\{SLOT_EMPTY_WAI
 console.log(k, g && g[1], e && e[1]); process.exit(g && e && Number(g[1]) === k && Number(e[1]) === k ? 0 : 1)' $H > $T/29.out 2>&1; rc=$?
 ok "A'29. SLOT_KILL_GRACE and SLOT_EMPTY_WAIT default to KILL_GRACE_MS of the roles (30 s)" '(( rc == 0 ))' "$(cat $T/29.out)"
 
+# the tester cells: tests/slots-exec-tester-cases.sh (TC1-TC7) and tests/train-exec-note-tester-cases.js (N1-N3), children
+# with their own tally, so README keeps counting test files
+zsh ${0:A:h}/slots-exec-tester-cases.sh > $T/tc.out 2>&1; rc=$?
+ok "tester cells TC1-TC7 (tests/slots-exec-tester-cases.sh) pass" '(( rc == 0 ))' "rc $rc; $(grep -E 'FAIL|^ ' $T/tc.out | grep -v '^  ok' | tail -20)"
+node ${0:A:h}/train-exec-note-tester-cases.js > $T/tn.out 2>&1; rc=$?
+ok "tester cells N1-N3 (tests/train-exec-note-tester-cases.js) pass" '(( rc == 0 ))' "rc $rc; $(tail -8 $T/tn.out)"
+
 print -r -- "slots-exec: $pass ok, $fail failed"
 (( fail == 0 ))
