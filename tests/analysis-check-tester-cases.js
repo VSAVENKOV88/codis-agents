@@ -3,7 +3,9 @@
 // tally (so the README count of test files stays). Cells beyond the programmer's test: malformed arguments, an analysis
 // that cannot be read, a legacy last.json that is not a verdict, a report run inside a fenced block, one appended run is
 // one verdict (not two), two verdicts from two sources, a real race of several prepare and of two --append, the shell
-// quoting of the printed command, and an answer rewritten after it was collected under the rule of two verdicts (A23 x A6), and an answer rewritten after collect by one that is not a verdict or that names another key (A23).
+// quoting of the printed command, and an answer rewritten after it was collected under the rule of two verdicts (A23 x A6), and an answer rewritten after collect by one that is not a verdict or that names another key (A23); the journal of
+// answers (M2.2): a real race of observers, collect --sha as an observer, foreign files in runs/<n>.answers, and seeded
+// sequences over several runs checked for the multiset of shown verdicts and for the journal and the report.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -235,6 +237,143 @@ const keyOf = (o, t) => (o && o.keys && o.keys[t]) || null;
     const col = collect(c);
     const k = keyOf(col.out, 't1');
     ok('A23 the same answer written again: one verdict, no "changed" note', !!k && k.verdicts.length === 1 && !/changed after it was collected/.test(col.all), JSON.stringify(k));
+  }
+
+  // ---- M2.2 the journal of answers (tester round 3) ----
+  const journalFiles = (c, n) => { const d = path.join(c.S, 'analysis-checks', c.sha, 'runs', `${n}.answers`); return fs.existsSync(d) ? fs.readdirSync(d) : []; };
+
+  // E1: a real race of observers (no listing injected): one entry, every observer shows the verdict, prepare refuses.
+  for (let i = 0; i < 4; i++) {
+    const c = fresh();
+    const p = prep(c);
+    writeAnswer(oFile(p), answer(c.sha, ['t1'], 'changes-needed', 1));
+    const rs = await Promise.all(Array.from({ length: 6 }, (_, j) => runAsync(j % 2 ? ['collect', '--shared', c.S, '--analysis', c.A] : prepArgs(c))));
+    const entries = journalFiles(c, 1).filter((f) => /\.json$/.test(f));
+    const shown = rs.filter((r, j) => (j % 2 ? r.code === 0 : r.code === 3) && keyOf(r.out, 't1') && keyOf(r.out, 't1').verdicts.length === 1
+      && keyOf(r.out, 't1').verdicts[0].verdict === 'changes-needed');
+    ok(`E1 race ${i + 1}: six observers at once (3 prepare, 3 collect) - one journal entry, each shows the changes-needed once, every prepare refuses`,
+      entries.length === 1 && shown.length === 6, `entries ${entries.join(',')}; ${rs.map((r) => `${r.code}:${JSON.stringify(keyOf(r.out, 't1'))}`).join(' | ').slice(0, 600)}`);
+  }
+
+  // E4: collect --sha (without --run) is an observer: it records the answer it saw.
+  {
+    const c = fresh();
+    const p = prep(c);
+    writeAnswer(oFile(p), answer(c.sha, ['t1'], 'changes-needed', 1));
+    const s1 = run(['collect', '--shared', c.S, '--analysis', c.A, '--sha', c.sha]);
+    writeAnswer(oFile(p), answer(c.sha, ['t1'], 'ready', 0));
+    const k = keyOf(collect(c).out, 't1');
+    ok('E4 collect --sha saw the changes-needed, then a rewrite by ready: both verdicts of t1', s1.code === 0 && !!k && k.twoVerdicts === true
+      && k.verdicts.map((v) => v.verdict).join(',') === 'changes-needed,ready', JSON.stringify(k));
+  }
+
+  // E5: an unknown file and a marker without its entry in runs/<n>.answers/: named, and a new answer is a new entry
+  // with no marker (it is appended, not taken as appended already).
+  {
+    const c = fresh();
+    const p = prep(c);
+    writeAnswer(oFile(p), answer(c.sha, ['t1'], 'changes-needed', 1));
+    collect(c);
+    const d = path.join(c.S, 'analysis-checks', c.sha, 'runs', '1.answers');
+    fs.writeFileSync(path.join(d, 'notes.txt'), 'x');
+    fs.writeFileSync(path.join(d, '5.appended'), JSON.stringify({ reportRun: 1, textSha256: 'f'.repeat(64) }));
+    writeAnswer(oFile(p), answer(c.sha, ['t1'], 'ready', 0));
+    const col = collect(c);
+    const r1 = col.out && (col.out.runs || []).find((r) => r.run === 1);
+    ok('E5 an unknown file in runs/1.answers is named, the run stays a result with both answers', /unknown file: .*notes\.txt/.test(col.all)
+      && !!r1 && r1.state === 'result' && (r1.answers || []).length === 2, JSON.stringify(r1));
+    const ap = collect(c, ['--run', '1', '--append']);
+    const rep = fs.existsSync(c.report) ? fs.readFileSync(c.report, 'utf8') : '';
+    ok('E5 a marker without its entry does not mark the next answer: --append writes both answers', ap.code === 0
+      && (rep.match(/^# Analysis check$/mg) || []).length === 2 && /Verdict: ready/.test(rep) && /Verdict: changes-needed/.test(rep), JSON.stringify(ap.out && ap.out.notes));
+  }
+
+  // E2/E3: seeded random sequences over several runs (prepare --again, --abandon, late answers, collect --sha, the
+  // observer changes on every step). In process, through main(). Invariants after every step:
+  //  - for each key, the count of every (run, verdict, significantGaps) a command showed never decreases (a multiset:
+  //    one of two equal changes-needed lost is a loss);
+  //  - prepare for a key with a shown verdict refuses (3) without --again;
+  //  - the journal holds no two entries with one sha256; every marker's text is exactly one run of the report, and no
+  //    run of this version is in the report twice.
+  {
+    const AC = require(SCRIPT);
+    const mainOf = (args) => { const r = AC.main(args); return { code: r.code, out: r.out || {} }; };
+    let seed = 20261111;
+    const rnd = (n) => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+    const fails = [];
+    let steps = 0;
+    for (let sq = 0; sq < 150 && fails.length < 8; sq++) {
+      const c = fresh();
+      const base = ['--shared', c.S, '--analysis', c.A];
+      const runsDir = path.join(c.S, 'analysis-checks', c.sha, 'runs');
+      const pool = [answer(c.sha, ['t1'], 'changes-needed', 1), answer(c.sha, ['t1'], 'changes-needed', 2), answer(c.sha, ['t1'], 'ready', 0),
+        answer(c.sha, ['t2'], 'changes-needed', 3), answer(c.sha, ['t1', 't2'], 'ready', 0)];
+      const bads = ['garbage', '', JSON.stringify(answer('0'.repeat(64), ['t1'], 'ready', 0))];
+      const prepOf = (t, extra) => mainOf(['prepare', ...base, '--task', t, '--worktree', TMP, '--model', 'm1', ...(extra || [])]);
+      let cur = 1;
+      prepOf('t1');
+      const ever = {};
+      const log = [];
+      const observe = (o, what) => {
+        if (!o.out || !o.out.keys) return; // a prepare that made a run prints the run, not the keys
+        const now = {};
+        for (const [t, x] of Object.entries((o.out && o.out.keys) || {})) {
+          now[t] = {};
+          for (const v of x.verdicts) { const id = `${(/^run (\d+)/.exec(v.from) || [])[1] || v.from}|${v.verdict}${v.significantGaps}`; now[t][id] = (now[t][id] || 0) + 1; }
+        }
+        for (const [t, m] of Object.entries(ever)) for (const [id, cnt] of Object.entries(m)) {
+          const got = (now[t] && now[t][id]) || 0;
+          if (got < cnt) fails.push(`seq ${sq} [${log.join(' ')}] after ${what}: ${t} shows ${got} of ${id}, earlier ${cnt}`);
+        }
+        for (const [t, m] of Object.entries(now)) { ever[t] = ever[t] || {}; for (const [id, cnt] of Object.entries(m)) ever[t][id] = Math.max(ever[t][id] || 0, cnt); }
+      };
+      const observer = () => {
+        const w = rnd(5);
+        const [what, o] = w === 0 ? ['collect', mainOf(['collect', ...base])]
+          : w === 1 ? ['collect --sha', mainOf(['collect', ...base, '--sha', c.sha])]
+            : w === 2 ? ['append', mainOf(['collect', ...base, '--run', String(cur), '--append'])]
+              : w === 3 ? ['prepare t1', prepOf('t1')]
+                : ['prepare t2', prepOf('t2')];
+        if (what.startsWith('prepare') && o.code === 0) cur = o.out.run;
+        log.push(what); observe(o, what);
+      };
+      for (let st = 0; st < 10; st++) {
+        steps++;
+        const file = path.join(runsDir, `${cur}.json`);
+        const e = rnd(9);
+        if (e <= 2) { const a = Object.assign({}, pool[rnd(pool.length)]); a.report += `\nAn answer of run ${cur}.\n`; writeAnswer(file, a); log.push(`w${cur}:${a.tasks.join('+')}/${a.verdict}${a.significantGaps}`); }
+        else if (e === 3) { fs.writeFileSync(file, bads[rnd(bads.length)]); log.push(`bad${cur}`); }
+        else if (e === 4) { if (fs.existsSync(file)) fs.unlinkSync(file); log.push(`rm${cur}`); }
+        else if (e === 5) { const x = rnd(2); const o = mainOf(['collect', ...base, '--run', String(cur), '--exit', String(x)]); log.push(`exit${cur}=${x}`); observe(o, 'exit'); }
+        else if (e === 6) { const o = prepOf(rnd(2) ? 't1' : 't2', ['--again', 'r']); if (o.code === 0) cur = o.out.run; log.push(`again:${o.code === 0 ? `run ${cur}` : `exit ${o.code}`}`); observe(o, 'again'); }
+        else if (e === 7) { const o = prepOf('t1', ['--abandon', String(cur), '--reason', 'r']); log.push(`abandon${cur}:${o.code}`); observe(o, 'abandon'); }
+        else log.push('-');
+        observer();
+        // prepare for every key with a shown verdict refuses without --again
+        for (const [t, m] of Object.entries(ever)) {
+          if (!Object.keys(m).length) continue;
+          const pr = prepOf(t);
+          if (pr.code !== 3) { fails.push(`seq ${sq} [${log.join(' ')}]: prepare --task ${t} exit ${pr.code} although ${Object.keys(m).join(',')} was shown`); if (pr.code === 0) cur = pr.out.run; }
+          observe(pr, `prepare ${t} (gate)`);
+        }
+        // the journal and the report
+        const rep = fs.existsSync(c.report) ? AC.reportRuns(fs.readFileSync(c.report, 'utf8')) : [];
+        const texts = rep.map((x) => x.textSha256);
+        if (new Set(texts).size !== texts.length) fails.push(`seq ${sq} [${log.join(' ')}]: a run is in the report twice`);
+        for (const f of fs.existsSync(runsDir) ? fs.readdirSync(runsDir).filter((x) => /\.answers$/.test(x)) : []) {
+          const d = path.join(runsDir, f);
+          const hashes = fs.readdirSync(d).filter((x) => /^\d+\.json$/.test(x)).map((x) => JSON.parse(fs.readFileSync(path.join(d, x), 'utf8')).sha256);
+          if (new Set(hashes).size !== hashes.length) fails.push(`seq ${sq} [${log.join(' ')}]: ${f} holds one answer twice`);
+          for (const m of fs.readdirSync(d).filter((x) => /\.appended$/.test(x))) {
+            const t = JSON.parse(fs.readFileSync(path.join(d, m), 'utf8')).textSha256;
+            if (texts.filter((x) => x === t).length !== 1) fails.push(`seq ${sq} [${log.join(' ')}]: ${f}/${m} is not exactly one run of the report`);
+          }
+        }
+      }
+      fs.rmSync(c.S, { recursive: true, force: true });
+    }
+    ok(`E2/E3 seeded sequences (150 x 10 steps, several runs, the observer changes): no shown verdict is lost (multiset), prepare refuses, the journal and the report hold each answer once (${steps} steps)`,
+      fails.length === 0, fails.slice(0, 4).join('\n'));
   }
 
   done();
