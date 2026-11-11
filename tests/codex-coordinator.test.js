@@ -217,6 +217,11 @@ const acRow = flat(read('README.md').split('\n').find((l) => l.startsWith('| `sc
 ok('B17 README scripts table: the journal runs/<n>.answers/<k>.json, every answer seen is a verdict', /`runs\/<n>\.answers\/<k>\.json`/.test(acRow) && /every answer/.test(acRow), acRow);
 ok('B17 coordinator, Codex step 3: a second codex exec that rewrote an answer prepare or collect had seen',
   /a second `codex exec` that rewrote an answer `prepare` or `collect` had seen/.test(chkCodex), chkCodex.slice(Math.max(0, chkCodex.indexOf('Two verdicts') - 50), chkCodex.indexOf('Two verdicts') + 400));
+// B17 x B6/B9/B10: step 4 (not run) yields to step 3 when the journal of the run already holds an answer, so a
+// recorded verdict is appended rather than skipped (prepare would refuse a run with a result)
+const step4 = (chkCodex.match(/The third outcome[\s\S]*?(?=\s\d\.\s\*\*|$)/) || [''])[0];
+ok('B17 coordinator, Codex step 4: not run unless the journal of the run already holds an answer: then step 3 applies',
+  /unless the journal of the run already holds an answer: then step 3 applies/.test(step4), step4.slice(0, 900));
 ok('B17 no slots of the earlier round named: .collected, .appendedlater', ![read('README.md'), co, read('scripts/analysis-check.js')].some((t) => /\.collected\b|appendedlater/.test(t)));
 const sch = (() => { try { return JSON.parse(read('schemas/analysis-check.schema.json')); } catch { return null; } })();
 const RE = require('../scripts/role-exec');
