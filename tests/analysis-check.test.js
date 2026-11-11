@@ -571,6 +571,17 @@ let raceA23 = Promise.resolve();
       && fs.readFileSync(path.join(jdir(c), '1.json'), 'utf8') === other && vs(col.out) === 'changes-needed1,ready0', jlist(c).join(',') + JSON.stringify(col.out && col.out.keys));
   }
   {
+    // An entry another command is writing (not readable yet): nothing new is recorded, the answer now is still shown
+    const c = fresh();
+    const p = prep(c);
+    writeAnswer(oFile(p), A(c));
+    fs.mkdirSync(jdir(c), { recursive: true });
+    fs.writeFileSync(path.join(jdir(c), '1.json'), '{"sha256":');
+    const col = collect(c);
+    ok('B15 (c) an entry that cannot be read: no second entry, the answer now still shown as a verdict, the entry named', JSON.stringify(jlist(c)) === '["1.json"]'
+      && vs(col.out) === 'changes-needed1' && /cannot be read/.test(col.all) && prep(c).code === 3, jlist(c).join(',') + col.all.slice(0, 300));
+  }
+  {
     // B16: the marker of an appended answer names report run 1, but run 1 of the report is a run written elsewhere at
     // the same time; the run written from here is run 2. The foreign run is a verdict; ours is not counted twice.
     const c = fresh();
