@@ -55,7 +55,7 @@ exec ${JSON.stringify(process.execPath)} "$@"
   for (const k of ['SLOTS_DIR', 'SLOT_LEGACY_LOCK', 'SLOT_MEDIUM_N', 'SLOT_HEAVY_N', 'SLOT_POLL', 'SLOT_SAY', 'SLOT_SWAP_MIN_MB', 'SLOT_THIRD_FREE_PCT',
     'SLOT_THIRD_SWAP_GROW_MB', 'SLOT_THIRD_WINDOW', 'SLOT_HIST_GAP', 'SLOT_TOTAL_MAX', 'SLOT_PROC', 'GUARDS_JOBS_ALONE', 'GUARDS_JOBS_SHARED',
     'GUARDS_EXCLUSIVE_LOCK', 'SLOT_EXCL_TOOLS', 'GUARDS_EXCL_MARKER', 'GUARDS_EXCL_GLOB', 'SLOT_JOURNAL', 'SLOT_LABEL', 'SLOT_KIND', 'SLOT_RETRY_RC',
-    'SLOT_PRIORITY', 'SLOT_PATH', 'CODIS_WORKTREE_ROOT', 'CODIS_SHARED_DIR', 'CODIS_REPO_DIR']) delete process.env[k];
+    'SLOT_PRIORITY', 'SLOT_KILL_GRACE', 'SLOT_EMPTY_WAIT', 'SLOT_EXEC_NOTE', 'CODIS_SLOT_HELD', 'SLOT_PATH', 'CODIS_WORKTREE_ROOT', 'CODIS_SHARED_DIR', 'CODIS_REPO_DIR']) delete process.env[k];
   for (const k of Object.keys(process.env)) if (/^(SLOT_|SLOTS_|GUARDS_|CODIS_)/.test(k)) delete process.env[k];
   const env = Object.assign({}, process.env, { CODIS_AGENTS_CONFIG: cfgFile, CODIS_AGENTS_MACHINE: mfile, PATH: bin + path.delimiter + process.env.PATH,
     SLOTS_DIR: path.join(T, 'slots'), SLOT_LEGACY_LOCK: path.join(T, 'guards.lock'), SLOT_OS: 'darwin' });

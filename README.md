@@ -246,10 +246,10 @@ codis-agents/
 ├── workflows/    role-chain.js - the chain itself, fix rounds, the analyst after a second red, the train
 ├── rules/        multi-agent.md - the process rules; 20 marked lines go into every role prompt
 ├── hooks/        hooks.json - refuses git add -A, pushes to protected branches and tags
- ├── scripts/      39 scripts: memory slots, guard runs and selection, the train, post-checks, remote runner, cost
+ ├── scripts/      42 scripts: memory slots, guard runs and selection, the train, post-checks, remote runner, cost
 ├── examples/     example project and machine configs
 ├── schemas/      their JSON schemas
-└── tests/        181 test files of the plugin itself (npm test)
+└── tests/        182 test files of the plugin itself (npm test)
 ```
 
 Every file, script and config key is described in the [Technical reference](#technical-reference).
@@ -453,6 +453,7 @@ writes that into the report's section Closure. A task with `noAnalysis` gets no 
 | `rules/multi-agent.md` | the process rules; lines marked `<!-- role:<id> -->` go into every role prompt |
 | `hooks/hooks.json` | PreToolUse on Bash: refuses `git add -A` / `git add .`, pushes to protected branches or of protected tags, and `git remote set-head` / writes of `git symbolic-ref refs/remotes/<remote>/HEAD` / `git update-ref` on it and `git update-ref --stdin`, in any letter case, Unicode case folding included (they move the default branch the hooks protect); an abbreviated long option (`--del`, `--mi`) counts as the option; with `--git-dir` / `--work-tree` / `GIT_DIR` / `GIT_WORK_TREE` / `GIT_COMMON_DIR` the config is looked up from those paths too and a push is refused (use `-C`); git's global options before the subcommand are read by a table measured against git, and one outside it is refused; a commit or a reset of the arc branch under a live train (`<sharedDir>/train/lock/owner.json` names it as `base`): wait for the train (`train.js status`) or ride as a passenger |
 | `scripts/slots.zsh`, `heavy.sh`, `medium.sh` | memory slots for heavy and medium jobs, with a FIFO queue |
+| `scripts/slot-holder.zsh`, `slot-group.pl`, `slot-hold.sh` | the holder of a slot (its own process group; it stops the command's group), the process groups and exec markers of slot commands (perl), and a slot held while stdin stays open (for the adapter of a codex role) |
 | `scripts/stand.sh`, `stand.js` | the ticket of the project's shared stand (queue, holder, reset at issue and release) and its commands from the config |
 | `scripts/slot-journal.js` | summary of the slot journal: queue wait and hold per class and per worktree |
 | `scripts/guards-all.sh` | a full guard run of one worktree in a heavy slot, with a shared worker budget; an absolute worktree path brings its own project config (`config.js path --from <dir>`: the nearest `.claude/codis-agents.json` from it upwards, over `$CLAUDE_PROJECT_DIR` and the cwd; an explicit `$CODIS_AGENTS_CONFIG` still wins), a relative name is resolved by the config of the cwd as before - or on the remote runner (`scripts/guards-remote.js`, machine key `remote` with project key `remoteRun`; `--local` keeps it here); `--select <base>` runs only the selection of the task's diff (`guards-select.js --only-args` into `guardSubsetCommand`, its own log `guards-<name>.select.txt`, the quarantine read only, nothing selected - exit 0 and nothing runs, an unknown base - 65; remotely only with `remoteRun.subsetCommand`); `--guards <names file>` runs the same selection mode for the guards of a JSON array of names (the attribution of a red train); new reds rerun alone (`guardRerun`); a run on the same HEAD with a clean tracked tree that ended with exit 0 is not repeated ("reused, HEAD <sha>" and the saved summary; `--force` runs anyway); the main working copy of a repository is refused with 78 (`--main-checkout` runs it, for a project without worktrees); flaky guards go into the project's quarantine (`guardBaseline`); a remote run sends it with the run, the runner's own call `--quarantine-read-only` subtracts it without writing, and this machine writes the flaky guards of the log that comes back (a broken quarantine or a refused transfer: exit 69); `--no-quarantine` neither reads nor writes it |
@@ -1123,10 +1124,28 @@ the environment, or the default) and the value that fits. A swap at least the th
 unreadable source, an unknown OS) gives one line "swap not measured (...) - not checked" and the slot; the extra heavy
 slot is then refused as "memory not measured". Inside a container `/proc/meminfo` shows the memory of the host.
 
-A slot is held by a small zsh that takes `zsystem flock` (an fcntl lock) on the slot file, runs the command as its child
-and exits with its code: when the holder dies (even `kill -9`) the kernel drops the lock, and a command it leaves
-behind does not hold the slot. The holder never opens its own slot file after taking the lock (closing any descriptor
-of the file would drop an fcntl lock), so the command is never exec-ed in its place. The exclusive lock of guards
+A slot is held by a small zsh (`scripts/slot-holder.zsh`) in a process group of its own that takes `zsystem flock` (an
+fcntl lock) on the slot file, runs the command as its child in another process group of its own and exits with its
+code. The holder never opens its own slot file after taking the lock (closing any descriptor of the file would drop an
+fcntl lock), so the command is never exec-ed in its place. Before its first instruction the command names its group in
+an exec marker `<slot>.exec.<pgid>` (`scripts/slot-group.pl`; perl is required, it tells `EPERM` from `ESRCH`, which zsh
+cannot), and a slot stays busy while its lock is held, or a marker names a group that lives, or a marker cannot be read:
+a command left behind by a dead holder, and every member of its group, keeps the slot until it ends. Only the holder
+stops the command: INT, TERM or HUP to `heavy.sh` / `medium.sh` / `guards-all.sh` (or to their process group: Ctrl-C,
+`wait-step.js`) goes to the holder, which sends TERM and CONT to the command's group, waits `SLOT_KILL_GRACE` (30 s, the
+pause of the roles; owner 2026-11-11), KILLs it and waits up to `SLOT_EMPTY_WAIT` (30 s) for the group to be gone; the
+caller exits 143 and the slot is given only after that. The same stop runs when the command exits and members of its
+group remain (its code is kept). A group not gone after KILL keeps its marker, and the slot, until it ends. A waiter in
+the queue stops at once on a signal.
+
+`scripts/slot-hold.sh <medium|heavy>` holds a slot for a process that cannot hold an fcntl lock itself (the adapter of
+a codex role, part A2b): it queues like `heavy.sh`, prints one line `acquired <slot file> <epoch.ms>` and holds the slot
+until a line `release` comes on its stdin or the stdin ends. A command that runs in a held slot with
+`CODIS_SLOT_HELD="<class> <slot file>"` runs `heavy.sh` / `medium.sh` without a second ticket, when the slot file lies in
+its own slot directory (another directory is an ordinary queue), a marker of its own process group exists there and
+the class fits (a held heavy slot serves both classes); otherwise exit 64, never the queue, where it would wait behind
+itself. `scripts/train.js` passes `SLOT_EXEC_NOTE=<lock>/exec` to its guard runs: the groups of their commands are
+noted there, and the train lock lives while one of them lives (`scripts/train-lock.js`). The exclusive lock of guards
 marked `guards:exclusive` (`<slots.lockDir>/exclusive.lock`) is a `flock(2)` lock by contract, because the project's
 guard runner takes the same file with `lockf(1)` or `flock(1)` and on Linux the two lock types do not see each other:
 the slot scripts take it with the first executable of `SLOT_EXCL_TOOLS` (default `/usr/bin/lockf /usr/bin/flock
@@ -1143,7 +1162,9 @@ Every slot hold appends one line to the slot journal, `<slots.lockDir>/journal.t
 turns it off): request, acquire and release times, class, slot, kind, pid, exit code, worktree and a short command with
 `name=value` words masked. A failed write is ignored and never stops a slot. `node scripts/slot-journal.js [--since 2d]
 [--until <time>] [--json]` sums it up: queue wait (acquire - request) and hold (release - acquire), total and median,
-per class and per worktree, and the share of the queue in the agents' waiting.
+per class and per worktree, and the share of the queue in the agents' waiting. Kind `hold` is a slot held by
+`slot-hold.sh`; kind `nested` is a run inside a held slot (`CODIS_SLOT_HELD`), counted apart, never in the totals: its
+time is inside the holding record.
 
 ## Shared stand
 
@@ -1182,6 +1203,16 @@ fallback to another slot directory: a second directory would be a second queue t
 
 **The boundary of the guarantees.** The roles count as trusted participants that can make mistakes. The plugin guards against accidental damage to data, repeated execution, mixed runs and overuse of resources. The sandbox is no protection from a hostile agent: a deliberate forgery of state by one role against another is outside the guarantees, and code a role wrote runs outside the sandbox (hooks, the train).
 
+- Memory slots and process groups: KILL without a TERM before it (`kill -9` of `heavy.sh` or of its slot holder, the
+  OOM killer) does not stop the slot's command - it runs on in its slot, under its exec marker, to its end; no path of
+  the plugin sends such a KILL (`guards-remote-host.js` and `wait-step.js` send TERM; the Bash tool sends TERM to the
+  whole tree first). The stop of a background task of the Bash tool kills the whole tree after about 1.5 s, so the
+  30 s pause is not kept there. A descendant that leaves the command's process group (`setsid`, a daemon) is seen
+  neither by the lock nor by the marker. A command that reads the terminal is a background group for it and stops on
+  SIGTTIN, holding its slot until a signal (Ctrl-C) stops it. Markers are read only by this version of `slots.zsh`: a
+  waiter of an older copy on the same slot directory sees the lock alone. `kill -9` of a holder in the instant between
+  the start of its command and the write of the marker, while a waiter picks the slot, lets one more command into it.
+  `role-leftovers-check.js` judges a slot by the pid in `<slot>.who` and does not read markers.
 - The cost of adapter calls (`chain-cost.js --journal`) is a lower bound in three cases: gpt-6-astra charges a request
   above 272K input tokens 2x input and cache and 1.5x output, but `turn.completed.usage` is the sum of a turn, so the
   size of one request is not seen and the normal rate is used; a call killed before its usage (`killed`, `ceiling`,

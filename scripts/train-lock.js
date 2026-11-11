@@ -4,10 +4,13 @@
 // both use one rule of "alive" (train.js cannot be required: it runs its main() on load).
 //   <sharedDir>/train/lock/owner.json   {pid, child, pgid, train, base, wt, since, by?}: base is the arc branch the train
 //   moves (by: 'watch' when the coordinator's train.js watch took the lock); the dispatcher writes it as soon as it has chosen the arc, before it reads the arc head.
-// A holder whose pid, child and process group (any process of it, unless it is the reader's own group) are all gone is
-// dead. The guard run of a dispatcher is not detached, so it stays in the dispatcher's group: when the dispatcher and
-// its zsh are killed, an orphaned guard worker still holds the lock. A group that is the reader's own is no evidence: a
-// waiter started from the same shell job (a test, one terminal) shares it with the dead holder, and it would never let go.
+//   <sharedDir>/train/lock/exec         one pgid per line: the process groups of the commands of the train's guard runs.
+// A holder whose pid, child, process group and noted groups (any process of them, unless it is the reader's own group)
+// are all gone is dead. The guard run of a dispatcher is not detached, but slots.zsh runs the command of a slot in a
+// process group of its own: train.js passes SLOT_EXEC_NOTE=<lock>/exec to guards-all.sh, and scripts/slot-group.pl
+// appends each such group there, so an orphaned guard worker still holds the lock after the dispatcher and its zsh are
+// killed. A group that is the reader's own is no evidence: a waiter started from the same shell job (a test, one
+// terminal) shares it with the dead holder, and it would never let go.
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
@@ -22,7 +25,9 @@ const pgidOf = (pid) => { const r = spawnSync('ps', ['-o', 'pgid=', '-p', String
 let own;
 const ownPgid = () => (own === undefined ? (own = pgidOf(process.pid)) : own);
 const groupAlive = (g) => { if (!Number.isInteger(g) || g <= 1 || g === ownPgid()) return false; try { process.kill(-g, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
-const holderAlive = (o) => !!o && (alive(o.pid) || alive(o.child) || groupAlive(o.pgid));
+// the groups noted in <lock>/exec (slot-group.pl run); an unreadable or missing file notes none
+const notedGroups = (lock) => { try { return fs.readFileSync(path.join(lock, 'exec'), 'utf8').split('\n').filter((l) => /^\d+$/.test(l)).map(Number); } catch { return []; } };
+const holderAlive = (o, lock) => !!o && (alive(o.pid) || alive(o.child) || groupAlive(o.pgid) || (!!lock && notedGroups(lock).some(groupAlive)));
 
 // The live holder of the train lock under sharedDir that names its arc ({..., base}), or null: no lock, no owner file
 // or a broken one, no base yet (the arc head is read after base is written, so a move before it does not hurt the
@@ -30,7 +35,7 @@ const holderAlive = (o) => !!o && (alive(o.pid) || alive(o.child) || groupAlive(
 function arcHolder(sharedDir) {
   if (typeof sharedDir !== 'string' || !sharedDir) return null;
   const o = readJ(ownerFile(lockDir(sharedDir)));
-  return o && typeof o.base === 'string' && o.base && holderAlive(o) ? o : null;
+  return o && typeof o.base === 'string' && o.base && holderAlive(o, lockDir(sharedDir)) ? o : null;
 }
 
-module.exports = { lockDir, ownerFile, alive, pgidOf, ownPgid, groupAlive, holderAlive, arcHolder };
+module.exports = { lockDir, ownerFile, alive, pgidOf, ownPgid, groupAlive, notedGroups, holderAlive, arcHolder };

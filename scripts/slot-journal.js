@@ -9,7 +9,10 @@
 // with exit 75 had no worker budget - its hold is waiting too, counted in the line "no worker budget". Records with no acquire ("-") never got a slot (killed
 // while queueing): their wait counts, they have no hold. The class "stand" is the ticket of the project's shared stand
 // (scripts/stand.sh): its hold is the whole time a tester held the stand; kind "dead" - a holder found dead by the next
-// one, its release is the time it was found (an upper bound of the hold).
+// one, its release is the time it was found (an upper bound of the hold). Kind "hold" - a slot held by slot-hold.sh
+// for the adapter of a codex role (counted as any hold); kind "nested" - a heavy.sh / medium.sh run inside a slot the
+// process already held (CODIS_SLOT_HELD): no ticket, no slot of its own, its time already inside the holding record, so
+// it is counted apart ("nested runs") and never in the queue or hold totals.
 //
 // usage: slot-journal.js [--journal <file>] [--since <time>] [--until <time>] [--json]
 //   <time>: 30m, 6h, 2d (ago), an ISO date/time, or epoch seconds. Journal: --journal, else $SLOT_JOURNAL, else
@@ -75,8 +78,10 @@ function group(rs, key) {
 const noBudget = (r) => (r.kind === 'full' || r.kind === 'whole') && r.rc === 75;
 
 function summarize(records, { since = -Infinity, until = Infinity } = {}) {
-  const rs = records.filter((r) => r.request >= since && r.request <= until);
+  const inWin = records.filter((r) => r.request >= since && r.request <= until);
+  const rs = inWin.filter((r) => r.kind !== 'nested');
   return {
+    nested: stats(inWin.filter((r) => r.kind === 'nested')),
     window: rs.length ? { from: Math.min(...rs.map((r) => r.request)), to: Math.max(...rs.map((r) => r.release)) } : null,
     all: stats(rs), byClass: group(rs, (r) => r.class), byWorktree: group(rs, (r) => r.worktree),
     noBudget: stats(rs.filter(noBudget)),
@@ -100,10 +105,11 @@ function table(title, rows) {
 }
 
 function format(s, file) {
-  if (!s.window) return `${file}: no records in the window`;
+  if (!s.window) return `${file}: no records in the window${s.nested && s.nested.n ? ` (${s.nested.n} nested runs)` : ''}`;
   const iso = (t) => new Date(t * 1000).toISOString().replace('T', ' ').replace(/\.\d+Z$/, 'Z');
   const out = [`${file}: ${s.all.n} holds, ${iso(s.window.from)} .. ${iso(s.window.to)}`, '',
     table('class', [...s.byClass, ['all', s.all]]), '', table('worktree', s.byWorktree)];
+  if (s.nested.n) out.push('', `nested runs inside a held slot (no ticket of their own, their time inside the holding record): ${s.nested.n}, ${dur(s.nested.holdTotal)}`);
   if (s.noBudget.n) out.push('', `no worker budget (full runs back in the queue with 75): ${s.noBudget.n}, held ${dur(s.noBudget.holdTotal)} - waiting, not work`);
   return out.join('\n');
 }

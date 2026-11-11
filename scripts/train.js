@@ -330,7 +330,7 @@ function lockTake(P) {
   for (let i = 0; i < 3; i++) {
     try { fs.mkdirSync(P.LOCK); setOwner(P, CMD === 'watch' ? { by: 'watch' } : {}); return { ok: true }; } catch (e) { if (e.code !== 'EEXIST') throw e; }
     const o = readJ(ownerFile(P));
-    if (holderAlive(o)) return { busy: o };
+    if (holderAlive(o, P.LOCK)) return { busy: o };
     if (!o && ageMs(P.LOCK) < STALE_MS) return { busy: { pid: null, note: 'a lock without its owner file yet' } };
     try { fs.mkdirSync(brk); } catch (e) {
       if (e.code !== 'EEXIST') throw e;
@@ -342,7 +342,7 @@ function lockTake(P) {
     try {
       writeAtomic(brkOwner, { pid: process.pid, since: new Date().toISOString() });
       const o2 = readJ(ownerFile(P));
-      const sameDead = o2 ? (o && o2.pid === o.pid && !holderAlive(o2)) : (!o && ageMs(P.LOCK) >= STALE_MS);
+      const sameDead = o2 ? (o && o2.pid === o.pid && !holderAlive(o2, P.LOCK)) : (!o && ageMs(P.LOCK) >= STALE_MS);
       if (sameDead) {
         // a rename, not the removal of the dead train's worktree: that worktree (a cloned corpus) is removed by reapDead
         // under the breaker's own lock, so the break lock is held for milliseconds and nobody can break again meanwhile
@@ -424,8 +424,9 @@ function identity(P) {
 
 // --priority: the full run of the train and its attribution are ahead of the waiting task runs in the heavy queue
 // (slots.zsh SLOT_PRIORITY; coordinator's decisions 2-5 of 2026-10-30 in p-runq): the arc waits for the train.
+// SLOT_EXEC_NOTE: the slot's command runs in a process group of its own, noted in <lock>/exec (train-lock.js).
 const runGuards = (P, wt, extra = []) => new Promise((res) => {
-  const ch = spawn('zsh', [path.join(H, 'guards-all.sh'), '--priority', ...extra, wt], { cwd: P.c.repoDir, env: P.env, stdio: ['ignore', 'pipe', 'pipe'] });
+  const ch = spawn('zsh', [path.join(H, 'guards-all.sh'), '--priority', ...extra, wt], { cwd: P.c.repoDir, env: Object.assign({}, P.env, { SLOT_EXEC_NOTE: path.join(P.LOCK, 'exec') }), stdio: ['ignore', 'pipe', 'pipe'] });
   let s = '';
   ch.stdout.on('data', (x) => { s += x; }); ch.stderr.on('data', (x) => { s += x; });
   try { setOwner(P, { child: ch.pid }); } catch { /* the lock is ours; a failed note only weakens the liveness check */ }
@@ -862,7 +863,7 @@ async function main() {
   if (cmd === 'status') {
     const h = readJ(P.HALT), o = readJ(ownerFile(P));
     console.log(h ? `halt: ${h.reason} (since ${h.at}); the coordinator lifts it with train.js resume` : 'halt: none');
-    console.log(o ? `lock: train ${o.train || '-'}${o.base ? ` for arc ${o.base}` : ''} by ${o.by === 'watch' ? 'watch ' : ''}pid ${o.pid} (${holderAlive(o) ? 'alive' : 'dead'}) since ${o.since}` : 'lock: free');
+    console.log(o ? `lock: train ${o.train || '-'}${o.base ? ` for arc ${o.base}` : ''} by ${o.by === 'watch' ? 'watch ' : ''}pid ${o.pid} (${holderAlive(o, P.LOCK) ? 'alive' : 'dead'}) since ${o.since}` : 'lock: free');
     const q = entries(P), all = waiters(P);
     console.log(`queue: ${q.length}`);
     for (const e of q) {
