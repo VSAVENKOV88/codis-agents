@@ -191,7 +191,7 @@ ok('K5 coordinator, Codex: the task tells the checker its sandbox is read-only -
 ok('K5 coordinator: the steps snapshot before and after stay common (outside the host blocks)', /\*\*Snapshot before\.\*\*/.test(chk) && /\*\*Snapshot after\.\*\*/.test(chk));
 // p-codex-D2b-1 (A14, A17, A6): every launch of the checker is a run of its own, prepared and collected by
 // scripts/analysis-check.js; no earlier result is removed, and two verdicts of one version both reach the owner.
-ok('A14 coordinator, Codex: no "Remove a last.json" - an earlier result of the same version is never removed', !/Remove a `last\.json`/.test(chkCodex) && !/last\.json/.test(chkCodex), chkCodex.slice(0, 600));
+ok('A14 coordinator, Codex: no "Remove a last.json" - an earlier result of the same version is never removed', !/Remove a `last\.json`/.test(chkCodex) && !/-o <check folder>\/last\.json/.test(chkCodex), chkCodex.slice(0, 600));
 ok('A14 coordinator, Codex: analysis-check.js prepare first; its exit 3 - show the result or the pending run, run nothing',
   /`node <plugin>\/scripts\/analysis-check\.js prepare /.test(chkCodex) && /exit 3[^.]*(show|shows)[^.]*run nothing|run nothing[^.]*exit 3/.test(chkCodex), chkCodex);
 ok('A14/A17 coordinator, Codex: the printed command once; "still running" - poll that same command, never run it again',

@@ -220,7 +220,9 @@ Larger changes run as a chain of agents, each in its own role:
   of the questions of the preparation that go to the owner in one list; the coordinator writes one line per gap into
   the section Closure of that run. The check of a task is a run whose `Tasks` line names its key: a run for another part
   of the feature does not count for this task. A task whose check is missing, or `changes-needed` without a Closure line for every
-  significant gap, does not go into the wave. The checker changes nothing but its report: the coordinator compares the
+  significant gap, does not go into the wave. Two runs of one version for a task with different verdicts (a run again,
+  a late answer): a `changes-needed` needs its Closure lines, and a later `ready` of the same version does not cancel
+  it; both verdicts go to the owner (owner 2026-11-10). The checker changes nothing but its report: the coordinator compares the
   worktree and the task and feature folders before and after its run (rules of the coordinator skill).
   Why (wave 2, 2026-11-02): three checks cost 0.46M tokens and about 20 minutes and found 14 significant gaps (a guard
   green without the fix, an acceptance bound to fail on the owner's data, a missed proxy path), against about 0.7M and

@@ -219,7 +219,9 @@ Before a task of a wave starts (product or plugin), its analysis is read by the 
 5. **Closure.** For `changes-needed`, write the section Closure of this run (the last one of the report): one line per significant gap G-n - closed
    in the brief or the analysis (with its layer mark: principle N, or "coordinator's decision, not from the model -
    candidate"), a question in the preparation list for the owner, or out of the task with its reason. A line
-   `Closure-sha256` is optional. The task goes into the wave only when every significant gap has its line.
+   `Closure-sha256` is optional. The task goes into the wave only when every significant gap has its line. Two runs of
+   one version for a task with different verdicts: a `changes-needed` needs its Closure lines, and a later `ready` of
+   the same version does not cancel it; both verdicts are named to the owner.
 
 ### Run the checker
 
@@ -231,28 +233,43 @@ goes by step 4.
 
 #### On Codex
 
-`codex exec` in the coordinator home, read-only, with a fixed version of the analysis:
+`codex exec` in the coordinator home, read-only, with a fixed version of the analysis. Every launch is a run of its own
+in `<sharedDir>/analysis-checks/<sha256>/` (`<sha256>`: `shasum -a 256 <analysis>`), outside the worktree and the task
+and feature folders; no result of an earlier run is removed or overwritten, and every result reaches the owner.
+`analysis-check.js` runs in the sandbox (no rule: it writes only there and into the report next to the analysis):
 
-1. Copy the analysis into a check folder inside `sharedDir`, outside the worktree and the task and feature folders
-   (`<sharedDir>/analysis-checks/<task>/<sha256>/`), as `analysis-<sha256>.md`, where `<sha256>` is
-   `shasum -a 256 <analysis>`. Next to it, `task.md`: the text of `<plugin>/agents/analysis-checker.md` without its
-   frontmatter, then the task - the copy, the original path and the sha256, the brief, the use cases, the specification,
-   the worktree, the task keys, and: "This sandbox is read-only: write nothing and run no experiment that writes; a
-   premise that needs one is `unverifiable (read-only sandbox)`. Return your run of the report in the field report and
-   the sha256 of the copy in analysisSha256." Remove a `last.json` left there by an earlier check of the same version,
-   so an answer is always the one of this run.
-2. Run it directly, under its rule: `codex exec --sandbox read-only --ephemeral --skip-git-repo-check --output-schema <plugin>/schemas/analysis-check.schema.json -o <check folder>/last.json -C <worktree> -m <model> "Read <check folder>/task.md and do what it says."`
-   (`<model>`: `codex.models` of the project config for `roleModel`, never above the model of `opus`). When the shell
-   tool answers "still running", poll it again in the same turn: do not end the turn while the checker runs.
-3. The answer (`last.json`) is `{analysisSha256, tasks, verdict, significantGaps, report}`. Append `report` to
-   `<name of the analysis>.check.md` yourself (step 4: `Saved-by: coordinator` under the header of the run) with
-   `Analysis-sha256: <sha256 of the copy>`. When the analysis later changes, its sha256 differs from the last checked
-   run: that version was not checked, run again.
+1. **Prepare.** `node <plugin>/scripts/analysis-check.js prepare --shared <sharedDir> --analysis <analysis> --task <key> --worktree <worktree> --model <model> --brief <brief>`
+   (`--task` once per key the check is for; `--use-cases` and `--spec` when the task has them; `<model>`: `codex.models`
+   of the project config for `roleModel`, never above the model of `opus`). It copies the analysis as
+   `analysis-<sha256>.md`, writes `task-<n>.md` (the checker's text without its frontmatter, then the task: the copy,
+   the original path and the sha256, the brief, the use cases, the specification, the worktree, the task keys, and "This
+   sandbox is read-only: write nothing and run no experiment that writes; a premise that needs one is `unverifiable
+   (read-only sandbox)`. Return your run of the report in the field report and the sha256 of the copy in
+   analysisSha256.") and the marker of run `<n>`, and prints `{run, sha, dir, argv, command}`. On its exit 3 show
+   what is there and run nothing: a result of this version for a key (in `runs/`, in the earlier layout
+   `analysis-checks/<task>/<sha256>/last.json`, or a run of `<name of the analysis>.check.md` with this
+   `Analysis-sha256` and the key in `Tasks`) - show it to the owner; a new run only with `--again <reason>` (another
+   model, a brief changed while the analysis did not); or a pending run - poll the command that runs it. Only when the
+   turn that ran the command has ended without an answer: `prepare ... --abandon <n> --reason <why>`.
+2. **Run** the command it printed, once, directly, under its rule: `codex exec --sandbox read-only --ephemeral --skip-git-repo-check --output-schema <plugin>/schemas/analysis-check.schema.json -o <check folder>/runs/<n>.json -C <worktree> -m <model> "Read <check folder>/task-<n>.md and do what it says."`
+   When the shell tool answers "still running", poll that same command in the same turn; never run it again: a second
+   run overwrites `runs/<n>.json`. Do not end the turn while the checker runs.
+3. **Collect.** `node <plugin>/scripts/analysis-check.js collect --shared <sharedDir> --analysis <analysis> --run <n> --exit <N>`
+   records the exit of `codex exec` and shows every run of this version with its state: a result (the answer
+   `runs/<n>.json` is `{analysisSha256, tasks, verdict, significantGaps, report}`; it counts only for the keys in its
+   `tasks`), not-run with its reason, or pending. When the snapshot after (step 3 above) did not void the check,
+   `node <plugin>/scripts/analysis-check.js collect --shared <sharedDir> --analysis <analysis> --run <n> --append`
+   appends `report` to `<name of the analysis>.check.md` with `Saved-by: coordinator` under the header of the run and
+   `Analysis-sha256` filled in when missing; a second `--append` of the run writes nothing. Two verdicts of one version
+   for a key (`--again`, a late answer of an abandoned run, a second `codex exec` that rewrote a collected answer) are
+   both appended and both named to the owner (step 5). When the analysis later changes, its sha256 differs: that
+   version was not checked, prepare again.
 4. The third outcome, "analysis check not run: <reason>", when any of these holds: `codex exec` ended with an exit other
-   than 0; no `last.json`; a JSON that does not fit the schema; `analysisSha256` differs from the sha256 of the copy;
-   `ready` with `significantGaps` above 0, or `changes-needed` with 0; the snapshot after (step 3) voids the check. Then
-   write nothing into `.check.md`, add the line `analysis check not run: <reason>, <date>` to the brief, and run again:
-   it is not a passed check and not a failed one, and the task stays out of the wave until a run gives a verdict.
+   than 0; no `runs/<n>.json`; a JSON that does not fit the schema; `analysisSha256` differs from the sha256 of the copy;
+   `ready` with `significantGaps` above 0, or `changes-needed` with 0; the header lines of `report` disagree with these
+   fields; the snapshot after (step 3) voids the check. `collect` names each as not-run. Then write nothing into
+   `.check.md`, add the line `analysis check not run: <reason>, <date>` to the brief, and prepare again: it is not a
+   passed check and not a failed one, and the task stays out of the wave until a run gives a verdict.
 
 ## Limits
 

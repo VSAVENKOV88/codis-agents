@@ -9,8 +9,8 @@
 //       into the wave; RULE_LIST of the workflow gains no entry for the checker (no role marker).
 //   T4. Coordinator skill: a fable roleModel runs the checker on opus (not only the word "fable"); the only difference of
 //       the folders is the report <name of the analysis>.check.md; Saved-by under the header; Analysis-sha256 filled by the coordinator.
-//   T5. Part b did not leak in: no scripts/analysis-check.js, no analysisCheck key or analysis-checker role in
-//       config.js, the schema, the workflow or the role-chain skill.
+//   T5. The check stays the coordinator's: no analysisCheck key or analysis-checker role in config.js, the schema, the
+//       workflow or the role-chain skill (scripts/analysis-check.js is the coordinator's tool on Codex, p-codex-D2b-1).
 //   (English of the agent: tests/hygiene.test.js, no Cyrillic in any file.)
 const fs = require('fs');
 const path = require('path');
@@ -55,10 +55,9 @@ ok('T4. coordinator: fills Analysis-sha256 with shasum -a 256 when the agent cou
 ok('T4. coordinator: the task goes into the wave only when every significant gap has its Closure line', /only when every significant gap has its line/.test(coStep), '');
 ok('T4. coordinator: step 3 of the list links the check', /"Check the analysis"/.test(co), '');
 
-// ---- T5: part b is not in this task ----
-ok('T5. no scripts/analysis-check.js (part b)', !exists('scripts/analysis-check.js'));
+// ---- T5: the check is not a role of the chain ----
 for (const f of ['scripts/config.js', 'workflows/role-chain.js', 'skills/role-chain/SKILL.md', 'schemas/codis-agents.schema.json']) {
-  ok(`T5. ${f}: no analysisCheck key and no analysis-checker role (part b)`, !/analysisCheck|analysis-checker/.test(raw(f)), f);
+  ok(`T5. ${f}: no analysisCheck key and no analysis-checker role`, !/analysisCheck|analysis-checker/.test(raw(f)), f);
 }
 
 // ---- Round 3 (after de7eb0b, review R2): one report per analysis, a repeated check appends a run ----
