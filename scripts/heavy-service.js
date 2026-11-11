@@ -16,8 +16,9 @@
 // Refused before the queue: docker and the stand (decision 9), guards-all.sh (guard runs come with part A2b-1c).
 //
 // A run, every step journaled before it is taken (<stateDir>/<task>/heavy.jsonl, append + fsync, one writer):
-//   queued -> holding: scripts/slot-hold.sh <class> outside the sandbox (its environment without CODIS_SLOT_HELD, so
-//   it queues in the slot directory of the project; SLOT_LABEL "codex <task> <role> <id>"); its lines "waiting for slot
+//   queued -> holding: scripts/slot-hold.sh <class> outside the sandbox (its environment without CODIS_SLOT_HELD and
+//   with CODIS_AGENTS_CONFIG = o.config, the run's project config, so it queues in the slot directory of that config
+//   and the machine file, whatever a lookup from the worktree would find; SLOT_LABEL "codex <task> <role> <id>"); its lines "waiting for slot
 //   ..." give the position and the reason; "acquired <slot> <t>" the slot; an exit before it is the queue's refusal.
 //   -> acquired: the exclusive lock file (GUARDS_EXCLUSIVE_LOCK, else <slot dir>/exclusive.lock) is created if missing,
 //   never truncated (the executor may only read it). -> running: the gate is spawned detached (its pid is the group G),
@@ -269,8 +270,10 @@ function scopeProblem(argv, kind) {
   return null;
 }
 
-// o: {task, callId, role, wt, tdir, box, stateDir, runId?, kinds?, userEnv?, codex?, codexVersions?, killGraceMs?,
-// emptyWaitMs?, pollMs?, npmCache?, inject?, log?}. inject (tests): probe() -> {} | {error}; executor(spec) -> spec;
+// o: {task, callId, role, wt, tdir, box, stateDir, config?, runId?, kinds?, userEnv?, codex?, codexVersions?, killGraceMs?,
+// emptyWaitMs?, pollMs?, npmCache?, inject?, log?}. config: the absolute path of the run's project config, given to the
+// holder and the exclusive check as CODIS_AGENTS_CONFIG (role-exec.js requires it; without it they look the config up
+// from the worktree, as heavy.sh does). inject (tests): probe() -> {} | {error}; executor(spec) -> spec;
 // alive(g) -> boolean | undefined (undefined: the real answer); beforeGo(run).
 // Returns {box, answers, cancel(reason), close()}: cancel stops every run of the call (the queued ones never start);
 // close() does the same with "the call ended" and resolves, once every run is final, to {runs: [{id, state, rc}]}.
@@ -278,6 +281,7 @@ function openHeavyService(o) {
   const bad = (m) => { throw new Error(`heavy-service: ${m}`); };
   for (const k of ['task', 'callId']) if (typeof o[k] !== 'string' || !/^[A-Za-z0-9._-]+$/.test(o[k]) || o[k] === '.' || o[k] === '..') bad(`${k} must be a plain name`);
   for (const k of ['wt', 'tdir', 'box', 'stateDir']) if (typeof o[k] !== 'string' || !path.isAbsolute(o[k])) bad(`${k} must be an absolute path`);
+  if (o.config !== undefined && (typeof o.config !== 'string' || !path.isAbsolute(o.config))) bad('config must be an absolute path');
   const userEnv = o.userEnv || process.env;
   const log = typeof o.log === 'function' ? o.log : () => {};
   const inject = o.inject || {};
@@ -374,6 +378,7 @@ function openHeavyService(o) {
   const holderEnv = () => {
     const e = Object.assign({}, userEnv);
     for (const k of ['CODIS_SLOT_HELD', 'SLOT_EXEC_NOTE', 'SLOT_PATH', 'SLOT_KIND', 'SLOT_RETRY_RC', 'SLOT_PRIORITY', 'CODIS_HEAVY_BOX', 'CODIS_HEAVY_ANSWERS']) delete e[k];
+    if (o.config) e.CODIS_AGENTS_CONFIG = o.config;
     return e;
   };
   const exclusive = (argv, cwd) => {

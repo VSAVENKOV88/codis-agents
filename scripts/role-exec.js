@@ -535,16 +535,18 @@ function createAgent(cfg) {
     }
   }
 
-  // The heavy channel (p-codex A2b-1b, scripts/heavy-service.js): prog and test on codex with the commit channel ask the
-  // adapter to run heavy commands in a memory slot. cfg.heavy {kinds?: {<kind>: medium | heavy}} turns it on; its
+  // The heavy channel (scripts/heavy-service.js): prog and test on codex with the commit channel ask the
+  // adapter to run heavy commands in a memory slot. cfg.heavy {config, kinds?: {<kind>: medium | heavy}} turns it on
+  // (config: the run's project config, whose slot directory the holder queues in); its
   // journal lies in commit.stateDir, out of the role's reach like the commit journal.
   const hv = c.heavy === undefined || c.heavy === null ? null : c.heavy;
   if (hv) {
-    if (typeof hv !== 'object' || Array.isArray(hv)) no('heavy must be an object {kinds?}');
+    if (typeof hv !== 'object' || Array.isArray(hv)) no('heavy must be an object {config, kinds?}');
     if (c.host !== 'codex') no('heavy on the claude host: a role of Claude takes its slots with heavy.sh itself');
     if (!cm) no('heavy needs commit: the journal of the heavy channel lies in commit.stateDir');
     const k = hv.kinds === undefined ? {} : hv.kinds;
     if (!k || typeof k !== 'object' || Array.isArray(k) || Object.values(k).some((v) => v !== 'medium' && v !== 'heavy')) no('heavy.kinds must map a kind to "medium" or "heavy"');
+    if (typeof hv.config !== 'string' || !path.isAbsolute(hv.config)) no('heavy.config must be the absolute path of the run\'s project config: the slot holder queues by it, not by a lookup from the worktree');
   }
 
   // {refused} or the plan of the call.
@@ -699,7 +701,7 @@ function createAgent(cfg) {
         // KILL) and the call waits for them in close()
         try {
           heavy = openHeavyService({ task: plan.key, callId: path.basename(plan.callDir), role: plan.kind, wt: plan.t.wt, tdir: plan.t.dir,
-            box: path.join(plan.callDir, 'heavy'), stateDir: cm.stateDir, runId: cm.runId, kinds: hv.kinds || {}, userEnv: c.env || process.env,
+            box: path.join(plan.callDir, 'heavy'), stateDir: cm.stateDir, config: hv.config, runId: cm.runId, kinds: hv.kinds || {}, userEnv: c.env || process.env,
             codex: cx.bin, codexVersions: hv.codexVersions, killGraceMs: graceMs, emptyWaitMs: graceMs, npmCache: path.join(plan.callDir, 'npm-cache'), inject: hv.inject, log });
           heavyStop = () => heavy.cancel('signalled');
           enter(heavyStop);

@@ -368,8 +368,10 @@ function adapterCfg(host, args, ad, callsDir, log, runId) {
     cfg.commit = { stateDir: commitStateDir(config) };
     if (runId !== undefined) cfg.commit.runId = runId;
     if (config.commitAuthor) cfg.commit.author = { name: config.commitAuthor.name, email: config.commitAuthor.email };
-    // the heavy channel of prog and test (scripts/heavy-service.js): the class of a kind from slots.kinds of the config
-    cfg.heavy = { kinds: (config.slots && config.slots.kinds) || {} };
+    // the heavy channel of prog and test (scripts/heavy-service.js): the class of a kind from slots.kinds of the config,
+    // and the config's own path (configPath of config.js json), whose slot directory the holder queues in; a config
+    // without its path (not loaded by config.js) gets no channel, so no holder queues by a lookup from the worktree
+    if (typeof config.configPath === 'string') cfg.heavy = { config: config.configPath, kinds: (config.slots && config.slots.kinds) || {} };
     cfg.codex = { home: ad.codexHome };
     if (ad.bin) cfg.codex.bin = ad.bin;
     if (ad.codexAuth) cfg.codex.auth = ad.codexAuth;

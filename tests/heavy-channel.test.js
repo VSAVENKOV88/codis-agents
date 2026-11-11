@@ -258,7 +258,9 @@ const groupAlive = (g) => { try { process.kill(-g, 0); return true; } catch (e) 
     put(d, id, { argv: ['zsh', path.join(S, 'heavy.sh'), 'node', '-e', 'console.log("SP " + process.env.SLOT_PATH); setTimeout(()=>{}, 4000)'] });
     const run = await until(() => journal(d).find((e) => e.id === id && e.ev === 'running'), 15000);
     const mk = run ? `${run.slot}.exec.${run.pgid}` : '';
-    ok('B\'11 the marker <slot>.exec.<G> exists while the command runs, no .exectmp left', !!run && fs.existsSync(mk) && !markers(d).some((f) => /exectmp/.test(f)), markers(d).join(' '));
+    // the line "running" is journaled before the marker is renamed into place, so the marker may follow it by a moment
+    const seenMk = !!run && !!(await until(() => fs.existsSync(mk), 3000));
+    ok('B\'11 the marker <slot>.exec.<G> exists while the command runs, no .exectmp left', seenMk && !markers(d).some((f) => /exectmp/.test(f)), markers(d).join(' '));
     const w = outside(d, 'echo got-it');
     await sleep(1200);
     drv.kill('SIGKILL');
@@ -474,10 +476,10 @@ const groupAlive = (g) => { try { process.kill(-g, 0); return true; } catch (e) 
   {
     const CR = require(CHAIN);
     const shared = path.join(T, 'shared');
-    const cfg = CR.adapterCfg('codex', { config: { sharedDir: shared, worktreeRoot: T, slots: { kinds: { tsc: 'medium' } } }, tasks: [] }, { codexHome: path.join(T, 'ch') }, path.join(T, 'calls'), () => {});
+    const cfg = CR.adapterCfg('codex', { config: { sharedDir: shared, worktreeRoot: T, configPath: '/p/.claude/codis-agents.json', slots: { kinds: { tsc: 'medium' } } }, tasks: [] }, { codexHome: path.join(T, 'ch') }, path.join(T, 'calls'), () => {});
     ok('chain-run adapterCfg: codex gets cfg.heavy with the kinds of slots.kinds', !!cfg.heavy && cfg.heavy.kinds.tsc === 'medium', JSON.stringify(cfg.heavy));
-    const cfgP = CR.adapterCfg('codex', { config: { sharedDir: shared, worktreeRoot: T, configPath: '/p/.claude/codis-agents.json' }, tasks: [] }, { codexHome: path.join(T, 'ch') }, path.join(T, 'calls'), () => {});
-    ok('B\'10 chain-run adapterCfg: cfg.heavy.config is the path of the run\'s config (configPath of config.js json)', cfgP.heavy && cfgP.heavy.config === '/p/.claude/codis-agents.json', JSON.stringify(cfgP.heavy));
+    const cfgN = CR.adapterCfg('codex', { config: { sharedDir: shared, worktreeRoot: T }, tasks: [] }, { codexHome: path.join(T, 'ch') }, path.join(T, 'calls'), () => {});
+    ok('B\'10 chain-run adapterCfg: cfg.heavy.config is the path of the run\'s config (configPath of config.js json); a config without it gets no channel', cfg.heavy.config === '/p/.claude/codis-agents.json' && cfgN.heavy === undefined, JSON.stringify([cfg.heavy, cfgN.heavy]));
     const hk = path.join(CR.commitStateDir({ sharedDir: shared }), 'K');
     fs.mkdirSync(hk, { recursive: true });
     fs.writeFileSync(path.join(hk, 'heavy.jsonl'), JSON.stringify({ v: 1, n: 1, ts: 'x', id: id32(), ev: 'undetermined', why: 'x' }) + '\n');
