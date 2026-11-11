@@ -4,6 +4,29 @@ Every version of the codis-agents plugin, newest first. What the plugin does now
 [README.md](README.md); its [Technical reference](README.md#technical-reference) is the current state of every rule,
 key and script, and this file says when and why each one changed. Versions before 0.4.14 are in the git history.
 
+## 0.4.43 - 2026-11-11
+
+- **The heavy channel of a Codex role** (p-codex-A2b-1b). A `prog` or `test` role on Codex asks the adapter to run a
+  heavy or medium command in a memory slot: `scripts/heavy-req.js [--kind <k>] [--cwd <dir>] [--max <s>] -- <argv>`
+  (and `wait`, `cancel`). The adapter's service, `scripts/heavy-service.js`, queues `slot-hold.sh`, runs the command as
+  `codex sandbox -P codis-heavy -- zsh <class>.sh <argv>` in a group it names in the exec marker, and releases the slot
+  only after that group is gone; the journal is `<commit.stateDir>/<task>/heavy.jsonl`, shown by
+  `chain-run.js status --heavy`. The slot holder and the executor both get the run's project config
+  (`CODIS_AGENTS_CONFIG`), so a guard marked exclusive by a config outside the worktree still runs under its lock.
+- **Answers of an analysis check on Codex are never lost** (p-codex-D2b-1). `scripts/analysis-check.js` records every
+  valid answer any of its commands saw in `runs/<n>.json` in the journal of the run, `runs/<n>.answers/<k>.json`
+  (an exclusive create), before anything is printed; every answer of the journal is a verdict for its keys, so a second
+  `codex exec` that rewrites the file adds an answer and hides none, and `--append` writes every answer not yet
+  appended, in the order seen. Step 4 of the coordinator skill: an exit or an answer condition no longer makes a run
+  not-run when its journal already holds an answer.
+- **A single dropped ssh connection to the remote runner no longer halts the train** (p-runner-ssh-retry).
+  `scripts/guards-remote.js` retries an ssh call only when ssh exits 255 with the host key matched (ssh(1) EXIT
+  STATUS; the runner itself exits only 0, 64 or 69): 3 attempts, pauses of 10 s and 30 s
+  (`GUARDS_REMOTE_SSH_PAUSE` overrides them). After a failed `git push` the runner is asked whether it has the commit.
+  A host key mismatch, an answer of the runner, a missing ssh and an ssh killed by a signal stop at once, as before.
+  Exhausted attempts end with `remote runner unreachable: <ssh line> (<op>, 3 attempts)`; a successful run with
+  retries names them in one log line after the sweep line.
+
 ## 0.4.42 - 2026-11-11
 
 - **The holder of a slot stops its command before the slot is released** (p-codex-A2b-1a). The command of a slot runs
