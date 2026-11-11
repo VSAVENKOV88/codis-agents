@@ -326,6 +326,18 @@ const keyOf = (o, t) => (o && o.keys && o.keys[t]) || null;
           if (got < cnt) fails.push(`seq ${sq} [${log.join(' ')}] after ${what}: ${t} shows ${got} of ${id}, earlier ${cnt}`);
         }
         for (const [t, m] of Object.entries(now)) { ever[t] = ever[t] || {}; for (const [id, cnt] of Object.entries(m)) ever[t][id] = Math.max(ever[t][id] || 0, cnt); }
+        // the oracle on disk: every entry of every journal is shown for each key of its answer, as many times as it is there
+        const want = {};
+        for (const f of fs.existsSync(runsDir) ? fs.readdirSync(runsDir).filter((x) => /^\d+\.answers$/.test(x)) : []) {
+          for (const x of fs.readdirSync(path.join(runsDir, f)).filter((y) => /^\d+\.json$/.test(y))) {
+            const a = JSON.parse(fs.readFileSync(path.join(runsDir, f, x), 'utf8')).answer;
+            for (const t of a.tasks) { const id = `${parseInt(f, 10)}|${a.verdict}${a.significantGaps}`; want[t] = want[t] || {}; want[t][id] = (want[t][id] || 0) + 1; }
+          }
+        }
+        for (const [t, m] of Object.entries(want)) for (const [id, cnt] of Object.entries(m)) {
+          const got = (now[t] && now[t][id]) || 0;
+          if (got !== cnt) fails.push(`seq ${sq} [${log.join(' ')}] after ${what}: ${t} shows ${got} of ${id}, the journal holds ${cnt}`);
+        }
       };
       const observer = () => {
         const w = rnd(5);
