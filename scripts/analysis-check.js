@@ -19,25 +19,29 @@
 //   runs/<n>.json       the answer, written by `codex exec -o`
 //   runs/<n>.exit       the exit code of `codex exec`, recorded by `collect --exit`
 //   runs/<n>.abandoned  {reason}: the run's turn ended without an answer
-//   runs/<n>.collected  {sha256, verdict, significantGaps, tasks, report} of runs/<n>.json when collect first saw it
-//                       as a result: the whole answer, so an answer a second codex exec rewrote is still appended
-//   runs/<n>.appended   {sha256, verdict, ..., reportRun} of the answer collected first, once --append wrote it to the
-//                       report (reportRun: its ordinal there)
-//   runs/<n>.appendedlater  the same for the answer that rewrote it (a second codex exec of run n)
+//   runs/<n>.answers/<k>.json      the journal of the run: {sha256, at, answer}, one entry per distinct valid answer
+//                                  any command saw in runs/<n>.json (sha256 of its bytes), k in the order they were seen
+//   runs/<n>.answers/<k>.appended  {reportRun, textSha256, ...} once --append wrote answer k to the report
 // The earlier layout <sharedDir>/analysis-checks/<key>/<sha>/ (last.json and other files) is only read.
 //
-// The state of run n, from its files, first match wins:
+// To see is to record: every command reads every run of the version first, and a valid runs/<n>.json (schema,
+// analysisSha256 = sha, verdict agrees with significantGaps, the header lines of report agree with the fields) that is
+// not in the journal yet is recorded there before anything is printed - unless an exit other than 0 is recorded for the
+// run. No command removes or rewrites an entry, so a second `codex exec` of the run that rewrites the file after a
+// command saw it adds an answer and hides none; only an answer rewritten before any command saw it is lost.
+//
+// The state of run n, first match wins:
+//   the journal has entries -> result: each entry is a verdict for the keys of its own `tasks`; the file now is only
+//     named (the answer it is now, not a verdict, gone; a later exit other than 0; "late, after abandon";
+//     "exit not recorded")
 //   runs/<n>.json and an exit other than 0 recorded -> not-run: exit N
-//   runs/<n>.json valid (schema, analysisSha256 = sha, verdict agrees with significantGaps, the header lines of report
-//     agree with the fields) -> result (also after .abandoned: "late, after abandon"; without .exit: "exit not recorded")
 //   runs/<n>.json not valid -> not-run: <reason>
 //   no runs/<n>.json and .abandoned -> not-run: abandoned (<reason>)
 //   no runs/<n>.json and .exit -> not-run: exit N, no runs/<n>.json
 //   otherwise -> prepared (pending)
 // A result counts for key t only when t is in the `tasks` of the answer (rule "Waves": the check of a task is a run whose
 // Tasks line names its key). `prepare` makes a run only when no requested key has a result (in runs/, in the earlier
-// layout, or as a run of <name of the analysis>.check.md with this Analysis-sha256 and the key in Tasks; an answer of a
-// run that a second codex exec rewrote after collect saw it stays a verdict of its own) - unless
+// layout, or as a run of <name of the analysis>.check.md with this Analysis-sha256 and the key in Tasks) - unless
 // --again - and the version has no pending run of any key: one pending run per version. Liveness of `codex exec` is
 // not checked (ps is refused in the sandbox), so only --abandon ends a pending run.
 //
@@ -52,7 +56,7 @@ const SCHEMA = path.join(PLUGIN, 'schemas', 'analysis-check.schema.json');
 const CHECKER = path.join(PLUGIN, 'agents', 'analysis-checker.md');
 const HEX = /^[0-9a-f]{64}$/;
 const KEY = /^[A-Za-z0-9._-]+$/;
-const SUFFIXES = ['prepared', 'json', 'exit', 'abandoned', 'collected', 'appended', 'appendedlater'];
+const SUFFIXES = ['prepared', 'json', 'exit', 'abandoned', 'answers'];
 
 class Exit extends Error { constructor(code, msg, out) { super(msg); this.code = code; this.out = out; } }
 const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
@@ -93,6 +97,16 @@ function taskKeys(value) {
   const parts = value.split(',').map((s) => s.trim());
   return parts.length && parts.every((p) => KEY.test(p)) ? parts : null;
 }
+// The identity of the text of one run of a report: its lines from `# Analysis check` up to the section Closure, which the
+// coordinator writes into the run after it was appended (agents/analysis-checker.md, "The section Closure is written by
+// the coordinator"), without trailing whitespace.
+function runTextSha(text) {
+  const lines = text.split('\n');
+  const start = lines.findIndex((l) => /^# Analysis check\s*$/.test(l));
+  const rest = lines.slice(Math.max(start, 0));
+  const end = rest.findIndex((l) => /^## Closure\s*$/.test(l));
+  return sha256((end < 0 ? rest : rest.slice(0, end)).join('\n').replace(/\s+$/, ''));
+}
 // Splits a report into its runs: each starts at a line `# Analysis check` outside a fenced block.
 function reportRuns(text) {
   const lines = text.split('\n');
@@ -104,7 +118,7 @@ function reportRuns(text) {
     const h = headerOf(body);
     const v = (name) => (h[name] ? h[name].value : null);
     return { ordinal: k + 1, sha: v('Analysis-sha256'), tasksLine: v('Tasks'), tasks: taskKeys(v('Tasks')), verdict: v('Verdict'),
-      significantGaps: v('Significant gaps'), savedBy: v('Saved-by') };
+      significantGaps: v('Significant gaps'), savedBy: v('Saved-by'), textSha256: runTextSha(body) };
   });
 }
 // Why an answer is not a verdict for version sha, or null when it is one.
@@ -164,57 +178,100 @@ function runNumbers(runsDir) {
   return { nums: [...nums].sort((a, b) => a - b), unknown };
 }
 
+const answersDir = (dir, n) => path.join(dir, 'runs', `${n}.answers`);
+
+// The journal of run n: its readable entries in order, the numbers of entries that cannot be read (being written by
+// another command, or damaged), the append markers and unknown files.
+function journal(dir, sha, n) {
+  const d = answersDir(dir, n);
+  let names = [];
+  try { names = fs.readdirSync(d); } catch { /* nothing seen yet */ }
+  const entries = [], unreadable = [], unknown = [], marks = new Map();
+  let top = 0;
+  for (const f of names) {
+    const m = /^(\d+)\.(json|appended)$/.exec(f);
+    if (!m) { unknown.push(path.join(d, f)); continue; }
+    const k = +m[1];
+    top = Math.max(top, k);
+    const v = readJson(path.join(d, f));
+    if (m[2] === 'appended') marks.set(k, v || {});
+    else if (v && typeof v.sha256 === 'string' && HEX.test(v.sha256) && !invalid(v.answer, sha)) entries.push({ k, sha256: v.sha256, answer: v.answer });
+    else unreadable.push(k);
+  }
+  entries.sort((a, b) => a.k - b.k);
+  for (const e of entries) e.mark = marks.get(e.k) || null;
+  return { entries, unreadable, unknown, top };
+}
+
+// Records a valid answer of run n in its journal unless an entry with its sha256 is there. The entry k is created with
+// O_EXCL: an observer that loses the race reads the winner's entry and stops when it holds the same answer, or tries
+// k+1. While an entry cannot be read (another command is writing it) nothing is recorded: that command records it.
+function record(dir, sha, n, hash, answer) {
+  fs.mkdirSync(answersDir(dir, n), { recursive: true });
+  for (;;) {
+    const j = journal(dir, sha, n);
+    if (j.unreadable.length || j.entries.some((e) => e.sha256 === hash)) return;
+    if (claim(path.join(answersDir(dir, n), `${j.top + 1}.json`), { sha256: hash, at: new Date().toISOString(), answer })) return;
+  }
+}
+
 function stateOf(dir, sha, n) {
   const f = (s) => path.join(dir, 'runs', `${n}.${s}`);
   const mark = readJson(f('prepared'));
   const exitRaw = exists(f('exit')) ? fs.readFileSync(f('exit'), 'utf8').trim() : null;
   const exit = exitRaw == null ? null : (/^-?\d+$/.test(exitRaw) ? +exitRaw : exitRaw);
+  const failed = exit != null && exit !== 0;
   const abandoned = exists(f('abandoned')) ? (readJson(f('abandoned')) || {}) : null;
-  const collected = readJson(f('collected'));
-  const appended = readJson(f('appended'));
-  const later = readJson(f('appendedlater'));
   const r = { run: n, prepared: !!mark, asked: mark && mark.tasks ? mark.tasks : null, again: mark && mark.again ? mark.again : null, exit, notes: [] };
   if (!mark) r.notes.push('without prepare: no runs/' + n + '.prepared');
+  // the file now: a valid answer (its hash), not a verdict (why), or gone
+  let now = null;
   if (exists(f('json'))) {
     const buf = fs.readFileSync(f('json'));
     let a = null, why = null;
     try { a = JSON.parse(buf.toString('utf8')); } catch (e) { why = 'runs/' + n + '.json is not JSON: ' + e.message; }
     if (!why) why = invalid(a, sha);
-    if (exit != null && exit !== 0) return Object.assign(r, { state: 'not-run', reason: `exit ${exit}` });
-    if (why) return Object.assign(r, { state: 'not-run', reason: why });
-    Object.assign(r, { state: 'result', file: f('json'), hash: sha256(buf) }, summary(a));
-    r.appended = [appended, later].some((m) => m && m.sha256 === r.hash);
-    if (abandoned) r.notes.push('late, after abandon');
-    if (exit == null) r.notes.push('exit not recorded');
-    // The same codex exec run again after its answer was collected rewrites the file. Every answer of the run that
-    // collect saw (the first one in .collected, a later one appended in .appendedlater) and that differs from the file
-    // now is an earlier verdict of the run: it counts for its keys like the current one.
-    const seen = collected || appended;
-    r.earlier = [];
-    for (const m of [seen, later]) {
-      if (m && m.sha256 !== r.hash && !r.earlier.some((e) => e.sha256 === m.sha256)) {
-        r.earlier.push({ sha256: m.sha256, verdict: m.verdict, significantGaps: m.significantGaps, tasks: Array.isArray(m.tasks) ? m.tasks : [],
-          appended: [appended, later].some((x) => x && x.sha256 === m.sha256) });
-      }
-    }
-    if (seen && seen.sha256 !== r.hash) {
-      r.collected = { verdict: seen.verdict, significantGaps: seen.significantGaps, tasks: seen.tasks };
-      r.notes.push(`runs/${n}.json changed after it was collected - a second codex exec of run ${n}: collected ${seen.verdict} (${seen.significantGaps}), now ${a.verdict} (${a.significantGaps}); name both to the owner`);
-    }
-    if (later && later.sha256 !== r.hash) {
-      r.notes.push(`runs/${n}.json changed again after its later answer was appended: appended ${later.verdict} (${later.significantGaps}), now ${a.verdict} (${a.significantGaps}) - not appended; name every answer to the owner`);
-    }
-    r._earlierAnswer = seen && seen.sha256 !== r.hash && typeof seen.report === 'string' ? Object.assign({ sha256: seen.sha256 }, seen) : null;
-    if (r.asked) {
-      const missing = r.asked.filter((t) => !a.tasks.includes(t));
-      if (missing.length) r.notes.push(`asked for ${r.asked.join(', ')}; the checker named ${a.tasks.join(', ') || 'none'}: ${missing.join(', ')} ${missing.length > 1 ? 'are' : 'is'} not checked`);
-    }
-    r._answer = a;
-    return r;
+    now = why ? { why } : { hash: sha256(buf), answer: a };
   }
-  if (abandoned) return Object.assign(r, { state: 'not-run', reason: `abandoned (${abandoned.reason || ''})` });
-  if (exit != null) return Object.assign(r, { state: 'not-run', reason: `exit ${exit}, no runs/${n}.json` });
-  return Object.assign(r, { state: 'prepared' });
+  if (now && now.hash && !failed) record(dir, sha, n, now.hash, now.answer);
+  const j = journal(dir, sha, n);
+  r._unknown = j.unknown;
+  for (const k of j.unreadable) r.notes.push(`runs/${n}.answers/${k}.json cannot be read (another command is writing it, or it is damaged): nothing new is recorded for run ${n} while it is so`);
+  // A valid file this call could not record (an entry being written) is still shown as an answer of the run.
+  const entries = j.entries.slice();
+  if (now && now.hash && !failed && !entries.some((e) => e.sha256 === now.hash)) entries.push({ k: null, sha256: now.hash, answer: now.answer, mark: null });
+  if (!entries.length) {
+    if (now && failed) return Object.assign(r, { state: 'not-run', reason: `exit ${exit}` });
+    if (now) return Object.assign(r, { state: 'not-run', reason: now.why });
+    if (abandoned) return Object.assign(r, { state: 'not-run', reason: `abandoned (${abandoned.reason || ''})` });
+    if (exit != null) return Object.assign(r, { state: 'not-run', reason: `exit ${exit}, no runs/${n}.json` });
+    return Object.assign(r, { state: 'prepared' });
+  }
+  const m = entries.length;
+  const last = entries[m - 1];
+  Object.assign(r, { state: 'result' }, summary(last.answer));
+  r.answers = entries.map((e) => Object.assign({ answer: e.k }, summary(e.answer), { appended: !!e.mark }));
+  r.appended = entries.every((e) => !!e.mark);
+  r._entries = entries;
+  if (abandoned) r.notes.push('late, after abandon');
+  if (exit == null) r.notes.push('exit not recorded');
+  if (failed) r.notes.push(`exit ${exit} recorded after answer ${j.entries.length ? j.entries[j.entries.length - 1].k : 1} was recorded: the recorded answers stay verdicts; name the exit to the owner`);
+  if (m > 1) r.notes.push(`${m} answers: a second codex exec of run ${n} rewrote runs/${n}.json after a command saw it - each answer is a verdict for its keys; name every one to the owner`);
+  if (!now) r.notes.push(`runs/${n}.json is gone - the recorded answers stay verdicts`);
+  else if (now.why) r.notes.push(`runs/${n}.json changed after it was collected - a second codex exec of run ${n}: now not a verdict (${now.why}); the recorded answers stay verdicts`);
+  else {
+    const at = entries.find((e) => e.sha256 === now.hash);
+    if (!at) r.notes.push(`runs/${n}.json changed after it was collected and is not recorded (exit ${exit} recorded): name it to the owner`);
+    else if (m > 1) r.notes.push(`runs/${n}.json is now answer ${at.k == null ? m : at.k} of ${m}`);
+    if (at && at.k == null) r.notes.push(`runs/${n}.json is not recorded yet - an entry of the journal is being written`);
+  }
+  if (r.asked) {
+    for (const e of entries) {
+      const missing = r.asked.filter((t) => !e.answer.tasks.includes(t));
+      if (missing.length) r.notes.push(`${m > 1 ? `answer ${e.k == null ? m : e.k}: ` : ''}asked for ${r.asked.join(', ')}; the checker named ${e.answer.tasks.join(', ') || 'none'}: ${missing.join(', ')} ${missing.length > 1 ? 'are' : 'is'} not checked`);
+    }
+  }
+  return r;
 }
 
 // Everything known about version sha of the analysis: its runs, the earlier layout, the runs of the report.
@@ -223,7 +280,7 @@ function survey(shared, analysis, sha) {
   checkCopy(dir, sha);
   const { nums, unknown } = runNumbers(path.join(dir, 'runs'));
   const runs = nums.map((n) => stateOf(dir, sha, n));
-  const legacy = [], unknownFiles = unknown.map((f) => path.join(dir, 'runs', f)), otherVersions = [];
+  const legacy = [], unknownFiles = unknown.map((f) => path.join(dir, 'runs', f)).concat(...runs.map((r) => r._unknown)), otherVersions = [];
   const root = checksDir(shared);
   let entries = [];
   try { entries = fs.readdirSync(root, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name); } catch { /* none */ }
@@ -254,29 +311,30 @@ function survey(shared, analysis, sha) {
   }
   const report = reportPath(analysis);
   const rep = exists(report) ? reportRuns(fs.readFileSync(report, 'utf8')) : [];
-  // The report runs this folder wrote: the ordinals its .appended and .appendedlater markers name.
-  const here = new Set(nums.flatMap((n) => ['appended', 'appendedlater'].map((s) => (readJson(path.join(dir, 'runs', `${n}.${s}`)) || {}).reportRun))
-    .filter(Number.isInteger));
+  // The report runs this folder wrote: their text is the text an append marker names (not their ordinal: another writer
+  // may append between the count and the write). Their verdicts come from the journal.
+  const texts = new Set(runs.flatMap((r) => (r._entries || []).map((e) => e.mark && e.mark.textSha256)).filter(Boolean));
   const mine = rep.filter((x) => x.sha === sha);
+  for (const x of mine) x.here = texts.has(x.textSha256);
   for (const x of rep) if (x.sha && x.sha !== sha) otherVersions.push({ sha: x.sha, reportRun: x.ordinal, verdict: x.verdict, tasks: x.tasksLine });
   const notInFormat = mine.filter((x) => !x.tasks).map((x) => ({ reportRun: x.ordinal, line: `Tasks: ${x.tasksLine == null ? '' : x.tasksLine}` }));
-  return { dir, report, runs, legacy, unknownFiles, otherVersions, reportRunsOfVersion: mine, appendedOrdinals: here, notInFormat };
+  return { dir, report, runs, legacy, unknownFiles, otherVersions, reportRunsOfVersion: mine, notInFormat };
 }
 
-// The verdicts that count for key t: results in runs/ (with the earlier answers of a rewritten run), legacy results, and
-// runs of the report not appended from here.
+// The verdicts that count for key t: every answer in the journals of runs/, legacy results, and runs of the report not
+// appended from here.
 function verdictsFor(s, t) {
   const v = [];
   for (const r of s.runs) {
     if (r.state !== 'result') continue;
-    for (const e of r.earlier) {
-      if (e.tasks.includes(t)) v.push({ from: `run ${r.run} (an earlier answer, rewritten by a second codex exec)`, verdict: e.verdict, significantGaps: e.significantGaps, appended: e.appended });
-    }
-    if (r.tasks.includes(t)) v.push({ from: `run ${r.run}`, verdict: r.verdict, significantGaps: r.significantGaps, appended: r.appended, notes: r.notes });
+    const many = r._entries.length > 1;
+    r._entries.forEach((e, i) => {
+      if (e.answer.tasks.includes(t)) v.push({ from: `run ${r.run}${many ? ` answer ${e.k == null ? i + 1 : e.k}` : ''}`, verdict: e.answer.verdict, significantGaps: e.answer.significantGaps, appended: !!e.mark });
+    });
   }
   for (const l of s.legacy) if (l.state === 'result' && l.tasks.includes(t)) v.push({ from: `legacy ${l.file}`, verdict: l.verdict, significantGaps: l.significantGaps });
   for (const x of s.reportRunsOfVersion) {
-    if (x.tasks && x.tasks.includes(t) && !s.appendedOrdinals.has(x.ordinal)) {
+    if (x.tasks && x.tasks.includes(t) && !x.here) {
       v.push({ from: `report run ${x.ordinal} of ${s.report}`, verdict: x.verdict, significantGaps: x.significantGaps, savedBy: x.savedBy ? 'yes' : 'no' });
     }
   }
@@ -286,11 +344,11 @@ function verdictsFor(s, t) {
 const TWO = 'two verdicts of one version: name both to the owner; a changes-needed needs its Closure lines, and a later ready of the same version does not cancel it';
 const PENDING = (n) => `run ${n} has no result yet. Poll the command that runs it - never run it again: a second run overwrites runs/${n}.json. `
   + `Only when the turn that ran it has ended: prepare --abandon ${n} --reason <why>`;
-const strip = (r) => { const o = Object.assign({}, r); delete o._answer; delete o._earlierAnswer; delete o.file; delete o.hash; return o; };
+const strip = (r) => { const o = Object.assign({}, r); delete o._entries; delete o._unknown; return o; };
 
 function view(s, keys) {
   const allKeys = new Set(keys || []);
-  for (const r of s.runs) if (r.state === 'result') r.tasks.forEach((t) => allKeys.add(t));
+  for (const r of s.runs) if (r.state === 'result') r._entries.forEach((e) => e.answer.tasks.forEach((t) => allKeys.add(t)));
   for (const l of s.legacy) if (l.state === 'result') l.tasks.forEach((t) => allKeys.add(t));
   for (const x of s.reportRunsOfVersion) (x.tasks || []).forEach((t) => allKeys.add(t));
   const k = {};
@@ -306,7 +364,7 @@ function view(s, keys) {
   for (const o of s.otherVersions) notes.push(`another version - not a check of this one: ${o.sha}${o.reportRun ? ` (report run ${o.reportRun})` : ''}`);
   return {
     dir: s.dir, report: s.report, runs: s.runs.map(strip), legacy: s.legacy, unknownFiles: s.unknownFiles, otherVersions: s.otherVersions,
-    keys: k, reportRuns: s.reportRunsOfVersion.length, appendedHere: s.appendedOrdinals.size, notes,
+    keys: k, reportRuns: s.reportRunsOfVersion.length, appendedHere: s.reportRunsOfVersion.filter((x) => x.here).length, notes,
   };
 }
 
@@ -382,7 +440,8 @@ function prepare(o) {
   }
   // Results for other keys of this version are named for reference only.
   for (const r of s.runs) {
-    if (r.state === 'result') { const other = r.tasks.filter((t) => !o.task.includes(t)); if (other.length) notes.push(`checked for ${other.join(', ')} (run ${r.run}, ${r.verdict}): not a check of ${o.task.join(', ')}`); }
+    if (r.state !== 'result') continue;
+    for (const e of r._entries) { const other = e.answer.tasks.filter((t) => !o.task.includes(t)); if (other.length) notes.push(`checked for ${other.join(', ')} (run ${r.run}, ${e.answer.verdict}): not a check of ${o.task.join(', ')}`); }
   }
   fs.mkdirSync(runsDir, { recursive: true });
   const copy = path.join(dir, `analysis-${sha}.md`);
@@ -414,42 +473,37 @@ function collect(o) {
   const analysis = path.resolve(o.analysis);
   const sha = o.sha || sha256(readAnalysis(analysis));
   if (o.sha && !exists(versionDir(o.shared, sha))) throw new Exit(65, `no check folder ${versionDir(o.shared, sha)}`);
-  let s = survey(o.shared, analysis, sha);
-  const runsDir = path.join(s.dir, 'runs');
+  const dir = versionDir(o.shared, sha);
   const notes = [];
   if (o.run != null) {
+    // The exit is recorded before any command of this call reads the run: an answer of a failed codex exec is never
+    // recorded in the journal.
     const n = +o.run;
-    if (!s.runs.some((r) => r.run === n)) throw new Exit(3, `no run ${n} in ${s.dir}`, view(s, o.task));
-    if (o.exit != null) {
-      if (!claim(path.join(runsDir, `${n}.exit`), `${+o.exit}\n`)) {
-        const was = fs.readFileSync(path.join(runsDir, `${n}.exit`), 'utf8').trim();
-        if (was !== String(+o.exit)) throw new Exit(3, `the exit of run ${n} is recorded already as ${was}, not ${+o.exit}`, view(s, o.task));
-      }
-      s = survey(o.shared, analysis, sha);
+    checkCopy(dir, sha);
+    if (!runNumbers(path.join(dir, 'runs')).nums.includes(n)) { const s0 = survey(o.shared, analysis, sha); throw new Exit(3, `no run ${n} in ${s0.dir}`, view(s0, o.task)); }
+    if (o.exit != null && !claim(path.join(dir, 'runs', `${n}.exit`), `${+o.exit}\n`)) {
+      const was = fs.readFileSync(path.join(dir, 'runs', `${n}.exit`), 'utf8').trim();
+      if (was !== String(+o.exit)) throw new Exit(3, `the exit of run ${n} is recorded already as ${was}, not ${+o.exit}`, view(survey(o.shared, analysis, sha), o.task));
     }
   }
-  // The first collect of a result keeps the whole answer: a later rewrite of the file is then visible, and the first
-  // answer can still be appended.
-  for (const r of s.runs) {
-    if (r.state === 'result' && !r.collected) claim(path.join(runsDir, `${r.run}.collected`), Object.assign({ sha256: r.hash }, summary(r._answer), { report: r._answer.report }));
-  }
+  let s = survey(o.shared, analysis, sha);
   if (o.append) {
     const n = +o.run;
     const r = s.runs.find((x) => x.run === n);
     if (r.state !== 'result') throw new Exit(3, `run ${n} is ${r.state}${r.reason ? ': ' + r.reason : ''} - nothing is appended`, view(s, o.task));
-    // The answer collected first goes under .appended, an answer that rewrote it under .appendedlater, oldest first.
-    // The marker first, then the write: a second --append (or a second session) finds the marker and writes nothing.
-    const writes = r.collected ? [['appended', r._earlierAnswer], ['appendedlater', Object.assign({ sha256: r.hash }, r._answer)]]
-      : [['appended', Object.assign({ sha256: r.hash }, r._answer)]];
-    for (const [marker, ans] of writes) {
-      if (!ans) { notes.push(`run ${n}: the text of the answer collected first is not kept - it is not appended; name its verdict to the owner`); continue; }
+    // Every recorded answer without its marker, in the order they were seen. The marker first, then the write: a
+    // second --append (or a second session) finds the marker and writes nothing.
+    for (const e of r._entries) {
+      if (e.k == null) { notes.push(`run ${n}: runs/${n}.json is not recorded yet - not appended; collect --append again`); continue; }
+      if (e.mark) { notes.push(`run ${n}: answer ${e.k} is already appended to ${s.report}`); continue; }
+      const text = withHeader(e.answer.report, sha);
       const before = exists(s.report) ? fs.readFileSync(s.report, 'utf8') : '';
       const ordinal = reportRuns(before).length + 1;
-      if (!claim(path.join(runsDir, `${n}.${marker}`), Object.assign({ sha256: ans.sha256, reportRun: ordinal }, summary(ans)))) {
-        notes.push(`run ${n}: ${marker === 'appended' ? 'the answer collected first' : 'the later answer'} is already appended to ${s.report}`);
+      if (!claim(path.join(answersDir(s.dir, n), `${e.k}.appended`), Object.assign({ sha256: e.sha256, reportRun: ordinal, textSha256: runTextSha(text) }, summary(e.answer)))) {
+        notes.push(`run ${n}: answer ${e.k} is already appended to ${s.report}`);
       } else {
-        fs.appendFileSync(s.report, (before && !before.endsWith('\n') ? '\n' : '') + (before ? '\n' : '') + withHeader(ans.report, sha));
-        notes.push(`run ${n}: ${marker === 'appended' ? '' : 'the later answer '}appended to ${s.report} as report run ${ordinal}`);
+        fs.appendFileSync(s.report, (before && !before.endsWith('\n') ? '\n' : '') + (before ? '\n' : '') + text);
+        notes.push(`run ${n}: answer ${e.k} appended to ${s.report} as report run ${ordinal}`);
       }
     }
     s = survey(o.shared, analysis, sha);
@@ -489,7 +543,7 @@ function main(argv) {
   return res;
 }
 
-module.exports = { claim, claimRun, reportRuns, taskKeys, invalid, stateOf, survey, withHeader, main };
+module.exports = { claim, claimRun, reportRuns, runTextSha, taskKeys, invalid, journal, record, stateOf, survey, withHeader, main };
 
 if (require.main === module) {
   const res = main(process.argv.slice(2));

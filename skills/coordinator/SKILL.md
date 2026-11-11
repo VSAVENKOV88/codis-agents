@@ -261,8 +261,9 @@ and feature folders; no result of an earlier run is removed or overwritten, and 
    `node <plugin>/scripts/analysis-check.js collect --shared <sharedDir> --analysis <analysis> --run <n> --append`
    appends `report` to `<name of the analysis>.check.md` with `Saved-by: coordinator` under the header of the run and
    `Analysis-sha256` filled in when missing; a second `--append` of the run writes nothing. Two verdicts of one version
-   for a key (`--again`, a late answer of an abandoned run, a second `codex exec` that rewrote a collected answer) are
-   both appended and both named to the owner (step 5). When the analysis later changes, its sha256 differs: that
+   for a key (`--again`, a late answer of an abandoned run, a second `codex exec` that rewrote an answer `prepare` or
+   `collect` had seen: every answer a command saw stays in the journal of the run) are both appended and both named to
+   the owner (step 5). When the analysis later changes, its sha256 differs: that
    version was not checked, prepare again.
 4. The third outcome, "analysis check not run: <reason>", when any of these holds: `codex exec` ended with an exit other
    than 0; no `runs/<n>.json`; a JSON that does not fit the schema; `analysisSha256` differs from the sha256 of the copy;

@@ -112,7 +112,7 @@ if (!fs.existsSync(SCRIPT)) done();
   const rep = fs.existsSync(c.report) ? fs.readFileSync(c.report, 'utf8') : '';
   ok('A12 --append: the report written to <name of the analysis>.check.md next to the analysis', ap.code === 0 && rep.startsWith('# Analysis check\n') && /## Gaps/.test(rep), ap.all);
   ok('A12 --append: Saved-by: coordinator under the header of the run; no Check-run line', /Significant gaps: 0\nSaved-by: coordinator\n/.test(rep) && !/Check-run/.test(rep), rep.slice(0, 400));
-  ok('A12 --append: the marker runs/1.appended', fs.existsSync(path.join(dir, 'runs', '1.appended')));
+  ok('A12 --append: the marker runs/1.answers/1.appended of answer 1', fs.existsSync(path.join(dir, 'runs', '1.answers', '1.appended')));
   const ap2 = collect(c, ['--run', '1', '--append']);
   ok('A12 a second --append: "already appended", the report unchanged', ap2.code === 0 && /already appended/.test(ap2.all) && fs.readFileSync(c.report, 'utf8') === rep, ap2.all);
 
