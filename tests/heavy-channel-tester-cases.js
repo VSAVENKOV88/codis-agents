@@ -15,6 +15,8 @@
 //   TB9-TB12 the run's config (o.config) against the worktree's and the environment's: the holder and the nested heavy.sh
 //       use the run's slot directory (TB9), the conductor passes an absolute configPath (TB10), the exclusive check reads
 //       the run's guardExclusive (TB11), and the nested heavy.sh takes the exclusive lock by it (TB12, B'12).
+//   TB13 kind tsc (medium) with the run's config at a path with a blank: the medium slot of the run's directory and
+//       CODIS_AGENTS_CONFIG of the command = the run's config.
 // Like the parent: real slot-hold.sh and heavy.sh on a slot directory of the test, the executor outside codex sandbox,
 // the pauses at 2 s, a fake machine; the conductor with the fake codex of tests/fixtures/chain-run/bin (no model).
 const fs = require('fs');
@@ -329,6 +331,26 @@ const writeJournal = (d, id, run, extra) => {
     const a = (await req(d, 'prog-1', ['--max', '20', '--', 'zsh', 'port.guard.sh'])).j;
     const out = logOf(d, a && a.id);
     ok(`TB12 ${name}: the exclusive guard of the run's config runs under the exclusive lock (B'12)`, a && a.state === 'done' && /LOCK-HELD/.test(out), `${J(a)} | ${out.slice(0, 400)}`);
+    await svc.close();
+  }
+
+  // TB13: kind tsc -> medium, the run's config at a path with a blank, the worktree and the environment naming other
+  // configs: the nested medium.sh of the executor runs in the medium slot of the run's directory, and the command (with
+  // every heavy.sh / medium.sh it calls) sees CODIS_AGENTS_CONFIG = the run's config, not the worktree's or the adapter's
+  {
+    const { d, c } = cfgCase(true);
+    const spaced = path.join(d.root, 'run cfg', 'codis-agents.json');
+    fs.mkdirSync(path.dirname(spaced));
+    fs.copyFileSync(c.runCfg, spaced);
+    const svc = openCfg(d, 'prog-1', spaced, { tsc: 'medium' });
+    const a = (await req(d, 'prog-1', ['--kind', 'tsc', '--max', '20', '--', 'node', '-e', 'console.log("SP " + process.env.SLOT_PATH); console.log("CFG=" + process.env.CODIS_AGENTS_CONFIG + "=")'])).j;
+    const out = logOf(d, a && a.id);
+    const sp = (/SP (\S+)/.exec(out) || [])[1] || '';
+    ok('TB13 kind tsc (medium) with the run\'s config at a path with a blank: the nested medium.sh runs in a medium slot of the run\'s directory',
+      a && a.state === 'done' && a.rc === 0 && clsOf(d, a.id) === 'medium' && path.dirname(sp) === c.run && /^medium\.\d+\.lock$/.test(path.basename(sp)) && !c.counts().wt && !c.counts().other,
+      `${J(a)} sp ${sp} ${J(c.counts())} | ${out.slice(0, 400)}`);
+    ok('TB13 ... and the command sees CODIS_AGENTS_CONFIG = the run\'s config (not the worktree\'s, not the adapter\'s)',
+      out.includes(`CFG=${spaced}=`), out.slice(0, 400));
     await svc.close();
   }
   done();
