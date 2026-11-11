@@ -442,5 +442,13 @@ const groupAlive = (g) => { try { process.kill(-g, 0); return true; } catch (e) 
     const dflt = C.load(write(undefined));
     ok('config slots.kinds: {} by default (every kind heavy)', !!dflt && JSON.stringify(dflt.config.slots.kinds) === '{}', JSON.stringify(dflt && dflt.config.slots));
   }
+
+  // ---- the tester cells: tests/heavy-channel-tester-cases.js (TB1-TB8: resolve of an undetermined run, the conductor's
+  // start check, a signal of the adapter, cwd through a link, recovery of a new call, a failed probe, an earlier id), a
+  // child with its own tally, so README keeps counting test files
+  {
+    const tc = spawnSync(process.execPath, [path.join(__dirname, 'heavy-channel-tester-cases.js')], { encoding: 'utf8', timeout: 280000 });
+    ok('the tester cells of the heavy channel (tests/heavy-channel-tester-cases.js) pass', tc.status === 0, `exit ${tc.status} ${tc.signal || ''}\n${String(tc.stdout).split('\n').filter((l) => /FAIL/.test(l)).join('\n').slice(0, 3000)}${String(tc.stderr).slice(-800)}`);
+  }
   done();
 })().catch((e) => { ok('the test ran to its end', false, e.stack); done(); });
