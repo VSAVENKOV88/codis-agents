@@ -582,6 +582,28 @@ let raceA23 = Promise.resolve();
       && vs(col.out) === 'changes-needed1' && /cannot be read/.test(col.all) && prep(c).code === 3, jlist(c).join(',') + col.all.slice(0, 300));
   }
   {
+    // B15 (d) two observers of different answers race for the same k: this one listed the journal before the other
+    // wrote 1.json (a stale listing, injected once), so it tries 1.json too; O_EXCL keeps the other entry and this
+    // answer becomes entry 2.
+    let AC = null;
+    try { AC = require(SCRIPT); } catch { /* red above */ }
+    const c = fresh();
+    const p = prep(c);
+    const dir = p.out && p.out.dir;
+    if (AC && AC.record && dir) {
+      fs.mkdirSync(jdir(c), { recursive: true });
+      const other = JSON.stringify({ sha256: sha(JSON.stringify(A(c))), at: 'x', answer: A(c) });
+      fs.writeFileSync(path.join(jdir(c), '1.json'), other);
+      const real = fs.readdirSync;
+      let stale = true;
+      fs.readdirSync = function (d, ...rest) { if (stale && String(d) === jdir(c)) { stale = false; return []; } return real.call(fs, d, ...rest); };
+      try { AC.record(dir, c.sha, 1, sha(JSON.stringify(C(c))), C(c)); } finally { fs.readdirSync = real; }
+      const two = (() => { try { return JSON.parse(fs.readFileSync(path.join(jdir(c), '2.json'), 'utf8')); } catch { return {}; } })();
+      ok('B15 (d) a race for entry 1: the entry the other observer wrote stays, this answer is entry 2', fs.readFileSync(path.join(jdir(c), '1.json'), 'utf8') === other
+        && two.answer && two.answer.verdict === 'ready', jlist(c).join(','));
+    } else ok('B15 (d) the script exports record', false);
+  }
+  {
     // B16: the marker of an appended answer names report run 1, but run 1 of the report is a run written elsewhere at
     // the same time; the run written from here is run 2. The foreign run is a verdict; ours is not counted twice.
     const c = fresh();
