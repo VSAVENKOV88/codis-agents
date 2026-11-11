@@ -1,6 +1,6 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT"></a>
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-0.4.41-informational" alt="Version 0.4.41"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-0.4.42-informational" alt="Version 0.4.42"></a>
   <a href="https://claude.com/claude-code"><img src="https://img.shields.io/badge/Claude%20Code-plugin-D97757" alt="Claude Code plugin"></a>
   <a href="#codex-cli"><img src="https://img.shields.io/badge/Codex%20CLI-preview-yellow" alt="Codex CLI: preview"></a>
 </p>

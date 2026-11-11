@@ -4,6 +4,19 @@ Every version of the codis-agents plugin, newest first. What the plugin does now
 [README.md](README.md); its [Technical reference](README.md#technical-reference) is the current state of every rule,
 key and script, and this file says when and why each one changed. Versions before 0.4.14 are in the git history.
 
+## 0.4.42 - 2026-11-11
+
+- **The holder of a slot stops its command before the slot is released** (p-codex-A2b-1a). The command of a slot runs
+  in its own process group, named by the marker `<slot>.exec.<pgid>`; the holder runs in a process group of its own,
+  and on a signal or at the end it stops the command's group: TERM and CONT, up to `SLOT_KILL_GRACE` (30 s), KILL, then
+  up to `SLOT_EMPTY_WAIT` (30 s) for the group to empty. A waiter gets the slot only after the group is gone; a command
+  that outlives that wait keeps its slot under the marker. `CODIS_SLOT_HELD` lets a command inside a held slot run a
+  nested slot command in the same slots directory without queueing again; `slot-hold.sh` holds a slot for a caller
+  that is not a child (one line `acquired <slot> <epoch.ms>`, held until `release` or EOF). The train passes
+  `SLOT_EXEC_NOTE`, so its lock sees the command's group and not only the dispatcher. A behaviour change for roles on
+  Claude too: cancelling `heavy.sh`, `medium.sh` or `guards-all.sh` now stops the whole command group instead of leaving
+  orphans, and perl is required by `slots.zsh`.
+
 ## 0.4.41 - 2026-11-10
 
 - **The remote runner sweeps its run copies** (p-runner-cleanup). Every preflight of the runner, before its env-check
