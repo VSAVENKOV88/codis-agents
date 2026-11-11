@@ -18,6 +18,7 @@ const { ok, done } = require('./lib');
 const ROOT = path.join(__dirname, '..');
 const read = (f) => { try { return fs.readFileSync(path.join(ROOT, f), 'utf8'); } catch { return ''; } };
 const flat = (s) => s.replace(/\s+/g, ' ');
+const rules0Early = () => read('rules/multi-agent.md');
 const SKILLS = ['brief', 'coordinator', 'role-chain'];
 const skill = Object.fromEntries(SKILLS.map((s) => [s, read(`skills/${s}/SKILL.md`)]));
 
@@ -175,7 +176,7 @@ ok('L17* coordinator, Codex: between waves, both homes, /hooks and the check aga
 const chk = flat(section(co, /^Check the analysis/));
 const chkCodex = flat(hostText(section(co, /^Check the analysis/), 'codex'));
 ok('K1 coordinator, Codex: codex exec --sandbox read-only --ephemeral --output-schema <plugin>/schemas/analysis-check.schema.json -o ... -C <worktree> in the coordinator home',
-  /codex exec --sandbox read-only --ephemeral --skip-git-repo-check --output-schema <plugin>\/schemas\/analysis-check\.schema\.json -o <check folder>\/last\.json -C <worktree> -m <model>/.test(chkCodex)
+  /codex exec --sandbox read-only --ephemeral --skip-git-repo-check --output-schema <plugin>\/schemas\/analysis-check\.schema\.json -o <check folder>\/runs\/<n>\.json -C <worktree> -m <model>/.test(chkCodex)
   && /coordinator home/.test(chkCodex), chkCodex.slice(0, 800));
 ok('K1 coordinator, Codex: the checker runs directly under its rule and is waited for in the turn (no wait-step.js)', /still running/.test(chkCodex) && !/wait-step\.js start/.test(chkCodex), chkCodex);
 ok('K2 coordinator, Codex: a copy analysis-<sha256>.md outside the worktree and the task and feature folders; the answer carries analysisSha256; the report Analysis-sha256 of the copy',
@@ -183,11 +184,32 @@ ok('K2 coordinator, Codex: a copy analysis-<sha256>.md outside the worktree and 
 ok('K3 coordinator, Codex: the coordinator appends the report with Saved-by: coordinator', /Saved-by: coordinator/.test(chkCodex));
 ok('K4 coordinator, Codex: the third outcome "analysis check not run: <reason>" - nothing in .check.md, a line in the brief, not a passed check, the task stays out of the wave',
   /analysis check not run: <reason>/.test(chkCodex) && /not a passed check/.test(chkCodex) && /nothing[^.]*\.check\.md/.test(chkCodex) && /wave/.test(chkCodex), chkCodex);
-ok('K4 coordinator, Codex: every cause of the third outcome is named (exit, no last.json, schema, sha, verdict against gaps, snapshot)',
-  /exit/.test(chkCodex) && /no `last\.json`|no last\.json/.test(chkCodex) && /schema/.test(chkCodex) && /analysisSha256[^.]*differs|differs[^.]*analysisSha256/.test(chkCodex)
+ok('K4 coordinator, Codex: every cause of the third outcome is named (exit, no runs/<n>.json, schema, sha, verdict against gaps, snapshot)',
+  /exit/.test(chkCodex) && /no `runs\/<n>\.json`/.test(chkCodex) && /schema/.test(chkCodex) && /analysisSha256[^.]*differs|differs[^.]*analysisSha256/.test(chkCodex)
   && /significantGaps/.test(chkCodex) && /snapshot/.test(chkCodex), chkCodex);
 ok('K5 coordinator, Codex: the task tells the checker its sandbox is read-only - "unverifiable (read-only sandbox)"', /unverifiable \(read-only sandbox\)/.test(chkCodex));
 ok('K5 coordinator: the steps snapshot before and after stay common (outside the host blocks)', /\*\*Snapshot before\.\*\*/.test(chk) && /\*\*Snapshot after\.\*\*/.test(chk));
+// p-codex-D2b-1 (A14, A17, A6): every launch of the checker is a run of its own, prepared and collected by
+// scripts/analysis-check.js; no earlier result is removed, and two verdicts of one version both reach the owner.
+ok('A14 coordinator, Codex: no "Remove a last.json" - an earlier result of the same version is never removed', !/Remove a `last\.json`/.test(chkCodex) && !/last\.json/.test(chkCodex), chkCodex.slice(0, 600));
+ok('A14 coordinator, Codex: analysis-check.js prepare first; its exit 3 - show the result or the pending run, run nothing',
+  /`node <plugin>\/scripts\/analysis-check\.js prepare /.test(chkCodex) && /exit 3[^.]*(show|shows)[^.]*run nothing|run nothing[^.]*exit 3/.test(chkCodex), chkCodex);
+ok('A14/A17 coordinator, Codex: the printed command once; "still running" - poll that same command, never run it again',
+  /once/.test(chkCodex) && /still running[^.]*poll[^.]*same command/.test(chkCodex) && /never run it again/.test(chkCodex), chkCodex);
+ok('A14 coordinator, Codex: collect --run <n> --exit, then collect --run <n> --append (only when the snapshot after did not void the check)',
+  /analysis-check\.js collect [^`]*--run <n> --exit <N>/.test(chkCodex) && /analysis-check\.js collect [^`]*--run <n> --append/.test(chkCodex)
+  && /snapshot after[^.]*void/i.test(chkCodex), chkCodex);
+ok('A14 coordinator, Codex: --abandon only when the turn that ran the command has ended; every result to the owner',
+  /--abandon <n> --reason/.test(chkCodex) && /turn[^.]*ended/.test(chkCodex) && /every result|all (the )?results|both verdicts/.test(chkCodex), chkCodex);
+const step5 = flat((section(co, /^Check the analysis/).match(/5\. \*\*Closure\.\*\*[^]*?(?=\n### |\n\d\. \*\*)/) || [''])[0]);
+ok('A6 coordinator step 5: two runs of one version for a task - a changes-needed needs its Closure lines, a later ready of the same version does not cancel it',
+  /later `ready` of the same version does not cancel/.test(step5), step5);
+const wavesStep = flat(((rules0Early().match(/\n## Waves[^\n]*\n([\s\S]*?)\n## /) || ['', ''])[1].split(/\n- /).find((b) => /analysis-checker/.test(b)) || ''));
+ok('A6 rule Waves: a later ready of the same version does not cancel a changes-needed; both verdicts named to the owner',
+  /later `ready` of the same version does not cancel/.test(wavesStep) && /both/.test(wavesStep), wavesStep.slice(0, 400));
+const readmeGaps = flat((read('README.md').match(/\n## Known gaps\n([\s\S]*?)\n## /) || ['', ''])[1]);
+ok('A17 README Known gaps: a second codex exec of the same prepared run is not told from the first',
+  /second `codex exec` of the same prepared run/.test(readmeGaps), '');
 const sch = (() => { try { return JSON.parse(read('schemas/analysis-check.schema.json')); } catch { return null; } })();
 const RE = require('../scripts/role-exec');
 // codex exec takes the file as it is (--output-schema), so it is in the strict form already: the strict form of its
