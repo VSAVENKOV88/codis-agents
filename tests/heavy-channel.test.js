@@ -269,8 +269,10 @@ const groupAlive = (g) => { try { process.kill(-g, 0); return true; } catch (e) 
     const w = jsonOut(await req(d, ['--max', '20', '--', 'node', 'wt-only-run.js']));
     ok('B\'12 x B\'10 a guard marked by the worktree\'s rule only is not exclusive for the run: no exclusive lock (the adapter and the executor agree)',
       w && w.state === 'done' && /LOCKRC=0\b/.test(w.tail || ''), JSON.stringify(w));
-    const n = jsonOut(await req(d, ['--max', '20', '--', 'zsh', path.join(S, 'heavy.sh'), 'zsh', 'port.guard.sh']));
-    ok('B\'12 x B\'10 a heavy.sh in the argv (two levels under the held slot) takes the exclusive lock by the run\'s config',
+    // a script of the argv that calls heavy.sh itself (the executor's heavy.sh sees only the script, not the guard)
+    fs.writeFileSync(path.join(d.wt, 'wrap.sh'), `zsh ${JSON.stringify(path.join(S, 'heavy.sh'))} zsh port.guard.sh\n`);
+    const n = jsonOut(await req(d, ['--max', '20', '--', 'zsh', 'wrap.sh']));
+    ok('B\'12 x B\'10 a heavy.sh called by a script of the argv (two levels under the held slot) takes the exclusive lock by the run\'s config',
       n && n.state === 'done' && /LOCKRC=75\b/.test(n.tail || ''), JSON.stringify(n));
     ok('B\'10 nothing of these runs queued outside the run\'s slot directory', !b.holds(b.otherSlots).length && !b.holds(b.fallback).length && !b.holds(path.join(d.root, 'wt-slots')).length, JSON.stringify(b.counts()));
     await svc.close();

@@ -25,8 +25,9 @@
 //   journaled with G and its start time, then the exec marker <slot>.exec.<G> is written (tmp + rename), and only then
 //   "go" reaches the gate. The gate writes the file started, runs the executor as its child and writes its code into
 //   the file rc. The executor is `codex sandbox -P codis-heavy -- zsh <scripts>/<class>.sh <argv>` with
-//   CODIS_SLOT_HELD="<class> <slot>": a nested heavy.sh / medium.sh of the argv runs without a second ticket, and an
-//   exclusive guard takes its lock through heavy.sh, as for a role of Claude.
+//   CODIS_SLOT_HELD="<class> <slot>" and CODIS_AGENTS_CONFIG = o.config: a nested heavy.sh / medium.sh of the argv runs
+//   without a second ticket, and a guard marked exclusive by the run's config takes its lock through heavy.sh, as for a
+//   role of Claude.
 //   The end: the gate exited -> members left in G are stopped; a stop (the role's cancel, the end of the call, a
 //   signal of the adapter) -> stopping, TERM and CONT to G, killGraceMs, KILL, up to emptyWaitMs for G to be gone
 //   (owner 2026-11-11: 30 s and 30 s; polled every 100 ms, the period slot_run waits for its holder). G gone ->
@@ -271,9 +272,10 @@ function scopeProblem(argv, kind) {
 }
 
 // o: {task, callId, role, wt, tdir, box, stateDir, config?, runId?, kinds?, userEnv?, codex?, codexVersions?, killGraceMs?,
-// emptyWaitMs?, pollMs?, npmCache?, inject?, log?}. config: the absolute path of the run's project config, given to the
-// holder and the exclusive check as CODIS_AGENTS_CONFIG (role-exec.js requires it; without it they look the config up
-// from the worktree, as heavy.sh does). inject (tests): probe() -> {} | {error}; executor(spec) -> spec;
+// emptyWaitMs?, pollMs?, npmCache?, inject?, log?}. config: the absolute path of the run's project config, given as
+// CODIS_AGENTS_CONFIG to every process the service starts that reads the project config - the holder, the exclusive
+// check and the executor with its nested <class>.sh (role-exec.js requires it; without it they look the config up from
+// the worktree, as heavy.sh does). inject (tests): probe() -> {} | {error}; executor(spec) -> spec;
 // alive(g) -> boolean | undefined (undefined: the real answer); beforeGo(run).
 // Returns {box, answers, cancel(reason), close()}: cancel stops every run of the call (the queued ones never start);
 // close() does the same with "the call ended" and resolves, once every run is final, to {runs: [{id, state, rc}]}.
@@ -402,6 +404,9 @@ function openHeavyService(o) {
     const e = { PATH: [...new Set(dirs)].join(':'), HOME: typeof userEnv.HOME === 'string' ? userEnv.HOME : '/', CODEX_HOME: x.codexHome, TMPDIR: x.tmpdir,
       LANG: locale(userEnv.LANG), LC_ALL: locale(userEnv.LC_ALL || userEnv.LANG), SLOTS_DIR: path.dirname(x.slot), CODIS_SLOT_HELD: `${x.cls} ${x.slot}`,
       GUARDS_EXCLUSIVE_LOCK: x.lock };
+    // the nested <class>.sh and every heavy.sh / medium.sh of the argv read the run's config, as the holder and the
+    // exclusive check do: its guardExclusive decides which guard takes the exclusive lock, whatever the worktree holds
+    if (o.config) e.CODIS_AGENTS_CONFIG = o.config;
     if (typeof o.npmCache === 'string' && path.isAbsolute(o.npmCache)) e.npm_config_cache = o.npmCache;
     return e;
   };
