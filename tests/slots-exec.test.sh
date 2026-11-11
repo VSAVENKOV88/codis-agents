@@ -55,7 +55,10 @@ _tree() { local c; for c in $(pgrep -P $1 2>/dev/null); do _tree $c; done; print
 typeset -a BG GROUPS_MADE
 # cleanup: every process group the test made and every tree it started, with KILL (stubborn commands ignore TERM)
 cleanup() { local p g i; for p in $BG; do for i in $(_tree $p); do kill -9 $i 2>/dev/null; done; done
-  for g in $GROUPS_MADE; do (( g > 1 )) && kill -9 -- -$g 2>/dev/null; done }
+  for g in $GROUPS_MADE; do gkill $g; done }
+# gkill <pgid> - KILL to a group the test made; never to 0 or 1 (an empty value read from a file that a broken slot
+# script never wrote would make it "-0": the test's own group)
+gkill() { [[ $1 == <2-> ]] && kill -9 -- -$1 2>/dev/null }
 trap 'cleanup; rm -rf $T' EXIT
 trap '' PIPE   # a write to the fifo of a holder that is gone must not end the test
 # bwait <pid> [tenths] - waits for a background job, then KILLs its tree: code 124
@@ -65,7 +68,7 @@ tm() { local s=$1 p; shift; "$@" & p=$!; BG+=$p; bwait $p $(( s * 10 )) }
 # busy <file> - an fcntl probe from its own process: 0 - the lock is held
 busy() { [[ -e $1 ]] || return 1; ( zsystem flock -t 0 -f _f $1 ) 2>/dev/null; (( $? == 1 )) }
 # galive <pgid> - the group lives (kill 0 succeeds, or EPERM)
-galive() { perl -MPOSIX -e 'exit(kill(0, -$ARGV[0]) || $!+0 == POSIX::EPERM() ? 0 : 1)' $1 }
+galive() { [[ $1 == <2-> ]] || return 1; perl -MPOSIX -e 'exit(kill(0, -$ARGV[0]) || $!+0 == POSIX::EPERM() ? 0 : 1)' $1 }
 # lead <command...> & - the command in a process group of its own (as wait-step.js and guards-remote-host.js start
 # jobs), always in the background: the subshell of `&` becomes perl and then the command, so $! is the command's pid and
 # its group; INT and QUIT back to their defaults (a job of a non-interactive shell starts with them ignored)
@@ -128,7 +131,7 @@ ok "A'2. (setup) the zombie-only group reads EPERM" 'galive $z2[1] && ! kill -0 
 print -r -- $z2[1] > $S1.exec.$z2[1]
 tm 2 $H/heavy.sh touch $T/2z.ran > $T/2z.out 2>&1; rc=$?
 ok "A'2. a marker naming a group that reads EPERM holds the slot" '(( rc == 124 )) && [[ ! -e $T/2z.ran ]]' "rc $rc; $(tail -3 $T/2z.out)"
-kill -9 -- -$z2[2] 2>/dev/null; waitfor "! galive $z2[1]" 50
+gkill $z2[2]; waitfor "! galive $z2[1]" 50
 tm 10 $H/heavy.sh touch $T/2z.ran > $T/2z.out 2>&1; rc=$?
 ok "A'2. ... the zombie reaped (ESRCH): the slot is free and the marker removed" '(( rc == 0 )) && [[ -e $T/2z.ran && ! -e $S1.exec.$z2[1] ]]' "rc $rc; $(tail -3 $T/2z.out)"
 
@@ -174,7 +177,7 @@ rm -f $T/8.ran
 $H/heavy.sh touch $T/8.ran > $T/8b.out 2>&1 & w8b=$!; BG+=$w8b
 sleep 1.2
 ok "A'8. ... a waiter does not get the slot while the command lives" '[[ ! -e $T/8.ran ]]' "$(tail -3 $T/8b.out)"
-kill -9 -- -$c8 2>/dev/null
+gkill $c8
 bwait $w8b 50; rc=$?
 ok "A'8. the command ended: the waiter runs and the marker is gone" '(( rc == 0 )) && [[ -e $T/8.ran && ! -e $S1.exec.$c8 ]]' "rc $rc; $(tail -3 $T/8b.out)"
 
@@ -259,7 +262,7 @@ s18() { # s18 <name> <how: TERM|INT|HUP|group> [second]
   $H/heavy.sh touch $T/18.ran > $T/18w.out 2>&1 & local ww=$!; BG+=$ww
   sleep 0.3
   local t0=$EPOCHREALTIME
-  if [[ $2 == group ]]; then kill -TERM -- -$w; else kill -$2 $w; fi
+  if [[ $2 == group ]]; then [[ $w == <2-> ]] && kill -TERM -- -$w; else kill -$2 $w; fi
   waitfor '[[ -e $T/18.term ]]' 10
   ok "A'18. $1: the command's group got TERM at once" '[[ -e $T/18.term ]]'
   [[ -n $3 ]] && { sleep 0.5; kill -TERM $w 2>/dev/null; }
@@ -289,7 +292,7 @@ ok "A'20. the group not empty after KILL: heavy.sh ends after both pauses, with 
 ok "A'20. ... the marker stays: the slot is busy with a free lock" '[[ -e $S1.exec.$c20 ]] && ! busy $S1' "markers '$(markers)'"
 tm 2 $H/heavy.sh touch $T/20.ran > $T/20w.out 2>&1; rc=$?
 ok "A'20. ... a waiter does not get it" '(( rc == 124 )) && [[ ! -e $T/20.ran ]]' "rc $rc; $(tail -2 $T/20w.out)"
-[[ -n $p20 ]] && kill -9 -- -$p20 2>/dev/null; waitfor "! galive ${c20:-0}" 50
+gkill $p20; waitfor "! galive ${c20:-0}" 50
 tm 10 $H/heavy.sh touch $T/20.ran > $T/20w.out 2>&1; rc=$?
 ok "A'20. the group gone: the next waiter takes the slot and removes the marker" '(( rc == 0 )) && [[ -e $T/20.ran && ! -e $S1.exec.$c20 ]]' "rc $rc; $(tail -2 $T/20w.out)"
 
@@ -298,7 +301,7 @@ ok "A'20. the group gone: the next waiter takes the slot and removes the marker"
 rm -f $T/21.done $T/21.c
 lead $H/heavy.sh zsh -c 'print -r -- $$ > '$T'/21.c; sleep 2; touch '$T'/21.done' > $T/21.out 2>&1 & w21=$!; BG+=$w21; GROUPS_MADE+=$w21
 waitfor '[[ -s $T/21.c ]]'; c21=$(<$T/21.c); GROUPS_MADE+=$c21
-kill -9 -- -$w21; wait $w21 2>/dev/null
+gkill $w21; wait $w21 2>/dev/null
 sleep 0.3
 ok "A'21. KILL to the group of heavy.sh: the command lives on in its slot (lock and marker)" 'kill -0 $c21 2>/dev/null && busy $S1 && [[ -e $S1.exec.$c21 ]]' "markers '$(markers)'"
 waitfor '[[ -e $T/21.done ]]' 50; waitfor '! busy $S1' 30
@@ -329,10 +332,10 @@ waitfor '[[ -s $T/24.c ]]' 150
 c24=$(<$T/24.c); g24=$(ps -o pgid= -p ${c24:-0} | tr -d ' '); GROUPS_MADE+=$g24
 ok "A'24. guards-all.sh with SLOT_EXEC_NOTE: the group of its command is noted in <lock>/exec" '[[ -n $g24 ]] && grep -qx "$g24" $T/lock/exec' "group '$g24', note '$(cat $T/lock/exec 2>/dev/null)'; $(tail -3 $T/24.out)"
 ok "A'24. ... the command does not inherit SLOT_EXEC_NOTE" '[[ $(<$T/24.env) == none ]]' "$(cat $T/24.env)"
-kill -9 -- -$w24; wait $w24 2>/dev/null
+gkill $w24; wait $w24 2>/dev/null
 ta() { node -e 'const TL = require(process.argv[1]); process.exit(TL.holderAlive({ pid: Number(process.argv[3]), pgid: Number(process.argv[3]) }, process.argv[2]) ? 0 : 1)' $H/train-lock.js $T/lock $w24 }
 ok "A'24. guards-all.sh and its caller KILLed: the train lock lives while the noted group lives" 'kill -0 $c24 2>/dev/null && ta'
-kill -9 -- -$g24 2>/dev/null; waitfor "! galive $g24" 50
+gkill $g24; waitfor "! galive $g24" 50
 ok "A'24. ... and is dead once that group is gone" '! ta'
 waitfor '! busy $S1' 50
 
