@@ -27,7 +27,7 @@
 # when the command has exited and members of its group remain. A group not gone after KILL keeps its marker (the slot
 # stays busy until it ends). KILL without a TERM before it (kill -9 of the caller or of the holder) does not stop the
 # command: it runs on in its slot, under its marker, to its end (README, Known gaps). Both pauses default to the pause of
-# the roles, 30 s (scripts/role-exec.js KILL_GRACE_MS; owner 2026-11-11 "по рекомендации, 30 с").
+# the roles, 30 s (scripts/role-exec.js KILL_GRACE_MS; the owner, 2026-11-11: "as recommended, 30 s").
 # NESTED: CODIS_SLOT_HELD="<class> <slot file>" (set by the adapter of a codex role for the commands it runs in a held
 # slot) lets heavy.sh / medium.sh run without a second ticket: only when the slot file lies in this SLOTS_DIR (another
 # directory - a test with its own slots - is an ordinary queue), a marker <slot>.exec.<my group> exists and the class
