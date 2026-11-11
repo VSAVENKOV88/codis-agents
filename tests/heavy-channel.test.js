@@ -196,7 +196,9 @@ const groupAlive = (g) => { try { process.kill(-g, 0); return true; } catch (e) 
 
   // ---- B'9, B'10: the environment of the executor; a holder with CODIS_SLOT_HELD in the adapter's environment
   {
-    const d = setup({ CODIS_SLOT_HELD: 'heavy /nowhere/heavy.0.lock', CODIS_COMMIT_BOX: '/x', OPENAI_API_KEY: 'k', SLOT_LABEL: 'leak' });
+    const d = setup({ CODIS_COMMIT_BOX: '/x', OPENAI_API_KEY: 'k', SLOT_LABEL: 'leak' });
+    // a CODIS_SLOT_HELD of this very slot directory: inherited by the holder it would take the nested path (64, no queue)
+    d.env.CODIS_SLOT_HELD = `heavy ${path.join(d.slots, 'heavy.0.lock')}`;
     const svc = open(d);
     const a = jsonOut(await req(d, ['--max', '20', '--', 'node', '-e', 'console.log("NAMES " + Object.keys(process.env).sort().join(","))']));
     const names = ((a && a.tail) || '').split('NAMES ')[1] || '';
@@ -385,6 +387,29 @@ const groupAlive = (g) => { try { process.kill(-g, 0); return true; } catch (e) 
     n = 0;
     fs.writeFileSync(jf3, line({ ev: 'queued', id: ids.a, hash: 'h', kind: null, cls: 'heavy', argv: ['x'] }) + '\n' + line({ ev: 'undetermined', id: ids.a, why: 'x' }) + '\n');
     ok('B\'27 an undetermined run: the start check refuses and names resolve --heavy', /undetermined/.test(HS.journalProblem(jf3) || '') && /resolve --heavy/.test(HS.journalProblem(jf3) || ''), HS.journalProblem(jf3));
+  }
+
+  // ---- B'9/B'30 through createAgent: prog with cfg.heavy gets the box of its own service, never an inherited one
+  {
+    const d = setup({ CODIS_HEAVY_BOX: '/inherited/box', CODIS_HEAVY_ANSWERS: '/inherited/answers', TMPDIR: path.join(T, 'rtmp') });
+    fs.mkdirSync(path.join(T, 'rtmp'), { recursive: true });
+    const home = path.join(d.root, 'chome');
+    fs.mkdirSync(home);
+    const seen = [];
+    const mk = (heavy) => RX.createAgent({ host: 'codex', callsDir: path.join(d.root, 'calls'), pluginRoot: ROOT, log: () => {}, env: d.env,
+      codex: { home, catalog: { models: [{ slug: 'gpt-6-astra', supported_reasoning_levels: ['high'] }] } },
+      tasks: { K: { dir: d.tdir, wt: d.wt, branch: 'task' } }, commit: { stateDir: d.state }, heavy,
+      launch: async (plan) => { seen.push(plan); return { outcome: 'crashed', error: 'a test launcher' }; } });
+    const schema = { type: 'object', properties: { a: { type: 'string' } } };
+    await mk({ kinds: { tsc: 'medium' } })('task', { label: 'prog:K', schema, agentType: 'general-purpose' });
+    await mk({ kinds: {} })('task', { label: 'review:K', schema, agentType: 'general-purpose' });
+    await mk(undefined)('task', { label: 'prog:K', schema, agentType: 'general-purpose' });
+    const [p1, r1, p0] = seen;
+    ok('B\'9 createAgent: prog with cfg.heavy gets CODIS_HEAVY_BOX of its call folder and the answers of the adapter, not the inherited ones',
+      !!p1 && p1.env.CODIS_HEAVY_BOX === path.join(p1.callDir, 'heavy') && p1.env.CODIS_HEAVY_ANSWERS === path.join(d.state, 'K', 'heavy-calls', path.basename(p1.callDir)), JSON.stringify(p1 && { b: p1.env.CODIS_HEAVY_BOX, a: p1.env.CODIS_HEAVY_ANSWERS }));
+    ok('B\'5/B\'30 review: no heavy channel and no inherited box; prog without cfg.heavy: neither', !!r1 && !r1.env.CODIS_HEAVY_BOX && !r1.env.CODIS_HEAVY_ANSWERS && !!p0 && !p0.env.CODIS_HEAVY_BOX && !/heavy-req\.js/.test(p0.stdin),
+      JSON.stringify([r1 && r1.env.CODIS_HEAVY_BOX, p0 && p0.env.CODIS_HEAVY_BOX]));
+    ok('B\'30 createAgent: the prompt of prog with cfg.heavy ends with the heavy-req.js lines', !!p1 && /heavy-req\.js[^\n]*-- <argv>/.test(p1.stdin));
   }
 
   // ---- B'30: the host section; config slots.kinds
