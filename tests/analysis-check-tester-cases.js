@@ -3,7 +3,7 @@
 // tally (so the README count of test files stays). Cells beyond the programmer's test: malformed arguments, an analysis
 // that cannot be read, a legacy last.json that is not a verdict, a report run inside a fenced block, one appended run is
 // one verdict (not two), two verdicts from two sources, a real race of several prepare and of two --append, the shell
-// quoting of the printed command, and an answer rewritten after it was collected under the rule of two verdicts (A23 x A6).
+// quoting of the printed command, and an answer rewritten after it was collected under the rule of two verdicts (A23 x A6), and an answer rewritten after collect by one that is not a verdict or that names another key (A23).
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -177,6 +177,64 @@ const keyOf = (o, t) => (o && o.keys && o.keys[t]) || null;
     const again = prep(c);
     ok('A23 x A6 prepare refuses and names the collected changes-needed too, not only the later ready', again.code === 3
       && /changes-needed/.test(again.out && again.out.refused || ''), (again.out && again.out.refused) || again.all.slice(0, 300));
+  }
+
+  // ---- A23: a collected answer rewritten by an answer that is not a verdict keeps its verdict ----
+  // A second codex exec of run 1 after collect saw changes-needed leaves a file with another hash that is not a result
+  // (not JSON, another analysisSha256). The verdict collect saw stays a verdict of t1: it is named, and prepare refuses
+  // without --again (otherwise a new run of the version starts and the changes-needed is lost).
+  for (const [name, bad] of [['not JSON', 'oops'], ['another analysisSha256', JSON.stringify(answer('0'.repeat(64), ['t1'], 'ready', 0))]]) {
+    const c = fresh();
+    const p = prep(c);
+    writeAnswer(oFile(p), answer(c.sha, ['t1'], 'changes-needed', 1));
+    collect(c, ['--run', '1', '--exit', '0']);
+    fs.writeFileSync(oFile(p), bad);
+    const col = collect(c);
+    const k = keyOf(col.out, 't1');
+    ok(`A23 a collected changes-needed rewritten by ${name}: still a verdict of t1, named as changed after it was collected`,
+      !!k && k.verdicts.some((v) => v.verdict === 'changes-needed') && /changed after it was collected/.test(col.all), JSON.stringify(col.out && col.out.keys));
+    const again = prep(c);
+    ok(`A23 a collected changes-needed rewritten by ${name}: prepare refuses (3) and names it`, again.code === 3
+      && /changes-needed/.test(again.out && again.out.refused || ''), `exit ${again.code}`);
+  }
+
+  // ---- A23 x A12: an appended changes-needed, then the run rewritten by an answer that is not a verdict ----
+  // The report holds the run of this version for t1 (written from here); prepare must still refuse without --again.
+  {
+    const c = fresh();
+    const p = prep(c);
+    writeAnswer(oFile(p), answer(c.sha, ['t1'], 'changes-needed', 1));
+    collect(c, ['--run', '1', '--exit', '0']);
+    collect(c, ['--run', '1', '--append']);
+    fs.writeFileSync(oFile(p), 'garbage');
+    const k = keyOf(collect(c).out, 't1');
+    ok('A23 x A12 appended then rewritten by garbage: t1 keeps the changes-needed', !!k && k.verdicts.some((v) => v.verdict === 'changes-needed'), JSON.stringify(k));
+    const again = prep(c);
+    ok('A23 x A12 appended then rewritten by garbage: prepare refuses (3) - the report holds a run of this version for t1', again.code === 3, `exit ${again.code}`);
+  }
+
+  // ---- A23: the rewrite names another key: the earlier answer still counts for its own key ----
+  {
+    const c = fresh();
+    const p = prep(c);
+    writeAnswer(oFile(p), answer(c.sha, ['t1'], 'changes-needed', 1));
+    collect(c, ['--run', '1', '--exit', '0']);
+    writeAnswer(oFile(p), answer(c.sha, ['t2'], 'ready', 0));
+    const k = keyOf(collect(c).out, 't1');
+    ok('A23 rewrite for another key: collect shows t1 with the earlier changes-needed in keys', !!k && k.verdicts.some((v) => v.verdict === 'changes-needed'), JSON.stringify(k));
+    ok('A23 rewrite for another key: prepare --task t1 refuses (3)', prep(c).code === 3);
+  }
+
+  // ---- A23: the same bytes written again are not a second verdict ----
+  {
+    const c = fresh();
+    const p = prep(c);
+    writeAnswer(oFile(p), answer(c.sha, ['t1'], 'changes-needed', 1));
+    collect(c, ['--run', '1', '--exit', '0']);
+    writeAnswer(oFile(p), answer(c.sha, ['t1'], 'changes-needed', 1));
+    const col = collect(c);
+    const k = keyOf(col.out, 't1');
+    ok('A23 the same answer written again: one verdict, no "changed" note', !!k && k.verdicts.length === 1 && !/changed after it was collected/.test(col.all), JSON.stringify(k));
   }
 
   done();
