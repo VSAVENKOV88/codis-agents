@@ -276,7 +276,7 @@ const keyOf = (o, t) => (o && o.keys && o.keys[t]) || null;
     collect(c);
     const d = path.join(c.S, 'analysis-checks', c.sha, 'runs', '1.answers');
     fs.writeFileSync(path.join(d, 'notes.txt'), 'x');
-    fs.writeFileSync(path.join(d, '5.appended'), JSON.stringify({ reportRun: 1, textSha256: 'f'.repeat(64) }));
+    fs.writeFileSync(path.join(d, '2.appended'), JSON.stringify({ reportRun: 1, textSha256: 'f'.repeat(64) }));
     writeAnswer(oFile(p), answer(c.sha, ['t1'], 'ready', 0));
     const col = collect(c);
     const r1 = col.out && (col.out.runs || []).find((r) => r.run === 1);
