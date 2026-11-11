@@ -3,6 +3,7 @@
 # does not hold:
 #   TC1 a command whose whole group is stopped (SIGSTOP, as a job that read the terminal gets SIGTTIN): a TERM to
 #       heavy.sh ends it at once - the holder sends CONT with the TERM - not after SLOT_KILL_GRACE;
+#   TC1b the same for a stopped leftover after a normal end (the stop of slot-group.pl sends the CONT);
 #   TC2 medium.sh x TERM with a stubborn command: the medium slot is held during the pause, 143, journal line rc 143,
 #       the slot free and the marker gone after the group;
 #   TC3 slot-hold.sh x TERM while it holds: 143, the slot free, no marker, journal kind hold rc 143;
@@ -72,6 +73,12 @@ ok "TC1. (setup) the command and its child are stopped" '[[ $(ps -o stat= -p $c1
 t0=$EPOCHREALTIME; kill -TERM $w1
 bwait $w1 150; rc=$?; dt=$(( EPOCHREALTIME - t0 ))
 ok "TC1. TERM to heavy.sh of a stopped group: 143 within 3 s (not after SLOT_KILL_GRACE 20 s), nothing left, marker gone" '(( rc == 143 && dt < 3 )) && ! galive $c1 && [[ -z $(markers) ]] && ! busy $S1' "rc $rc in $dt s, markers '$(markers)'; $(tail -2 $T/1.out)"
+# TC1b. a normal end (rc 3) with a stopped leftover in the group: the holder's stop sends CONT with the TERM, so the
+# leftover ends at once, not after SLOT_KILL_GRACE
+rm -f $T/1b.kid
+t0=$EPOCHREALTIME
+tm 15 $H/heavy.sh zsh -c 'sh -c "kill -STOP \$\$; sleep 60" & print -r -- $! > '$T'/1b.kid; sleep 0.5; exit 3' > $T/1b.out 2>&1; rc=$?; dt=$(( EPOCHREALTIME - t0 ))
+ok "TC1b. a stopped leftover after a normal end: code 3 within 3 s (not after SLOT_KILL_GRACE 20 s), leftover gone, slot free" '(( rc == 3 && dt < 3 )) && ! kill -0 $(<$T/1b.kid) 2>/dev/null && [[ -z $(markers) ]] && ! busy $S1' "rc $rc in $dt s, markers '$(markers)'; $(tail -2 $T/1b.out)"
 export SLOT_KILL_GRACE=2
 
 # TC2. medium.sh x TERM, the command ignores TERM: medium slot held in the pause, 143, then free

@@ -361,7 +361,7 @@ ok "A'29. SLOT_KILL_GRACE and SLOT_EMPTY_WAIT default to KILL_GRACE_MS of the ro
 # the tester cells: tests/slots-exec-tester-cases.sh (TC1-TC7) and tests/train-exec-note-tester-cases.js (N1-N3), children
 # with their own tally, so README keeps counting test files
 zsh ${0:A:h}/slots-exec-tester-cases.sh > $T/tc.out 2>&1; rc=$?
-ok "tester cells TC1-TC7 (tests/slots-exec-tester-cases.sh) pass" '(( rc == 0 ))' "rc $rc; $(grep -E 'FAIL|^ ' $T/tc.out | grep -v '^  ok' | tail -20)"
+ok "tester cells TC1-TC7, TC1b (tests/slots-exec-tester-cases.sh) pass" '(( rc == 0 ))' "rc $rc; $(grep -E 'FAIL|^ ' $T/tc.out | grep -v '^  ok' | tail -20)"
 node ${0:A:h}/train-exec-note-tester-cases.js > $T/tn.out 2>&1; rc=$?
 ok "tester cells N1-N3 (tests/train-exec-note-tester-cases.js) pass" '(( rc == 0 ))' "rc $rc; $(tail -8 $T/tn.out)"
 
