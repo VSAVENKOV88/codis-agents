@@ -83,7 +83,7 @@ process.exit(r.status === null ? 255 : r.status);
       'SLOT_SWAP_MIN_MB', 'SLOT_THIRD_FREE_PCT', 'SLOT_THIRD_SWAP_GROW_MB', 'SLOT_PROC']) delete process.env[k];
     for (const k of Object.keys(process.env)) if (/^(SLOT_|SLOTS_|GUARDS_|CODIS_)/.test(k)) delete process.env[k];
     const env = (extra) => Object.assign({}, process.env, { CODIS_AGENTS_CONFIG: cfgFile, CODIS_AGENTS_MACHINE: mfile, PATH: bin + path.delimiter + process.env.PATH, SLOT_OS: 'darwin', SLOT_POLL: '0.2',
-      SLOT_SAY: '1', SLOT_THIRD_WINDOW: '1', SLOT_HIST_GAP: '2', GUARDS_REMOTE_POLL: '0.3', FAKE_SERVER_ENV: SRV_ENV }, extra || {});
+      SLOT_SAY: '1', SLOT_THIRD_WINDOW: '1', SLOT_HIST_GAP: '2', GUARDS_REMOTE_POLL: '0.3', GUARDS_REMOTE_SSH_PAUSE: '0', FAKE_SERVER_ENV: SRV_ENV }, extra || {});
     const GA = path.join(ROOT, 'scripts', 'guards-all.sh');
     const ga = (opts, ...a) => { const r = spawnSync('zsh', [GA, ...a], { encoding: 'utf8', env: env(opts.env), cwd: opts.cwd || T, timeout: 180000 }); r.all = (r.stdout || '') + (r.stderr || ''); return r; };
     const set = (rc, red, extra) => {
