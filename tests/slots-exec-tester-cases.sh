@@ -1,4 +1,3 @@
-#!/bin/zsh
 # Tester cells of A2b-1a, run as a child of tests/slots-exec.test.sh (scripts/slots.zsh, slot-holder.zsh, slot-group.pl, slot-hold.sh) that tests/slots-exec.test.sh
 # does not hold:
 #   TC1 a command whose whole group is stopped (SIGSTOP, as a job that read the terminal gets SIGTTIN) and handles TERM:
