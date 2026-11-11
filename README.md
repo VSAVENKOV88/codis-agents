@@ -249,7 +249,7 @@ codis-agents/
  ├── scripts/      42 scripts: memory slots, guard runs and selection, the train, post-checks, remote runner, cost
 ├── examples/     example project and machine configs
 ├── schemas/      their JSON schemas
-└── tests/        182 test files of the plugin itself (npm test)
+└── tests/        183 test files of the plugin itself (npm test)
 ```
 
 Every file, script and config key is described in the [Technical reference](#technical-reference).

@@ -28,7 +28,7 @@ const until = (f, s) => { const t = Date.now() + s * 1000; while (Date.now() < t
 const RESET = 'Connection reset by 203.0.113.1 port 22';
 
 try {
-  // R18: the defaults are the owner's answer (2026-11-11, "по рекомендации"): 3 attempts, pauses 10 s and 30 s; the pause
+  // R18: the defaults are the owner's answer (2026-11-11, "as recommended"): 3 attempts, pauses 10 s and 30 s; the pause
   // is set by GUARDS_REMOTE_SSH_PAUSE (0 allowed: the tests do not sleep).
   const GR = require('../scripts/guards-remote');
   ok('R18: 3 attempts per ssh call, pauses 10 s then 30 s by default', GR.SSH_ATTEMPTS === 3 && typeof GR.sshPause === 'function'
