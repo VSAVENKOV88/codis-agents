@@ -90,6 +90,26 @@ const tailOf = (a) => (a && a.log && fs.existsSync(a.log) ? fs.readFileSync(a.lo
     ok('B\'13 without SLOTS_DIR: 77 at once (the default slot directory is not a root either)', n2.state === 'done' && n2.rc === 77, tailOf(n2));
     await svc.close();
   }
+  // ---- B'10 x B'12 in the sandbox: the run's config lies outside the roots and the worktree has none; the nested heavy.sh
+  // reads it (CODIS_AGENTS_CONFIG of the executor) and runs a guard marked by its guardExclusive under the exclusive lock
+  {
+    const d = setup();
+    for (const k of ['SLOTS_DIR', 'SLOT_JOURNAL', 'XDG_CONFIG_HOME', 'CLAUDE_PROJECT_DIR', 'CODIS_AGENTS_MACHINE']) delete d.env[k];
+    const c = path.dirname(d.wt);
+    d.env.HOME = path.join(c, 'home');
+    fs.mkdirSync(d.env.HOME);
+    const runSlots = path.join(c, 'run-slots');
+    const cfg = path.join(c, 'run-cfg', 'codis-agents.json');
+    fs.mkdirSync(path.dirname(cfg));
+    fs.writeFileSync(cfg, JSON.stringify({ repoDir: c, worktreeRoot: c, sharedDir: c, slots: { lockDir: runSlots }, guardExclusive: { glob: ['*.guard.sh'], marker: '#' } }));
+    // lockf -t 0 ends 75 (EX_TEMPFAIL) on a lock held by another descriptor, 0 on a free one
+    fs.writeFileSync(path.join(d.wt, 'port.guard.sh'), '# guards:exclusive — a fixed port\n/usr/bin/lockf -t 0 "$GUARDS_EXCLUSIVE_LOCK" true; echo LOCKRC=$?\n');
+    const svc = open(d, { config: cfg });
+    const a = await req(d, ['--max', '60', '--', 'zsh', 'port.guard.sh']);
+    ok('B\'12 x B\'10 under codex sandbox: the run\'s config outside the roots, none in the worktree - the guard it marks runs under the exclusive lock of its slot directory',
+      a.state === 'done' && a.rc === 0 && /LOCKRC=75\b/.test(tailOf(a)) && path.dirname(a.slot || '') === runSlots, JSON.stringify(a) + tailOf(a));
+    await svc.close();
+  }
   // ---- B'15: a codex outside the list of the channel: "no safe executor", nothing runs, no slot taken
   {
     const d = setup();

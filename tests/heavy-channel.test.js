@@ -78,19 +78,20 @@ const markers = (d) => fs.readdirSync(d.slots).filter((f) => /\.exec(tmp)?\./.te
 // A case whose holder can find its slot directory only through the run's config: the adapter's environment has neither
 // SLOTS_DIR nor SLOT_JOURNAL and names another config in CODIS_AGENTS_CONFIG, the worktree and its parents have none,
 // HOME is the case's own (a fallback lands in <HOME>/.cache, never in the machine's queue).
-function bareCfg(d) {
+// runExtra: more keys of the run's config (guardExclusive).
+function bareCfg(d, runExtra) {
   for (const k of ['SLOTS_DIR', 'SLOT_JOURNAL', 'XDG_CONFIG_HOME', 'CLAUDE_PROJECT_DIR', 'CODIS_AGENTS_MACHINE']) delete d.env[k];
   const home = path.join(d.root, 'home');
   fs.mkdirSync(home);
-  const cfgOf = (name, lockDir) => {
+  const cfgOf = (name, lockDir, extra) => {
     const dir = path.join(d.root, name);
-    fs.mkdirSync(dir);
+    fs.mkdirSync(dir, { recursive: true });
     const f = path.join(dir, 'codis-agents.json');
-    fs.writeFileSync(f, JSON.stringify({ repoDir: dir, worktreeRoot: dir, sharedDir: dir, slots: { lockDir } }));
+    fs.writeFileSync(f, JSON.stringify(Object.assign({ repoDir: dir, worktreeRoot: dir, sharedDir: dir, slots: { lockDir } }, extra || {})));
     return f;
   };
-  const b = { runSlots: path.join(d.root, 'run-slots'), otherSlots: path.join(d.root, 'other-slots'), fallback: path.join(home, '.cache', 'codis-agents', 'slots') };
-  b.runCfg = cfgOf('run-cfg', b.runSlots);
+  const b = { runSlots: path.join(d.root, 'run-slots'), otherSlots: path.join(d.root, 'other-slots'), fallback: path.join(home, '.cache', 'codis-agents', 'slots'), cfgOf };
+  b.runCfg = cfgOf('run-cfg', b.runSlots, runExtra);
   d.env.HOME = home;
   d.env.CODIS_AGENTS_CONFIG = cfgOf('other-cfg', b.otherSlots);
   b.holds = (dir) => { try { return fs.readFileSync(path.join(dir, 'journal.tsv'), 'utf8').split('\n').filter(Boolean).map((l) => l.split('\t')).filter((l) => l[6] === 'hold'); } catch { return []; } };
@@ -244,6 +245,34 @@ const groupAlive = (g) => { try { process.kill(-g, 0); return true; } catch (e) 
     const a = jsonOut(await req(d, ['--max', '20', '--', 'true']));
     ok('B\'10 a holder whose cwd has no config writes its hold line in the lockDir of the run\'s config', a && a.state === 'done' && b.holds(b.runSlots).length === 1, JSON.stringify({ a, n: b.counts() }));
     ok('B\'10 ... and none in the config of the adapter\'s environment or in <HOME>/.cache', !b.holds(b.otherSlots).length && !b.holds(b.fallback).length, JSON.stringify(b.counts()));
+    await svc.close();
+  }
+
+  // ---- B'10 x B'12: the executor, the nested <class>.sh and every heavy.sh / medium.sh of its argv judge by the run's
+  // config too (CODIS_AGENTS_CONFIG of the executor = o.config): the run's guardExclusive (*.guard.sh, marker #) against a
+  // worktree whose own config has the default one (*-run.js, marker //) and the adapter's environment naming another
+  {
+    const d = setup();
+    const b = bareCfg(d, { guardExclusive: { glob: ['*.guard.sh'], marker: '#' } });
+    b.cfgOf(path.join('wt', '.claude'), path.join(d.root, 'wt-slots'));
+    // lockf -t 0 ends 75 (EX_TEMPFAIL) on a lock held by another descriptor, 0 on a free one
+    const probeLock = '/usr/bin/lockf -t 0 "$GUARDS_EXCLUSIVE_LOCK" true; echo LOCKRC=$?';
+    fs.writeFileSync(path.join(d.wt, 'port.guard.sh'), `# guards:exclusive — a fixed port\n${probeLock}\n`);
+    fs.writeFileSync(path.join(d.wt, 'wt-only-run.js'), `// guards:exclusive — marked by the worktree's rule only\nconsole.log(require('child_process').spawnSync('/bin/sh', ['-c', ${JSON.stringify(probeLock)}], { encoding: 'utf8' }).stdout)\n`);
+    const envs = [];
+    const svc = open(d, { opts: { config: b.runCfg }, inject: { executor: (spec) => { envs.push(spec.env); return Object.assign({}, spec, { bin: spec.inner[0], args: spec.inner.slice(1) }); } } });
+    const a = jsonOut(await req(d, ['--max', '20', '--', 'zsh', 'port.guard.sh']));
+    ok('B\'10 the executor\'s environment names the run\'s config (CODIS_AGENTS_CONFIG = o.config), not the adapter\'s or the worktree\'s',
+      envs.length === 1 && envs[0].CODIS_AGENTS_CONFIG === b.runCfg, JSON.stringify(envs.map((e) => e.CODIS_AGENTS_CONFIG)));
+    ok('B\'12 x B\'10 a guard marked by the run\'s guardExclusive, the worktree\'s config marking it not: the nested heavy.sh runs it under the exclusive lock',
+      a && a.state === 'done' && /LOCKRC=75\b/.test(a.tail || ''), JSON.stringify(a));
+    const w = jsonOut(await req(d, ['--max', '20', '--', 'node', 'wt-only-run.js']));
+    ok('B\'12 x B\'10 a guard marked by the worktree\'s rule only is not exclusive for the run: no exclusive lock (the adapter and the executor agree)',
+      w && w.state === 'done' && /LOCKRC=0\b/.test(w.tail || ''), JSON.stringify(w));
+    const n = jsonOut(await req(d, ['--max', '20', '--', 'zsh', path.join(S, 'heavy.sh'), 'zsh', 'port.guard.sh']));
+    ok('B\'12 x B\'10 a heavy.sh in the argv (two levels under the held slot) takes the exclusive lock by the run\'s config',
+      n && n.state === 'done' && /LOCKRC=75\b/.test(n.tail || ''), JSON.stringify(n));
+    ok('B\'10 nothing of these runs queued outside the run\'s slot directory', !b.holds(b.otherSlots).length && !b.holds(b.fallback).length && !b.holds(path.join(d.root, 'wt-slots')).length, JSON.stringify(b.counts()));
     await svc.close();
   }
 
