@@ -58,7 +58,7 @@ if (!e && !isPush) {
 }
 fs.writeFileSync(process.env.FAKE_PLAN + '.state', JSON.stringify(st));
 const mode = e ? e.mode : 'ok';
-fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify({ op, mode, n: st.node }) + '\\n');
+fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify({ op, mode, n: st.node, t: Date.now() }) + '\\n');
 if (mode === 'real') {
   const r = spawnSync(${JSON.stringify(REAL_SSH)}, ['-F', 'none', '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5', '-p', '1', '127.0.0.1', 'true'], { stdio: 'inherit' });
   process.exit(r.status === null ? 254 : r.status);
@@ -116,6 +116,8 @@ process.exit(r.status === null ? 255 : r.status);
     const first = (r) => r.log.split('\n')[0];
     const ranOk = (r, n) => r.status === 0 && /^ran on runner example\.org/.test(r.log) && /^TOTAL: 1 green/m.test(r.log) && meta(n).rc === 0;
     const why = (r) => `${r.status} ${JSON.stringify(r.calls.map((k) => k.op + ':' + k.mode))} ${r.out.slice(-700)} | ${r.log.slice(0, 400)}`;
+    // seconds between the first two calls of an operation (the pause before the retry), and between the 2nd and 3rd
+    const gap = (r, op, k) => { const t = r.calls.filter((c) => c.op === op).map((c) => c.t); return t.length > k ? (t[k] - t[k - 1]) / 1000 : -1; };
     const fresh = () => { git(pw, 'commit', '-q', '--allow-empty', '-m', 'c' + Date.now()); return head(pw); };
     const onRunner = (sha) => spawnSync('git', ['--git-dir', path.join(R, 'repo.git'), 'cat-file', '-e', `${sha}^{commit}`]).status === 0;
 
@@ -159,12 +161,12 @@ process.exit(r.status === null ? 255 : r.status);
 
     // TP1: the default pause (no GUARDS_REMOTE_SSH_PAUSE) is slept: 10 s after the first lost attempt
     r = go('tp1', [{ op: 'preflight', mode: 'pre' }], { env: { GUARDS_REMOTE_SSH_PAUSE: null } });
-    ok('TP1: no GUARDS_REMOTE_SSH_PAUSE - "again in 10 s" and the run takes at least 10 s, ends 0',
-      ranOk(r, 'tp1') && r.out.includes('(preflight, attempt 1 of 3): ' + RESET + ' - again in 10 s') && r.s >= 10, `${r.s} s ${why(r)}`);
+    ok('TP1: no GUARDS_REMOTE_SSH_PAUSE - "again in 10 s", at least 10 s between the two preflight calls, ends 0',
+      ranOk(r, 'tp1') && r.out.includes('(preflight, attempt 1 of 3): ' + RESET + ' - again in 10 s') && gap(r, 'preflight', 1) >= 10, `${gap(r, 'preflight', 1)} s ${why(r)}`);
     // TP2: the variable's value is slept for each of two pauses
     r = go('tp2', [{ op: 'has', mode: 'pre', times: 2 }], { env: { GUARDS_REMOTE_SSH_PAUSE: '1.5' } });
-    ok('TP2: GUARDS_REMOTE_SSH_PAUSE=1.5, two lost attempts - "again in 1.5 s" twice, at least 3 s, ends 0',
-      ranOk(r, 'tp2') && (r.out.match(/again in 1\.5 s/g) || []).length === 2 && r.s >= 3, `${r.s} s ${why(r)}`);
+    ok('TP2: GUARDS_REMOTE_SSH_PAUSE=1.5, two lost attempts - "again in 1.5 s" twice, at least 1.5 s before each retry, ends 0',
+      ranOk(r, 'tp2') && (r.out.match(/again in 1\.5 s/g) || []).length === 2 && gap(r, 'has', 1) >= 1.5 && gap(r, 'has', 2) >= 1.5, `${gap(r, 'has', 1)} ${gap(r, 'has', 2)} s ${why(r)}`);
 
     // TG1: through guards-all.sh - one lost preflight, exit 0, the tally in the log; the same HEAD again is reused
     const ga = (n) => {
