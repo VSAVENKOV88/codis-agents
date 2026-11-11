@@ -46,12 +46,28 @@ const answer = (s, tasks, verdict, gaps, over) => Object.assign({ analysisSha256
   report: reportText(s, tasks, verdict, gaps) }, over || {});
 // The -o file of the printed command (the answer of codex exec lands there).
 const oFile = (p) => { const a = p.out && p.out.argv; return a ? a[a.indexOf('-o') + 1] : null; };
-const writeAnswer = (file, obj) => fs.writeFileSync(file, typeof obj === 'string' ? obj : JSON.stringify(obj));
+// A missing -o file (a prepare that failed under a mutant) writes nothing: the checks after it fail instead of a crash.
+const writeAnswer = (file, obj) => { if (file) fs.writeFileSync(file, typeof obj === 'string' ? obj : JSON.stringify(obj)); };
 const runOf = (o, n) => ((o && o.runs) || []).find((r) => r.run === n) || null;
 const listDir = (d) => { const out = []; const walk = (x) => { for (const e of fs.readdirSync(x).sort()) { const p = path.join(x, e); if (fs.statSync(p).isDirectory()) walk(p); else out.push(path.relative(d, p) + ':' + sha(fs.readFileSync(p))); } }; walk(d); return out; };
 
 ok('the script exists', fs.existsSync(SCRIPT));
 if (!fs.existsSync(SCRIPT)) done();
+
+// ---- A21: the run number is claimed with O_EXCL (first: a mutant of claim breaks every flow below) ----
+{
+  let AC = null;
+  try { AC = require(SCRIPT); } catch { /* red before the script */ }
+  ok('A21 the script exports claimRun', !!AC && typeof AC.claimRun === 'function');
+  if (AC && AC.claimRun) {
+    const runs = path.join(TMP, 'claim', 'runs');
+    fs.mkdirSync(runs, { recursive: true });
+    fs.writeFileSync(path.join(runs, '1.prepared'), '{"tasks":["other"]}');
+    const r1 = AC.claimRun(runs, 1, { tasks: ['t1'] });
+    ok('A21 claimRun on a marker that exists: false, the marker unchanged (EEXIST)', r1 === false && fs.readFileSync(path.join(runs, '1.prepared'), 'utf8') === '{"tasks":["other"]}');
+    ok('A21 claimRun on a new number: true, the marker written', AC.claimRun(runs, 2, { tasks: ['t1'] }) === true && /t1/.test(fs.readFileSync(path.join(runs, '2.prepared'), 'utf8')));
+  }
+}
 
 // ---- A1, A2, A17, A9, A12, A3, A16, A19 (count): the main flow ----
 {
@@ -296,21 +312,6 @@ if (!fs.existsSync(SCRIPT)) done();
   const q = prep(c2, ['t1', 't2']);
   writeAnswer(oFile(q), answer(c2.sha, ['t1'], 'ready', 0));
   ok('A20 t1 is blocked', prep(c2, ['t1']).code === 3);
-}
-
-// ---- A21: the run number is claimed with O_EXCL ----
-{
-  let AC = null;
-  try { AC = require(SCRIPT); } catch { /* red before the script */ }
-  ok('A21 the script exports claimRun', !!AC && typeof AC.claimRun === 'function');
-  if (AC && AC.claimRun) {
-    const runs = path.join(TMP, 'claim', 'runs');
-    fs.mkdirSync(runs, { recursive: true });
-    fs.writeFileSync(path.join(runs, '1.prepared'), '{"tasks":["other"]}');
-    const r1 = AC.claimRun(runs, 1, { tasks: ['t1'] });
-    ok('A21 claimRun on a marker that exists: false, the marker unchanged (EEXIST)', r1 === false && fs.readFileSync(path.join(runs, '1.prepared'), 'utf8') === '{"tasks":["other"]}');
-    ok('A21 claimRun on a new number: true, the marker written', AC.claimRun(runs, 2, { tasks: ['t1'] }) === true && /t1/.test(fs.readFileSync(path.join(runs, '2.prepared'), 'utf8')));
-  }
 }
 
 // ---- A22: the header of the report disagrees with the answer ----
