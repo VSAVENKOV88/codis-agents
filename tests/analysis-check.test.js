@@ -387,6 +387,21 @@ let raceA23 = Promise.resolve();
     const again = prep(c);
     ok('A23xA6 (a) prepare refuses and names the changes-needed', again.code === 3 && /changes-needed/.test((again.out && again.out.refused) || ''), again.all.slice(0, 400));
   }
+  // a third codex exec after both answers were appended: the appended later answer stays a verdict, the new one is named
+  {
+    const c = fresh();
+    const p = prep(c);
+    writeAnswer(oFile(p), answer(c.sha, ['t1'], 'changes-needed', 1));
+    collect(c, ['--run', '1', '--exit', '0']);
+    writeAnswer(oFile(p), answer(c.sha, ['t1'], 'ready', 0));
+    collect(c, ['--run', '1', '--append']);
+    writeAnswer(oFile(p), answer(c.sha, ['t1'], 'changes-needed', 2));
+    const col = collect(c);
+    const k = col.out && col.out.keys && col.out.keys.t1;
+    ok('A23xA6 a third answer of the run: all three are verdicts of t1, the unappended one named', !!k && k.verdicts.length === 3
+      && k.verdicts.map((x) => `${x.verdict}${x.significantGaps}`).sort().join(',') === 'changes-needed1,changes-needed2,ready0'
+      && /changed again after its later answer was appended/.test(col.all), JSON.stringify(k));
+  }
   // a race of four --append on a rewritten run still writes each answer once
   {
     const c = fresh();
