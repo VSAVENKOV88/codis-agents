@@ -1,8 +1,8 @@
 #!/bin/zsh
 # Tester cells of A2b-1a, run as a child of tests/slots-exec.test.sh (scripts/slots.zsh, slot-holder.zsh, slot-group.pl, slot-hold.sh) that tests/slots-exec.test.sh
 # does not hold:
-#   TC1 a command whose whole group is stopped (SIGSTOP, as a job that read the terminal gets SIGTTIN): a TERM to
-#       heavy.sh ends it at once - the holder sends CONT with the TERM - not after SLOT_KILL_GRACE;
+#   TC1 a command whose whole group is stopped (SIGSTOP, as a job that read the terminal gets SIGTTIN) and handles TERM:
+#       a TERM to heavy.sh ends it at once - the holder sends CONT with the TERM - not after SLOT_KILL_GRACE;
 #   TC1b the same for a stopped leftover after a normal end;
 #   TC2 medium.sh x TERM with a stubborn command: the medium slot is held during the pause, 143, journal line rc 143,
 #       the slot free and the marker gone after the group;
@@ -63,10 +63,12 @@ exbusy() { if [[ -x /usr/bin/lockf ]]; then ! /usr/bin/lockf -s -t 0 $GUARDS_EXC
 
 [[ -f $H/slots.zsh ]] || { print -r -- "  FAIL no $H/slots.zsh"; exit 1; }
 
-# TC1. the whole group stopped (leader and child): TERM to heavy.sh ends it at once (CONT with the TERM)
+# TC1. the whole group stopped (leader and child), both with a TERM handler that exits: TERM to heavy.sh ends it at
+# once - a stopped process runs its handler only after CONT (a stopped process without a handler dies of TERM alone on
+# macOS, so the handler is what this cell needs)
 export SLOT_KILL_GRACE=20
 rm -f $T/1.c
-lead $H/heavy.sh zsh -c 'sh -c "kill -STOP \$\$; sleep 60" & print -r -- $! > '$T'/1.kid; print -r -- $$ > '$T'/1.c; kill -STOP $$; sleep 60' > $T/1.out 2>&1 & w1=$!; BG+=$w1; GROUPS_MADE+=$w1
+lead $H/heavy.sh zsh -c 'sh -c "trap \"exit 0\" TERM; kill -STOP \$\$; while :; do sleep 0.1; done" & print -r -- $! > '$T'/1.kid; print -r -- $$ > '$T'/1.c; trap "exit 0" TERM; kill -STOP $$; while :; do sleep 0.1; done' > $T/1.out 2>&1 & w1=$!; BG+=$w1; GROUPS_MADE+=$w1
 waitfor '[[ -s $T/1.c ]]'; c1=$(<$T/1.c); kid1=$(<$T/1.kid); GROUPS_MADE+=$c1
 waitfor "[[ \$(ps -o stat= -p $c1) == T* && \$(ps -o stat= -p $kid1) == T* ]]" 30
 ok "TC1. (setup) the command and its child are stopped" '[[ $(ps -o stat= -p $c1) == T* && $(ps -o stat= -p $kid1) == T* ]]' "$(ps -o pid,stat,command -p $c1,$kid1)"
