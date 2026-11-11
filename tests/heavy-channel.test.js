@@ -75,6 +75,28 @@ const journal = (d) => { try { return fs.readFileSync(path.join(d.state, 'K', 'h
 const evs = (d, id) => journal(d).filter((e) => e.id === id).map((e) => e.ev);
 const slotLines = (d) => { try { return fs.readFileSync(path.join(d.slots, 'journal.tsv'), 'utf8').split('\n').filter(Boolean).map((l) => l.split('\t')); } catch { return []; } };
 const markers = (d) => fs.readdirSync(d.slots).filter((f) => /\.exec(tmp)?\./.test(f));
+// A case whose holder can find its slot directory only through the run's config: the adapter's environment has neither
+// SLOTS_DIR nor SLOT_JOURNAL and names another config in CODIS_AGENTS_CONFIG, the worktree and its parents have none,
+// HOME is the case's own (a fallback lands in <HOME>/.cache, never in the machine's queue).
+function bareCfg(d) {
+  for (const k of ['SLOTS_DIR', 'SLOT_JOURNAL', 'XDG_CONFIG_HOME', 'CLAUDE_PROJECT_DIR', 'CODIS_AGENTS_MACHINE']) delete d.env[k];
+  const home = path.join(d.root, 'home');
+  fs.mkdirSync(home);
+  const cfgOf = (name, lockDir) => {
+    const dir = path.join(d.root, name);
+    fs.mkdirSync(dir);
+    const f = path.join(dir, 'codis-agents.json');
+    fs.writeFileSync(f, JSON.stringify({ repoDir: dir, worktreeRoot: dir, sharedDir: dir, slots: { lockDir } }));
+    return f;
+  };
+  const b = { runSlots: path.join(d.root, 'run-slots'), otherSlots: path.join(d.root, 'other-slots'), fallback: path.join(home, '.cache', 'codis-agents', 'slots') };
+  b.runCfg = cfgOf('run-cfg', b.runSlots);
+  d.env.HOME = home;
+  d.env.CODIS_AGENTS_CONFIG = cfgOf('other-cfg', b.otherSlots);
+  b.holds = (dir) => { try { return fs.readFileSync(path.join(dir, 'journal.tsv'), 'utf8').split('\n').filter(Boolean).map((l) => l.split('\t')).filter((l) => l[6] === 'hold'); } catch { return []; } };
+  b.counts = () => ({ run: b.holds(b.runSlots).length, other: b.holds(b.otherSlots).length, fallback: b.holds(b.fallback).length });
+  return b;
+}
 // heavy-req.js as a child process: the service runs in this process, so nothing here may block its loop
 const req = (d, args, envx) => new Promise((resolve) => {
   const p = spawn(process.execPath, [CLIENT].concat(args), { cwd: d.wt, env: Object.assign({}, process.env, { CODIS_HEAVY_BOX: d.box, CODIS_HEAVY_ANSWERS: answersOf(d) }, envx || {}) });
@@ -210,6 +232,18 @@ const groupAlive = (g) => { try { process.kill(-g, 0); return true; } catch (e) 
     const inner = jsonOut(await req(d, ['--max', '20', '--', 'node', CLIENT, '--', 'true']));
     ok('B\'9 heavy-req.js inside the executor: "channel closed for this role" (exit 4)', inner && inner.state === 'done' && inner.rc === 4 && /channel closed/.test(inner.tail || ''), JSON.stringify(inner));
     ok('B\'9 the TMPDIR of the executor is its own, inside the task folder', /TMPDIR/.test(names) && !!run, JSON.stringify(run));
+    await svc.close();
+  }
+
+  // ---- B'10: the holder queues in the slot directory of the run's project config (o.config), whatever a lookup from
+  // its cwd would find (no config in the worktree, another one named by the adapter's environment)
+  {
+    const d = setup();
+    const b = bareCfg(d);
+    const svc = open(d, { opts: { config: b.runCfg } });
+    const a = jsonOut(await req(d, ['--max', '20', '--', 'true']));
+    ok('B\'10 a holder whose cwd has no config writes its hold line in the lockDir of the run\'s config', a && a.state === 'done' && b.holds(b.runSlots).length === 1, JSON.stringify({ a, n: b.counts() }));
+    ok('B\'10 ... and none in the config of the adapter\'s environment or in <HOME>/.cache', !b.holds(b.otherSlots).length && !b.holds(b.fallback).length, JSON.stringify(b.counts()));
     await svc.close();
   }
 
@@ -401,8 +435,8 @@ const groupAlive = (g) => { try { process.kill(-g, 0); return true; } catch (e) 
       tasks: { K: { dir: d.tdir, wt: d.wt, branch: 'task' } }, commit: { stateDir: d.state }, heavy,
       launch: async (plan) => { seen.push(plan); return { outcome: 'crashed', error: 'a test launcher' }; } });
     const schema = { type: 'object', properties: { a: { type: 'string' } } };
-    await mk({ kinds: { tsc: 'medium' } })('task', { label: 'prog:K', schema, agentType: 'general-purpose' });
-    await mk({ kinds: {} })('task', { label: 'review:K', schema, agentType: 'general-purpose' });
+    await mk({ kinds: { tsc: 'medium' }, config: path.join(d.root, 'cfg.json') })('task', { label: 'prog:K', schema, agentType: 'general-purpose' });
+    await mk({ kinds: {}, config: path.join(d.root, 'cfg.json') })('task', { label: 'review:K', schema, agentType: 'general-purpose' });
     await mk(undefined)('task', { label: 'prog:K', schema, agentType: 'general-purpose' });
     const [p1, r1, p0] = seen;
     ok('B\'9 createAgent: prog with cfg.heavy gets CODIS_HEAVY_BOX of its call folder and the answers of the adapter, not the inherited ones',
@@ -412,12 +446,38 @@ const groupAlive = (g) => { try { process.kill(-g, 0); return true; } catch (e) 
     ok('B\'30 createAgent: the prompt of prog with cfg.heavy ends with the heavy-req.js lines', !!p1 && /heavy-req\.js[^\n]*-- <argv>/.test(p1.stdin));
   }
 
+  // ---- B'10 through createAgent: cfg.heavy.config reaches the holder; the heavy channel without it is refused
+  {
+    const d = setup({ TMPDIR: path.join(T, 'rtmp') });
+    fs.mkdirSync(path.join(T, 'rtmp'), { recursive: true });
+    const b = bareCfg(d);
+    const home = path.join(d.root, 'chome');
+    fs.mkdirSync(home);
+    let got = null;
+    const mk = (heavy) => RX.createAgent({ host: 'codex', callsDir: path.join(d.root, 'calls'), pluginRoot: ROOT, log: () => {}, env: d.env,
+      codex: { home, catalog: { models: [{ slug: 'gpt-6-astra', supported_reasoning_levels: ['high'] }] } },
+      tasks: { K: { dir: d.tdir, wt: d.wt, branch: 'task' } }, commit: { stateDir: d.state }, heavy,
+      launch: async (plan) => {
+        got = jsonOut(await req(d, ['--max', '20', '--', 'true'], { CODIS_HEAVY_BOX: plan.env.CODIS_HEAVY_BOX, CODIS_HEAVY_ANSWERS: plan.env.CODIS_HEAVY_ANSWERS }));
+        return { outcome: 'crashed', error: 'a test launcher' };
+      } });
+    const schema = { type: 'object', properties: { a: { type: 'string' } } };
+    await mk({ kinds: {}, config: b.runCfg, inject: { probe: async () => ({}), executor: (spec) => Object.assign({}, spec, { bin: spec.inner[0], args: spec.inner.slice(1) }) } })('task', { label: 'prog:K', schema, agentType: 'general-purpose' });
+    ok('B\'10 createAgent: a run of prog holds its slot in the lockDir of cfg.heavy.config, not of the environment\'s config', !!got && got.state === 'done' && b.holds(b.runSlots).length === 1 && !b.holds(b.otherSlots).length && !b.holds(b.fallback).length,
+      JSON.stringify({ got, n: b.counts() }));
+    const refusal = (heavy) => { try { mk(heavy); return null; } catch (e) { return e.message; } };
+    ok('B\'10 createAgent: cfg.heavy without config, or with a relative one, is refused', /heavy\.config/.test(refusal({ kinds: {} }) || '') && /heavy\.config/.test(refusal({ kinds: {}, config: 'cfg.json' }) || ''),
+      JSON.stringify([refusal({ kinds: {} }), refusal({ kinds: {}, config: 'cfg.json' })]));
+  }
+
   // ---- the conductor: slots.kinds reaches the adapter; the start check reads the heavy journal of the task
   {
     const CR = require(CHAIN);
     const shared = path.join(T, 'shared');
     const cfg = CR.adapterCfg('codex', { config: { sharedDir: shared, worktreeRoot: T, slots: { kinds: { tsc: 'medium' } } }, tasks: [] }, { codexHome: path.join(T, 'ch') }, path.join(T, 'calls'), () => {});
     ok('chain-run adapterCfg: codex gets cfg.heavy with the kinds of slots.kinds', !!cfg.heavy && cfg.heavy.kinds.tsc === 'medium', JSON.stringify(cfg.heavy));
+    const cfgP = CR.adapterCfg('codex', { config: { sharedDir: shared, worktreeRoot: T, configPath: '/p/.claude/codis-agents.json' }, tasks: [] }, { codexHome: path.join(T, 'ch') }, path.join(T, 'calls'), () => {});
+    ok('B\'10 chain-run adapterCfg: cfg.heavy.config is the path of the run\'s config (configPath of config.js json)', cfgP.heavy && cfgP.heavy.config === '/p/.claude/codis-agents.json', JSON.stringify(cfgP.heavy));
     const hk = path.join(CR.commitStateDir({ sharedDir: shared }), 'K');
     fs.mkdirSync(hk, { recursive: true });
     fs.writeFileSync(path.join(hk, 'heavy.jsonl'), JSON.stringify({ v: 1, n: 1, ts: 'x', id: id32(), ev: 'undetermined', why: 'x' }) + '\n');
