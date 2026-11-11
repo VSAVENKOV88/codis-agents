@@ -229,4 +229,9 @@ try {
 } catch { /* none */ }
 spawnSync('chmod', ['-R', 'u+w', T]);
 fs.rmSync(T, { recursive: true, force: true });
+// ---- the tester cells: tests/runner-ssh-retry-tester-cases.js, a child with its own tally, so README keeps counting test files
+{
+  const tc = spawnSync(process.execPath, [path.join(__dirname, 'runner-ssh-retry-tester-cases.js')], { encoding: 'utf8', timeout: 400000 });
+  ok('the tester cells of the ssh retry (tests/runner-ssh-retry-tester-cases.js) pass', tc.status === 0, `${tc.status} ${tc.signal || ''}\n${(tc.stdout || '').split('\n').filter((l) => /FAIL/.test(l)).join('\n')}${(tc.stderr || '').slice(-800)}`);
+}
 done();
