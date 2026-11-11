@@ -268,9 +268,12 @@ and feature folders; no result of an earlier run is removed or overwritten, and 
 4. The third outcome, "analysis check not run: <reason>", when any of these holds: `codex exec` ended with an exit other
    than 0; no `runs/<n>.json`; a JSON that does not fit the schema; `analysisSha256` differs from the sha256 of the copy;
    `ready` with `significantGaps` above 0, or `changes-needed` with 0; the header lines of `report` disagree with these
-   fields; the snapshot after (step 3) voids the check. `collect` names each as not-run. Then write nothing into
-   `.check.md`, add the line `analysis check not run: <reason>, <date>` to the brief, and prepare again: it is not a
-   passed check and not a failed one, and the task stays out of the wave until a run gives a verdict.
+   fields; the snapshot after (step 3) voids the check. The conditions on the exit and the answer (all but the snapshot)
+   make the run not-run unless the journal of the run already holds an answer: then step 3 applies (`collect` shows
+   the recorded answers as results with a note even after an exit other than 0, a `runs/<n>.json` gone or now not a
+   verdict, and `prepare` refuses a new run while they are there). `collect` names each other case as not-run. Then
+   write nothing into `.check.md`, add the line `analysis check not run: <reason>, <date>` to the brief, and prepare
+   again: it is not a passed check and not a failed one, and the task stays out of the wave until a run gives a verdict.
 
 ## Limits
 
