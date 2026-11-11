@@ -9,6 +9,16 @@
 //      The runner's plugin must be this plugin's version, and the runner's own env-check.js must pass; before that
 //      check the runner sweeps the run copies under <root>/wt (all but live runs and the 3 newest finished ones,
 //      guards-remote-host.js#sweep), and its line "runner: swept ..." is printed here and kept as the log's second line.
+//      A lost connection is tried again: every ssh call (each operation of the runner and the git push) that ssh itself
+//      failed - exit 255 (ssh(1) EXIT STATUS: the runner's half exits only 0, 64 or 69), EPIPE included - runs again with
+//      the same input after a pause, at most SSH_ATTEMPTS (3) attempts, pauses 10 s then 30 s (GUARDS_REMOTE_SSH_PAUSE
+//      sets every pause, in seconds). Each retry prints "ssh to <host> lost (<op>, attempt N of 3): <the line of ssh> -
+//      again in S s"; a run that lived through one keeps "ssh to <host>: N lost connection(s) retried (<op> N, ...)" in
+//      its log after the sweep line. Not retried: a host key mismatch (never reconnect to a possible MITM), an answer of
+//      the runner, no ssh here, an ssh killed by a signal here. Every operation is safe to repeat: an attempt that ran
+//      before the connection was lost is found by the next one (the sweep is busy or done, has and fetch only read and
+//      mark, a start of the same name and SHA attaches to the run it began; a push lost after its ref was written ends
+//      like a refusal, so after any failed push the runner's repository is asked whether it has the commit).
 //   3. The commit goes by git push over that same ssh into <root>/repo.git at refs/runs/<name>/<sha> - not a branch and
 //      not a tag, so the pre-push hook lets it through and no push is ever forced; a commit the runner has is not sent.
 //   4. The runner prepares <root>/wt/<name> and runs its own guards-all.sh there, detached from ssh; new reds rerun alone
@@ -24,7 +34,7 @@
 //      their own (new reds there rerun alone too, known reds subtracted) and the exit code is the worse of the two:
 //      the runner's when it is not 0, else this part's.
 // Exit: the run's final code; 78 configuration (no remote or remoteRun, tracked changes, a worktree name the runner
-// cannot take); 69 environment - the runner unreachable, a host key mismatch, another plugin version there, its
+// cannot take); 69 environment - the runner unreachable (after its attempts), a host key mismatch, another plugin version there, its
 // env-check, a push refused, dependencies or prepare failing, the run vanished: the log then starts with
 // "environment: <reason>" and the meta keeps 69, so it is never reused.
 //   7. The quarantine of flaky guards (guardBaseline; scripts/guards-result.js) belongs to this machine: it is read here
@@ -87,16 +97,52 @@ const strip = (s) => s.replace(/^#![^\n]*\n/, '');
 const BUNDLE = `'use strict';\nconst __codisCorpus = (function () { const module = { exports: {} }; const exports = module.exports;\n${strip(fs.readFileSync(path.join(__dirname, 'corpus-remote.js'), 'utf8'))}\nreturn module.exports; })();\n`
   + strip(fs.readFileSync(path.join(__dirname, 'guards-remote-host.js'), 'utf8'));
 
-function remoteOp(r, op, input) {
+// The retry of a lost ssh call (point 2 of the header): the owner's answer of 2026-11-11 - 3 attempts, pauses 10 s and
+// 30 s; GUARDS_REMOTE_SSH_PAUSE (seconds, 0 allowed) replaces every pause.
+const SSH_ATTEMPTS = 3;
+const SSH_PAUSES = [10, 30];
+function sshPause(n, e = process.env) {
+  const v = e.GUARDS_REMOTE_SSH_PAUSE;
+  if (v !== undefined && v !== '' && Number(v) >= 0) return Number(v);
+  return SSH_PAUSES[Math.min(n, SSH_PAUSES.length) - 1];
+}
+const HOST_KEY = /Host key verification failed|REMOTE HOST IDENTIFICATION HAS CHANGED/;
+const lineOf = (s, last) => { const l = String(s || '').trim().split('\n').map((x) => x.trim()).filter(Boolean); return (last ? l.pop() : l[0]) || ''; };
+// An ssh failure, not an answer of the runner: marked, so the poll's own retry of an unusable answer does not count it
+// a second time.
+const sshFail = (msg) => Object.assign(env(msg), { ssh: true });
+// One retry: counted per operation in tries (the run's), printed and kept for the log; then the pause.
+function retryNote(r, tries, op, n, why) {
+  const s = sshPause(n);
+  tries.counts[op] = (tries.counts[op] || 0) + 1;
+  tries.note(`ssh to ${r.host} lost (${op}, attempt ${n} of ${SSH_ATTEMPTS}): ${why} - again in ${s} s`);
+  sleepS(s);
+}
+// "ssh to <host>: N lost connection(s) retried (<op> N, ...)", or null when none was.
+function retriedLine(r, tries) {
+  const e = Object.entries(tries.counts);
+  const n = e.reduce((a, [, k]) => a + k, 0);
+  return n ? `ssh to ${r.host}: ${n} lost connection${n > 1 ? 's' : ''} retried (${e.map(([o, k]) => `${o} ${k}`).join(', ')})` : null;
+}
+
+// One operation of the runner's half over ssh; a lost connection (exit 255, not a host key mismatch) is tried again with
+// the same script. The reason shown is the last line ssh printed - an EPIPE here (ssh gone before it read the script)
+// carries it in stderr too; the message of the spawn only when ssh printed nothing (no ssh: ENOENT).
+function remoteOp(r, op, input, tries) {
   const script = `${BUNDLE}\n;module.exports.cli(${JSON.stringify(op)}, ${JSON.stringify(Object.assign({ root: r.root }, input || {}))});\n`;
-  const p = spawnSync('ssh', [...sshOpts(r), `${r.user}@${r.host}`, 'node -'], { input: script, encoding: 'utf8', maxBuffer: 1 << 29 });
-  p.stderr = clean(p.stderr || '');
+  let p;
+  for (let n = 1; ; n++) {
+    p = spawnSync('ssh', [...sshOpts(r), `${r.user}@${r.host}`, 'node -'], { input: script, encoding: 'utf8', maxBuffer: 1 << 29 });
+    p.stderr = clean(p.stderr || '');
+    p.attempts = n;
+    if (p.status !== 255 || HOST_KEY.test(p.stderr) || n >= SSH_ATTEMPTS) break;
+    retryNote(r, tries, op, n, lineOf(p.stderr, true) || (p.error ? p.error.message : 'ssh exit 255'));
+  }
   const line = (p.stdout || '').split('\n').filter((l) => l.startsWith('REMOTE-RESULT ')).pop();
-  if (p.error) throw env(`remote runner unreachable: ${p.error.message}`);
-  if (!line) {
-    const err = (p.stderr || '').trim().split('\n').filter(Boolean).pop() || `ssh exit ${p.status}`;
-    if (/Host key verification failed|REMOTE HOST IDENTIFICATION HAS CHANGED/.test(p.stderr || '')) throw env(`host key mismatch for ${r.host} - possible MITM; nothing done (${err})`);
-    throw env(`remote runner unreachable: ${err}`);
+  if (p.error || !line || p.status === 255) {
+    const err = lineOf(p.stderr, true) || (p.error ? p.error.message : `ssh exit ${p.status}`);
+    if (HOST_KEY.test(p.stderr)) throw sshFail(`host key mismatch for ${r.host} - possible MITM; nothing done (${err})`);
+    throw sshFail(`remote runner unreachable: ${err}${p.attempts > 1 ? ` (${op}, ${p.attempts} attempts)` : ''}`);
   }
   if (p.status !== 0) throw new Stop(p.status === 64 ? 64 : 69, (p.stderr || '').trim() || `environment: remote ${op} failed (exit ${p.status})`);
   const body = line.slice('REMOTE-RESULT '.length);
@@ -193,6 +239,7 @@ function run(c, wt, log, name, qfile, opts) {
   G.metaStart(wt, log, subset || x.command, envId);
   let id = null;
   const said = [];
+  const tries = { counts: {}, note: (s) => { say(s); said.push(s); } };
   const fail = (e) => {
     const msg = e.message.replace(/^environment: /, '');
     process.stderr.write(`environment: ${msg}\n`);
@@ -209,24 +256,37 @@ function run(c, wt, log, name, qfile, opts) {
       if (ql.error) throw env(`quarantine ${qfile}: ${ql.error} - the runner cannot subtract it; no run (fix the file or move it aside)`);
       quarantine = ql.known; qhash = ql.hash;
     }
-    const pf = remoteOp(r, 'preflight', { plugin: r.plugin, version: VERSION });
+    const pf = remoteOp(r, 'preflight', { plugin: r.plugin, version: VERSION }, tries);
     if (pf.version !== VERSION) throw env(`the plugin on the runner is version ${pf.version} (${pf.plugin}${pf.commit ? ` at ${pf.commit.slice(0, 7)}` : ''}), this machine's is ${VERSION} - update the runner's plugin to the same version; no run`);
     if (!pf.envCheck || !pf.envCheck.ok) throw env(`the runner's env-check failed: ${JSON.stringify(pf.envCheck)}`);
     say(`remote runner ${r.host}: plugin ${pf.version}, node ${pf.node}, ${pf.cpus} CPUs; env-check ok`);
     const swept = sweepLine(pf.sweep);
     if (swept) { say(swept); said.push(swept); }
-    const h = remoteOp(r, 'has', { sha });
+    const h = remoteOp(r, 'has', { sha }, tries);
     if (!h.has) {
       const url = `${r.user}@${r.host}:${(r.root.startsWith('~/') ? r.root.slice(2) : r.root).replace(/\/+$/, '')}/repo.git`;
       const ref = `refs/runs/${name}/${sha}`;
       say(`push ${sha.slice(0, 12)} -> ${r.host} ${ref}`);
-      const p = spawnSync('git', ['-C', wt, 'push', '--no-follow-tags', '--', url, `${sha}:${ref}`],
-        { encoding: 'utf8', env: Object.assign({}, process.env, { GIT_SSH_COMMAND: sshE(r), GIT_SSH_VARIANT: 'ssh' }), maxBuffer: 1 << 26 });
-      if (p.status !== 0) throw env(`git push of ${sha.slice(0, 12)} to the runner was refused (exit ${p.status}): ${clean(tail(p.stderr, 5))}`);
+      // git exits 128 when its ssh failed before the ref was written (git's die()), and 1 both for a refusal of the
+      // runner and for a connection lost after the ref was written: after any failed push the runner's repository says
+      // whether the commit arrived; without it, 128 is a lost connection (tried again), anything else a refusal.
+      for (let n = 1; ; n++) {
+        const p = spawnSync('git', ['-C', wt, 'push', '--no-follow-tags', '--', url, `${sha}:${ref}`],
+          { encoding: 'utf8', env: Object.assign({}, process.env, { GIT_SSH_COMMAND: sshE(r), GIT_SSH_VARIANT: 'ssh' }), maxBuffer: 1 << 26 });
+        if (p.status === 0) break;
+        const why = clean(lineOf(p.stderr, false)) || `git exit ${p.status}`;
+        if (remoteOp(r, 'has', { sha }, tries).has) {
+          tries.counts.push = (tries.counts.push || 0) + 1;
+          tries.note(`ssh to ${r.host} lost (push, attempt ${n} of ${SSH_ATTEMPTS}): ${why} - the runner has the commit, nothing sent again`);
+          break;
+        }
+        if (p.status !== 128 || n >= SSH_ATTEMPTS) throw env(`git push of ${sha.slice(0, 12)} to the runner was refused (exit ${p.status}${n > 1 ? `, ${n} attempts` : ''}): ${clean(tail(p.stderr, 5))}`);
+        retryNote(r, tries, 'push', n, why);
+      }
     } else say(`commit ${sha.slice(0, 12)} already on ${r.host} - nothing sent`);
     const job = Object.assign({ plugin: r.plugin, corpus: c.worktreeSetup.scan.length > 0, deps: x.deps, prepare: x.prepare, config: runnerConfig(c, subset) },
       quarantine ? { quarantine } : {}, selected ? { selected } : {}, priority ? { priority: true } : {});
-    const st = remoteOp(r, 'start', { name, sha, bundle: BUNDLE, job });
+    const st = remoteOp(r, 'start', { name, sha, bundle: BUNDLE, job }, tries);
     id = st.id;
     say(st.attached ? `attached to the run ${id} on ${r.host} (${st.state}): no second run` : `started the run ${id} on ${r.host}${st.stopped ? ` (stopped the earlier run ${st.stopped} of ${name})` : ''}`);
     // D5: an attached run subtracts the quarantine it was begun with; when that is not the one read here, its result
@@ -240,9 +300,10 @@ function run(c, wt, log, name, qfile, opts) {
     let offset = 0, lastSay = 0, where = 'starting', failed = 0, buf = '';
     for (;;) {
       let p;
-      try { p = remoteOp(r, 'poll', { name, id, offset }); failed = 0; } catch (e) {
-        // one more try after a pause, then the connection counts as lost
-        if (!(e instanceof Stop) || e.code !== 69 || ++failed > 1) throw e;
+      try { p = remoteOp(r, 'poll', { name, id, offset }, tries); failed = 0; } catch (e) {
+        // an answer of the runner that is not usable (not JSON, its own 69): one more try after a pause; a lost ssh
+        // connection was already tried again inside remoteOp and ends the run
+        if (!(e instanceof Stop) || e.code !== 69 || e.ssh || ++failed > 1) throw e;
         say(`runner ${r.host} did not answer the poll (${e.message.replace(/^environment: /, '')}) - one more try in ${POLL} s`);
         sleepS(POLL); continue;
       }
@@ -264,14 +325,15 @@ function run(c, wt, log, name, qfile, opts) {
       if (Date.now() - lastSay >= SAY * 1000) { say(`waiting for remote run ${id} on ${r.host} (${Math.round((Date.now() - t0) / 1000)} s): ${where}`); lastSay = Date.now(); }
       sleepS(POLL);
     }
-    const f = remoteOp(r, 'fetch', { name, id });
+    const f = remoteOp(r, 'fetch', { name, id }, tries);
     let rc = f.rc;
     if (!f.log) {
       const why = (f.out.split('\n').find((l) => l.startsWith('environment: ')) || `environment: the runner wrote no log (exit ${f.rc})`).replace(/^environment: /, '');
       said.length = 0; said.push(...tail(f.out, 60).split('\n'));
       throw env(why);
     }
-    fs.writeFileSync(log, `ran on runner ${r.host}, HEAD ${sha}, workers ${f.workers === null ? '?' : f.workers} (run ${id}, plugin ${pf.version})\n${swept ? swept + '\n' : ''}${f.log}`);
+    const retried = retriedLine(r, tries);
+    fs.writeFileSync(log, `ran on runner ${r.host}, HEAD ${sha}, workers ${f.workers === null ? '?' : f.workers} (run ${id}, plugin ${pf.version})\n${swept ? swept + '\n' : ''}${retried ? retried + '\n' : ''}${f.log}`);
     if (f.rerun !== null) fs.writeFileSync(G.rerunLog(log), f.rerun);
     // 7. the runner subtracted the quarantine read-only; its flaky guards are written here
     const flaky = qfile ? G.flakyInLog(f.log) : [];
@@ -362,7 +424,7 @@ function main(argv) {
   return run(l.config, wt, log, name, qfile, { subset, selected, priority });
 }
 
-module.exports = { run, partHere, PART_MARK, runnerConfig, sameQuarantine, attachedOther, sweepLine, BUNDLE, VERSION };
+module.exports = { run, partHere, PART_MARK, runnerConfig, sameQuarantine, attachedOther, sweepLine, sshPause, SSH_ATTEMPTS, BUNDLE, VERSION };
 
 if (require.main === module) {
   try { process.exitCode = main(process.argv.slice(2)); } catch (e) {

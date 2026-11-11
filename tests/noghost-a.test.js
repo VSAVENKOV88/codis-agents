@@ -82,7 +82,7 @@ try {
     const src = `const GR = require(${JSON.stringify(path.join(ROOT, 'scripts', 'guards-remote.js'))});
       try { console.log('RC ' + GR.run(${JSON.stringify(cfg)}, ${JSON.stringify(wt)}, ${JSON.stringify(path.join(T, `log-${tag}.txt`))}, 'n', '')); }
       catch (e) { console.log('STOP ' + e.code + ' ' + e.message); }`;
-    const r = spawnSync(process.execPath, ['-e', src], { encoding: 'utf8', env: Object.assign({}, process.env, { PATH: bin + path.delimiter + process.env.PATH, NOGHOST_SSH_MARK: mark }) });
+    const r = spawnSync(process.execPath, ['-e', src], { encoding: 'utf8', env: Object.assign({}, process.env, { PATH: bin + path.delimiter + process.env.PATH, NOGHOST_SSH_MARK: mark, GUARDS_REMOTE_SSH_PAUSE: '0' }) });
     return { out: (r.stdout || '') + (r.stderr || ''), ssh: fs.existsSync(mark) };
   };
   const w1 = repo(path.join(T, 'wt1'));
