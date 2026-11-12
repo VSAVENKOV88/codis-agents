@@ -219,9 +219,15 @@ const specFile = (d, envx) => {
     put(d, g, { argv: ['zsh', '/anywhere/scripts/guards-all.sh', d.wt], cwd: d.wt });
     const ga = await final(d, g, 20000);
     ok('C1-5 argv with guards-all.sh: refused with the hint of the guard-run kinds', !!ga && ga.state === 'refused' && /environment: guards-all\.sh runs through the channel: heavy-req\.js --kind select --base <ref> \| --kind full/.test(ga.why || '') && !/A2b-1c/.test(ga.why || ''), JSON.stringify(ga));
+    // H7 (p-codex-A2b-2h-1, F-g): the adapter's check of the worktree (git status) is trusted git - a core.fsmonitor of
+    // the task's repository does not run
+    const fgMark = path.join(d.root, 'C1-4.FSMON');
+    spawnSync('git', ['-C', d.P.repo, 'config', 'core.fsmonitor', `touch '${fgMark}'; false`]);
     fs.appendFileSync(path.join(d.wt, 'README'), 'dirty\n');
     const dirty = await req(d, ['--kind', 'full', '--max', '20']);
+    spawnSync('git', ['-C', d.P.repo, 'config', '--unset', 'core.fsmonitor']);
     ok('C1-4 tracked changes: refused "commit first" before the queue', dirty.state === 'refused' && /commit first/.test(dirty.why || '') && !evs(d, dirty.id).includes('queued'), JSON.stringify(dirty));
+    ok('H7: the check of the worktree ran no core.fsmonitor of its repository', !fs.existsSync(fgMark));
     await svc.close();
   }
 

@@ -125,6 +125,15 @@ try {
   // R10: an orphan copy (corpus-sync copy, an old version) and R14: an orphan that is a link to a directory
   fs.mkdirSync(path.join(R.wt, 'copy1', 'pkg'), { recursive: true }); fs.writeFileSync(path.join(R.wt, 'copy1', 'pkg', 'x'), 'x');
   fs.symlinkSync(canary, path.join(R.wt, 'linkE'), 'dir');
+  // H14 (p-codex-A2b-2h-1, F-g): an orphan copy whose .git a guard rewrote into a gitdir of its own with core.fsmonitor
+  // and core.hooksPath, and a link out of the root: removed without git (its .git is no worktree file), nothing of its
+  // config runs, the link is not followed
+  const fgc = path.join(R.wt, 'fgc'), fgMark = path.join(T, 'fgc.FSMON');
+  fs.mkdirSync(fgc); git('init', '-q', fgc);
+  git('-C', fgc, 'config', 'core.fsmonitor', `touch '${fgMark}'; false`); git('-C', fgc, 'config', 'core.hooksPath', path.join(T, 'fgc-hooks'));
+  fs.mkdirSync(path.join(T, 'fgc-hooks'));
+  for (const h of ['post-checkout', 'reference-transaction', 'post-index-change']) fs.writeFileSync(path.join(T, 'fgc-hooks', h), `#!/bin/sh\ntouch '${fgMark}'\n`, { mode: 0o755 });
+  fs.writeFileSync(path.join(fgc, 'f.txt'), 'f'); fs.symlinkSync(canary, path.join(fgc, 'out'), 'dir');
   // R13: a name a run never has
   fs.mkdirSync(path.join(R.wt, '.tmp x')); fs.writeFileSync(path.join(R.wt, '.tmp x', 'keep'), 'k');
   // R20: train-1-lbl-select is a locked git worktree (a git worktree add still running)
@@ -156,6 +165,8 @@ try {
   ok('R1: git worktree list no longer names a removed run', !worktrees(R).includes(path.join(R.wt, 't') + '\n') && worktrees(R).includes(path.join(R.wt, 'train-2')), worktrees(R));
   ok('R7: a live run older than all is kept and not counted in the 3', left.includes('live') && (s.live || []).includes('live') && !(s.kept || []).includes('live'), JSON.stringify(s));
   ok('R10: an orphan without runs/<name>/run.json is removed and not counted', !left.includes('copy1') && s.removed.includes('copy1'), JSON.stringify(s));
+  ok('H14: an orphan copy with a .git directory of its own (core.fsmonitor, core.hooksPath) - removed, nothing of its config ran, its link not followed',
+    !left.includes('fgc') && s.removed.includes('fgc') && !fs.existsSync(fgMark) && snap(canary) === before.canary, JSON.stringify(s));
   ok('R14: an orphan that is a link - the link removed, its target intact', !left.includes('linkE') && snap(canary) === before.canary, JSON.stringify(s));
   ok('R15, R16: links inside a removed copy are not followed (deps, donor, a directory outside stay byte for byte)', snap(canary) === before.canary && fs.existsSync(path.join(R.deps, 'h1', 'node_modules', 'x', 'i.js')));
   ok('R17: a read-only directory inside a copy is removed too', !fs.existsSync(tWt));

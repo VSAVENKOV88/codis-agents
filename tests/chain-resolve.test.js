@@ -101,6 +101,13 @@ const PROG1 = (key, extra) => Object.assign({ n: 1, stepKind: 'prog', label: `pr
   ok('R8: a start without resumeAt is refused (next of the decision)', !!sc.why && /resumeAt/.test(sc.why), JSON.stringify(sc));
   sc = R.startCheck(RUNS, key, Object.assign({}, t0, { resumeAt: 'tester', head: B }), 'own', ctx(key));
   ok('R8: a start with resumeAt tester and head B goes', !sc.why, sc.why);
+  // H5 (p-codex-A2b-2h-1, F-g): the check of the worktree after the decisions (git status) is trusted git - a
+  // core.fsmonitor of the worktree's repository does not run
+  const fgMark = path.join(W, 'r8.FSMON');
+  git('-C', REPO, 'config', 'core.fsmonitor', `touch '${fgMark}'; false`);
+  sc = R.startCheck(RUNS, key, Object.assign({}, t0, { resumeAt: 'tester', head: B }), 'own', ctx(key));
+  git('-C', REPO, 'config', '--unset', 'core.fsmonitor');
+  ok('H5: startCheck reads the worktree without running its core.fsmonitor', !sc.why && !fs.existsSync(fgMark), `${sc.why} marker ${fs.existsSync(fgMark)}`);
   sc = R.startCheck(RUNS, key, Object.assign({}, t0, { resumeAt: 'tester', head: H }), 'own', ctx(key));
   ok('R8: another head is refused', !!sc.why, JSON.stringify(sc));
   // a torn tail appended to the segment after the decision: another state of the journal

@@ -18,6 +18,7 @@ const { ok, skip, has, done } = require('./lib');
 const ROOT = path.join(__dirname, '..');
 const C = require('../scripts/config');
 const G = require('../scripts/guards-result');
+const TF = require('./trusted-git-fixture');
 const zsh = has('zsh') && has('perl');
 const T = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'guards-remote-')));
 const bin = path.join(T, 'bin'), wts = path.join(T, 'wts'), shared = path.join(T, 'shared'), main = path.join(T, 'main');
@@ -156,7 +157,12 @@ process.exit(r.status === null ? 255 : r.status);
     // a tracked file whose path a donor may also hold (ignored in another checkout, tracked in this commit)
     put('fix/a.txt', 'COMMIT\n');
     git(main, 'init', '-q', '-b', 'trunk'); git(main, 'add', '.'); git(main, 'commit', '-q', '-m', 'project');
-    git(main, 'config', 'core.hooksPath', path.join(ROOT, 'scripts', 'git-hooks'));
+    // H3 (p-codex-A2b-2h-1, F-h and F-g): hooks of the project (pre-push, post-index-change, ...) log their runs, and
+    // core.fsmonitor creates a marker; the trusted git of guards-all.sh and guards-remote.js runs neither
+    const hooksLog = path.join(T, 'hooks.log'), fsMark = path.join(T, 'here.FSMON');
+    TF.writeHooks(path.join(T, 'hooks'), hooksLog);
+    git(main, 'config', 'core.hooksPath', path.join(T, 'hooks'));
+    git(main, 'config', 'core.fsmonitor', TF.fsmonitorCmd(fsMark));
     for (const n of ['xw', 'yw']) git(main, 'worktree', 'add', '-q', '--detach', path.join(wts, n));
     const xw = path.join(wts, 'xw'), yw = path.join(wts, 'yw');
     const head = (w) => git(w, 'rev-parse', 'HEAD').stdout.trim();
@@ -286,8 +292,20 @@ process.exit(r.status === null ? 255 : r.status);
     // The main flow: B2a-6, 8, 10-17, 21, 22.
     setMachine(remote); set(1, ['srv/a-run.js'], false);
     const sha = head(xw);
+    // H13: the runner's repo.git carries core.fsmonitor and core.hooksPath (a guard of an earlier run wrote them with
+    // git config in its linked worktree, which writes the shared config)
+    const repoGit = path.join(R, 'repo.git'), runnerLog = path.join(T, 'runner-hooks.log'), runnerMark = path.join(T, 'runner.FSMON');
+    TF.writeHooks(path.join(T, 'runner-hooks'), runnerLog);
+    TF.quiet(repoGit, 'config', 'core.hooksPath', path.join(T, 'runner-hooks'));
+    TF.quiet(repoGit, 'config', 'core.fsmonitor', TF.fsmonitorCmd(runnerMark));
+    TF.clear(hooksLog, fsMark, runnerLog, runnerMark);
     x = ga('xw');
     const all = x.stdout + x.stderr;
+    ok('H3: the remote run (rev-parse, status, push) ran no hook of the project (pre-push, post-index-change) and no fsmonitor here',
+      TF.hookLines(hooksLog).length === 0 && !fs.existsSync(fsMark), `${TF.read(hooksLog)} marker ${fs.existsSync(fsMark)}`);
+    ok('H13: the runner ran no hook and no fsmonitor of its repo.git (worktree add/remove/prune, update-ref, status, ls-tree)',
+      TF.hookLines(runnerLog).length === 0 && !fs.existsSync(runnerMark), `${TF.read(runnerLog)} marker ${fs.existsSync(runnerMark)}`);
+    TF.quiet(repoGit, 'config', '--unset', 'core.hooksPath'); TF.quiet(repoGit, 'config', '--unset', 'core.fsmonitor');
     ok('main flow: the runner ran, exit = the runner\'s final code after its reruns (1: one repeated)', x.status === 1 && count('full.count') === 1, `${x.status} ${all}`);
     const fc = read(path.join(T, 'full.count')) || '';
     ok('B2a-16: the runner ran in <root>/wt/<name>, the remote command (--no-font) with the runner\'s worker count', fc.startsWith(path.join(R, 'wt', 'xw') + ' ') && /--no-font/.test(fc), fc);
@@ -296,7 +314,7 @@ process.exit(r.status === null ? 255 : r.status);
       calls.length > 0 && calls.every((a) => { const s = a.join(' '); return a.includes('-F') && a[a.indexOf('-F') + 1] === 'none' && a.includes(remote.key) && s.includes('StrictHostKeyChecking=yes')
         && s.includes(`UserKnownHostsFile=${remote.knownHosts}`) && s.includes('IdentitiesOnly=yes') && /ConnectTimeout=\d+/.test(s) && s.includes('BatchMode=yes') && !/accept-new|StrictHostKeyChecking=no/.test(s); }), JSON.stringify(calls));
     ok('B2a-6: every ssh call goes to runner@example.org', calls.every((a) => a.includes('runner@example.org')));
-    ok('B2a-8: the HEAD went by git push over that ssh (receive-pack), into refs/runs/<name>/<sha> of <root>/repo.git, with the plugin\'s pre-push hook on',
+    ok('B2a-8: the HEAD went by git push over that ssh (receive-pack), into refs/runs/<name>/<sha> of <root>/repo.git',
       calls.some((a) => a.join(' ').includes('git-receive-pack')) && spawnSync('git', ['--git-dir', path.join(R, 'repo.git'), 'rev-parse', `refs/runs/xw/${sha}`], { encoding: 'utf8' }).stdout.trim() === sha);
     const pushes = (read(path.join(T, 'push.log')) || '').split('\n').filter(Boolean).map((l) => l.split(' '));
     ok('B2a-8: one push, --no-follow-tags, no force, mirror, tags or all; the refspec is exactly <sha>:refs/runs/xw/<sha> (no +)',
@@ -413,6 +431,14 @@ process.exit(r.status === null ? 255 : r.status);
         setCfg({ prepare: ['touch pkg/.env.local'] }); set(0, [], false);
         z = ga('--force', 'xw');
         ok('B2a-15: a .env* appears in the runner\'s worktree - exit 69 before any guard, the file named', z.status === 69 && /^environment: .*\.env/.test(out('xw')) && /pkg\/\.env\.local/.test(out('xw')) && count('full.count') === 0, `${z.status} ${out('xw')}`);
+        // H12: the prepare commands (project code) put core.fsmonitor into the config git reads for the copy and a .env*:
+        // the check after prepare lists the commit's files from repo.git (ls-tree), the copy's config never runs
+        const prepMark = path.join(T, 'prepare.FSMON');
+        setCfg({ prepare: [`git config core.fsmonitor "touch '${prepMark}'; false" && touch pkg/.env.local`] }); set(0, [], false);
+        z = ga('--force', 'xw');
+        TF.quiet(path.join(R, 'repo.git'), 'config', '--unset', 'core.fsmonitor');
+        ok('H12: core.fsmonitor and a .env* written by prepare - exit 69, the file named, the fsmonitor never ran', z.status === 69 && /pkg\/\.env\.local/.test(out('xw'))
+          && /after the prepare commands/.test(out('xw')) && !fs.existsSync(prepMark) && count('full.count') === 0, `${z.status} marker ${fs.existsSync(prepMark)} ${out('xw')}`);
         // R2: the donor holds a path the commit tracks (ignored in the checkout the donor came from) - its copy would
         // replace the committed file and the runner would test a tree that is not HEAD: exit 69, the path named, before
         // the prepare commands and any guard; the result is not reused.
