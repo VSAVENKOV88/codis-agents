@@ -292,20 +292,11 @@ process.exit(r.status === null ? 255 : r.status);
     // The main flow: B2a-6, 8, 10-17, 21, 22.
     setMachine(remote); set(1, ['srv/a-run.js'], false);
     const sha = head(xw);
-    // H13: the runner's repo.git carries core.fsmonitor and core.hooksPath (a guard of an earlier run wrote them with
-    // git config in its linked worktree, which writes the shared config)
-    const repoGit = path.join(R, 'repo.git'), runnerLog = path.join(T, 'runner-hooks.log'), runnerMark = path.join(T, 'runner.FSMON');
-    TF.writeHooks(path.join(T, 'runner-hooks'), runnerLog);
-    TF.quiet(repoGit, 'config', 'core.hooksPath', path.join(T, 'runner-hooks'));
-    TF.quiet(repoGit, 'config', 'core.fsmonitor', TF.fsmonitorCmd(runnerMark));
-    TF.clear(hooksLog, fsMark, runnerLog, runnerMark);
+    TF.clear(hooksLog, fsMark);
     x = ga('xw');
     const all = x.stdout + x.stderr;
     ok('H3: the remote run (rev-parse, status, push) ran no hook of the project (pre-push, post-index-change) and no fsmonitor here',
       TF.hookLines(hooksLog).length === 0 && !fs.existsSync(fsMark), `${TF.read(hooksLog)} marker ${fs.existsSync(fsMark)}`);
-    ok('H13: the runner ran no hook and no fsmonitor of its repo.git (worktree add/remove/prune, update-ref, status, ls-tree)',
-      TF.hookLines(runnerLog).length === 0 && !fs.existsSync(runnerMark), `${TF.read(runnerLog)} marker ${fs.existsSync(runnerMark)}`);
-    TF.quiet(repoGit, 'config', '--unset', 'core.hooksPath'); TF.quiet(repoGit, 'config', '--unset', 'core.fsmonitor');
     ok('main flow: the runner ran, exit = the runner\'s final code after its reruns (1: one repeated)', x.status === 1 && count('full.count') === 1, `${x.status} ${all}`);
     const fc = read(path.join(T, 'full.count')) || '';
     ok('B2a-16: the runner ran in <root>/wt/<name>, the remote command (--no-font) with the runner\'s worker count', fc.startsWith(path.join(R, 'wt', 'xw') + ' ') && /--no-font/.test(fc), fc);
@@ -360,8 +351,18 @@ process.exit(r.status === null ? 255 : r.status);
     ok('B2a-21: waiting lines name the remote run', /waiting for remote run xw@/.test(all), all);
 
     // B2a-9: the SHA is on the runner - no transfer; B2a-11: the same hash - no install.
+    // H13: the runner's repo.git carries core.fsmonitor and core.hooksPath (a guard of an earlier run wrote them with git
+    // config in its linked worktree, which writes the shared config); no push this time, so no receive-pack of the runner
+    // (not a process of the plugin) runs its hooks
+    const runnerGit = path.join(R, 'repo.git'), runnerLog = path.join(T, 'runner-hooks.log'), runnerMark = path.join(T, 'runner.FSMON');
+    TF.writeHooks(path.join(T, 'runner-hooks'), runnerLog);
+    TF.quiet(runnerGit, 'config', 'core.hooksPath', path.join(T, 'runner-hooks'));
+    TF.quiet(runnerGit, 'config', 'core.fsmonitor', TF.fsmonitorCmd(runnerMark));
     set(0, [], false);
     x = ga('--force', 'xw');
+    TF.quiet(runnerGit, 'config', '--unset', 'core.hooksPath'); TF.quiet(runnerGit, 'config', '--unset', 'core.fsmonitor');
+    ok('H13: the runner ran no hook and no fsmonitor of its repo.git (worktree remove/prune/add, rev-parse, status, ls-tree)',
+      x.status === 0 && TF.hookLines(runnerLog).length === 0 && !fs.existsSync(runnerMark), `${x.status} ${TF.read(runnerLog)} marker ${fs.existsSync(runnerMark)}`);
     ok('B2a-9: SHA already on the runner - no git push this time', x.status === 0 && !sshCalls().some((a) => a.join(' ').includes('git-receive-pack')) && count('full.count') === 1, `${x.status} ${x.stdout}${x.stderr}`);
     ok('B2a-11: the same lock-file hash - taken from the cache, nothing installed', (read(path.join(T, 'install.count')) || '').split('\n').filter(Boolean).length === 2);
 
