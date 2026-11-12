@@ -58,7 +58,7 @@ function makeProject(root, o) {
   const base = git(repo, 'rev-parse', 'HEAD');
   git(repo, 'worktree', 'add', '-q', '-b', 'task', wt);
   const cmd = { fixed: 'cd {wt} && zsh runner.sh {jobs} -', adaptive: 'cd {wt} && zsh runner.sh {jobs} {limitFile}', whole: 'cd {wt} && zsh runner.sh 0 -' }[x.mode || 'fixed'];
-  const config = Object.assign({ repoDir: repo, worktreeRoot: wts, sharedDir: shared, slots: { lockDir: slots }, guardFiles: ['*.g'], guardCommand: cmd,
+  const config = Object.assign({ repoDir: repo, worktreeRoot: wts, sharedDir: shared, defaultBranch: 'main', slots: { lockDir: slots }, guardFiles: ['*.g'], guardCommand: cmd,
     guardSubsetCommand: 'cd {wt} && zsh runner.sh {jobs} - {onlyArgs}',
     guardRerun: { command: 'cd {wt} && zsh runner.sh one {name}', newRedPattern: '^FAIL (\\S+)', tallyPattern: '^accounted (\\d+)', maxReruns: 5 },
     guardBaseline: 'baseline.json' }, x.config || {});

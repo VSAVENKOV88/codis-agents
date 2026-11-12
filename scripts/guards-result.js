@@ -41,8 +41,15 @@
 //    tracked tree, the same command and a final exit code 0 is not repeated (guards-all.sh prints "reused, HEAD <sha>"
 //    and the saved summary; --force runs anyway). Untracked files do not count: guard runs and probes leave them.
 //    The record names the environment of the run (env: "remote:<host>" for a run on the remote runner,
-//    scripts/guards-remote.js; a record without it is a run on this machine, "local"): a result is reused only in the
-//    environment it came from - a green run here says nothing of the runner and the other way round.
+//    scripts/guards-remote.js; "sandbox:codex" for a guard run of a codex role through the heavy channel; a record
+//    without it is a run on this machine, "local"): a result is reused only in the environment it came from - a green
+//    run here says nothing of the runner and the other way round. One exception, one way: a codex role's run reuses a
+//    green run of this machine (the sandbox runs less than the host, never more), the host never reuses a run of the
+//    sandbox (a guard that skips itself there would be a false green).
+// 3. A guard run of a codex role (CODIS_GUARDS_EXEC, scripts/heavy-service.js): a single rerun goes through
+//    scripts/heavy-exec.js into the executor, like the run itself; a rerun whose executor could not start (exit 69 and
+//    "environment: heavy-exec: ..." on stderr) is the environment, neither flaky nor a new red. Its quarantine is
+//    read only (guards-all.sh --quarantine-read-only), and the log says so for a codex role.
 //
 // usage: guards-result.js rerun <wt> <log> <runner rc> <guardRerun JSON> [<guardBaseline> [<quarantine file> [ro [<selected file>]]]]
 //          (ro: the quarantine is subtracted, never written - the remote runner, guards-all.sh --quarantine-read-only); select: the same on a selection, guards-all.sh --select
@@ -276,12 +283,16 @@ function rerun({ wt, log, rc, cfg, baseline, quarantine, readOnly, selected }) {
     for (const name of fresh) {
       const cmd = subst(cfg.command, wt, name);
       fs.appendFileSync(details, `==== ${name}: ${cmd}\n`);
-      const r = spawnSync('zsh', ['-c', cmd], { cwd: wt, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
+      const r = process.env.CODIS_GUARDS_EXEC
+        ? spawnSync(process.execPath, [path.join(__dirname, 'heavy-exec.js'), process.env.CODIS_GUARDS_EXEC, '--', 'zsh', '-c', cmd], { cwd: wt, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 })
+        : spawnSync('zsh', ['-c', cmd], { cwd: wt, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
       const code = r.status === null ? `signal ${r.signal}` : r.status;
       fs.appendFileSync(details, `${r.stdout || ''}${r.stderr || ''}${r.error ? r.error.message + '\n' : ''}==== exit ${code}\n\n`);
       // B14 under uncountedIsRed (F3): a single run that exits 0 and accounted for 0 of 1 is not green alone
       const one = r.status === 0 && cfg.uncountedIsRed === true ? countCheck({ text: `${r.stdout || ''}${r.stderr || ''}`, cfg, selected: [name], label: `the single rerun of ${name}` }) : null;
-      if (one && !one.ok) { res.uncounted.push(name); fs.appendFileSync(details, one.text); res.envText = (res.envText || '') + one.text; }
+      const noExec = process.env.CODIS_GUARDS_EXEC && r.status === 69 && /^environment: heavy-exec: .*$/m.exec(r.stderr || '');
+      if (noExec) { const t = `environment: the single rerun of ${name} did not start: ${noExec[0].slice('environment: '.length)}\n`; res.uncounted.push(name); fs.appendFileSync(details, t); res.envText = (res.envText || '') + t; }
+      else if (one && !one.ok) { res.uncounted.push(name); fs.appendFileSync(details, one.text); res.envText = (res.envText || '') + one.text; }
       else if (r.status === 0) res.flaky.push(name); else res.repeated.push({ name, rc: code });
     }
     if (!res.repeated.length) res.rc = 0;
@@ -292,6 +303,7 @@ function rerun({ wt, log, rc, cfg, baseline, quarantine, readOnly, selected }) {
       if (!baseline) qText = 'quarantine off: no guardBaseline in the project config\n';
       else if (!quarantine) qText = 'quarantine off on this run (--no-quarantine): nothing written\n';
       else if (readOnly === 'select') qText = 'quarantine read-only on a selection (guards-all.sh --select): nothing written; name the flaky guards under "Flaky guards" in the role\'s report\n';
+      else if (readOnly && process.env.CODIS_GUARDS_EXEC) qText = 'quarantine read-only on a codex role\'s run (the heavy channel): nothing written; name the flaky guards under "Flaky guards" in the role\'s report\n';
       else if (readOnly) qText = 'quarantine read-only on this run (the remote runner): the machine that started the run writes it\n';
       else {
         const w = writeFlaky({ wt, log, names: res.flaky, quarantine, baseline, readHash: ql.hash });
@@ -357,7 +369,8 @@ function gitState(wt) {
   const s = spawnSync('git', ['-C', wt, 'status', '--porcelain', '--untracked-files=no'], { encoding: 'utf8' });
   return { head: h.stdout.trim(), clean: s.status === 0 && s.stdout.trim() === '' };
 }
-// env: left out for a run on this machine (the record stays as it always was), "remote:<host>" for the runner.
+// env: left out for a run on this machine (the record stays as it always was), "remote:<host>" for the runner,
+// "sandbox:codex" for a guard run of a codex role.
 function metaStart(wt, log, command, env) {
   const g = gitState(wt);
   fs.writeFileSync(metaFile(log), JSON.stringify(Object.assign({ v: 1, head: g.head, cleanStart: g.clean, command, startedAt: new Date().toISOString() }, env && env !== 'local' ? { env } : {}), null, 1) + '\n');
@@ -376,8 +389,8 @@ function reusable(wt, log, command, env = 'local', quarantine = '') {
   let m;
   try { m = JSON.parse(fs.readFileSync(metaFile(log), 'utf8')); } catch { return no('no record of an earlier run'); }
   if (!fs.existsSync(log)) return no('the log of the earlier run is gone');
-  const was = m.env || 'local';
-  if (was !== (env || 'local')) return no(`environment changed (${was} -> ${env || 'local'})`);
+  const was = m.env || 'local', now = env || 'local';
+  if (was !== now && !(now === 'sandbox:codex' && was === 'local')) return no(`environment changed (${was} -> ${now})`);
   if (m.rc === undefined) return no('the earlier run did not finish');
   if (!m.head) return no('the worktree is not a git worktree');
   if (m.rc !== 0) return no(`the earlier run ended with exit ${m.rc}`);

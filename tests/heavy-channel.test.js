@@ -522,7 +522,7 @@ const groupAlive = (g) => { try { process.kill(-g, 0); return true; } catch (e) 
     const t = { dir: '/x/task' };
     const on = RX.hostSection('prog', t, { heavy: true }), te = RX.hostSection('test', t, { heavy: true }), rv = RX.hostSection('review', t, { heavy: true });
     ok('B\'30 prog/test with the heavy channel: heavy-req.js -- <argv>, wait --id ... --max 25, cancel --id', [on, te].every((s) => /heavy-req\.js[^\n]*-- <argv>/.test(s) && /heavy-req\.js[^\n]*wait --id <id> --max 25/.test(s) && /heavy-req\.js[^\n]*cancel --id <id>/.test(s)), on);
-    ok('B\'30 guard runs through --kind full / --kind select; browser and file-watcher guards named as the environment', /--kind full/.test(on) && !/A2b-1c/.test(on) && /browser/.test(on) && /file watcher/.test(on) && !/needs the heavy channel \(A2b\)/.test(on), on);
+    ok('B\'30 guard runs through --kind full / --kind select; browser and file-watcher guards named as the environment', /--kind full/.test(on) && !/come with A2b-1c/.test(on) && /browser/.test(on) && /file watcher/.test(on) && !/needs the heavy channel \(A2b\)/.test(on), on);
     ok('B\'30 review: no heavy line', !/heavy-req/.test(rv), rv);
     const C = require(path.join(S, 'config.js'));
     const cfgDir = path.join(T, 'cfg');

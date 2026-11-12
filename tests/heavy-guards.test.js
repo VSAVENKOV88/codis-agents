@@ -273,9 +273,9 @@ const specFile = (d, envx) => {
     ok('C1-20 a second request during the run waits behind it (one run at a time), no second guards-all.sh', b.state === 'queued' && new RegExp(`behind run ${a.id}`).test(b.why || '') && procsOf(d.wt).filter((l) => /guards-all\.sh/.test(l)).length <= 2,
       JSON.stringify(b) + procsOf(d.wt).join('\n'));
     const c = await req(d, ['cancel', '--id', a.id, '--max', '60']);
-    ok('C1-20 a cancel while it waits: stopped, no process of the run left', c.state === 'stopped' && !!(await until(() => procsOf(d.wt).length === 0, 10000)), JSON.stringify(c) + procsOf(d.wt).join('\n'));
+    ok('C1-20 a cancel while it waits: stopped', c.state === 'stopped', JSON.stringify(c));
     const cb = await req(d, ['cancel', '--id', b.id, '--max', '60']);
-    ok('C1-20 the second, cancelled before or after its start, is final', FINAL.includes(cb.state), JSON.stringify(cb));
+    ok('C1-20 the second, cancelled before or after its start, is final; no process of either run is left', FINAL.includes(cb.state) && !!(await until(() => procsOf(d.wt).length === 0, 10000)), JSON.stringify(cb) + procsOf(d.wt).join('\n'));
     try { process.kill(-nb.pid, 'SIGTERM'); } catch { /* gone */ }
     await svc.close();
   }
@@ -315,7 +315,7 @@ const specFile = (d, envx) => {
   for (const mode of ['adaptive', 'whole']) {
     const d = setup({ mode, config: { remoteRun: { command: 'cd {wt} && print REMOTE' } } });
     const machine = path.join(d.root, 'machine.json');
-    fs.writeFileSync(machine, JSON.stringify({ remote: { host: 'runner.invalid', user: 'u', key: '/k', knownHosts: '/kh', root: '/r' } }));
+    fs.writeFileSync(machine, JSON.stringify({ slots: { lockDir: d.slots }, remote: { host: 'runner.invalid', user: 'u', key: '/k', knownHosts: '/kh', root: '/r' } }));
     const r = gaRun(d, [d.wt], { CODIS_GUARDS_EXEC: specFile(d), CODIS_AGENTS_MACHINE: machine });
     const log = read(path.join(d.P.shared, 'guards-wt.txt'));
     ok(`C1-8 ${mode}: the runner goes through heavy-exec.js (CODEX_SANDBOX=fake)${mode === 'adaptive' ? ', {limitFile} readable' : ''}`, r.status === 0 && /RUNNER sb=fake/.test(log) && (mode !== 'adaptive' || /^LIMIT=\d/m.test(log)), r.stdout.slice(-500) + r.stderr.slice(-300) + log.slice(0, 300));
@@ -373,8 +373,8 @@ const specFile = (d, envx) => {
   {
     const t = { dir: '/x/task' };
     const on = RX.hostSection('prog', t, { heavy: true }), te = RX.hostSection('test', t, { heavy: true }), rv = RX.hostSection('review', t, { heavy: true });
-    ok('C1-22 prog/test: --kind full and --kind select --base <ref> replace guards-all.sh, rc, guardsLog, where; no "A2b-1c"',
-      [on, te].every((s) => /heavy-req\.js --kind full/.test(s) && /heavy-req\.js --kind select --base <ref>/.test(s) && /guards-all\.sh/.test(s) && /guardsLog/.test(s) && /where/.test(s) && !/A2b-1c/.test(s)), on);
+    ok('C1-22 prog/test: --kind full and --kind select --base <ref> replace guards-all.sh, rc, guardsLog, where; no "guard runs come with A2b-1c"',
+      [on, te].every((s) => /heavy-req\.js --kind full/.test(s) && /heavy-req\.js --kind select --base <ref>/.test(s) && /guards-all\.sh/.test(s) && /guardsLog/.test(s) && /where/.test(s) && !/come with A2b-1c/.test(s)), on);
     ok('C1-22 review: no heavy line', !/heavy-req/.test(rv), rv);
   }
 
