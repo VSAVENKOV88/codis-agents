@@ -16,8 +16,8 @@
 #   stop <pgid> <grace> <wait>  TERM and CONT to the group (CONT: a member stopped by SIGTTIN or SIGTSTP gets the TERM),
 #                               up to <grace> s for it to be gone, then KILL and up to <wait> s more; polls every 0.1 s
 #                               (the period slot_run waits for its holder); 0 - gone, 1 - not gone. The perl of `run`
-#                               before its setpgrp (no group <pgid> yet) gets the same signals as the pid <pgid> and is
-#                               waited for too. It is the only place that signals the command of a slot
+#                               before its setpgrp (no group <pgid> yet) gets the same signals as the pid <pgid>. It
+#                               is the only place that signals the command of a slot
 # Exit codes of lead and run when the command cannot start: 127 not found, 126 not executable (as zsh), 72 no new
 # group, 73 the marker cannot be written (the command does not run unmarked).
 use strict;
@@ -69,16 +69,16 @@ if ($cmd eq 'lead') {
   exit 64 unless defined $g && $g =~ /^\d+$/ && $g > 1;
   # Before its setpgrp the perl of `run` is the pid <g> in the caller's group (the holder's) and the group <g> does not
   # exist yet: the signal then goes to that pid, so it dies before the command starts. A pid <g> in any other group is
-  # never signalled (a pid reused after the leader was reaped).
+  # never signalled (a pid reused after the leader was reaped); a group made between the two calls gets the signal by
+  # the second call to it. That perl dies at once, so only the group is waited for.
   my $pre = sub { my $p = getpgrp($g); $p > 0 && $p == getpgrp(0) };
-  my $sig = sub { kill($_[0], -$g) || ($pre->() && kill($_[0], $g)) };
-  my $gone = sub { !alive($g) && !$pre->() };
+  my $sig = sub { kill($_[0], -$g) || ($pre->() && kill($_[0], $g)) || kill($_[0], -$g) };
   $sig->('TERM');
   $sig->('CONT');
   for my $i (0, 1) {
     my $until = Time::HiRes::time() + (($i ? $wait : $grace) // 0);
-    while (!$gone->() && Time::HiRes::time() < $until) { select(undef, undef, undef, 0.1); }
-    exit 0 if $gone->();
+    while (alive($g) && Time::HiRes::time() < $until) { select(undef, undef, undef, 0.1); }
+    exit 0 unless alive($g);
     $sig->('KILL') unless $i;
   }
   exit 1;
