@@ -158,12 +158,13 @@ try {
       const d = path.join(T, `tr-${kind}`), main = path.join(d, 'main'), wts = path.join(d, 'wts'), shared = path.join(d, 'shared'), bin = path.join(d, 'bin');
       const log = path.join(d, 'hooks.log'), mark = path.join(d, 'FSMON');
       for (const x of [wts, shared, bin]) fs.mkdirSync(x, { recursive: true });
-      const sh = (f, body) => F.put(f, body, 0o755);
-      sh(path.join(bin, 'sysctl'), '#!/bin/zsh\n[[ $1 == -n && $2 == vm.swapusage ]] || exec /usr/sbin/sysctl "$@"\nprint -r -- "total = 30000,00M  used = 1000,00M  free = 20000,00M  (encrypted)"\n');
-      sh(path.join(bin, 'memory_pressure'), '#!/bin/zsh\nprint -r -- "System-wide memory free percentage: 20%"\n');
-      sh(path.join(bin, 'vm_stat'), '#!/bin/zsh\nprint -r -- "Mach Virtual Memory Statistics: (page size of 16384 bytes)"\nprint -r -- "Swapouts:                                   0."\n');
-      sh(path.join(bin, 'df'), '#!/bin/zsh\nprint -r -- "Filesystem 1M-blocks Used Available Capacity Mounted"\nprint -r -- "/dev/disk3s6 100000 0 0 0% /System/Volumes/VM"\n');
-      sh(path.join(d, 'guard.sh'), '#!/bin/sh\necho "=== 3 passed in 0.1s ==="\nexit 0\n');
+      // the memory probes of the slots: a calm machine
+      const fake = (t, body) => F.put(path.join(bin, t), body, 0o755);
+      fake('sysctl', '#!/bin/zsh\n[[ $1 == -n && $2 == vm.swapusage ]] || exec /usr/sbin/sysctl "$@"\nprint -r -- "total = 30000,00M  used = 1000,00M  free = 20000,00M  (encrypted)"\n');
+      fake('memory_pressure', '#!/bin/zsh\nprint -r -- "System-wide memory free percentage: 20%"\n');
+      fake('vm_stat', '#!/bin/zsh\nprint -r -- "Mach Virtual Memory Statistics: (page size of 16384 bytes)"\nprint -r -- "Swapouts:                                   0."\n');
+      fake('df', '#!/bin/zsh\nprint -r -- "Filesystem 1M-blocks Used Available Capacity Mounted"\nprint -r -- "/dev/disk3s6 100000 0 0 0% /System/Volumes/VM"\n');
+      F.put(path.join(d, 'guard.sh'), '#!/bin/sh\necho "=== 3 passed in 0.1s ==="\nexit 0\n', 0o755);
       F.makeFh(main, log, kind, path.join(d, 'abs-hooks'));
       F.put(path.join(main, '.gitignore'), 'data/\n'); F.put(path.join(main, 'data', 'corpus.txt'), 'corpus\n');
       F.quiet(main, 'add', '.gitignore'); F.quiet(main, 'commit', '-q', '-m', 'ignore');
@@ -180,8 +181,9 @@ try {
       F.put(path.join(home, '.gitconfig'), '[user]\n\tname = H10 Owner\n\temail = owner@example.com\n');
       const env = Object.assign({}, process.env, { CODIS_AGENTS_CONFIG: cfgFile, HOME: home, PATH: bin + path.delimiter + process.env.PATH, SLOT_OS: 'darwin',
         SLOT_POLL: '0.2', SLOT_SAY: '1', SLOT_THIRD_WINDOW: '1', SLOT_HIST_GAP: '2', CODIS_TRAIN_POLL: '0.3' });
-      for (const k of ['SLOTS_DIR', 'SLOT_LEGACY_LOCK', 'SLOT_JOURNAL', 'SLOT_LABEL', 'SLOT_KIND', 'SLOT_RETRY_RC', 'GUARDS_EXCLUSIVE_LOCK', 'SLOT_MEDIUM_N', 'SLOT_HEAVY_N', 'SLOT_TOTAL_MAX', 'GUARDS_JOBS_ALONE', 'GUARDS_JOBS_SHARED', 'SLOT_EXCL_TOOLS', 'GUARDS_EXCL_GLOB', 'GUARDS_EXCL_MARKER', 'SLOT_PATH',
-        'SLOT_SWAP_MIN_MB', 'SLOT_THIRD_FREE_PCT', 'SLOT_THIRD_SWAP_GROW_MB', 'SLOT_PROC', 'CLAUDE_PROJECT_DIR', 'CODIS_SLOT_HELD', 'CODIS_GUARDS_EXEC',
+      // every knob of slots.zsh by name (tests/slots-hermetic.test.js checks the list)
+      for (const k of ['SLOTS_DIR', 'SLOT_LEGACY_LOCK', 'SLOT_JOURNAL', 'SLOT_LABEL', 'SLOT_KIND', 'SLOT_RETRY_RC', 'SLOT_PRIORITY', 'SLOT_KILL_GRACE', 'SLOT_EMPTY_WAIT', 'SLOT_EXEC_NOTE', 'GUARDS_EXCLUSIVE_HELD', 'CODIS_SLOT_HELD', 'GUARDS_EXCLUSIVE_LOCK', 'SLOT_MEDIUM_N', 'SLOT_HEAVY_N', 'SLOT_TOTAL_MAX', 'GUARDS_JOBS_ALONE', 'GUARDS_JOBS_SHARED', 'SLOT_EXCL_TOOLS', 'GUARDS_EXCL_GLOB', 'GUARDS_EXCL_MARKER', 'SLOT_PATH',
+        'SLOT_SWAP_MIN_MB', 'SLOT_THIRD_FREE_PCT', 'SLOT_THIRD_SWAP_GROW_MB', 'SLOT_PROC', 'CODIS_WORKTREE_ROOT', 'CODIS_SHARED_DIR', 'CODIS_REPO_DIR', 'CLAUDE_PROJECT_DIR', 'CODIS_GUARDS_EXEC',
         'GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL', 'GIT_CONFIG_GLOBAL']) delete env[k];
 
       // H8: wt-setup.sh of the task
