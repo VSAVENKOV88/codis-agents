@@ -32,7 +32,7 @@ fs.writeFileSync(path.join(BIN, 'codex'), `#!${process.execPath}
 const fs = require('fs');
 const a = process.argv.slice(2);
 for (const [sig, code] of [['SIGTERM', 143], ['SIGINT', 130], ['SIGHUP', 129]]) process.on(sig, () => process.exit(code));
-fs.appendFileSync(process.env.FAKE_CODEX_LOG + '.pids', process.pid + '\n');
+fs.appendFileSync(process.env.FAKE_CODEX_LOG + '.pids', process.pid + '\\n');
 process.stdout.write('fake codex on stdout\\n');
 let input = '';
 process.stdin.on('data', (d) => { input += d; });
