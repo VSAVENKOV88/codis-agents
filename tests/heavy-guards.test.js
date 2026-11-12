@@ -170,7 +170,7 @@ const specFile = (d, envx) => {
       JSON.stringify(s) + JSON.stringify(sq) + read(SEL).slice(0, 400));
     const s2 = await req(d, ['--kind', 'select', '--base', d.P.base, '--max', '120']);
     ok('C1-2 --base <full sha>: runs (reused or run, rc 0)', s2.state === 'done' && s2.rc === 0, JSON.stringify(s2));
-    for (const [b, why] of [['--x', /base/], ['-uweird', /base/], ['a b', /base/], ['nope-no-such', /unknown base/]]) {
+    for (const [b, why] of [['--x', /needs base, a branch name or a commit/], ['-uweird', /needs base, a branch name or a commit/], ['a b', /needs base, a branch name or a commit/], ['nope-no-such', /unknown base/]]) {
       const id = id32();
       put(d, id, { kind: 'select', base: b, cwd: d.wt });
       const a = await final(d, id, 20000);
