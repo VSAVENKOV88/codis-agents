@@ -125,13 +125,14 @@ if (!fs.existsSync(SCRIPT)) done();
       /once/.test(next) && /starts the checker and waits for it/.test(next) && /still running[^.]*poll that same command/.test(next)
       && /refused while the run lives \(exit 3\)/.test(next) && /died/.test(next) && /collect --run 1 --append/.test(next) && !/--exit/.test(next), next);
     fs.writeFileSync(c.ans, answer(c.sha, ['t1'], 'ready', 0));
-    const r = await runAsync(c).finished;
+    const h = runAsync(c);
+    const r = await h.finished;
     ok('N17 the checker gets no open stdin (stdin /dev/null): run ends while its own stdin stays open', !r.timedOut, r.all.slice(0, 400));
     ok('M4-1 run: exit 0, stdout is only its JSON (the checker writes to stderr)', r.code === 0 && !!r.out && !/fake codex on stdout/.test(r.stdout) && /fake codex on stdout/.test(r.stderr), r.all.slice(0, 600));
     const cs = calls(c);
     ok('M4-1 exactly one codex exec, with the argv of the template (= the argv prepare printed)', cs.length === 1 && JSON.stringify(['codex', ...cs[0].argv]) === JSON.stringify(p.out && p.out.argv), JSON.stringify(cs));
     const running = readJ(f(c, 1, 'running'));
-    ok('M4-1 runs/1.running {pid, lstart} names the run process', !!running && running.pid === r.child.pid && typeof running.lstart === 'string' && running.lstart.length > 0, JSON.stringify(running));
+    ok('M4-1 runs/1.running {pid, lstart} names the run process', !!running && running.pid === h.child.pid && typeof running.lstart === 'string' && running.lstart.length > 0, JSON.stringify(running));
     ok('M4-1 runs/1.exit is 0, recorded by run', fs.existsSync(f(c, 1, 'exit')) && fs.readFileSync(f(c, 1, 'exit'), 'utf8').trim() === '0');
     ok('M4-1 the answer is observed: runs/1.answers/1.json, run 1 a result, the output names exit 0',
       fs.existsSync(path.join(c.runs, '1.answers', '1.json')) && runOf(r.out, 1) && runOf(r.out, 1).state === 'result' && r.out.exit === 0, JSON.stringify(r.out && r.out.runs));

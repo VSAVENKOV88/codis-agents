@@ -1301,7 +1301,7 @@ function status(argv) {
 }
 
 // Before the command line: resolve (scripts/chain-resolve.js) takes these functions at call time.
-module.exports = { requiresIsolationOf, authorProblem, commitJournalProblem, heavyJournalProblem, commitStateDir, beginStop, StopError, lockData, liveText, read3, openStepVerdict, lockFileOf, loadConfig, runDirOf, refusalText, makeSteps, stepExec, openStepText, stateRootProblem, runScript, makePipeline, taskTable, parseTasks, lstartOf, liveness, reconcile, acquireTask, unrecordedCalls, takeLock, releaseLock, execStep, hookGate, adapterCfg, logState, CAUSE_KNOWN, MAX_WAIT };
+module.exports = { requiresIsolationOf, authorProblem, commitJournalProblem, heavyJournalProblem, commitStateDir, beginStop, StopError, lockData, liveText, read3, openStepVerdict, lockFileOf, loadConfig, runDirOf, refusalText, makeSteps, stepExec, openStepText, stateRootProblem, runScript, makePipeline, taskTable, parseTasks, lstartOf, normL, psCause, liveness, reconcile, acquireTask, unrecordedCalls, takeLock, releaseLock, execStep, hookGate, adapterCfg, logState, CAUSE_KNOWN, MAX_WAIT };
 
 if (require.main === module) {
   const [cmd, ...rest] = process.argv.slice(2);

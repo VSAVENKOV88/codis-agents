@@ -1,14 +1,16 @@
 #!/usr/bin/env node
 'use strict';
 // The runs of the analysis check on Codex: every launch of the checker is a run of its own, and no result is removed
-// or overwritten by this script. The coordinator runs both commands in its sandbox (they write only under
-// <sharedDir>/analysis-checks/ and, with --append, the report next to the analysis); `codex exec` itself runs under its
-// own execpolicy rule, with the argv `prepare` prints.
+// or overwritten by this script. The coordinator runs `prepare` and `collect` in its sandbox (they write only under
+// <sharedDir>/analysis-checks/ and, with --append, the report next to the analysis). `run` is the only command that
+// starts the checker: the fourth execpolicy rule of the coordinator home lets `node <plugin>/scripts/analysis-check.js
+// run` out of the sandbox (the checker needs the network), and no rule lets a direct `codex exec` out.
 //
 // usage:
 //   analysis-check.js prepare --shared <sharedDir> --analysis <path> --task <key> [--task <key>...] --worktree <path>
 //       --model <codex model> [--brief <p>] [--use-cases <p>] [--spec <p>] [--again <reason>]
 //       [--abandon <n> --reason <text>]
+//   analysis-check.js run --shared <sharedDir> --analysis <path> --sha <sha256> --run <n>
 //   analysis-check.js collect --shared <sharedDir> --analysis <path> [--sha <sha256>] [--task <key>...]
 //       [--run <n> [--exit <N>] [--append]]
 //
@@ -16,9 +18,12 @@
 //   analysis-<sha>.md   the copy the checker reads (the folder is a version folder because it holds this file)
 //   task-<n>.md         the task of run n
 //   runs/<n>.prepared   the run's marker {run, tasks, analysis, again?, argv}, created with O_EXCL
+//   runs/<n>.running    {pid, lstart, at} of the `run` that started the checker, created with O_EXCL
 //   runs/<n>.json       the answer, written by `codex exec -o`
-//   runs/<n>.exit       the exit code of `codex exec`, recorded by `collect --exit`
-//   runs/<n>.abandoned  {reason}: the run's turn ended without an answer
+//   runs/<n>.exit       the exit code of `codex exec`: recorded by `run`, or by `collect --exit` for a run without
+//                       runs/<n>.running
+//   runs/<n>.died       {pid, lstart, at}: a later `run` found the process of runs/<n>.running gone without an exit
+//   runs/<n>.abandoned  {reason}: a run that was never started, ended by `prepare --abandon`
 //   runs/<n>.answers/<k>.json      the journal of the run: {sha256, at, answer}, one entry per distinct valid answer
 //                                  any command saw in runs/<n>.json (sha256 of its bytes), k in the order they were seen
 //   runs/<n>.answers/<k>.appended  {reportRun, textSha256, ...} once --append wrote answer k to the report
@@ -32,31 +37,53 @@
 //
 // The state of run n, first match wins:
 //   the journal has entries -> result: each entry is a verdict for the keys of its own `tasks`; the file now is only
-//     named (the answer it is now, not a verdict, gone; a later exit other than 0; "late, after abandon";
-//     "exit not recorded")
+//     named (the answer it is now, not a verdict, gone; a later exit other than 0; "late, after abandon"; "late,
+//     after died"; "exit not recorded")
 //   runs/<n>.json and an exit other than 0 recorded -> not-run: exit N
 //   runs/<n>.json not valid -> not-run: <reason>
 //   no runs/<n>.json and .abandoned -> not-run: abandoned (<reason>)
+//   no runs/<n>.json and .died -> not-run: died (pid P, started L)
 //   no runs/<n>.json and .exit -> not-run: exit N, no runs/<n>.json
-//   otherwise -> prepared (pending)
+//   otherwise -> prepared (pending); with .running the run is named with the pid that started it
 // A result counts for key t only when t is in the `tasks` of the answer (rule "Waves": the check of a task is a run whose
 // Tasks line names its key). `prepare` makes a run only when no requested key has a result (in runs/, in the earlier
 // layout, or as a run of <name of the analysis>.check.md with this Analysis-sha256 and the key in Tasks) - unless
-// --again - and the version has no pending run of any key: one pending run per version. Liveness of `codex exec` is
-// not checked (ps is refused in the sandbox), so only --abandon ends a pending run.
+// --again - and the version has no pending run of any key: one pending run per version.
 //
-// Exit: 0 done; 3 refused by the state of the runs (the output names it); 64 usage; 65 the data (an analysis that
-// cannot be read, a copy whose sha256 differs from its name, a version folder that does not exist for --sha).
+// `run --run n` outside the sandbox: ps must answer (inside the sandbox it is refused: exit 69 before anything is
+// read or written); the version folder, runs/, runs/<n>.answers and runs/<n>.json must not be symbolic links (run
+// writes through them outside the sandbox: 65); then it reads every run as any command does and starts the checker
+// only for a pending run without runs/<n>.running. The argv it starts is the template of this copy of the plugin with
+// the worktree and the model of the marker (both checked); the marker's argv must equal it (65 otherwise: the marker is
+// written in the sandbox, so its argv is never run as it stands). runs/<n>.running is claimed with O_EXCL, so at most
+// one checker is started per run. A second `run` of a run with runs/<n>.running is refused (3): while the process of the
+// marker lives (its pid and start time, as ps names them) it says so; when it is gone and the run has no exit and no
+// answer, it records runs/<n>.died first. A marker that cannot be read yet is never taken for a dead run. The checker
+// gets stdin /dev/null (`codex exec` with a prompt reads a stdin that is not a terminal to its end before it starts)
+// and the stderr of `run` for its output; INT, TERM and HUP to `run` are passed to it. Its exit (127 when it cannot be
+// started, 128+signal when a signal ended it) is recorded before the run is read, as `collect --exit` does: an answer
+// of a failed checker is never recorded. Liveness can be told only outside the sandbox, so `prepare` and `collect` show
+// a run with runs/<n>.running as pending, and `prepare --abandon` refuses it (the next `run` tells).
+//
+// Exit: 0 done (for `run`: the checker was started and its exit recorded, the output names it); 3 refused by the state
+// of the runs (the output names it); 64 usage; 65 the data (an analysis that cannot be read, a copy whose sha256 differs
+// from its name, a version folder that does not exist for --sha, a marker whose argv is not the template, a symbolic
+// link); 69 `run` where ps does not answer.
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
+const { spawn } = require('child_process');
 
 const PLUGIN = path.resolve(__dirname, '..');
 const SCHEMA = path.join(PLUGIN, 'schemas', 'analysis-check.schema.json');
 const CHECKER = path.join(PLUGIN, 'agents', 'analysis-checker.md');
 const HEX = /^[0-9a-f]{64}$/;
 const KEY = /^[A-Za-z0-9._-]+$/;
-const SUFFIXES = ['prepared', 'json', 'exit', 'abandoned', 'answers'];
+const MODEL = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+// The path this script was started by, as written (the rule matches the literal path, not its realpath).
+const SELF = require.main === module ? path.resolve(process.argv[1]) : __filename;
+const SUFFIXES = ['prepared', 'running', 'json', 'exit', 'died', 'abandoned', 'answers'];
 
 class Exit extends Error { constructor(code, msg, out) { super(msg); this.code = code; this.out = out; } }
 const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
@@ -179,6 +206,10 @@ function runNumbers(runsDir) {
 }
 
 const answersDir = (dir, n) => path.join(dir, 'runs', `${n}.answers`);
+const runFile = (dir, n, suffix) => path.join(dir, 'runs', `${n}.${suffix}`);
+// The argv of the checker of run n: the template of this copy of the plugin, with the worktree and the model.
+const checkerArgv = (dir, n, worktree, model) => ['codex', 'exec', '--sandbox', 'read-only', '--ephemeral', '--skip-git-repo-check',
+  '--output-schema', SCHEMA, '-o', runFile(dir, n, 'json'), '-C', worktree, '-m', model, `Read ${path.join(dir, `task-${n}.md`)} and do what it says.`];
 
 // The journal of run n: its readable entries in order, the numbers of entries that cannot be read (being written by
 // another command, or damaged), the append markers and unknown files.
@@ -222,6 +253,8 @@ function stateOf(dir, sha, n) {
   const exit = exitRaw == null ? null : (/^-?\d+$/.test(exitRaw) ? +exitRaw : exitRaw);
   const failed = exit != null && exit !== 0;
   const abandoned = exists(f('abandoned')) ? (readJson(f('abandoned')) || {}) : null;
+  const died = exists(f('died')) ? (readJson(f('died')) || {}) : null;
+  const running = exists(f('running')) ? (readJson(f('running')) || {}) : null;
   const r = { run: n, prepared: !!mark, asked: mark && mark.tasks ? mark.tasks : null, again: mark && mark.again ? mark.again : null, exit, notes: [] };
   if (!mark) r.notes.push('without prepare: no runs/' + n + '.prepared');
   // the file now: a valid answer (its hash), not a verdict (why), or gone
@@ -244,7 +277,13 @@ function stateOf(dir, sha, n) {
     if (now && failed) return Object.assign(r, { state: 'not-run', reason: `exit ${exit}` });
     if (now) return Object.assign(r, { state: 'not-run', reason: now.why });
     if (abandoned) return Object.assign(r, { state: 'not-run', reason: `abandoned (${abandoned.reason || ''})` });
+    if (died) return Object.assign(r, { state: 'not-run', reason: `died (pid ${died.pid}, started ${died.lstart})` });
     if (exit != null) return Object.assign(r, { state: 'not-run', reason: `exit ${exit}, no runs/${n}.json` });
+    if (running) {
+      r.running = { pid: running.pid == null ? null : running.pid, lstart: running.lstart == null ? null : running.lstart };
+      r.notes.push(`started by analysis-check.js run as pid ${running.pid} since ${running.lstart}; whether it lives cannot be told here: `
+        + `run that command again (it is refused while the run lives and records the run as died when it is gone)`);
+    }
     return Object.assign(r, { state: 'prepared' });
   }
   const m = entries.length;
@@ -254,6 +293,7 @@ function stateOf(dir, sha, n) {
   r.appended = entries.every((e) => !!e.mark);
   r._entries = entries;
   if (abandoned) r.notes.push('late, after abandon');
+  if (died) r.notes.push('late, after died');
   if (exit == null) r.notes.push('exit not recorded');
   if (failed) r.notes.push(`exit ${exit} recorded after answer ${j.entries.length ? j.entries[j.entries.length - 1].k : 1} was recorded: the recorded answers stay verdicts; name the exit to the owner`);
   if (m > 1) r.notes.push(`${m} answers: a second codex exec of run ${n} rewrote runs/${n}.json after a command saw it - each answer is a verdict for its keys; name every one to the owner`);
@@ -342,8 +382,9 @@ function verdictsFor(s, t) {
 }
 
 const TWO = 'two verdicts of one version: name both to the owner; a changes-needed needs its Closure lines, and a later ready of the same version does not cancel it';
-const PENDING = (n) => `run ${n} has no result yet. Poll the command that runs it - never run it again: a second run overwrites runs/${n}.json. `
-  + `Only when the turn that ran it has ended: prepare --abandon ${n} --reason <why>`;
+const PENDING = (n, cmd) => `run ${n} has no result yet. Poll the command that started it, ${cmd}: running it again is refused while the run lives (exit 3) `
+  + `and records the run as died when it is gone. Only for a run that was never started: prepare --abandon ${n} --reason <why>`;
+const runCommand = (shared, analysis, sha, n) => ['node', SELF, 'run', '--shared', shared, '--analysis', analysis, '--sha', sha, '--run', String(n)].map(quote).join(' ');
 const strip = (r) => { const o = Object.assign({}, r); delete o._entries; delete o._unknown; return o; };
 
 function view(s, keys) {
@@ -387,7 +428,7 @@ const quote = (a) => (/^[A-Za-z0-9_@%+=:,./-]+$/.test(a) ? a : `"${a.replace(/([
 
 function parse(argv) {
   const [cmd, ...rest] = argv;
-  const o = { cmd, task: [] };
+  const o = { cmd, task: [], given: [] };
   const one = ['--shared', '--analysis', '--worktree', '--model', '--brief', '--use-cases', '--spec', '--again', '--abandon', '--reason', '--sha', '--run', '--exit'];
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
@@ -395,11 +436,14 @@ function parse(argv) {
     else if (a === '--append') o.append = true;
     else if (one.includes(a)) { if (rest[i + 1] == null) throw new Exit(64, `${a} needs a value`); o[a.slice(2)] = rest[++i]; }
     else throw new Exit(64, `unknown argument ${a}`);
+    o.given.push(a);
   }
   return o;
 }
+const RUN_USAGE = 'analysis-check.js run --shared <dir> --analysis <path> --sha <sha256> --run <n>';
 const USAGE = 'usage: analysis-check.js prepare --shared <dir> --analysis <path> --task <key>... --worktree <path> --model <model> '
   + '[--brief <p>] [--use-cases <p>] [--spec <p>] [--again <reason>] [--abandon <n> --reason <text>]\n'
+  + `       ${RUN_USAGE}\n`
   + '       analysis-check.js collect --shared <dir> --analysis <path> [--sha <sha256>] [--task <key>...] [--run <n> [--exit <N>] [--append]]';
 
 function readAnalysis(p) {
@@ -411,12 +455,15 @@ function prepare(o) {
   if (o.task.some((t) => !KEY.test(t))) throw new Exit(64, `a task key is [A-Za-z0-9._-]+: ${o.task.join(', ')}`);
   if (o.abandon != null && (!/^\d+$/.test(o.abandon) || !o.reason)) throw new Exit(64, '--abandon <n> needs a run number and --reason <text>');
   if (o.again === '') throw new Exit(64, '--again needs a reason');
+  if (!MODEL.test(o.model)) throw new Exit(64, `--model is [A-Za-z0-9][A-Za-z0-9._-]*: ${o.model}`);
+  const shared = path.resolve(o.shared);
   const analysis = path.resolve(o.analysis);
   const buf = readAnalysis(analysis);
   const sha = sha256(buf);
-  const dir = versionDir(o.shared, sha);
+  const dir = versionDir(shared, sha);
   const runsDir = path.join(dir, 'runs');
-  let s = survey(o.shared, analysis, sha);
+  const cmdOf = (n) => runCommand(shared, analysis, sha, n);
+  let s = survey(shared, analysis, sha);
   const notes = [];
   if (o.abandon != null) {
     const n = +o.abandon;
@@ -424,14 +471,18 @@ function prepare(o) {
     if (!r) throw new Exit(3, `no run ${n} in ${dir}`, view(s, o.task));
     if (r.state === 'result') throw new Exit(3, `run ${n} has a result (${r.verdict}): it is not abandoned`, view(s, o.task));
     if (r.state !== 'prepared') throw new Exit(3, `run ${n} is not pending (${r.state}: ${r.reason})`, view(s, o.task));
+    if (r.running) {
+      throw new Exit(3, `run ${n} was started by analysis-check.js run (pid ${r.running.pid} since ${r.running.lstart}): run ${cmdOf(n)} - it is refused `
+        + 'while the run lives and records the run as died when it is gone; --abandon is only for a run that was never started', view(s, o.task));
+    }
     if (!claim(path.join(runsDir, `${n}.abandoned`), { reason: o.reason, at: new Date().toISOString() })) {
       throw new Exit(3, `run ${n} was abandoned already`, view(s, o.task));
     }
     notes.push(`run ${n} abandoned: ${o.reason}`);
-    s = survey(o.shared, analysis, sha);
+    s = survey(shared, analysis, sha);
   }
   const pending = s.runs.filter((r) => r.state === 'prepared');
-  if (pending.length) throw new Exit(3, PENDING(pending[0].run), view(s, o.task));
+  if (pending.length) throw new Exit(3, PENDING(pending[0].run, cmdOf(pending[0].run)), view(s, o.task));
   const found = {};
   for (const t of o.task) { const v = verdictsFor(s, t); if (v.length) found[t] = v; }
   if (Object.keys(found).length && !o.again) {
@@ -449,18 +500,18 @@ function prepare(o) {
   checkCopy(dir, sha);
   const n = (s.runs.length ? Math.max(...s.runs.map((r) => r.run)) : 0) + 1;
   const task = path.join(dir, `task-${n}.md`);
-  const argv = ['codex', 'exec', '--sandbox', 'read-only', '--ephemeral', '--skip-git-repo-check', '--output-schema', SCHEMA,
-    '-o', path.join(runsDir, `${n}.json`), '-C', path.resolve(o.worktree), '-m', o.model, `Read ${task} and do what it says.`];
+  const argv = checkerArgv(dir, n, path.resolve(o.worktree), o.model);
   const mark = { tasks: o.task, analysis, at: new Date().toISOString(), argv };
   if (o.again) mark.again = o.again;
-  if (!claimRun(runsDir, n, mark)) throw new Exit(3, PENDING(n), view(survey(o.shared, analysis, sha), o.task));
+  if (!claimRun(runsDir, n, mark)) throw new Exit(3, PENDING(n, cmdOf(n)), view(survey(shared, analysis, sha), o.task));
   fs.writeFileSync(task, taskText({ copy, analysis, sha, brief: o.brief, useCases: o['use-cases'], spec: o.spec, worktree: path.resolve(o.worktree), tasks: o.task }));
-  const v = view(survey(o.shared, analysis, sha), o.task);
+  const v = view(survey(shared, analysis, sha), o.task);
   return {
     code: 0,
-    out: { run: n, sha, dir, tasks: o.task, argv, command: argv.map(quote).join(' '),
-      next: `Run the command once. When the shell tool answers "still running", poll that same command; never run it again (a second run overwrites runs/${n}.json). `
-        + `Then: collect --run ${n} --exit <its exit code>, and collect --run ${n} --append unless the snapshot after voids the check.`,
+    out: { run: n, sha, dir, tasks: o.task, argv, command: cmdOf(n),
+      next: 'Run the command once: it starts the checker and waits for it. When the shell tool answers "still running", poll that same command. '
+        + 'Running it again is refused while the run lives (exit 3) and records the run as died when it is gone. '
+        + `Then collect --run ${n} --append unless the snapshot after voids the check.`,
       notes: notes.concat(v.notes), otherVersions: v.otherVersions },
   };
 }
@@ -481,6 +532,10 @@ function collect(o) {
     const n = +o.run;
     checkCopy(dir, sha);
     if (!runNumbers(path.join(dir, 'runs')).nums.includes(n)) { const s0 = survey(o.shared, analysis, sha); throw new Exit(3, `no run ${n} in ${s0.dir}`, view(s0, o.task)); }
+    if (o.exit != null && exists(runFile(dir, n, 'running'))) {
+      throw new Exit(3, `the exit of run ${n} is recorded by analysis-check.js run, which started its checker (runs/${n}.running): collect --run ${n} without --exit`,
+        view(survey(o.shared, analysis, sha), o.task));
+    }
     if (o.exit != null && !claim(path.join(dir, 'runs', `${n}.exit`), `${+o.exit}\n`)) {
       const was = fs.readFileSync(path.join(dir, 'runs', `${n}.exit`), 'utf8').trim();
       if (was !== String(+o.exit)) throw new Exit(3, `the exit of run ${n} is recorded already as ${was}, not ${+o.exit}`, view(survey(o.shared, analysis, sha), o.task));
@@ -514,6 +569,133 @@ function collect(o) {
   return { code: 0, out: v };
 }
 
+// ---- run: the only start of the checker ----
+
+// Why the version folder, runs/, runs/<n>.answers or runs/<n>.json is a symbolic link, or null. run writes through
+// these paths outside the sandbox (the journal, the -o of the checker), and the sandbox of the coordinator can make them.
+function linkProblem(dir, n) {
+  const paths = [[dir, 'dir'], [path.join(dir, 'runs'), 'dir'], [answersDir(dir, n), 'dir'], [runFile(dir, n, 'json'), 'file']];
+  for (const [p, kind] of paths) {
+    let st;
+    try { st = fs.lstatSync(p); } catch (e) { if (e.code === 'ENOENT') continue; throw e; }
+    if (st.isSymbolicLink()) return `${p} is a symbolic link`;
+    if (kind === 'dir' && !st.isDirectory()) return `${p} is not a folder`;
+  }
+  return null;
+}
+
+// The argv of the checker for run n: the template with the worktree and the model of the marker, both checked, and the
+// marker's argv equal to it. The marker is written in the sandbox, so its argv is never run as it stands.
+function checkedArgv(dir, n) {
+  const bad = (what) => new Exit(65, `the marker runs/${n}.prepared does not hold the argv of this plugin: ${what}; `
+    + `prepare --abandon ${n} --reason <why>, then prepare`);
+  const mark = readJson(runFile(dir, n, 'prepared'));
+  const a = mark && mark.argv;
+  if (!Array.isArray(a) || !a.every((x) => typeof x === 'string')) throw bad('no argv of strings');
+  const at = (flag) => (a.indexOf(flag) > 0 ? a[a.indexOf(flag) + 1] : undefined);
+  const w = at('-C'), m = at('-m');
+  let isDir = false;
+  try { isDir = typeof w === 'string' && fs.statSync(w).isDirectory(); } catch { /* not there */ }
+  if (typeof w !== 'string' || !path.isAbsolute(w) || w.startsWith('-') || !isDir) throw bad(`the worktree -C ${JSON.stringify(w)} is not the absolute path of a folder`);
+  if (typeof m !== 'string' || !MODEL.test(m)) throw bad(`the model -m ${JSON.stringify(m)} is not [A-Za-z0-9][A-Za-z0-9._-]*`);
+  const want = checkerArgv(dir, n, w, m);
+  if (JSON.stringify(a) !== JSON.stringify(want)) {
+    const i = want.findIndex((x, k) => a[k] !== x);
+    throw bad(`it differs from the template at argument ${i < 0 ? want.length : i} (${JSON.stringify(a[i < 0 ? want.length : i])}, the template has ${JSON.stringify(i < 0 ? null : want[i])})`);
+  }
+  return want;
+}
+
+// The refusal of a run with runs/<n>.running: the run lives, is being started, or is gone - then runs/<n>.died is
+// recorded first. Called only for a pending run (no answer, no exit), outside the sandbox (ps answered for this process).
+function runningRefusal(dir, n, cmd, out, CR) {
+  const m = readJson(runFile(dir, n, 'running'));
+  if (!m || !Number.isInteger(m.pid) || typeof m.lstart !== 'string') {
+    return new Exit(3, `run ${n} is being started (runs/${n}.running cannot be read yet): run ${cmd} again later to see; it never starts a second checker`, out);
+  }
+  const now = CR.lstartOf(m.pid);
+  if (now && CR.normL(now) === CR.normL(m.lstart)) {
+    return new Exit(3, `run ${n} is running as pid ${m.pid} since ${m.lstart}: poll the command that started it; when it runs in another turn or session, `
+      + `run ${cmd} again later to see - it never starts a second checker`, out);
+  }
+  claim(runFile(dir, n, 'died'), { pid: m.pid, lstart: m.lstart, at: new Date().toISOString() });
+  return new Exit(3, `run ${n} died (pid ${m.pid}, started ${m.lstart}, is gone) with no exit and no answer: runs/${n}.died recorded; `
+    + 'prepare again (a new run, no --abandon)', out);
+}
+
+// Records the exit of the checker of run n unless one is recorded already (that one is kept); a note when they differ.
+function recordExit(dir, n, code) {
+  const file = runFile(dir, n, 'exit');
+  if (claim(file, `${code}\n`)) return null;
+  let was = '?';
+  try { was = fs.readFileSync(file, 'utf8').trim(); } catch { /* named as ? */ }
+  return was === String(code) ? null : `run ${n}: the exit recorded already is kept: recorded ${was}, codex exec ended with ${code}`;
+}
+
+// Starts the checker in the foreground (the process group of run) and waits for it: stdin /dev/null, its output to
+// the stderr of run (stdout carries only the JSON of run), INT/TERM/HUP passed to it. Resolves {code, error?}: its
+// exit code, 128+signal, or 127 when it cannot be started.
+function startChecker(argv, env) {
+  return new Promise((resolve) => {
+    const fwd = {};
+    let ended = false;
+    const end = (r) => {
+      if (ended) return;
+      ended = true;
+      for (const [sig, h] of Object.entries(fwd)) process.removeListener(sig, h);
+      resolve(r);
+    };
+    let child;
+    try { child = spawn(argv[0], argv.slice(1), { stdio: ['ignore', 2, 2], env }); } catch (e) { end({ code: 127, error: `${argv[0]} could not be started: ${e.code || e.message}` }); return; }
+    for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) { fwd[sig] = () => { try { child.kill(sig); } catch { /* gone */ } }; process.on(sig, fwd[sig]); }
+    child.on('error', (e) => end({ code: 127, error: `${argv[0]} could not be started: ${e.code || e.message}` }));
+    child.on('exit', (code, signal) => end({ code: code != null ? code : 128 + (os.constants.signals[signal] || 0) }));
+  });
+}
+
+async function run(o, env) {
+  const mine = ['--shared', '--analysis', '--sha', '--run'];
+  const other = o.given.find((a) => !mine.includes(a));
+  if (other || mine.some((a) => o[a.slice(2)] == null) || new Set(o.given).size !== o.given.length) {
+    throw new Exit(64, `usage: ${RUN_USAGE}${other ? ` (run takes no ${other})` : ''}`);
+  }
+  if (!/^\d+$/.test(o.run)) throw new Exit(64, '--run needs a run number');
+  if (!HEX.test(o.sha)) throw new Exit(64, '--sha needs a sha256 (64 hex digits)');
+  const shared = path.resolve(o.shared), analysis = path.resolve(o.analysis), sha = o.sha, n = +o.run;
+  const cmd = runCommand(shared, analysis, sha, n);
+  const CR = require('./chain-run.js');
+  const self = CR.lstartOf(process.pid);
+  if (!self) {
+    throw new Exit(69, `refused - ps does not answer (ps -o lstart= -p ${process.pid} gave no start time)${CR.psCause(env)}: whether a run lives cannot be told, `
+      + `so no checker is started; start it as a plain argv, ${cmd}, with no node -e, sh -c, env, node flag, other path to node or relative path, `
+      + 'so the execpolicy rule of the coordinator home lets it out of the sandbox');
+  }
+  const dir = versionDir(shared, sha);
+  const link = linkProblem(dir, n);
+  if (link) throw new Exit(65, `${link}: run writes there outside the sandbox, so nothing is started`);
+  if (!exists(dir)) throw new Exit(65, `no check folder ${dir}`);
+  checkCopy(dir, sha);
+  if (!runNumbers(path.join(dir, 'runs')).nums.includes(n)) { const s0 = survey(shared, analysis, sha); throw new Exit(3, `no run ${n} in ${dir}`, view(s0, [])); }
+  const s = survey(shared, analysis, sha);
+  const out = view(s, []);
+  const r = s.runs.find((x) => x.run === n);
+  if (!r.prepared) throw new Exit(3, `run ${n} was not prepared (no runs/${n}.prepared): nothing is started`, out);
+  if (r.state === 'result') throw new Exit(3, `run ${n} has a result (${r.verdict}): nothing is started`, out);
+  if (r.state !== 'prepared') throw new Exit(3, `run ${n} is not pending (${r.state}: ${r.reason}): nothing is started`, out);
+  if (exists(runFile(dir, n, 'running'))) throw runningRefusal(dir, n, cmd, out, CR);
+  const argv = checkedArgv(dir, n);
+  if (!claim(runFile(dir, n, 'running'), { pid: process.pid, lstart: self, at: new Date().toISOString() })) throw runningRefusal(dir, n, cmd, out, CR);
+  const res = await startChecker(argv, env);
+  const late = recordExit(dir, n, res.code);
+  const v = view(survey(shared, analysis, sha), []);
+  v.sha = sha;
+  v.run = n;
+  v.exit = res.code;
+  v.notes = [res.error, late].filter(Boolean).concat(v.notes);
+  v.next = `collect --run ${n} --append unless the snapshot after voids the check (codex exec ended with ${res.code})`;
+  return { code: 0, out: v };
+}
+
 // The report of a run with `Saved-by: coordinator` under its header and `Analysis-sha256` filled in when missing.
 function withHeader(report, sha) {
   const lines = report.replace(/\s+$/, '').split('\n');
@@ -529,26 +711,30 @@ function withHeader(report, sha) {
   return out.join('\n') + '\n';
 }
 
-function main(argv) {
-  let res;
+const refusal = (e) => {
+  if (!(e instanceof Exit)) throw e;
+  return { code: e.code, out: Object.assign({ refused: e.message }, e.out || {}), message: e.message };
+};
+// prepare and collect answer at once; run answers with a promise (it waits for the checker).
+function main(argv, env) {
   try {
     const o = parse(argv);
-    if (o.cmd === 'prepare') res = prepare(o);
-    else if (o.cmd === 'collect') res = collect(o);
-    else throw new Exit(64, USAGE);
+    if (o.cmd === 'prepare') return prepare(o);
+    if (o.cmd === 'collect') return collect(o);
+    if (o.cmd === 'run') return run(o, env || process.env).catch(refusal);
+    throw new Exit(64, USAGE);
   } catch (e) {
-    if (!(e instanceof Exit)) throw e;
-    res = { code: e.code, out: Object.assign({ refused: e.message }, e.out || {}), message: e.message };
+    return refusal(e);
   }
-  return res;
 }
 
-module.exports = { claim, claimRun, reportRuns, runTextSha, taskKeys, invalid, journal, record, stateOf, survey, withHeader, main };
+module.exports = { claim, claimRun, reportRuns, runTextSha, taskKeys, invalid, journal, record, recordExit, stateOf, survey, withHeader, main };
 
 if (require.main === module) {
-  const res = main(process.argv.slice(2));
-  process.stdout.write(JSON.stringify(res.out, null, 2) + '\n');
-  if (res.message) process.stderr.write(res.message + '\n');
-  else if (res.out && res.out.next) process.stderr.write(res.out.next + '\n');
-  process.exitCode = res.code;
+  Promise.resolve(main(process.argv.slice(2))).then((res) => {
+    process.stdout.write(JSON.stringify(res.out, null, 2) + '\n');
+    if (res.message) process.stderr.write(res.message + '\n');
+    else if (res.out && res.out.next) process.stderr.write(res.out.next + '\n');
+    process.exitCode = res.code;
+  });
 }
