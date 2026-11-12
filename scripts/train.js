@@ -424,8 +424,16 @@ function identity(P) {
 
 // --priority: the full run of the train and its attribution are ahead of the waiting task runs in the heavy queue
 // (slots.zsh SLOT_PRIORITY; coordinator's decisions 2-5 of 2026-10-30 in p-runq): the arc waits for the train.
-// SLOT_EXEC_NOTE: the slot's command runs in a process group of its own, noted in <lock>/exec (train-lock.js).
+// SLOT_EXEC_NOTE: the slot's command runs in a process group of its own, noted in <lock>/exec (train-lock.js). Before
+// each run <lock>/exec keeps only the groups still alive (a group not gone after KILL stays): a pgid of an earlier run
+// of this train, given later to an unrelated group, would hold the lock of a dead dispatcher.
+const pruneNoted = (P) => {
+  const f = path.join(P.LOCK, 'exec');
+  if (!fs.existsSync(f)) return;
+  try { fs.writeFileSync(`${f}.tmp`, TL.notedGroups(P.LOCK).filter(TL.groupAlive).map((g) => `${g}\n`).join('')); fs.renameSync(`${f}.tmp`, f); } catch { /* the lock is ours; a failed prune leaves the file as it was */ }
+};
 const runGuards = (P, wt, extra = []) => new Promise((res) => {
+  pruneNoted(P);
   const ch = spawn('zsh', [path.join(H, 'guards-all.sh'), '--priority', ...extra, wt], { cwd: P.c.repoDir, env: Object.assign({}, P.env, { SLOT_EXEC_NOTE: path.join(P.LOCK, 'exec') }), stdio: ['ignore', 'pipe', 'pipe'] });
   let s = '';
   ch.stdout.on('data', (x) => { s += x; }); ch.stderr.on('data', (x) => { s += x; });
