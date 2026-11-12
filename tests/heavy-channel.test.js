@@ -185,7 +185,7 @@ const groupAlive = (g) => { try { process.kill(-g, 0); return true; } catch (e) 
     }
     ok('B\'8 docker: "environment: Docker and the stand are outside A2b"', /environment: Docker and the stand are outside A2b/.test((answer(d, dk) || {}).why || ''));
     ok('B\'8 stand.sh: the same refusal', /environment: Docker and the stand are outside A2b/.test((answer(d, st) || {}).why || ''));
-    ok('B\'8 guards-all.sh: "guard runs come with A2b-1c"', /guard runs come with A2b-1c/.test((answer(d, ga) || {}).why || ''));
+    ok('B\'8 guards-all.sh: refused with the hint of the guard-run kinds (heavy-req.js --kind select --base <ref> | --kind full)', /guards-all\.sh runs through the channel: heavy-req\.js --kind select --base <ref> \| --kind full/.test((answer(d, ga) || {}).why || ''));
     ok('B\'4 no slot line for the refused requests (no holder started)', slotLines(d).length === before, `${before} -> ${slotLines(d).length}`);
     const p = spawnSync(process.execPath, [CLIENT, '--', 'true'], { encoding: 'utf8', env: Object.assign({}, process.env, { CODIS_HEAVY_BOX: '', CODIS_HEAVY_ANSWERS: '' }) });
     ok('B\'5 heavy-req.js without the channel: exit 4, "channel closed for this role"', p.status === 4 && /channel closed for this role/.test(p.stdout + p.stderr), `${p.status} ${p.stdout}`);
@@ -522,7 +522,7 @@ const groupAlive = (g) => { try { process.kill(-g, 0); return true; } catch (e) 
     const t = { dir: '/x/task' };
     const on = RX.hostSection('prog', t, { heavy: true }), te = RX.hostSection('test', t, { heavy: true }), rv = RX.hostSection('review', t, { heavy: true });
     ok('B\'30 prog/test with the heavy channel: heavy-req.js -- <argv>, wait --id ... --max 25, cancel --id', [on, te].every((s) => /heavy-req\.js[^\n]*-- <argv>/.test(s) && /heavy-req\.js[^\n]*wait --id <id> --max 25/.test(s) && /heavy-req\.js[^\n]*cancel --id <id>/.test(s)), on);
-    ok('B\'30 guard runs (guards-all.sh) refused until A2b-1c; browser and file-watcher guards named as the environment', /guard runs come with A2b-1c/.test(on) && /browser/.test(on) && /file watcher/.test(on) && !/needs the heavy channel \(A2b\)/.test(on), on);
+    ok('B\'30 guard runs through --kind full / --kind select; browser and file-watcher guards named as the environment', /--kind full/.test(on) && !/A2b-1c/.test(on) && /browser/.test(on) && /file watcher/.test(on) && !/needs the heavy channel \(A2b\)/.test(on), on);
     ok('B\'30 review: no heavy line', !/heavy-req/.test(rv), rv);
     const C = require(path.join(S, 'config.js'));
     const cfgDir = path.join(T, 'cfg');
