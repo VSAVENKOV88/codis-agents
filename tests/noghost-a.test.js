@@ -49,7 +49,7 @@ try {
   e = errs({ guardSubsetCommand: SUBJ, remoteRun: Object.assign({}, RR, { localCommand: 'cd {wt}/srv && npm run guards -- --all {onlyArgs} --concurrency {jobs}' }) });
   ok('A3. an explicit localCommand with {jobs} -> an error naming the key and {jobs}', /remoteRun\.localCommand: \{jobs\} is not filled in here \(only \{wt\}, \{onlyArgs\}\)/.test(e) && !/\(default/.test(e), e);
   e = errs({ guardCommand: 'cd {wt} && run --all {onlyArgs}' });
-  ok('A4. guardCommand with {onlyArgs} (the full run fills none) -> an error', /guardCommand: \{onlyArgs\} is not filled in here \(only \{wt\}, \{jobs\}, \{limitFile\}\)/.test(e), e);
+  ok('A4. guardCommand with {onlyArgs} (the full run fills none) -> an error', /guardCommand: \{onlyArgs\} is not filled in here \(only \{wt\}, \{jobs\}, \{limitFile\}, \{skipArgs\}\)/.test(e), e);
   e = errs({ guardCommand: 'cd {wt} && run --concurrency {job}' });
   ok('A5. guardCommand with a typo {job} -> "unknown placeholder {job}"', /guardCommand: unknown placeholder \{job\}/.test(e), e);
   e = errs({ guardCommand: 'cd {wt} && echo ${HOME} ${=X} {a,b} {1..3} && run --concurrency {jobs}' });
