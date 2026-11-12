@@ -2,7 +2,7 @@
 'use strict';
 // The heavy channel under the real codex sandbox (p-codex A2b-1b, cells B'1, B'12, B'13, B'15): scripts/heavy-service.js
 // runs the command as `codex sandbox -P <profile of the executor> -- zsh <class>.sh <argv>` with no model call and a
-// throwaway CODEX_HOME. The profile: write to the worktree and the task folder, its own TMPDIR inside the task folder,
+// throwaway CODEX_HOME; a here-doc of zsh works there (C2a-21, TMPPREFIX in the white list). The profile: write to the worktree and the task folder, its own TMPDIR inside the task folder,
 // /tmp and the system TMPDIR read only, .git and .codex read only, the network only loopback (owner 2026-11-11 "a").
 // The probe of the first run of a call checks it; a codex outside the list of the channel refuses with "no safe
 // executor". Skipped without macOS or codex.
@@ -122,6 +122,16 @@ const tailOf = (a) => (a && a.log && fs.existsSync(a.log) ? fs.readFileSync(a.lo
     const a = await req(d, ['--max', '60', '--', 'zsh', 'port.guard.sh']);
     ok('B\'12 x B\'10 under codex sandbox: the run\'s config outside the roots, none in the worktree - the guard it marks runs under the exclusive lock of its slot directory',
       a.state === 'done' && a.rc === 0 && /LOCKRC=75\b/.test(tailOf(a)) && path.dirname(a.slot || '') === runSlots, JSON.stringify(a) + tailOf(a));
+    await svc.close();
+  }
+  // ---- C2a-21: a here-doc of zsh in the executor - zsh writes its temporary file under TMPPREFIX, which the white list
+  // points into the run's own TMPDIR (the zsh default /tmp/zsh is read only in the sandbox); the probe of the call passes
+  {
+    const d = setup();
+    const svc = open(d);
+    const a = await req(d, ['--max', '60', '--', 'zsh', '-c', 'cat <<E\nHEREDOC-OK\nE']);
+    ok('C2a-21 zsh -c \'cat <<E ...\' under codex sandbox: done rc 0, the here-doc printed (the probe of the call green)',
+      a.state === 'done' && a.rc === 0 && /HEREDOC-OK/.test(tailOf(a)), JSON.stringify(a) + tailOf(a));
     await svc.close();
   }
   // ---- B'15: a codex outside the list of the channel: "no safe executor", nothing runs, no slot taken

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 // Guard runs of a codex role through the heavy channel under the real codex sandbox (p-codex-A2b-1c1, cells C1-1, C1-6,
-// C1-8, C1-9, C1-11, C1-12): guards-all.sh runs outside the sandbox in its own heavy slot, and every command of the
+// C1-8, C1-9, C1-11, C1-12; p-codex-A2b-1c2a C2a-8: a guard with a declared need is skipped): guards-all.sh runs outside the sandbox in its own heavy slot, and every command of the
 // project - the runner in each mode of guardCommand, the selection, a single rerun - runs as `codex sandbox -P
 // codis-heavy` through scripts/heavy-exec.js, in the group of the slot's command. No model call; a throwaway CODEX_HOME
 // per run. Skipped without macOS or codex.
@@ -103,6 +103,18 @@ const run = async (d, args) => {
     const log = read(path.join(d.P.shared, 'guards-wt.txt'));
     ok(`C1-8 ${mode} under codex sandbox: the runner in seatbelt, rc 0${mode === 'adaptive' ? '; {limitFile} read, <limitFile>.active refused' : ''}`,
       a.state === 'done' && a.rc === 0 && /RUNNER sb=seatbelt/.test(log) && (mode !== 'adaptive' || (/^LIMIT=\d/m.test(log) && /^ACTIVE=refused/m.test(log))), JSON.stringify(a) + log.slice(0, 800));
+    await d.svc.close();
+  }
+  // ---- C2a-8 under the sandbox: guardNeeds, fixed {jobs} with {skipArgs} - the marked guard is passed as --skip and never
+  // runs; the others run in seatbelt; the answer: rc 79, verdict incomplete, notRun with its need and reason
+  {
+    const d = setup({ needs: { marker: '#' }, guards: { 'a.g': 'exit 0', 'b.g': '# guards:needs browser — no browser in the sandbox\nprint -r -- B-RAN\n' } });
+    const a = await run(d, ['--kind', 'full']);
+    const log = read(path.join(d.P.shared, 'guards-wt.txt'));
+    ok('C2a-8 --kind full under codex sandbox with a marked guard: --skip passed, it did not run, the others in seatbelt; rc 79, verdict incomplete, notRun guards/b.g (needs browser)',
+      a.state === 'done' && a.rc === 79 && a.verdict === 'incomplete' && Array.isArray(a.notRun) && a.notRun.map((x) => x.guard).join() === 'guards/b.g' && a.notRun[0].needs[0] === 'browser'
+      && /^SKIPPED guards\/b\.g$/m.test(log) && !/B-RAN/.test(log) && /RUNNER sb=seatbelt/.test(log) && /^incomplete: 1 guard not run in the sandbox of a codex role: guards\/b\.g \(needs browser: no browser in the sandbox\)$/m.test(log),
+      JSON.stringify(a) + log.slice(0, 1500));
     await d.svc.close();
   }
   done();
