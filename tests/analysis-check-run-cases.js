@@ -20,6 +20,7 @@ const TMP = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'codis-acr-'))
 const kids = new Set();
 process.on('exit', () => {
   for (const pid of kids) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } }
+  for (const c of allFakes) for (const pid of fakePids(c)) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } }
   try { fs.rmSync(TMP, { recursive: true, force: true }); } catch { /* best effort */ }
 });
 
@@ -31,6 +32,7 @@ fs.writeFileSync(path.join(BIN, 'codex'), `#!${process.execPath}
 const fs = require('fs');
 const a = process.argv.slice(2);
 for (const [sig, code] of [['SIGTERM', 143], ['SIGINT', 130], ['SIGHUP', 129]]) process.on(sig, () => process.exit(code));
+fs.appendFileSync(process.env.FAKE_CODEX_LOG + '.pids', process.pid + '\n');
 process.stdout.write('fake codex on stdout\\n');
 let input = '';
 process.stdin.on('data', (d) => { input += d; });
@@ -75,6 +77,9 @@ const collect = (c, extra) => script(['collect', '--shared', c.S, '--analysis', 
 const RUN = (c, n) => ['run', '--shared', c.S, '--analysis', c.A, '--sha', c.sha, '--run', String(n || 1)];
 const runSync = (c, n, env, extra) => script([...RUN(c, n), ...(extra || [])], env || envOf(c));
 const calls = (c) => (fs.existsSync(c.log) ? fs.readFileSync(c.log, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);
+// Every fake codex started for c, also one still waiting for the end of its stdin (it writes its pid before reading).
+const fakePids = (c) => (fs.existsSync(c.log + '.pids') ? fs.readFileSync(c.log + '.pids', 'utf8').split('\n').filter(Boolean).map(Number) : []);
+const allFakes = [];
 const runOf = (o, n) => ((o && o.runs) || []).find((r) => r.run === n) || null;
 const f = (c, n, s) => path.join(c.runs, `${n}.${s}`);
 const readJ = (p) => { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return null; } };
@@ -97,9 +102,10 @@ function runAsync(c, env, deadline) {
   let timedOut = false;
   const timer = setTimeout(() => {
     timedOut = true;
-    for (const x of calls(c)) { try { process.kill(x.pid, 'SIGKILL'); } catch { /* gone */ } }
+    for (const pid of fakePids(c)) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } }
     try { child.kill('SIGKILL'); } catch { /* gone */ }
   }, deadline || 20000);
+  allFakes.push(c);
   const finished = new Promise((res) => child.on('close', (status, signal) => {
     clearTimeout(timer);
     kids.delete(child.pid);
@@ -290,7 +296,7 @@ if (!fs.existsSync(SCRIPT)) done();
     prep(c);
     const first = runAsync(c, envOf(c, { FAKE_CODEX_GATE: c.gate }), 15000);
     await started(c);
-    for (const x of calls(c)) { try { process.kill(x.pid, 'SIGKILL'); } catch { /* gone */ } }
+    for (const pid of fakePids(c)) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } }
     first.child.kill('SIGKILL');
     await first.finished;
     const col = collect(c);
