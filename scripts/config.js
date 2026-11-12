@@ -390,6 +390,9 @@ function resolve(raw, opts = {}) {
   for (const [k, v] of Object.entries(kinds)) {
     if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(k)) errors.push(`slots.kinds.${k}: a kind is a plain name (a-z, 0-9, _ and -)`);
     if (v !== 'medium' && v !== 'heavy') errors.push(`slots.kinds.${k}: expected "medium" or "heavy", not ${JSON.stringify(v)}`);
+    // the kinds of a guard run of the heavy channel (scripts/heavy-service.js GUARD_KINDS): the adapter runs guards-all.sh,
+    // which takes a heavy slot of its own, so they are never a class of the project
+    if (k === 'full' || k === 'select') errors.push(`slots.kinds.${k}: a reserved kind of the heavy channel (a guard run of a codex role), not a kind of the project`);
   }
   for (const k of ['medium', 'heavy', 'total', 'jobsAlone', 'jobsShared']) {
     if (!(Number.isInteger(c.slots[k]) && c.slots[k] >= 1)) errors.push(`slots.${k}: expected a positive integer`);

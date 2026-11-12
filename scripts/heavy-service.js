@@ -1,5 +1,5 @@
 'use strict';
-// The heavy channel of the role adapter (p-codex A2b-1b, mechanism K-b): a programmer or tester on codex cannot take a
+// The heavy channel of the role adapter (mechanism K-b): a programmer or tester on codex cannot take a
 // memory slot inside its sandbox (the slot directory is not a write root), so it asks the adapter to run a heavy
 // command (scripts/heavy-req.js); the adapter takes the slot outside the sandbox and runs the command in a sandbox of
 // the role's rights. scripts/role-exec.js opens one service per prog/test call (cfg.heavy) and closes it when the role's
@@ -7,13 +7,15 @@
 //
 // The box (<call folder>/heavy) is an untrusted source, read as the commit channel reads its box
 // (scripts/commit-service.js readNoFollow: no link, no FIFO, a size limit): <32 hex>.json is a request {id, argv, kind?,
-// cwd?} - no other field -, <32 hex>.cancel asks to stop that request. Answers <id>.json lie in the adapter's state folder
+// cwd?} or a guard run {id, kind: "full"} / {id, kind: "select", base} (cwd? allowed) - no other field -, <32 hex>.cancel
+// asks to stop that request. Answers <id>.json lie in the adapter's state folder
 // (<stateDir>/<task>/heavy-calls/<call>/), rewritten on every change of state.
 //
 // One run at a time per call (owner decision 4): a second request waits in the adapter's queue, never with a second
 // ticket. The class of a run: slots.kinds of the project config (decision 1; a kind not in it, or no kind, is heavy);
 // an argv that is a guard marked guards:exclusive is heavy whatever its kind (only heavy.sh takes the exclusive lock).
-// Refused before the queue: docker and the stand (decision 9), guards-all.sh (guard runs come with part A2b-1c).
+// Refused before the queue: docker and the stand (decision 9), guards-all.sh in an argv (a guard run is a kind of its
+// own, below: inside the executor guards-all.sh could only wait behind its own held slot).
 //
 // A run, every step journaled before it is taken (<stateDir>/<task>/heavy.jsonl, append + fsync, one writer):
 //   queued -> holding: scripts/slot-hold.sh <class> outside the sandbox (its environment without CODIS_SLOT_HELD and
@@ -30,7 +32,7 @@
 //   role of Claude.
 //   The end: the gate exited -> members left in G are stopped; a stop (the role's cancel, the end of the call, a
 //   signal of the adapter) -> stopping, TERM and CONT to G, killGraceMs, KILL, up to emptyWaitMs for G to be gone
-//   (owner 2026-11-11: 30 s and 30 s; polled every 100 ms, the period slot_run waits for its holder). G gone ->
+//   (30 s each by default; polled every 100 ms, the period slot_run waits for its holder). G gone ->
 //   group-empty, the marker removed, "release" to the holder, then done (the code from the file rc, also when a stop
 //   came meanwhile: a result is never turned into a stop) or stopped. G not gone, or a signal refused with EPERM ->
 //   undetermined: the marker stays and keeps the slot busy until G ends, the holder is released all the same.
@@ -47,6 +49,22 @@
 // file outside the roots refused, listen and connect on 127.0.0.1 working, an outside address refused,
 // CODEX_SANDBOX=seatbelt, no variable outside the list; anything else refuses every request "environment: no safe
 // executor".
+//
+// A guard run (kind full, or kind select with base; the kinds are reserved, config.js refuses them in slots.kinds): the
+// argv is the adapter's, never the role's - `zsh <scripts>/guards-all.sh --local --quarantine-read-only <wt>` or
+// `... --local --select <base> <wt>`; refused before the queue: tracked changes in the worktree ("commit first"), a base
+// that is not a plain ref name or not a commit. guards-all.sh runs outside the sandbox and takes a heavy slot of its own
+// (its queue, worker budget, .jobs/.limit, exclusive lock, meta, log and read-only quarantine are those of any run), so
+// the adapter takes no slot and writes no marker for it: queued -> the probe -> the executor spec
+// <stateDir>/<task>/heavy-runs/<id>/exec.json ({bin, args, env, label}: codex, the profile below, the white list, its
+// own TMPDIR) -> the gate with the environment of the holder plus CODIS_GUARDS_EXEC=<spec> -> running (G, no slot) ->
+// go. Every command of the project inside the run goes into the executor through scripts/heavy-exec.js, in the group of
+// the run's slot command. While guards-all.sh waits for its slot or workers, the last line of the gate's log that starts
+// with "waiting for" is the why of the answer (read on the poll of the box). A stop: TERM and CONT to G, up to
+// killGraceMs + emptyWaitMs for G to be gone (guards-all.sh's slot_run waits for its holder, which stops the runner with
+// its own two pauses), KILL, emptyWaitMs. G gone -> group-empty, the spec and the run's TMPDIR removed (out.log stays),
+// done or stopped. The answer adds base, where ("local full run" | "local selection") and guardsLog (the line "guards
+// log: <path>" of guards-all.sh).
 //
 // Recovery (a new call of the task, chain-run.js status and its start check): a run left without a final state is
 // judged by its group: G alive -> "running without adapter" (the task waits for the coordinator: resolve --heavy ...
@@ -81,6 +99,9 @@ const SAFE_PATH = '/usr/bin:/bin:/usr/sbin:/sbin';
 const NAME_RE = /^([0-9a-f]{32})\.json$/;
 const CANCEL_RE = /^([0-9a-f]{32})\.cancel$/;
 const KIND_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+// the kinds of a guard run; a base is a plain ref name, never an option of git (no leading dash)
+const GUARD_KINDS = new Set(['full', 'select']);
+const BASE_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/;
 const FINAL = new Set(['done', 'stopped', 'cancelled-before-start', 'undetermined', 'refused']);
 // The gate: waits for one line "go" on stdin (EOF -> 70, another line -> 71), writes the file started, runs the
 // executor as its child (never exec: the code must reach the file rc) and writes its code, published by a rename.
@@ -249,12 +270,21 @@ function openJournal(file) {
   };
 }
 
-// The request: exactly {id, argv, kind?, cwd?}; argv a non-empty array of strings. The reason, or null.
+// The request: exactly {id, argv, kind?, cwd?}, argv a non-empty array of strings; or a guard run {id, kind: "full",
+// cwd?} / {id, kind: "select", base, cwd?} without argv. The reason, or null.
 function requestProblem(r, id) {
   if (!r || typeof r !== 'object' || Array.isArray(r)) return 'the request is not a JSON object';
-  const extra = Object.keys(r).filter((k) => !['id', 'argv', 'kind', 'cwd'].includes(k));
-  if (extra.length) return `fields other than id, argv, kind and cwd: ${extra.slice(0, 5).join(', ')}`;
+  const extra = Object.keys(r).filter((k) => !['id', 'argv', 'kind', 'cwd', 'base'].includes(k));
+  if (extra.length) return `fields other than id, argv, kind, cwd and base: ${extra.slice(0, 5).join(', ')}`;
   if (r.id !== id) return 'the id differs from the name of the request file';
+  if (r.cwd !== undefined && r.cwd !== null && typeof r.cwd !== 'string') return 'cwd is not a string';
+  if (GUARD_KINDS.has(r.kind)) {
+    if (r.argv !== undefined) return `argv is not given with kind ${r.kind}: the adapter runs guards-all.sh itself`;
+    if (r.kind === 'full' && r.base !== undefined) return 'base belongs to kind select only';
+    if (r.kind === 'select' && (typeof r.base !== 'string' || !BASE_RE.test(r.base))) return 'kind select needs base, a branch name or a commit (letters, digits, . _ / -, not starting with -)';
+    return null;
+  }
+  if (r.base !== undefined) return 'base belongs to kind select only';
   if (!Array.isArray(r.argv) || !r.argv.length) return 'argv is not a non-empty array';
   if (r.argv.length > MAX_ARGV) return `more than ${MAX_ARGV} arguments`;
   if (r.argv.some((a) => typeof a !== 'string' || a.includes('\0'))) return 'an argument that is not a string or holds a NUL';
@@ -263,11 +293,12 @@ function requestProblem(r, id) {
   if (r.cwd !== undefined && r.cwd !== null && typeof r.cwd !== 'string') return 'cwd is not a string';
   return null;
 }
-// Out of the channel before the queue: docker and the stand (owner decision 9), guard runs (part A2b-1c).
+// Out of the channel before the queue: docker and the stand (owner decision 9); guards-all.sh in an argv (a guard run
+// is the kind full or select, with the adapter's argv).
 function scopeProblem(argv, kind) {
   const names = argv.map((a) => path.basename(a));
   if (kind === 'docker' || names[0] === 'docker' || names[0] === 'docker-compose' || names.includes('stand.sh')) return 'environment: Docker and the stand are outside A2b';
-  if (names.includes('guards-all.sh')) return 'environment: guard runs come with A2b-1c';
+  if (names.includes('guards-all.sh')) return 'environment: guards-all.sh runs through the channel: heavy-req.js --kind select --base <ref> | --kind full';
   return null;
 }
 
@@ -306,6 +337,8 @@ function openHeavyService(o) {
   const boxReal = fs.realpathSync(o.box);
   const wtReal = rolePlaces.realish(o.wt);
   const tdirReal = rolePlaces.realish(o.tdir);
+  // the files of a guard run that live as long as its group: the executor spec and the run's TMPDIR
+  const guardFiles = (r) => [path.join(runsDir, r.id, 'exec.json')].concat(r.call ? [path.join(tdirReal, 'heavy-tmp', r.call, r.id)] : []);
 
   // ---- the journal and the recovery of earlier calls
   let broken = null;
@@ -327,6 +360,8 @@ function openHeavyService(o) {
           if (Number.isInteger(r.pgid) && r.slot) fs.rmSync(`${r.slot}.exec.${r.pgid}`, { force: true });
           r.state = s.state;
         }
+        // the executor spec and TMPDIR of a guard run live only as long as its group: gone once the run is final
+        if (GUARD_KINDS.has(r.kind) && FINAL.has(r.state) && r.state !== 'undetermined') guardFiles(r).forEach((f) => fs.rmSync(f, { recursive: true, force: true }));
         if (s.state === 'running without adapter') broken = broken || `environment: run ${r.id} of an earlier call is running without adapter (${s.why}): the task waits for the coordinator (chain-run.js resolve --heavy)`;
         else if (r.state === 'undetermined') broken = broken || `environment: run ${r.id} of an earlier call is undetermined: the task waits for the coordinator (chain-run.js resolve --heavy)`;
         ids.set(r.id, { hash: r.hash, state: r.state });
@@ -344,8 +379,12 @@ function openHeavyService(o) {
   };
   const publicOf = (r) => {
     const a = { state: r.state, kind: r.kind || null, cls: r.cls || null };
-    for (const k of ['position', 'why', 'slot', 'pgid', 'log', 'rc']) if (r[k] !== undefined && r[k] !== null) a[k] = r[k];
-    if (FINAL.has(r.state) && r.log) a.tail = tailOf(r.log);
+    for (const k of ['position', 'why', 'slot', 'pgid', 'log', 'rc', 'base', 'where']) if (r[k] !== undefined && r[k] !== null) a[k] = r[k];
+    if (FINAL.has(r.state) && r.log) {
+      a.tail = tailOf(r.log);
+      const g = r.guard ? /^guards log: (.+)$/m.exec(readText(r.log) || '') : null;
+      if (g) a.guardsLog = g[1];
+    }
     return a;
   };
   const show = (r) => writeAnswer(r.id, publicOf(r));
@@ -379,7 +418,7 @@ function openHeavyService(o) {
   // ---- the class of a run
   const holderEnv = () => {
     const e = Object.assign({}, userEnv);
-    for (const k of ['CODIS_SLOT_HELD', 'SLOT_EXEC_NOTE', 'SLOT_PATH', 'SLOT_KIND', 'SLOT_RETRY_RC', 'SLOT_PRIORITY', 'CODIS_HEAVY_BOX', 'CODIS_HEAVY_ANSWERS']) delete e[k];
+    for (const k of ['CODIS_SLOT_HELD', 'SLOT_EXEC_NOTE', 'SLOT_PATH', 'SLOT_KIND', 'SLOT_RETRY_RC', 'SLOT_PRIORITY', 'CODIS_HEAVY_BOX', 'CODIS_HEAVY_ANSWERS', 'CODIS_GUARDS_EXEC']) delete e[k];
     if (o.config) e.CODIS_AGENTS_CONFIG = o.config;
     return e;
   };
@@ -399,11 +438,13 @@ function openHeavyService(o) {
   })();
   const gitDir = (() => { const g = which('git', userEnv.PATH); return g ? path.dirname(g) : null; })();
   const locale = (v) => (typeof v === 'string' && /^[A-Za-z0-9_.@-]+$/.test(v) ? v : 'C');
+  // x.slot left out (the spec of a guard run): heavy-exec.js adds SLOTS_DIR, CODIS_SLOT_HELD and GUARDS_EXCLUSIVE_LOCK
+  // from the slot guards-all.sh holds
   const execEnv = (x) => {
     const dirs = [path.dirname(process.execPath)].concat(gitDir ? [gitDir] : [], SAFE_PATH.split(':'));
     const e = { PATH: [...new Set(dirs)].join(':'), HOME: typeof userEnv.HOME === 'string' ? userEnv.HOME : '/', CODEX_HOME: x.codexHome, TMPDIR: x.tmpdir,
-      LANG: locale(userEnv.LANG), LC_ALL: locale(userEnv.LC_ALL || userEnv.LANG), SLOTS_DIR: path.dirname(x.slot), CODIS_SLOT_HELD: `${x.cls} ${x.slot}`,
-      GUARDS_EXCLUSIVE_LOCK: x.lock };
+      LANG: locale(userEnv.LANG), LC_ALL: locale(userEnv.LC_ALL || userEnv.LANG) };
+    if (x.slot) Object.assign(e, { SLOTS_DIR: path.dirname(x.slot), CODIS_SLOT_HELD: `${x.cls} ${x.slot}`, GUARDS_EXCLUSIVE_LOCK: x.lock });
     // the nested <class>.sh and every heavy.sh / medium.sh of the argv read the run's config, as the holder and the
     // exclusive check do: its guardExclusive decides which guard takes the exclusive lock, whatever the worktree holds
     if (o.config) e.CODIS_AGENTS_CONFIG = o.config;
@@ -415,9 +456,10 @@ function openHeavyService(o) {
       .concat([path.join(wtReal, '.git'), path.join(wtReal, '.codex')].map((r) => `${JSON.stringify(r)}="read"`), ['":slash_tmp"="read"']);
     return `permissions.${PROFILE}={extends=":workspace",filesystem={${fsx.join(',')}},network={enabled=true,mode="limited",allow_local_binding=true}}`;
   };
+  // codex sandbox with the profile of the role's rights, up to -C <cwd> -- <argv> (heavy-exec.js adds those for a guard run)
+  const sandboxArgs = () => ['sandbox', '--enable', 'network_proxy', '-c', `default_permissions=${JSON.stringify(PROFILE)}`, '-c', profileText(), '-P', PROFILE];
   const specOf = (inner, env, cwd) => {
-    let spec = { bin: codexBin, args: ['sandbox', '--enable', 'network_proxy', '-c', `default_permissions=${JSON.stringify(PROFILE)}`, '-c', profileText(), '-P', PROFILE, '-C', cwd, '--'].concat(inner),
-      inner, env, cwd };
+    let spec = { bin: codexBin, args: sandboxArgs().concat(['-C', cwd, '--'], inner), inner, env, cwd };
     if (inject.executor) spec = inject.executor(spec) || spec;
     return spec;
   };
@@ -461,6 +503,9 @@ function openHeavyService(o) {
     if (j.loopback !== 'connected') return { error: `listen and connect on 127.0.0.1 failed (${j.loopback})` };
     if (j.outside === 'connected') return { error: `an outside address (${PROBE_OUTSIDE}) was reached` };
     if (j.sandbox !== 'seatbelt') return { error: `CODEX_SANDBOX=${j.sandbox}` };
+    // the variables of the adapter's side of the channel never reach the executor, whatever the white list says
+    const side = (j.names || []).filter((n) => ['CODIS_GUARDS_EXEC', 'CODIS_HEAVY_BOX', 'CODIS_HEAVY_ANSWERS'].includes(n));
+    if (side.length) return { error: `variables of the channel in the executor: ${side.join(', ')}` };
     const allowed = new Set(Object.keys(env).concat(CODEX_ADDED, PROXY_ADDED));
     const extra = (j.names || []).filter((n) => !allowed.has(n));
     if (extra.length) return { error: `variables outside the white list: ${extra.slice(0, 5).join(', ')}` };
@@ -523,6 +568,7 @@ function openHeavyService(o) {
     if (r.cancel) return finalize(r, 'cancelled-before-start', { why: r.cancel });
     if (!ready) ready = await probe();
     if (ready.error) return finalize(r, 'refused', { why: `environment: no safe executor: ${ready.error}` });
+    if (r.guard) return executeGuards(r);
     let gate = null, slot = null;
     for (;;) {
       if (r.cancel) return finalize(r, 'cancelled-before-start', { why: r.cancel });
@@ -609,6 +655,59 @@ function openHeavyService(o) {
     const g = await gate.exited;
     return finalize(r, 'stopped', { why: how.stop || `exit code lost: the gate ended ${g.sig ? `by ${g.sig}` : `with ${g.rc}`}` });
   };
+  // ---- a guard run: guards-all.sh in the gate, its own slot; the executor through heavy-exec.js
+  const executeGuards = async (r) => {
+    const dir = path.join(runsDir, r.id);
+    fs.rmSync(dir, { recursive: true, force: true });
+    const tmpdir = path.join(tdirReal, 'heavy-tmp', o.callId, r.id);
+    for (const d of [dir, path.join(dir, 'codex-home'), tmpdir]) fs.mkdirSync(d, { recursive: true });
+    Object.assign(r, { log: path.join(dir, 'out.log'), started: path.join(dir, 'started'), rcFile: path.join(dir, 'rc'), call: o.callId });
+    const clean = () => { for (const f of guardFiles(r)) fs.rmSync(f, { recursive: true, force: true }); };
+    const spec = { bin: codexBin, args: sandboxArgs(), env: execEnv({ codexHome: path.join(dir, 'codex-home'), tmpdir }), label: `codex ${o.task} ${role} ${r.id}` };
+    const specFile = path.join(dir, 'exec.json');
+    let logFd, gate;
+    try {
+      fs.writeFileSync(specFile, JSON.stringify(spec) + '\n', { mode: 0o600 });
+      if (r.cancel) { clean(); return finalize(r, 'cancelled-before-start', { why: r.cancel }); }
+      const env = Object.assign(holderEnv(), { CODIS_GUARDS_EXEC: specFile });
+      logFd = fs.openSync(r.log, 'w', 0o644);
+      gate = spawn('/bin/sh', ['-c', GATE, 'gate', r.started, r.rcFile].concat(r.argv), { cwd: wtReal, env, detached: true, stdio: ['pipe', logFd, logFd] });
+    } catch (e) {
+      if (logFd !== undefined) fs.closeSync(logFd);
+      clean();
+      return finalize(r, 'cancelled-before-start', { why: `environment: the gate could not be started (${e.code || e.message})` });
+    }
+    fs.closeSync(logFd);
+    gate.stdin.on('error', () => { /* the gate is gone */ });
+    gate.exited = new Promise((f) => gate.on('exit', (rc, sig) => f({ rc, sig })));
+    gate.on('error', () => { /* the exit event follows */ });
+    r.pgid = gate.pid;
+    append({ ev: 'running', id: r.id, pgid: gate.pid, lstart: lstartOf(gate.pid), log: r.log, started: r.started, rcFile: r.rcFile });
+    if (inject.beforeGo) inject.beforeGo(r);
+    gate.stdin.end('go\n');
+    r.state = 'running'; show(r);
+    const how = await Promise.race([gate.exited.then((x) => ({ exit: x })), r.stopP.then((reason) => ({ stop: reason }))]);
+    let res = 'empty';
+    if (how.stop) {
+      append({ ev: 'stopping', id: r.id, reason: how.stop });
+      r.state = 'stopping'; show(r);
+      res = await stopGroup(r.pgid, graceMs + waitMs, waitMs, alive);
+    } else if (alive(r.pgid)) res = await stopGroup(r.pgid, graceMs + waitMs, waitMs, alive);
+    if (res !== 'empty') return finalize(r, 'undetermined', { why: `environment: run undetermined: the group ${r.pgid} ${res === 'eperm' ? 'refused a signal (EPERM)' : 'was not gone after KILL'}` });
+    append({ ev: 'group-empty', id: r.id });
+    clean();
+    r.why = null;
+    const rc = readText(r.rcFile);
+    if (rc !== null && /^\d+\s*$/.test(rc)) return finalize(r, 'done', { rc: +rc });
+    const g = await gate.exited;
+    return finalize(r, 'stopped', { why: how.stop || `exit code lost: the gate ended ${g.sig ? `by ${g.sig}` : `with ${g.rc}`}` });
+  };
+  // the why of a guard run while guards-all.sh waits: the last line of the gate's log, when it starts with "waiting for"
+  const guardWhy = (r) => {
+    const last = tailOf(r.log).split('\n').map((l) => l.trim()).filter(Boolean).pop() || '';
+    const why = /^waiting for /.test(last) ? last : null;
+    if (why !== r.why) { r.why = why; show(r); }
+  };
   const pump = () => {
     if (active || !queue.length) return;
     active = queue.shift();
@@ -635,6 +734,15 @@ function openHeavyService(o) {
 
   // ---- the box: a scan reads new requests and cancels; fs.watch is only a signal, the poll goes on
   const reusedSeen = new Set();
+  // a guard run tests the committed HEAD: tracked changes refuse it; a base must name a commit. The reason, or null.
+  const guardProblem = (q) => {
+    const git = (...a) => spawnSync(gitDir ? path.join(gitDir, 'git') : 'git', ['-C', wtReal].concat(a), { encoding: 'utf8', env: holderEnv(), timeout: 60000 });
+    const st = git('status', '--porcelain', '--untracked-files=no');
+    if (st.status !== 0) return `environment: git status in the worktree failed (${String(st.stderr || st.error || '').trim().slice(0, 300)})`;
+    if (String(st.stdout).trim()) return 'tracked changes in the worktree: commit first (a guard run tests the committed HEAD)';
+    if (q.kind === 'select' && git('rev-parse', '--verify', '--quiet', `${q.base}^{commit}`).status !== 0) return `unknown base ${q.base}: not a commit of the worktree's repository`;
+    return null;
+  };
   const handle = (id, rd) => {
     const hash = rd.bytes ? sha256(rd.bytes) : `error:${rd.code}`;
     const known = ids.get(id);
@@ -653,20 +761,28 @@ function openHeavyService(o) {
     try { q = JSON.parse(rd.bytes.toString('utf8')); } catch { return refuse(id, hash, 'the request is not JSON'); }
     const why = requestProblem(q, id);
     if (why) return refuse(id, hash, why);
-    const sp = scopeProblem(q.argv, q.kind);
+    const guard = GUARD_KINDS.has(q.kind);
+    const sp = guard ? null : scopeProblem(q.argv, q.kind);
     if (sp) return refuse(id, hash, sp);
     const cwd = rolePlaces.realish(q.cwd ? path.resolve(wtReal, q.cwd) : wtReal);
     if (!rolePlaces.within(cwd, wtReal)) return refuse(id, hash, `cwd ${q.cwd} resolves to ${cwd}, outside the worktree`);
     if (!fs.existsSync(cwd)) return refuse(id, hash, `cwd ${q.cwd} does not exist`);
     if (closing) return refuse(id, hash, closing);
     const kind = q.kind || null;
-    let cls = kind && own(kinds, kind) && kinds[kind] === 'medium' ? 'medium' : 'heavy';
+    let cls = !guard && kind && own(kinds, kind) && kinds[kind] === 'medium' ? 'medium' : 'heavy';
     if (cls === 'medium' && exclusive(q.argv, cwd)) cls = 'heavy';
-    const r = { id, hash, kind, cls, argv: q.argv, cwd, state: 'queued', why: null, waiters: [] };
+    let argv = q.argv;
+    if (guard) {
+      const gp = guardProblem(q);
+      if (gp) return refuse(id, hash, gp);
+      argv = ['zsh', path.join(__dirname, 'guards-all.sh'), '--local'].concat(kind === 'select' ? ['--select', q.base] : ['--quarantine-read-only'], [wtReal]);
+    }
+    const r = Object.assign({ id, hash, kind, cls, argv, cwd: guard ? wtReal : cwd, state: 'queued', why: null, waiters: [] },
+      guard ? { guard: true, where: kind === 'select' ? 'local selection' : 'local full run' } : {}, kind === 'select' ? { base: q.base } : {});
     r.stopP = new Promise((f) => { r.stopF = f; });
     runs.set(id, r);
     ids.set(id, { hash, state: 'queued' });
-    try { append({ ev: 'queued', id, hash, kind, cls, argv: q.argv, cwd }); } catch (e) { return finalize(r, 'refused', { why: `environment: the heavy journal cannot be written (${e.code || e.message})` }, true); }
+    try { append(Object.assign({ ev: 'queued', id, hash, kind, cls, argv, cwd: r.cwd }, r.base ? { base: r.base } : {})); } catch (e) { return finalize(r, 'refused', { why: `environment: the heavy journal cannot be written (${e.code || e.message})` }, true); }
     queue.push(r);
     show(r);
     if (active) behind();
@@ -682,6 +798,7 @@ function openHeavyService(o) {
       const c = CANCEL_RE.exec(name);
       if (c && runs.get(c[1]) && runs.get(c[1]).stopF) stopRun(runs.get(c[1]), 'cancelled by the role');
     }
+    if (active && active.guard && active.state === 'running' && active.log) guardWhy(active);
     reqs.sort((a, b) => ((a.rd.st ? a.rd.st.birthtimeMs : 0) - (b.rd.st ? b.rd.st.birthtimeMs : 0)) || (a.id < b.id ? -1 : 1));
     for (const x of reqs) { try { handle(x.id, x.rd); } catch (e) { note(`request ${x.id}: ${e.message}`); } }
   };
@@ -731,7 +848,7 @@ function status(stateDir, task) {
   for (const r of j.runs.values()) {
     const s = judge(r);
     const e = { id: r.id, kind: r.kind || null, cls: r.cls || null, state: s.state };
-    for (const [k, v] of [['why', s.why], ['rc', s.rc], ['slot', r.slot], ['pgid', r.pgid], ['log', r.log], ['call', r.call]]) if (v !== undefined && v !== null) e[k] = v;
+    for (const [k, v] of [['why', s.why], ['rc', s.rc], ['base', r.base], ['slot', r.slot], ['pgid', r.pgid], ['log', r.log], ['call', r.call]]) if (v !== undefined && v !== null) e[k] = v;
     if (!FINAL.has(s.state) && r.call) {
       try { const a = JSON.parse(fs.readFileSync(path.join(stateDir, task, 'heavy-calls', r.call, `${r.id}.json`), 'utf8')); if (a.position) e.position = a.position; if (a.why && !e.why) e.why = a.why; } catch { /* no answer */ }
     }
@@ -763,7 +880,9 @@ async function resolveStop(stateDir, task, id, o) {
     }
     if (!r.lstart || lstartOf(r.pgid) !== r.lstart) return { ok: false, why: `leader gone: the slot stays held by the marker until the group ends (group ${r.pgid}, its leader is not the process of the record)` };
     app({ ev: 'stopping', reason: 'resolve' });
-    const res = await stopGroup(r.pgid, x.graceMs || KILL_GRACE_MS, x.waitMs || EMPTY_WAIT_MS, groupLives);
+    // a guard run: the holder of its slot stops the runner with its own two pauses, so the group gets both before KILL
+    const grace = x.graceMs || (GUARD_KINDS.has(r.kind) ? KILL_GRACE_MS + EMPTY_WAIT_MS : KILL_GRACE_MS);
+    const res = await stopGroup(r.pgid, grace, x.waitMs || EMPTY_WAIT_MS, groupLives);
     if (res !== 'empty') { app({ ev: 'undetermined', why: `resolve: the group ${r.pgid} ${res === 'eperm' ? 'refused a signal (EPERM)' : 'was not gone after KILL'}` }); return { ok: false, state: 'undetermined', why: 'the group was not confirmed gone' }; }
     rmMark();
     app({ ev: 'stopped', why: 'stopped by resolve' });
@@ -771,4 +890,4 @@ async function resolveStop(stateDir, task, id, o) {
   } finally { J.close(); }
 }
 
-module.exports = { openHeavyService, readHeavyJournal, journalProblem, status, resolveStop, requestProblem, scopeProblem, stopGroup, HEAVY_CODEX_VERSIONS, PROXY_ADDED, KILL_GRACE_MS, EMPTY_WAIT_MS, MAX_REQUEST_BYTES, PROFILE };
+module.exports = { GUARD_KINDS, openHeavyService, readHeavyJournal, journalProblem, status, resolveStop, requestProblem, scopeProblem, stopGroup, HEAVY_CODEX_VERSIONS, PROXY_ADDED, KILL_GRACE_MS, EMPTY_WAIT_MS, MAX_REQUEST_BYTES, PROFILE };

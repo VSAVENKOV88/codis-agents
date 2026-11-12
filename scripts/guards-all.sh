@@ -75,6 +75,15 @@
 #   of the log ends with "(--priority: ...)". With the remote runner the flag travels with the run
 #   (guards-remote.js --priority, job.priority): the runner's guards-all.sh runs with --priority, in its queue and its
 #   budget (its own slots.jobsAlone).
+# Guard run of a codex role (scripts/heavy-service.js, heavy-req.js --kind full | --kind select --base <ref>): the
+#   adapter starts this script outside the sandbox with CODIS_GUARDS_EXEC naming the executor spec of the run. Then the
+#   run is local whatever the machine file says (the remote runner waits for A2b-2) and its log gets the line "local
+#   full run: ..." / "local selection: ..."; "guards log: <log>" is printed first; the slot journal label adds the label
+#   of the spec ("guards-all <name> codex <task> <role> <id>"); every command of the project - the runner in each mode
+#   and a single rerun (guards-result.js) - runs through scripts/heavy-exec.js in codex sandbox; the meta names the
+#   environment sandbox:codex, and such a run is never reused by a run without the variable (guards-result.js reuse).
+#   Without the variable nothing of this happens. Inside a held slot (CODIS_SLOT_HELD: a command of the heavy channel)
+#   this script refuses 64 at once: its own ticket would wait behind the held slot forever.
 # usage: guards-all.sh [--force] [--main-checkout] [--local] [--no-quarantine] [--quarantine-read-only] [--priority] [--select <base> | --guards <names file>] <worktree>   (a name under worktreeRoot, or a path) -> log in <sharedDir>/guards-<name>.txt (.select.txt)
 #   A worktree directly under worktreeRoot (by name or by path) logs as guards-<name>.txt; any other path as
 #   guards-<basename>-<cksum of its resolved path>.txt, so two worktrees with the same basename never share a log and
@@ -97,6 +106,12 @@ done
 set -- "${POS[@]}"
 [[ -n $1 ]] || { print -u2 -r -- "$USAGE"; exit 64; }
 [[ -n $GUARDS && -n $SELBASE ]] && { print -u2 -r -- "guards-all: --select and --guards exclude each other"$'\n'"$USAGE"; exit 64; }
+if [[ -n $CODIS_SLOT_HELD ]]; then
+  print -u2 -r -- "guards-all: refused - inside a held slot (CODIS_SLOT_HELD=$CODIS_SLOT_HELD): a guard run takes a heavy slot of its own, and its ticket would wait behind the held slot forever; a codex role asks the heavy channel: heavy-req.js --kind select --base <ref> | --kind full"
+  exit 64
+fi
+WHERE=
+if [[ -n $CODIS_GUARDS_EXEC ]]; then LOCAL=1; WHERE="local full run"; [[ -n $SELBASE || -n $GUARDS ]] && WHERE="local selection"; fi
 cfg() { node "$H/config.js" get "$1" 2>/dev/null }
 # An absolute worktree brings its own project config (config.js path --from: the nearest .claude/codis-agents.json from
 # it upwards), so a run started from another folder neither takes a foreign config nor refuses 78; an explicit
@@ -115,6 +130,7 @@ NAME=${WT:A:t}
 OUT=$CODIS_SHARED_DIR/guards-$NAME.txt
 [[ -n $SELECT ]] && OUT=$CODIS_SHARED_DIR/guards-$NAME.select.txt
 mkdir -p $CODIS_SHARED_DIR
+[[ -n $WHERE ]] && print -r -- "guards log: $OUT"
 if [[ -n $SELECT ]]; then
   CMD=$(cfg guardSubsetCommand)
   [[ -n $CMD ]] || { print -u2 "guards-all: --select needs guardSubsetCommand in the project config"; exit 78; }
@@ -166,6 +182,8 @@ if (( ! LOCAL )) && RHOST=$(cfg remote.host) && [[ -n $RHOST ]]; then
   elif RCMD=$(cfg remoteRun.command) && [[ -n $RCMD ]]; then ENVID=remote:$RHOST CMD=$RCMD
   else print -u2 -r -- "guards-all: note: the machine file names the remote runner $RHOST, but the project config has no remoteRun - the run stays on this machine"; fi
 fi
+GLABEL=
+if [[ -n $WHERE ]]; then ENVID=sandbox:codex; GLABEL=$(node "$H/heavy-exec.js" label "$CODIS_GUARDS_EXEC" 2>/dev/null); fi
 if (( ! FORCE )) && node "$H/guards-result.js" reuse "$WT" "$OUT" "$CMD" "$ENVID" "$QFILE" > /dev/null 2>&1; then
   tail -40 "$OUT"; print -r -- ""; node "$H/guards-result.js" reuse "$WT" "$OUT" "$CMD" "$ENVID" "$QFILE"; exit 0
 fi
@@ -190,8 +208,10 @@ RCF=$(_slot_tmp guardsrc) || { print -u2 "guards-all: no temporary file in ${TMP
 trap 'rm -f $RCF ${SELTMP:+$SELFILE}' EXIT
 while true; do
   : > $RCF
-  SLOT_KIND=$kind SLOT_RETRY_RC=75 SLOT_PRIORITY=$PRIO SLOT_LABEL="guards-all $NAME" slot_run heavy zsh -c '
-    source "$1"; WT="$2"; OUT="$3"; CMD="$4"; mode="$5"; RCF="$6"; GR="$7"; RERUN="$8"; BASELINE="$9"; QFILE="${10}"; QRO="${11}"; SELFILE="${12}"; LPAT="${13}"; TPL="${14}"; ONLY="${15}"; PR="${16}"
+  SLOT_KIND=$kind SLOT_RETRY_RC=75 SLOT_PRIORITY=$PRIO SLOT_LABEL="guards-all $NAME${GLABEL:+ $GLABEL}" slot_run heavy zsh -c '
+    source "$1"; WT="$2"; OUT="$3"; CMD="$4"; mode="$5"; RCF="$6"; GR="$7"; RERUN="$8"; BASELINE="$9"; QFILE="${10}"; QRO="${11}"; SELFILE="${12}"; LPAT="${13}"; TPL="${14}"; ONLY="${15}"; PR="${16}"; ENVID="${17}"; WHERE="${18}"
+    # a guard run of a codex role (CODIS_GUARDS_EXEC): the runner goes into the executor through heavy-exec.js
+    X=(); [[ -n $CODIS_GUARDS_EXEC ]] && X=(node "${1:h}/heavy-exec.js" "$CODIS_GUARDS_EXEC" --)
     # the train (--priority) in the worker budget: runs without it yield (slots.zsh, slot_guard_plan)
     PRSAY=; [[ -n $PR ]] && PRSAY=" (--priority: the train; runs without it yield and take what it leaves)"
     cd "$WT" || exit 1
@@ -211,29 +231,30 @@ while true; do
       fi
       sleep $SLOT_POLL
     done
-    node "$GR" meta-start "$WT" "$OUT" "$CMD"
+    node "$GR" meta-start "$WT" "$OUT" "$CMD" "$ENVID"
     # the template is filled, {onlyArgs} last: a value (a guard name, the worktree path) is never filled in again
     sub() { local c=$1; c=${c//\{jobs\}/$2}; c=${c//\{limitFile\}/${(q)SLOT_PATH}.limit}; c=${c//\{wt\}/${(q)WT}}; c=${c//\{onlyArgs\}/$ONLY}; print -r -- $c }
     if [[ $mode == adaptive ]]; then
       print -r -- "workers at start: $n (ceiling $GUARDS_JOBS_ALONE, re-evaluated every $SLOT_POLL s; $SLOT_PATH)$PRSAY"
       { while sleep $SLOT_POLL; do slot_guard_plan "$SLOT_PATH" adaptive run $PR > /dev/null; done } &
       tk=$!
-      zsh -c "$(sub "$TPL" $GUARDS_JOBS_ALONE)" > "$OUT" 2>&1; print -r -- $? > "$RCF"
+      "${X[@]}" zsh -c "$(sub "$TPL" $GUARDS_JOBS_ALONE)" > "$OUT" 2>&1; print -r -- $? > "$RCF"
       pkill -P $tk 2>/dev/null; kill $tk 2>/dev/null   # and its sleep - no orphans
     elif [[ $mode == whole ]]; then
       print -r -- "workers: set by the runner itself (guardCommand has no {jobs}), counted as the whole budget $n ($SLOT_PATH)$PRSAY"
-      zsh -c "$(sub "$TPL" $n)" > "$OUT" 2>&1; print -r -- $? > "$RCF"
+      "${X[@]}" zsh -c "$(sub "$TPL" $n)" > "$OUT" 2>&1; print -r -- $? > "$RCF"
     else
       print -r -- "workers: $n for the whole run (fixed runner; $SLOT_PATH)$PRSAY"
-      zsh -c "$(sub "$TPL" $n)" > "$OUT" 2>&1; print -r -- $? > "$RCF"
+      "${X[@]}" zsh -c "$(sub "$TPL" $n)" > "$OUT" 2>&1; print -r -- $? > "$RCF"
     fi
     rm -f "$SLOT_PATH.jobs" "$SLOT_PATH.limit" "$SLOT_PATH.limit.tmp" "$SLOT_PATH.limit.active" "$SLOT_PATH.whole"
+    [[ -n $WHERE ]] && print -r -- "$WHERE: a codex role'"'"'s run through the heavy channel; the remote runner waits for A2b-2" >> "$OUT"
     tail -25 "$OUT"
     # selected N - accounted for N (a run given guards by --only): fewer is the environment, 69, before any rerun
     COUNTED=1
     if [[ -n $SELFILE ]] && ! node "$GR" count "$OUT" "$RERUN" "$SELFILE" "$LPAT"; then print -r -- 69 > "$RCF"; COUNTED=; fi
     if [[ -n $RERUN && -n $COUNTED ]]; then node "$GR" rerun "$WT" "$OUT" "$(<$RCF)" "$RERUN" "$BASELINE" "$QFILE" "$QRO" ${SELFILE:+"$SELFILE"}; print -r -- $? > "$RCF"; fi
-    node "$GR" meta-end "$WT" "$OUT" "$(<$RCF)" "$QFILE"' guards-all "$H/slots.zsh" "$WT" "$OUT" "$CMD" "$mode" "$RCF" "$H/guards-result.js" "$RERUN" "$BASELINE" "$QFILE" "$QRO" "$SELFILE" "$LPAT" "${TPL:-$CMD}" "$ONLY" "${${PRIO:#0}:+priority}"
+    node "$GR" meta-end "$WT" "$OUT" "$(<$RCF)" "$QFILE"' guards-all "$H/slots.zsh" "$WT" "$OUT" "$CMD" "$mode" "$RCF" "$H/guards-result.js" "$RERUN" "$BASELINE" "$QFILE" "$QRO" "$SELFILE" "$LPAT" "${TPL:-$CMD}" "$ONLY" "${${PRIO:#0}:+priority}" "$ENVID" "$WHERE"
   rc=$?
   [[ -s $RCF ]] && exit $(<$RCF)          # the runner ran: its code
   (( rc == 75 )) || exit $rc              # 75 without a run: no worker budget - queue again
