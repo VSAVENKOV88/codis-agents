@@ -125,6 +125,8 @@ fi
 WHERE=
 if [[ -n $CODIS_GUARDS_EXEC ]]; then LOCAL=1; WHERE="local full run"; [[ -n $SELBASE || -n $GUARDS ]] && WHERE="local selection"; fi
 cfg() { node "$H/config.js" get "$1" 2>/dev/null }
+# trusted git (scripts/trusted-git.js) for the git of this script: no hook and no core.fsmonitor of the worktree runs
+TRUSTED_GIT=(${(f)"$(node "$H/trusted-git.js" flags)"})
 # An absolute worktree brings its own project config (config.js path --from: the nearest .claude/codis-agents.json from
 # it upwards), so a run started from another folder neither takes a foreign config nor refuses 78; an explicit
 # $CODIS_AGENTS_CONFIG still wins. Exported: slots.zsh, cfg and the scripts below read it. A relative name keeps the
@@ -164,7 +166,7 @@ elif [[ -n $SELECT ]]; then
   ONLY=$(node "$H/guards-select.js" --wt "$WT" --base "$SELBASE" --only-args --names-out "$SELFILE" 2>$SELERR); src=$?
   SELWHY=$(<$SELERR); rm -f $SELERR
   if (( src == 3 )); then
-    print -r -- "nothing selected: no guard is changed, imports or names a changed file, or matches guardAlways (base $SELBASE, HEAD $(git -C "$WT" rev-parse --short HEAD 2>/dev/null)) - run your new guards directly" > "$OUT"
+    print -r -- "nothing selected: no guard is changed, imports or names a changed file, or matches guardAlways (base $SELBASE, HEAD $(git "${TRUSTED_GIT[@]}" -C "$WT" rev-parse --short HEAD 2>/dev/null)) - run your new guards directly" > "$OUT"
     cat "$OUT"; exit 0
   elif (( src == 2 )); then
     print -r -- "the selection could not be computed (base $SELBASE): $SELWHY" > "$OUT"

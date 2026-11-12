@@ -20,6 +20,7 @@
 // repository root; * and ? stay within one path segment, ** crosses segments.
 const path = require('path');
 const { spawnSync } = require('child_process');
+const TG = require('./trusted-git');
 const cfg = require('./config');
 
 const CMDS = ['up', 'deploy', 'reset', 'status', 'down'];
@@ -77,9 +78,9 @@ if (require.main === module) {
   } else if (cmd === 'image-diff') {
     const base = opt('--base'), wt = path.resolve(opt('--wt') || process.cwd());
     if (!base) die('usage: stand.js image-diff --base <ref> [--wt <dir>]', 64);
-    const top = spawnSync('git', ['-C', wt, 'rev-parse', '--show-toplevel'], { encoding: 'utf8' });
+    const top = TG.run(['-C', wt, 'rev-parse', '--show-toplevel'], { encoding: 'utf8' });
     if (top.status !== 0) die(`stand image-diff: ${wt} is not a git worktree: ${top.stderr.trim()}`, 2);
-    const d = spawnSync('git', ['-C', top.stdout.trim(), 'diff', '--no-renames', '--name-only', `${base}...HEAD`], { encoding: 'utf8' });
+    const d = TG.run(['-C', top.stdout.trim(), 'diff', '--no-renames', '--name-only', `${base}...HEAD`], { encoding: 'utf8' });
     if (d.status !== 0) die(`stand image-diff: cannot diff ${base}...HEAD in ${wt}: ${d.stderr.trim()}`, 2);
     const files = d.stdout.split('\n').filter(Boolean);
     const hit = files.filter((f) => matches(stand.imageFiles, f));

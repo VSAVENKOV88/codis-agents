@@ -28,6 +28,7 @@
 // within one path segment, ** crosses segments (the same rule as stand.imageFiles).
 const path = require('path');
 const { spawnSync } = require('child_process');
+const TG = require('./trusted-git');
 const { matches } = require('./stand');
 const { SPEC } = require('./config');
 
@@ -52,7 +53,7 @@ function parse(argv) {
 function check(a) {
   const wt = path.resolve(a.wt || process.cwd());
   const git = (...args) => {
-    const r = spawnSync('git', ['-C', wt, ...args], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+    const r = TG.run(['-C', wt, ...args], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
     return { rc: r.status, out: (r.stdout || '').trim(), err: (r.stderr || '').trim() };
   };
   const sha = (ref) => {

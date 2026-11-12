@@ -37,8 +37,12 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { spawn, spawnSync } = require('child_process');
-/* global __codisCorpus */
+/* global __codisCorpus, __codisTrustedGit */
 const CR = typeof __codisCorpus !== 'undefined' ? __codisCorpus : require('./corpus-remote');
+// trusted git (scripts/trusted-git.js, bundled ahead of this file by guards-remote.js): repo.git and the run's worktree
+// hold config a guard of an earlier run may have written (git config in a linked worktree writes the shared config of
+// repo.git) - no hook and no core.fsmonitor of it runs
+const TG = typeof __codisTrustedGit !== 'undefined' ? __codisTrustedGit : require('./trusted-git');
 const { Stop, notLink, readJSON, writeJSON, withLock, sha256File } = CR;
 
 const env = (msg) => new Stop(69, `environment: ${msg}`);
@@ -59,7 +63,7 @@ function checkSha(sha) {
   if (!SHA.test(String(sha))) throw new Stop(64, `bad commit ${JSON.stringify(sha)}`);
   return String(sha);
 }
-const git = (args, opts) => spawnSync('git', args, Object.assign({ encoding: 'utf8', maxBuffer: 1 << 28 }, opts || {}));
+const git = (args, opts) => TG.run(args, Object.assign({ encoding: 'utf8', maxBuffer: 1 << 28 }, opts || {}));
 
 // The start time of a process as ps prints it (procps on Linux, BSD ps on macOS): with the pid it names one process,
 // never a later one that got the same pid.
@@ -254,7 +258,7 @@ function job(R, input, name, sha, dir, say) {
     if (st.status !== 0) throw env(`git status in ${wt} failed after the donor copy: ${tail(st.stderr, 3)}`);
     const changed = st.stdout.split('\0').filter(Boolean).map((l) => l.slice(3));
     if (changed.length) throw env(`the donor copy changed files the commit ${sha} holds: ${changed.slice(0, 20).join(', ')}${changed.length > 20 ? ` and ${changed.length - 20} more` : ''} - the runner would not test HEAD; refused before any guard (those paths are ignored where the donor came from and tracked in the commit)`);
-    noSecrets(wt, sha, 'the donor copy');
+    noSecrets(R, wt, sha, 'the donor copy');
   }
 
   for (const d of input.deps || []) {
@@ -286,7 +290,7 @@ function job(R, input, name, sha, dir, say) {
     medium(cmd, wt, 'prepare command');
   }
 
-  noSecrets(wt, sha, 'the prepare commands');
+  noSecrets(R, wt, sha, 'the prepare commands');
 
   phase('full run: guards-all.sh of the runner');
   // the train's priority (job.priority): first in the runner's slot queue and in its worker budget
@@ -352,8 +356,12 @@ function depsCache({ deps, hash, files, install, run, say, phase, what }) {
 
 // Nothing secret reaches a run: the checkout holds the commit only, the donor no .env*; anything else is refused. Checked
 // after the donor copy (before any project code runs: the dependency install, the prepare commands) and after prepare.
-function noSecrets(wt, sha, after) {
-  const tracked = new Set(git(['-C', wt, 'ls-files', '-z']).stdout.split('\0').filter(Boolean));
+// The files the commit holds come from repo.git (ls-tree of the commit), never from the copy's index or its .git, which
+// the prepare commands may have rewritten.
+function noSecrets(R, wt, sha, after) {
+  const ls = git(['--git-dir', R.repo, 'ls-tree', '-r', '-z', '--name-only', sha]);
+  if (ls.status !== 0) throw env(`git ls-tree ${sha} in ${R.repo} failed (after ${after}): ${tail(ls.stderr, 3)}`);
+  const tracked = new Set(ls.stdout.split('\0').filter(Boolean));
   const secrets = [];
   (function walk(rel) {
     for (const n of fs.readdirSync(path.join(wt, rel))) {

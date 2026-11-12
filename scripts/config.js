@@ -38,6 +38,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const TG = require('./trusted-git');
 
 const FILE = path.join('.claude', 'codis-agents.json');
 const PLUGIN_ROOT = path.resolve(__dirname, '..');
@@ -612,7 +613,7 @@ function resolve(raw, opts = {}) {
 // set-head origin --auto sets it again (git-clone(1), git-remote(1)). Only the remote "origin" is read - the name git
 // clone gives; a project with another remote sets defaultBranch. No list of usual names: not derivable stays unknown.
 function originHead(dir) {
-  const r = spawnSync('git', ['-C', dir, 'symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'], { encoding: 'utf8' });
+  const r = TG.run(['-C', dir, 'symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'], { encoding: 'utf8' });
   const s = r.status === 0 ? r.stdout.trim() : '';
   return s.startsWith('origin/') && s.length > 7 ? s.slice(7) : null;
 }
@@ -703,7 +704,7 @@ function branchDirOf(c, file, opts) {
 }
 
 function gitMainRoot(dir) {
-  const r = spawnSync('git', ['-C', dir, 'rev-parse', '--path-format=absolute', '--git-common-dir'], { encoding: 'utf8' });
+  const r = TG.run(['-C', dir, 'rev-parse', '--path-format=absolute', '--git-common-dir'], { encoding: 'utf8' });
   if (r.status !== 0) return null;
   const common = r.stdout.trim();
   return path.basename(common) === '.git' ? path.dirname(common) : null;

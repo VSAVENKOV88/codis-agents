@@ -97,6 +97,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { spawnSync } = require('child_process');
+const TG = require('./trusted-git');
 
 const q = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
 const { matches } = require('./stand');
@@ -128,7 +129,7 @@ const needText = (x) => {
   return `${unknown.length ? `unknown need ${unknown.join(', ')}` : `needs ${x.needs.join(', ')}`}: ${x.reason}`;
 };
 const gitOut = (wt, args) => {
-  const r = spawnSync('git', ['-C', wt].concat(args), { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
+  const r = TG.run(['-C', wt].concat(args), { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
   if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${String(r.stderr || (r.error && r.error.message) || 'failed').trim().slice(0, 300)}`);
   return r.stdout;
 };
@@ -225,21 +226,52 @@ function countCheck({ text, cfg, selected, localPattern, label }) {
 const rerunLog = (log) => (log.endsWith('.txt') ? log.slice(0, -4) : log) + '.rerun.txt';
 
 const sha256 = (b) => crypto.createHash('sha256').update(b).digest('hex');
-// A flat known-red file (absolute path) -> {known: {name: reason}, hash} (hash: sha256 of the bytes read) or {error, code}.
-function readKnown(file) {
-  let raw, o;
-  try { raw = fs.readFileSync(file); } catch (e) { return { error: e.code === 'ENOENT' ? 'no such file' : `not readable (${e.message})`, code: e.code }; }
-  try { o = JSON.parse(raw.toString('utf8')); } catch (e) { return { error: `not readable as JSON (${e.message})` }; }
+// The bytes of a flat known-red file -> {known: {name: reason}, hash} (hash: sha256 of the bytes) or {error}. quote: the
+// error of a broken JSON carries the message of JSON.parse, which quotes the first bytes of the file.
+function parseKnown(raw, quote) {
+  let o;
+  try { o = JSON.parse(raw.toString('utf8')); } catch (e) { return { error: quote ? `not readable as JSON (${e.message})` : 'not readable as JSON' }; }
   if (!o || typeof o !== 'object' || Array.isArray(o)) return { error: 'expected a JSON object {"<guard name>": "<reason>"}' };
   const bad = Object.keys(o).filter((k) => typeof o[k] !== 'string');
   if (bad.length) return { error: `the reason of ${bad.join(', ')} is not a string (expected {"<guard name>": "<reason>"})` };
   return { known: o, hash: sha256(raw) };
 }
-// The known reds of the baseline file (path relative to wt): {known: {name: reason}} or {error}.
+// A flat known-red file of this machine (absolute path; the quarantine) -> {known, hash} or {error, code}.
+function readKnown(file) {
+  let raw;
+  try { raw = fs.readFileSync(file); } catch (e) { return { error: e.code === 'ENOENT' ? 'no such file' : `not readable (${e.message})`, code: e.code }; }
+  return parseKnown(raw, true);
+}
+const NOT_REGULAR = 'not a regular file inside the worktree';
+// The known reds of the baseline file (path relative to wt): {known: {name: reason}} or {error}. The file lives in the
+// tree a branch wrote, so it is read only as a regular file inside wt reached without a symbolic link: every component
+// of the path below wt is checked with lstat, the file is opened with O_NOFOLLOW (non-blocking, so a FIFO never waits)
+// and checked again with fstat. A link (to a file outside, to valid JSON, to a directory), a path through a directory
+// link, out of wt or to anything but a regular file is NOT_REGULAR and nothing is read; a broken JSON names no byte of
+// the file (the log of a run may travel from the runner).
 function readBaseline(wt, rel) {
-  const r = readKnown(path.resolve(wt, rel));
-  if (r.code === 'ENOENT') return { error: 'no such file in the worktree' };
-  return r.error ? { error: r.error } : { known: r.known };
+  const root = path.resolve(wt), abs = path.resolve(root, String(rel));
+  const r = path.relative(root, abs);
+  if (!r || r === '..' || r.startsWith('..' + path.sep) || path.isAbsolute(r)) return { error: NOT_REGULAR };
+  let cur = root;
+  for (const part of r.split(path.sep)) {
+    cur = path.join(cur, part);
+    let st;
+    try { st = fs.lstatSync(cur); } catch (e) { return { error: e.code === 'ENOENT' ? 'no such file in the worktree' : NOT_REGULAR }; }
+    if (st.isSymbolicLink()) return { error: NOT_REGULAR };
+  }
+  if (!fs.lstatSync(abs).isFile()) return { error: NOT_REGULAR };
+  let fd;
+  try { fd = fs.openSync(abs, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK); } catch (e) {
+    return { error: e.code === 'ELOOP' ? NOT_REGULAR : `not readable (${e.code || 'error'})` };
+  }
+  let raw;
+  try {
+    if (!fs.fstatSync(fd).isFile()) return { error: NOT_REGULAR };
+    raw = fs.readFileSync(fd);
+  } catch (e) { return { error: `not readable (${e.code || 'error'})` }; } finally { fs.closeSync(fd); }
+  const k = parseKnown(raw, false);
+  return k.error ? { error: k.error } : { known: k.known };
 }
 
 const QUARANTINE = 'guards-quarantine.json';
@@ -321,8 +353,11 @@ function takeQuarantine(wt, baseline, file, names) {
   return withLock(file, () => {
     const q = readQuarantine(file);
     if (q.error) throw new Error(`the quarantine ${file} is broken: ${q.error}`);
+    // a baseline that does not exist yet starts empty (its first entry creates it); one that exists is read by
+    // readBaseline - a link or anything but a regular file inside the worktree throws, nothing is written
     const bf = path.resolve(wt, baseline);
-    const b = fs.existsSync(bf) ? readBaseline(wt, baseline) : { known: {} };
+    let b = readBaseline(wt, baseline);
+    if (b.error === 'no such file in the worktree') b = { known: {} };
     if (b.error) throw new Error(`guardBaseline ${baseline} is broken: ${b.error}`);
     const want = names && names.length ? names : Object.keys(q.known);
     const moved = want.filter((n) => Object.hasOwn(q.known, n)), missing = want.filter((n) => !Object.hasOwn(q.known, n));
@@ -432,7 +467,7 @@ function rerun({ wt, log, rc, cfg, baseline, quarantine, readOnly, selected, exc
 
 // The reason of a quarantine entry written by the run of <log> in <wt>: "flaky: <log name> <sha7>, green alone, <date>".
 function flakyReason(wt, log) {
-  const h = spawnSync('git', ['-C', wt, 'rev-parse', '--short=7', 'HEAD'], { encoding: 'utf8' });
+  const h = TG.run(['-C', wt, 'rev-parse', '--short=7', 'HEAD'], { encoding: 'utf8' });
   const sha = h.status === 0 ? h.stdout.trim() : 'no-HEAD', day = new Date().toISOString().slice(0, 10);
   return `flaky: ${path.basename(log)} ${sha}, green alone, ${day}`;
 }
@@ -470,9 +505,9 @@ const flakyInLog = (text) => namesInRerun(text, /^flaky, red under load, green a
 
 const metaFile = (log) => `${log}.meta.json`;
 function gitState(wt) {
-  const h = spawnSync('git', ['-C', wt, 'rev-parse', 'HEAD'], { encoding: 'utf8' });
+  const h = TG.run(['-C', wt, 'rev-parse', 'HEAD'], { encoding: 'utf8' });
   if (h.status !== 0) return { head: null, clean: false };
-  const s = spawnSync('git', ['-C', wt, 'status', '--porcelain', '--untracked-files=no'], { encoding: 'utf8' });
+  const s = TG.run(['-C', wt, 'status', '--porcelain', '--untracked-files=no'], { encoding: 'utf8' });
   return { head: h.stdout.trim(), clean: s.status === 0 && s.stdout.trim() === '' };
 }
 // env: left out for a run on this machine (the record stays as it always was), "remote:<host>" for the runner,

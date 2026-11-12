@@ -79,6 +79,7 @@ const path = require('path');
 const crypto = require('crypto');
 const net = require('net');
 const { spawn, spawnSync } = require('child_process');
+const TG = require('./trusted-git');
 const { readNoFollow, CODEX_ADDED } = require('./commit-service');
 const { verdictOf } = require('./guards-result');
 const rolePlaces = require('./role-roots');
@@ -747,7 +748,7 @@ function openHeavyService(o) {
   const reusedSeen = new Set();
   // a guard run tests the committed HEAD: tracked changes refuse it; a base must name a commit. The reason, or null.
   const guardProblem = (q) => {
-    const git = (...a) => spawnSync(gitDir ? path.join(gitDir, 'git') : 'git', ['-C', wtReal].concat(a), { encoding: 'utf8', env: holderEnv(), timeout: 60000 });
+    const git = (...a) => TG.run(['-C', wtReal].concat(a), { git: gitDir ? path.join(gitDir, 'git') : 'git', encoding: 'utf8', env: holderEnv(), timeout: 60000 });
     const st = git('status', '--porcelain', '--untracked-files=no');
     if (st.status !== 0) return `environment: git status in the worktree failed (${String(st.stderr || st.error || '').trim().slice(0, 300)})`;
     if (String(st.stdout).trim()) return 'tracked changes in the worktree: commit first (a guard run tests the committed HEAD)';

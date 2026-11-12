@@ -81,7 +81,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
-const { spawnSync } = require('child_process');
+const TG = require('./trusted-git');
 const config = require('./config');
 
 const VERSION = 1;
@@ -123,13 +123,13 @@ function parseArgs(argv) {
 }
 
 function gitTop(dir) {
-  const r = spawnSync('git', ['-C', dir, 'rev-parse', '--show-toplevel'], { encoding: 'utf8' });
+  const r = TG.run(['-C', dir, 'rev-parse', '--show-toplevel'], { encoding: 'utf8' });
   return r.status === 0 ? r.stdout.trim() : null;
 }
 // git ls-files of the root: the index, or (others) the untracked files git does not ignore.
 function lsFiles(root, others) {
   const args = ['-C', root, 'ls-files', '-z'].concat(others ? ['--others', '--exclude-standard'] : []);
-  const r = spawnSync('git', args, { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
+  const r = TG.run(args, { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
   if (r.status !== 0) throw new Error(`git ls-files in ${root}: ${(r.stderr || '').trim()}`);
   return r.stdout.split('\0').filter(Boolean);
 }
@@ -137,7 +137,7 @@ function lsFiles(root, others) {
 // generated one is looked for here as well as in the lists above.
 function lsIgnored(root, name) {
   const args = ['-C', root, 'ls-files', '-z', '--others', '--ignored', '--exclude-standard', '--', `:(glob)**/${name}`];
-  const r = spawnSync('git', args, { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
+  const r = TG.run(args, { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
   if (r.status !== 0) throw new Error(`git ls-files --ignored in ${root}: ${(r.stderr || '').trim()}`);
   return r.stdout.split('\0').filter(Boolean);
 }

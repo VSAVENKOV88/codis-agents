@@ -50,6 +50,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const TG = require('./trusted-git');
 
 const USAGE = 'usage: detect.js [--root <dir>]';
 const NO_ORIGIN_HEAD = 'origin/HEAD not set - default branch unknown (no network call is made to find it)';
@@ -64,10 +65,12 @@ function childEnv(extra) {
   return env;
 }
 
+const shResult = (r) => ({ code: r.error ? null : r.status, out: r.stdout || '', err: r.stderr || '', missing: !!(r.error && r.error.code === 'ENOENT') });
 function sh(cmd, args, cwd, env) {
-  const r = spawnSync(cmd, args, { cwd, env: env || childEnv(), encoding: 'utf8', maxBuffer: 512 * 1024 * 1024 });
-  return { code: r.error ? null : r.status, out: r.stdout || '', err: r.stderr || '', missing: !!(r.error && r.error.code === 'ENOENT') };
+  return shResult(spawnSync(cmd, args, { cwd, env: env || childEnv(), encoding: 'utf8', maxBuffer: 512 * 1024 * 1024 }));
 }
+// git of the repository read: trusted git (scripts/trusted-git.js), so that its hooks and core.fsmonitor never run.
+const gitSh = (args, cwd) => shResult(TG.run(args, { cwd, env: childEnv(), encoding: 'utf8', maxBuffer: 512 * 1024 * 1024 }));
 
 const exists = (f) => { try { fs.lstatSync(f); return true; } catch { return false; } };
 const isFile = (f) => { try { return fs.statSync(f).isFile(); } catch { return false; } };
@@ -87,7 +90,7 @@ function bytesOf(p) {
 }
 
 function readGit(root, notes) {
-  const git = (...a) => sh('git', a, root);
+  const git = (...a) => gitSh(a, root);
   const r = {};
   const count = git('rev-list', '--count', 'HEAD');
   r.isRepo = true;
@@ -119,8 +122,11 @@ function readGit(root, notes) {
     return { name: key.slice('remote.'.length, -'.url'.length), url: url.replace(/^([A-Za-z][A-Za-z0-9+.-]*:\/\/[^/@:]*):[^/@]*@/, '$1:***@') };
   });
   r.remote = sortBy(remotes, (x) => x.name);
-  const hp = git('config', '--get', 'core.hooksPath');
-  r.hooksPath = hp.code === 0 ? hp.out.trim() : null;
+  // the repository's own value: the trusted git sets core.hooksPath on its command line (scope "command"), which a plain
+  // --get would answer; the last value of the config files wins, as git reads them
+  const hp = git('config', '--show-scope', '--get-all', 'core.hooksPath');
+  const own = hp.code === 0 ? hp.out.split('\n').filter((l) => l && !l.startsWith('command\t')).map((l) => l.slice(l.indexOf('\t') + 1)) : [];
+  r.hooksPath = own.length ? own[own.length - 1] : null;
   return r;
 }
 
@@ -275,7 +281,7 @@ function readCompose(root, files, notes) {
 }
 
 function readIgnored(root) {
-  const r = sh('git', ['status', '--porcelain=v1', '-z', '--ignored=traditional', '--untracked-files=normal', '--ignore-submodules=all'], root);
+  const r = gitSh(['status', '--porcelain=v1', '-z', '--ignored=traditional', '--untracked-files=normal', '--ignore-submodules=all'], root);
   const fields = r.out.split('\0');
   const out = [];
   for (let i = 0; i < fields.length; i++) {
@@ -298,7 +304,7 @@ function readExisting(root, files) {
 
 function detect(start) {
   const notes = [];
-  const top = sh('git', ['rev-parse', '--show-toplevel'], start);
+  const top = gitSh(['rev-parse', '--show-toplevel'], start);
   if (top.missing) notes.push('git not found - git facts not read');
   const isRepo = top.code === 0;
   const root = isRepo ? fs.realpathSync(top.out.replace(/\n$/, '')) : start;
@@ -307,7 +313,7 @@ function detect(start) {
     const nul = { isRepo: top.missing ? null : false, commits: null, head: null, defaultBranch: null, branches: null, tagShapes: null, remote: null, hooksPath: null };
     return { root, repo: { git: nul, ci: null, stacks: null, venvs: null, compose: null, ignored: null, existing: null, notes } };
   }
-  const files = sh('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], root).out.split('\0')
+  const files = gitSh(['ls-files', '--cached', '--others', '--exclude-standard', '-z'], root).out.split('\0')
     .filter(Boolean).filter((f) => exists(path.join(root, f))).sort(byteSort);
   const repo = { git: readGit(root, notes) };
   repo.ci = files.filter((f) => /^\.github\/workflows\/[^/]+\.ya?ml$/.test(f)).map((file) => ({ file }));

@@ -12,7 +12,7 @@
 // --allow: regular expressions of paths the tester may change (project config "testerWritable"), required for the
 // tester: there is no built-in list (the guards and fixtures of a project are the project's), so without one the check
 // fails instead of guessing.
-const { execFileSync } = require('child_process');
+const TG = require('./trusted-git');
 
 const allowFor = (role, allow) => {
   if (role === 'reviewer') return () => false;
@@ -29,7 +29,7 @@ function check({ wt, since, role, allow }) {
   }
   const ok = allowFor(role, allow);
   if (!ok) return { ok: false, role, offending: [], error: `unknown role ${role}` };
-  const git = (...a) => execFileSync('git', ['-C', wt, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  const git = (...a) => TG.out(['-C', wt, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   let head;
   try {
     head = git('rev-parse', 'HEAD').trim();

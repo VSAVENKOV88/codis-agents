@@ -15,7 +15,7 @@
 //   stderr; 64 - bad usage.
 const fs = require('fs');
 const path = require('path');
-const { spawnSync } = require('child_process');
+const TG = require('./trusted-git');
 
 const real = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
 
@@ -23,7 +23,7 @@ const real = (p) => { try { return fs.realpathSync(p); } catch { return path.res
 // "ENVIRONMENT VARIABLES"); git hooks set GIT_DIR. Every GIT_* is dropped, so that only the directory decides and no
 // environment variable can turn the main working copy into a "worktree".
 const gitEnv = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_')));
-const revParse = (cwd, args) => spawnSync('git', ['-C', cwd, 'rev-parse', ...args], { encoding: 'utf8', env: gitEnv() });
+const revParse = (cwd, args) => TG.run(['-C', cwd, 'rev-parse', ...args], { encoding: 'utf8', env: gitEnv() });
 const lines = (r) => (r.stdout || '').split('\n').filter(Boolean);
 const gitError = (r) => ((r.error && r.error.message) || (r.stderr || '').trim() || `git rev-parse exit ${r.status}`).split('\n')[0];
 

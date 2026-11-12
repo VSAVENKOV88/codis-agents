@@ -69,6 +69,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const TG = require('./trusted-git');
 const C = require('./config');
 const G = require('./guards-result');
 const { sshOpts, sshE } = require('./corpus-sync');
@@ -91,10 +92,11 @@ const deep = (v) => (typeof v === 'string' ? clean(v) : Array.isArray(v) ? v.map
   : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [clean(k), deep(x)])) : v);
 const tail = (s, n) => String(s || '').trim().split('\n').slice(-n).join('\n');
 const VERSION = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8')).version;
-// corpus-remote.js wrapped as a module ahead of the runner's half: one script on stdin, no file of this plugin needed
-// on the runner beyond its guards-all.sh, slots and env-check of the same version.
+// corpus-remote.js and trusted-git.js wrapped as modules ahead of the runner's half: one script on stdin, no file of this
+// plugin needed on the runner beyond its guards-all.sh, slots and env-check of the same version.
 const strip = (s) => s.replace(/^#![^\n]*\n/, '');
-const BUNDLE = `'use strict';\nconst __codisCorpus = (function () { const module = { exports: {} }; const exports = module.exports;\n${strip(fs.readFileSync(path.join(__dirname, 'corpus-remote.js'), 'utf8'))}\nreturn module.exports; })();\n`
+const wrap = (name, file) => `const ${name} = (function () { const module = { exports: {} }; const exports = module.exports;\n${strip(fs.readFileSync(path.join(__dirname, file), 'utf8'))}\nreturn module.exports; })();\n`;
+const BUNDLE = `'use strict';\n${wrap('__codisCorpus', 'corpus-remote.js')}${wrap('__codisTrustedGit', 'trusted-git.js')}`
   + strip(fs.readFileSync(path.join(__dirname, 'guards-remote-host.js'), 'utf8'));
 
 // The retry of a lost ssh call (point 2 of the header): the owner's answer of 2026-11-11 - 3 attempts, pauses 10 s and
@@ -170,9 +172,9 @@ function sweepLine(s) {
 }
 
 function gitState(wt) {
-  const h = spawnSync('git', ['-C', wt, 'rev-parse', 'HEAD'], { encoding: 'utf8' });
+  const h = TG.run(['-C', wt, 'rev-parse', 'HEAD'], { encoding: 'utf8' });
   if (h.status !== 0) return { head: null, clean: false };
-  const s = spawnSync('git', ['-C', wt, 'status', '--porcelain', '--untracked-files=no'], { encoding: 'utf8' });
+  const s = TG.run(['-C', wt, 'status', '--porcelain', '--untracked-files=no'], { encoding: 'utf8' });
   return { head: h.stdout.trim(), clean: s.status === 0 && s.stdout.trim() === '' };
 }
 
@@ -271,7 +273,7 @@ function run(c, wt, log, name, qfile, opts) {
       // runner and for a connection lost after the ref was written: after any failed push the runner's repository says
       // whether the commit arrived; without it, 128 is a lost connection (tried again), anything else a refusal.
       for (let n = 1; ; n++) {
-        const p = spawnSync('git', ['-C', wt, 'push', '--no-follow-tags', '--', url, `${sha}:${ref}`],
+        const p = TG.run(['-C', wt, 'push', '--no-follow-tags', '--', url, `${sha}:${ref}`],
           { encoding: 'utf8', env: Object.assign({}, process.env, { GIT_SSH_COMMAND: sshE(r), GIT_SSH_VARIANT: 'ssh' }), maxBuffer: 1 << 26 });
         if (p.status === 0) break;
         const why = clean(lineOf(p.stderr, false)) || `git exit ${p.status}`;

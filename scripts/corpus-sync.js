@@ -10,7 +10,8 @@
 //   - sessions/ at any depth and in any case (users' sessions), node_modules, dist and .deps (installed on the runner), the "skip" and
 //     "link" globs of worktreeSetup, and every symbolic link (neither the link nor what it points to: the walk never
 //     follows one, and rsync gets only regular files, without -L).
-// The main checkout is only read: git status runs with --no-optional-locks (no index refresh is written) and files are
+// The main checkout is only read: git status is trusted git (scripts/trusted-git.js: no hook, no fsmonitor,
+// --no-optional-locks - no index refresh is written) and files are
 // opened for reading; the manifest goes to <sharedDir>/corpus-manifest.json.
 // The runner comes from the machine file (scripts/config.js, key remote {host, user, key, knownHosts, root}). ssh and
 // the rsync transport always use only that key and only that known_hosts file, with strict host key checking and no
@@ -29,6 +30,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const TG = require('./trusted-git');
 const C = require('./config');
 const { sha256File, manifestId, byPath } = require('./corpus-remote');
 
@@ -90,7 +92,7 @@ function manifest(c) {
   let st = null;
   try { st = fs.statSync(repo); } catch { /* below */ }
   if (!st || !st.isDirectory()) throw env(`repoDir ${repo} is not reachable - no corpus to describe`);
-  const g = spawnSync('git', ['--no-optional-locks', '-C', repo, '-c', 'core.fsmonitor=false', 'status', '--porcelain=v1', '-z', '--ignored', '--', ...c.worktreeSetup.scan], { encoding: 'utf8', maxBuffer: 1 << 28 });
+  const g = TG.run(['-C', repo, 'status', '--porcelain=v1', '-z', '--ignored', '--', ...c.worktreeSetup.scan], { encoding: 'utf8', maxBuffer: 1 << 28 });
   if (g.status !== 0) throw env(`git status in repoDir ${repo} failed: ${(g.stderr || '').trim().split('\n').pop()}`);
   const globs = { skip: c.worktreeSetup.skip.map(globRe), link: c.worktreeSetup.link.map(globRe) };
   const files = [], excluded = [];

@@ -41,7 +41,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { spawnSync } = require('child_process');
+const TG = require('./trusted-git');
 const CJ = require('./chain-journal.js');
 
 // chain-run.js requires this module, so its functions are taken at call time.
@@ -66,7 +66,7 @@ function fsyncDir(dir) {
   try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
 }
 const segNames = (dir) => { try { return fs.readdirSync(dir).filter((f) => /^seg-\d+\.jsonl$/.test(f)).sort((a, b) => +/\d+/.exec(a)[0] - +/\d+/.exec(b)[0]); } catch { return []; } };
-const git = (wt, args) => spawnSync('git', ['-C', wt].concat(args), { encoding: 'utf8', timeout: 10000 });
+const git = (wt, args) => TG.run(['-C', wt].concat(args), { encoding: 'utf8', timeout: 10000 });
 const isAncestor = (wt, a, b) => typeof wt === 'string' && git(wt, ['merge-base', '--is-ancestor', a, b]).status === 0;
 const headOf = (wt) => { const p = typeof wt === 'string' ? git(wt, ['rev-parse', '--verify', '-q', 'HEAD']) : null; return p && p.status === 0 ? p.stdout.trim() : null; };
 

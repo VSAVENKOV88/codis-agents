@@ -136,6 +136,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
+const TG = require('./trusted-git');
 const { createAgent, validate, realish, overlap, procOf, stopAll, DEFAULT_CODEX_MODELS, DEFAULT_CODEX_EFFORT } = require('./role-exec.js');
 const { MODEL_ALIASES } = require('./config.js');
 const RR = require('./role-roots.js');
@@ -479,7 +480,7 @@ async function execStep(step, o) {
 // ---- the journal of the steps
 const gitOf = (wt, args) => {
   if (typeof wt !== 'string') return null;
-  const p = spawnSync('git', ['-C', wt].concat(args), { encoding: 'utf8', timeout: 10000 });
+  const p = TG.run(['-C', wt].concat(args), { encoding: 'utf8', timeout: 10000 });
   return p.status === 0 ? String(p.stdout).trim() : null;
 };
 const gitHeadOf = (wt) => gitOf(wt, ['rev-parse', '--verify', '-q', 'HEAD']);

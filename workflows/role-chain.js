@@ -263,7 +263,9 @@ const FULL_SHA = /^([0-9a-f]{40}|[0-9a-f]{64})$/
 const ABBREV_SHA = /^[0-9a-fA-F]{4,64}$/
 const SHA_SCHEMA = { type: 'object', properties: { sha: { type: 'string' }, error: { type: 'string' } }, required: ['sha'] }
 const sha1 = (t, role, phase, h, retry) => {
-  const ws = [lit('git'), lit('-C'), t.wt, lit('rev-parse'), lit('--verify'), lit('-q'), `${h}^{commit}`]
+  // exception E8 of tests/trusted-git-census.test.js: git without scripts/trusted-git.js (this script loads no module);
+  // rev-parse --verify runs no hook and no fsmonitor - another subcommand here goes through the module instead
+  const ws =[lit('git'), lit('-C'), t.wt, lit('rev-parse'), lit('--verify'), lit('-q'), `${h}^{commit}`]
   const opts = checkOpts(`sha:${t.key}:${role}`, phase, SHA_SCHEMA, retry)
   return svc({ kind: 'sha', label: opts.label, phase, effect: 'none', argv: argvOf(ws), schema: SHA_SCHEMA, stdoutField: 'sha', noJson: { sha: '', error: '$error' },
     agent: { prompt: `Run one command and return what it prints as the schema field sha (change nothing, analyse nothing):

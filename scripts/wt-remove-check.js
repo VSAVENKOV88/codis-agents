@@ -13,6 +13,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const TG = require('./trusted-git');
 
 const args = process.argv.slice(2);
 const search = [];
@@ -27,7 +28,7 @@ if (!fs.existsSync(target)) { console.error('no such path: ' + target); process.
 target = fs.realpathSync(target);
 
 const run = (cmd, a, cwd) => spawnSync(cmd, a, { cwd, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
-const git = (cwd, ...a) => run('git', ['-C', cwd, ...a]);
+const git = (cwd, ...a) => TG.run(['-C', cwd, ...a], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
 const inside = (p) => p === target || p.startsWith(target + path.sep);
 const sizeKB = (p) => { const r = run('du', ['-sk', p]); return r.status === 0 ? parseInt(r.stdout, 10) : null; };
 const fmt = (kb) => (kb == null ? '? KB' : kb >= 1024 * 1024 ? (kb / 1024 / 1024).toFixed(1) + ' GB (' + kb + ' KB)'

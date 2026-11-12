@@ -32,7 +32,7 @@
 // 78 no or invalid project config.
 const fs = require('fs');
 const path = require('path');
-const { spawnSync } = require('child_process');
+const TG = require('./trusted-git');
 const cfg = require('./config');
 const { matches } = require('./stand');
 
@@ -49,7 +49,7 @@ const { config, errors } = cfg.load(file);
 if (errors.length) die(78, `the project config ${file} does not validate:\n` + errors.map((e) => 'codis-agents config: ' + e).join('\n'));
 
 const git = (...args) => {
-  const r = spawnSync('git', ['-C', wt, ...args], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
+  const r = TG.run(['-C', wt, ...args], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
   if (r.status !== 0) die(2, `git ${args.join(' ')}: ${(r.stderr || '').trim() || 'failed'}`);
   return r.stdout;
 };

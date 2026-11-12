@@ -4,6 +4,25 @@ Every version of the codis-agents plugin, newest first. What the plugin does now
 [README.md](README.md); its [Technical reference](README.md#technical-reference) is the current state of every rule,
 key and script, and this file says when and why each one changed. Versions before 0.4.14 are in the git history.
 
+## Unreleased
+
+- **Trusted git: no hook and no fsmonitor of the repository runs in a trusted process** (p-codex-A2b-2h-1; owner
+  2026-11-12: hooks off in every trusted git operation). The new `scripts/trusted-git.js` runs git with
+  `-c core.hooksPath=/dev/null -c core.fsmonitor=false --no-optional-locks`; every git call of the conductor's service
+  steps (`role-diff-check.js`, `chain-resolve.js`, the step journal of `chain-run.js`, `stand.js image-diff`), the train
+  (its git wrapper, `branchOk`, the merge `--ff-only` into the arc's worktree), `guards-all.sh`, `guards-select.js`,
+  `guards-result.js` (the meta, the quarantine reason, the enumerator of `guardNeeds`), `wt-setup.sh`, `merge-only.js`,
+  `main-checkout.js`, `config.js` (`originHead`, `gitMainRoot`), `corpus-sync.js`, the heavy channel's check of the
+  worktree, `guards-remote.js` (status, push) and the runner's half (bundled), `wt-remove-check.js`, `agents-md.js` and
+  `detect.js` (which still reports the repository's own `core.hooksPath`) goes through it. The hooks of the main
+  checkout do not run either: a `post-merge` that ran after the train's merge no longer does. The census
+  `tests/trusted-git-census.test.js` fails on a git call outside the module and its named exceptions.
+- **The runner lists the files of the commit from `repo.git`** (`ls-tree`), not from the copy's index: the check of
+  `.env*` after the prepare commands runs no config the copy's `.git` holds.
+- **`guardBaseline` is read without following links**: a link, a path through a directory link, a path out of the
+  worktree or anything but a regular file is "not a regular file inside the worktree" and nothing is read (a rerun keeps
+  the runner's code, `quarantine-take` writes nothing); a broken JSON no longer quotes the file's first bytes.
+
 ## 0.4.45 - 2026-11-12
 
 - **Guard runs of a Codex role go through the heavy channel** (p-codex-A2b-1c1, M-B). `heavy-req.js --kind full` and

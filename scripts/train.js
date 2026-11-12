@@ -112,6 +112,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
+const TG = require('./trusted-git');
 const C = require('./config');
 const GR = require('./guards-result');
 const TL = require('./train-lock');
@@ -155,7 +156,7 @@ function project() {
 }
 
 const git = (P, cwd, args, opts = {}) => {
-  const r = spawnSync('git', ['-C', cwd, ...args], Object.assign({ encoding: 'utf8', env: P.env, maxBuffer: 64 * 1024 * 1024 }, opts));
+  const r = TG.run(['-C', cwd, ...args], Object.assign({ encoding: 'utf8', env: P.env, maxBuffer: 64 * 1024 * 1024 }, opts));
   return { rc: r.status, out: (r.stdout || '').trim(), err: (r.stderr || '').trim() || (r.error ? r.error.message : '') };
 };
 const rev = (P, ref) => { const r = git(P, P.c.repoDir, ['rev-parse', '--verify', '-q', `${ref}^{commit}`]); return r.rc === 0 ? r.out : ''; };
@@ -164,7 +165,7 @@ const TASK = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 // A full object name: 40 hex digits (SHA-1), or 64 in a SHA-256 repository (git init --object-format=sha256), as the
 // chain's FULL_SHA (workflows/role-chain.js).
 const SHA = /^([0-9a-f]{40}|[0-9a-f]{64})$/;
-const branchOk = (b) => typeof b === 'string' && !b.startsWith('-') && spawnSync('git', ['check-ref-format', `refs/heads/${b}`]).status === 0;
+const branchOk = (b) => typeof b === 'string' && !b.startsWith('-') && TG.run(['check-ref-format', `refs/heads/${b}`]).status === 0;
 const resultFile = (P, task, head) => path.join(P.RES, `${task}-${head}.json`);
 
 // ---- the waiters (p-verdict-orphan-a) ----
