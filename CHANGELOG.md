@@ -4,7 +4,7 @@ Every version of the codis-agents plugin, newest first. What the plugin does now
 [README.md](README.md); its [Technical reference](README.md#technical-reference) is the current state of every rule,
 key and script, and this file says when and why each one changed. Versions before 0.4.14 are in the git history.
 
-## Unreleased
+## 0.4.47 - 2026-11-13
 
 - **Branches whose roles ran on codex ride the selection and the train like branches of Claude roles**
   (p-codex-A2b-2h-2; owner 2026-11-12: the container isolation goes to the backlog). The task field
