@@ -303,6 +303,35 @@ const specFile = (d, envx) => {
     await svc.close();
   }
 
+  // ---- C1-21, C1-19: resolve stop with its default pauses (no graceMs/waitMs): a guard run gets TERM and both pauses
+  // of its holder (KILL_GRACE_MS + EMPTY_WAIT_MS, 60 s) before KILL, so the holder's own KILL of the runner and its slot
+  // journal line (rc 143) come first; any other kind gets KILL_GRACE_MS. A virtual clock (setTimeout and Date.now of
+  // this process, only during the call) measures the pause without waiting it; the stubborn group is real.
+  for (const [kind, want] of [['full', HS.KILL_GRACE_MS + HS.EMPTY_WAIT_MS], ['select', HS.KILL_GRACE_MS + HS.EMPTY_WAIT_MS], ['heavy', HS.KILL_GRACE_MS]]) {
+    const state = fs.mkdtempSync(path.join(T, 'grace-'));
+    const g = spawn('zsh', ['-c', 'trap "" TERM; while :; do sleep 1; done'], { detached: true, stdio: 'ignore' });
+    kids.add(g.pid);
+    const lst = await until(() => { const p = spawnSync('ps', ['-o', 'lstart=', '-p', String(g.pid)], { encoding: 'utf8', env: Object.assign({}, process.env, { LC_ALL: 'C' }) }); return String(p.stdout).trim() || null; }, 10000);
+    const id = id32();
+    fs.mkdirSync(path.join(state, 'K'), { recursive: true });
+    fs.writeFileSync(path.join(state, 'K', 'heavy.jsonl'), JSON.stringify({ v: 1, n: 1, ev: 'running', id, kind, pgid: g.pid, lstart: lst }) + '\n');
+    await sleep(300);
+    const real = { st: global.setTimeout, now: Date.now, kill: process.kill };
+    const t0 = Date.now();
+    let vt = t0;
+    const sig = [];
+    global.setTimeout = (fn, ms) => { vt += Math.max(0, Number(ms) || 0); return real.st(fn, Math.min(Number(ms) || 0, 5)); };
+    Date.now = () => vt;
+    process.kill = function (pid, s) { if (pid === -g.pid && s && s !== 0) sig.push([s, vt - t0]); return real.kill.apply(process, arguments); };
+    let r;
+    try { r = await HS.resolveStop(state, 'K', id); } finally { global.setTimeout = real.st; Date.now = real.now; process.kill = real.kill; }
+    const kill = sig.find((x) => x[0] === 'SIGKILL');
+    ok(`C1-21 resolve stop of a ${kind} run with the default pauses: TERM at once, KILL after ${want / 1000} s, stopped`,
+      !!r && r.ok && r.state === 'stopped' && !!sig[0] && sig[0][0] === 'SIGTERM' && sig[0][1] < 1000 && !!kill && kill[1] >= want && kill[1] < want + 1000,
+      JSON.stringify(r) + ' ' + JSON.stringify(sig));
+    try { process.kill(-g.pid, 'SIGKILL'); } catch { /* gone */ }
+  }
+
   // ---- C1-6: guards-all.sh inside a held slot (CODIS_SLOT_HELD) refuses 64 at once, never the endless 75
   {
     const d = setup();
