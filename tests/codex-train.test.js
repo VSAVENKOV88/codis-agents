@@ -313,5 +313,10 @@ function heavyLine() {
   if (!has('zsh')) { skip('S1-S2, T1-T7 (guards-all.sh and train.js run zsh scripts)', 'zsh not found'); done(); }
   await selectionReal();
   train();
+  // the tester cells: tests/codex-train-tester-cases.js (TS1-TS4: the tester's selection from its prompt, a configPath
+  // with a blank and a quote, the ride command run in the task's worktree, a relaunch with the fields of an old
+  // isolation stop), a child with its own tally, so README keeps counting test files
+  const tc = spawnSync(process.execPath, [path.join(__dirname, 'codex-train-tester-cases.js')], { encoding: 'utf8', timeout: 280000 });
+  ok('the tester cells (tests/codex-train-tester-cases.js) pass', tc.status === 0, `exit ${tc.status} ${tc.signal || ''}\n${String(tc.stdout).split('\n').filter((l) => /FAIL/.test(l)).join('\n').slice(0, 3000)}${String(tc.stderr).slice(-800)}`);
   done();
 })().catch((e) => { console.log('  FAIL threw: ' + (e && e.stack)); process.exit(1); });
