@@ -5,7 +5,8 @@
 // hand; this test checks that train.js passes it.
 //   N1 while the guard runs, <sharedDir>/train/lock/exec names the guard's process group;
 //   N2 the guard's environment has no SLOT_EXEC_NOTE;
-//   N3 the train ends green and releases its lock.
+//   N3 the train ends green and releases its lock;
+//   N4 a red train: before its attribution run <lock>/exec keeps only the groups still alive (a live one stays).
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -56,6 +57,7 @@ for (const k of ['SLOTS_DIR', 'SLOT_LEGACY_LOCK', 'SLOT_JOURNAL', 'SLOT_LABEL', 
 const tr = (...a) => spawnSync(process.execPath, [TRAIN, ...a], { cwd: T, encoding: 'utf8', env, timeout: 180000 });
 const last = (s) => { try { return JSON.parse(String(s).trim().split('\n').pop()); } catch { return null; } };
 
+let LIVE = 0;
 try {
   git(main, 'init', '-q', '-b', 'main');
   put(path.join(main, '.gitignore'), 'data/\n');
@@ -76,9 +78,64 @@ try {
   ok('N1 while the guard runs, <lock>/exec names its process group', /^\d+$/.test(pg) && noted.includes(pg), `guard pgid '${pg}', noted '${noted.join(',')}'; ${r.stdout}${r.stderr}`);
   ok('N2 the guard does not inherit SLOT_EXEC_NOTE', (read(path.join(T, 'env.txt')) || '').trim() === 'none', read(path.join(T, 'env.txt')));
   ok('N3 the train is green and its lock released', o && o.verdict === 'green' && !fs.existsSync(LOCK), r.stdout + r.stderr);
+
+  // N4: a red train runs guards-all.sh again for its attribution. Its full run left in <lock>/exec its own group (dead
+  // by then), a dead pgid and a live group of another process; before the attribution run the dead ones are gone and
+  // the live one stays, so a pgid of an earlier run that the system gives to an unrelated group later cannot hold the
+  // lock of a dead dispatcher.
+  // the live group is not a child of this process (sh leaves it to init): a killed child left unreaped here would be a
+  // zombie, and a group of zombies answers EPERM on macOS, i.e. alive
+  LIVE = Number(spawnSync('sh', ['-c', 'perl -e "setpgrp(0, 0) or die; sleep 120" </dev/null >/dev/null 2>&1 & echo $!'], { encoding: 'utf8' }).stdout.trim());
+  sh(path.join(T, 'guard2.sh'), `#!/bin/sh
+T='${T}'
+SUBSET=0; ONLY=""
+while [ $# -gt 0 ]; do case "$1" in --subset) SUBSET=1;; --only) ONLY="$ONLY $2"; shift;; esac; shift; done
+if [ "$SUBSET" = 0 ] && [ -z "$ONLY" ]; then
+  ps -o pgid= -p $$ | tr -d ' ' > "$T/full-pgid.txt"
+  printf '99999999\\n${LIVE}\\n' >> '${path.join(LOCK, 'exec')}'
+fi
+if [ "$SUBSET" = 1 ] && [ ! -e "$T/attr-noted.txt" ]; then
+  ps -o pgid= -p $$ | tr -d ' ' > "$T/attr-pgid.txt"
+  cat '${path.join(LOCK, 'exec')}' > "$T/attr-noted.txt" 2>/dev/null
+fi
+if [ "$SUBSET" = 1 ] && [ ! -f f-q.txt ]; then echo "PASSED g1"; echo "=== 0 failed, 1 passed, 1 total in 0.1s ==="; exit 0; fi
+echo "FAILED g1 - red"
+echo "=== 1 failed, 0 passed, 1 total in 0.1s ==="
+exit 1
+`);
+  const G2 = path.join(T, 'guard2.sh');
+  const cfg2 = path.join(T, 'cfg2.json');
+  fs.writeFileSync(cfg2, JSON.stringify(Object.assign(JSON.parse(fs.readFileSync(cfgFile, 'utf8')), {
+    guardCommand: `cd {wt} && ${G2}`,
+    guardSubsetCommand: `cd {wt} && ${G2} --subset {onlyArgs}`,
+    guardRerun: { command: `cd {wt} && ${G2} --only {name}`, newRedPattern: '^FAILED (\\S+) ', tallyPattern: '^=== .*?(\\d+) total in [0-9.]+s ===$' } })));
+  env.CODIS_AGENTS_CONFIG = cfg2;
+  git(main, 'branch', '-f', 'q', 'arc');
+  const mq = path.join(T, 'mq');
+  git(main, 'worktree', 'add', '-q', mq, 'q');
+  put(path.join(mq, 'f-q.txt'), 'q\n'); git(mq, 'add', 'f-q.txt'); git(mq, 'commit', '-q', '-m', 'q');
+  git(main, 'worktree', 'remove', '--force', mq);
+  tr('enqueue', '--task', 'q', '--branch', 'q', '--head', rev('q'), '--base', 'arc');
+  const r2 = tr('run'); const o2 = last(r2.stdout);
+  const full = (read(path.join(T, 'full-pgid.txt')) || '').trim(), apg = (read(path.join(T, 'attr-pgid.txt')) || '').trim();
+  const an = (read(path.join(T, 'attr-noted.txt')) || '').split('\n').filter(Boolean);
+  const why = `full run group '${full}', attribution group '${apg}', live ${LIVE}, noted at the attribution '${an.join(',')}'; ${JSON.stringify(o2)} ${r2.stderr.slice(-600)}`;
+  ok('N4 (setup) the red train ran its attribution in a group of its own', /^\d+$/.test(full) && /^\d+$/.test(apg) && full !== apg && an.length > 0, why);
+  ok('N4 before the attribution run <lock>/exec keeps the live group and drops the dead ones (the dead pgid, the full run)', an.includes(String(LIVE)) && an.includes(apg) && !an.includes('99999999') && !an.includes(full), why);
+  // the dispatcher dead: the lock lives while the kept group lives and is dead after it
+  const L2 = path.join(T, 'lock-copy');
+  put(path.join(L2, 'exec'), an.filter((g) => g !== apg).join('\n') + '\n');
+  const TL = require(path.join(ROOT, 'scripts', 'train-lock.js'));
+  const deadOwner = { pid: 99999997, child: 99999996, pgid: 99999995 };
+  const before = TL.holderAlive(deadOwner, L2);
+  try { process.kill(-LIVE, 'SIGKILL'); } catch { /* gone */ }
+  let after = true;
+  for (let i = 0; i < 50 && (after = TL.holderAlive(deadOwner, L2)); i++) spawnSync('sleep', ['0.1']);
+  ok('N4 the lock of a dead dispatcher lives while the kept group lives, and is dead after it', before === true && after === false, `before ${before}, after ${after}; ${why}`);
 } catch (e) {
   ok('no exception', false, e && e.stack);
 } finally {
+  if (LIVE > 1) { try { process.kill(-LIVE, "SIGKILL"); } catch { /* gone */ } }
   try { spawnSync('git', ['-C', main, 'worktree', 'prune']); } catch { /* best effort */ }
   fs.rmSync(T, { recursive: true, force: true });
   done();

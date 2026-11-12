@@ -1154,7 +1154,8 @@ until a line `release` comes on its stdin or the stdin ends. A command that runs
 its own slot directory (another directory is an ordinary queue), a marker of its own process group exists there and
 the class fits (a held heavy slot serves both classes); otherwise exit 64, never the queue, where it would wait behind
 itself. `scripts/train.js` passes `SLOT_EXEC_NOTE=<lock>/exec` to its guard runs: the groups of their commands are
-noted there, and the train lock lives while one of them lives (`scripts/train-lock.js`). The exclusive lock of guards
+noted there, and the train lock lives while one of them lives (`scripts/train-lock.js`); before each guard run the
+train keeps in that file only the groups still alive. The exclusive lock of guards
 marked `guards:exclusive` (`<slots.lockDir>/exclusive.lock`) is a `flock(2)` lock by contract, because the project's
 guard runner takes the same file with `lockf(1)` or `flock(1)` and on Linux the two lock types do not see each other:
 the slot scripts take it with the first executable of `SLOT_EXCL_TOOLS` (default `/usr/bin/lockf /usr/bin/flock
@@ -1271,7 +1272,15 @@ fallback to another slot directory: a second directory would be a second queue t
   SIGTTIN, holding its slot until a signal (Ctrl-C) stops it. Markers are read only by this version of `slots.zsh`: a
   waiter of an older copy on the same slot directory sees the lock alone. `kill -9` of a holder in the instant between
   the start of its command and the write of the marker, while a waiter picks the slot, lets one more command into it.
-  `role-leftovers-check.js` judges a slot by the pid in `<slot>.who` and does not read markers.
+  `role-leftovers-check.js` judges a slot by the pid in `<slot>.who` and does not read markers. During the pause of a
+  stop the exclusive lock of `guards:exclusive` is free: `lockf`/`flock` is a member of the command's group, dies on the
+  TERM and drops the lock, while a guard that ignores TERM lives on in its held heavy slot until the KILL (at most
+  `SLOT_KILL_GRACE`). A hold whose wrapper (`heavy.sh`, `medium.sh`) is killed leaves no slot journal line: the line is
+  written by the wrapper after its holder ends, while the holder keeps the slot through its stop. `stopRun` of
+  `guards-remote-host.js` waits only for the leader of its job; a new run of the same name removes the run folder while
+  the holder and the command of the previous run may still be in their pause. A pid of a guard run of the train noted
+  in `<lock>/exec` that the system gives to an unrelated group within the same run (after the dispatcher died) keeps the
+  train lock alive until that group ends, like `pgid` of `owner.json`.
 - The exclusive lock taken up the process: a command under it that leaves its process group (`setsid`, a daemon) and
   runs `heavy.sh` of an exclusive guard waits for that lock until the outer guard ends - the bypass is bound to the
   process group. On the path of Claude the inner `heavy.sh` of such a nested exclusive guard takes a heavy slot of its
