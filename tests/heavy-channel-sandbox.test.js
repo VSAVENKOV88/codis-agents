@@ -90,6 +90,20 @@ const tailOf = (a) => (a && a.log && fs.existsSync(a.log) ? fs.readFileSync(a.lo
     ok('B\'13 without SLOTS_DIR: 77 at once (the default slot directory is not a root either)', n2.state === 'done' && n2.rc === 77, tailOf(n2));
     await svc.close();
   }
+  // ---- C0-2 (G30): heavy.sh of an exclusive guard asked through the channel - the executor's heavy.sh takes the lock, the
+  // inner one runs under it in the held slot without a second lockf (flock(2) LOCK_NB of the guard through perl: 75 held)
+  {
+    const d = setup();
+    const svc = open(d);
+    const H = path.join(S, 'heavy.sh');
+    fs.writeFileSync(path.join(d.wt, 'z-run.mjs'), '// guards:exclusive — a fixed port of the test\nimport { spawnSync } from "child_process";\n'
+      + 'const r = spawnSync("perl", ["-MFcntl=:flock", "-e", "open(my $f, \\"<\\", $ARGV[0]) or exit 2; exit(flock($f, LOCK_EX | LOCK_NB) ? 0 : 75)", process.env.GUARDS_EXCLUSIVE_LOCK || ""]);\n'
+      + 'console.log("ZX held=" + r.status + " sp=" + process.env.SLOT_PATH);\n');
+    const n8 = await req(d, ['--max', '30', '--', 'zsh', H, 'node', 'z-run.mjs']);
+    ok('C0-2 heavy-req -- heavy.sh node <exclusive guard> under codex sandbox: done rc 0, the guard ran once under the held lock in the held slot, no wait for the lock',
+      n8.state === 'done' && n8.rc === 0 && (tailOf(n8).match(/ZX held=75 sp=\/\S*heavy\.\d+\.lock/g) || []).length === 1 && !/waiting for the exclusive lock/.test(tailOf(n8)), JSON.stringify(n8) + tailOf(n8));
+    await svc.close();
+  }
   // ---- B'10 x B'12 in the sandbox: the run's config lies outside the roots and the worktree has none; the nested heavy.sh
   // reads it (CODIS_AGENTS_CONFIG of the executor) and runs a guard marked by its guardExclusive under the exclusive lock
   {
