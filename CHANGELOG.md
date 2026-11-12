@@ -4,6 +4,27 @@ Every version of the codis-agents plugin, newest first. What the plugin does now
 [README.md](README.md); its [Technical reference](README.md#technical-reference) is the current state of every rule,
 key and script, and this file says when and why each one changed. Versions before 0.4.14 are in the git history.
 
+## 0.4.45 - 2026-11-12
+
+- **Guard runs of a Codex role go through the heavy channel** (p-codex-A2b-1c1, M-B). `heavy-req.js --kind full` and
+  `--kind select --base <ref>` (no argv) make the adapter refuse tracked changes ("commit first") and a base that is not
+  a plain ref or not a commit, then start `guards-all.sh --local` outside the sandbox with `CODIS_GUARDS_EXEC` naming
+  `heavy-runs/<id>/exec.json`. `guards-all.sh` queues its own heavy slot, budget, exclusive lock, meta and log; every
+  command of the project (the runner, a single rerun of a new red) runs through the new `scripts/heavy-exec.js` inside
+  `codex sandbox` in the slot's command group (exit 69 `environment: heavy-exec: ...` without a spec, a slot or codex).
+  Under the variable the slot journal line is labelled `guards-all <name> codex <task> <role> <id>` and the meta says
+  `sandbox:codex` (a Codex role may reuse a host run, never the other way); without it nothing changes.
+  `guards-all.sh` refuses (64) inside a held slot. The stop of a guard run waits 60 s after TERM before KILL (owner
+  2026-11-12), and the spec and the run's TMPDIR are removed once the group is empty. `slots.kinds` `full` and `select`
+  are reserved.
+- **The stop of a slot command reaches it before `setpgrp`, and signals come from one place** (p-codex-A2b-1a tails
+  T3, T4). `slot-group.pl stop` signals the group, or the pid itself while it is still in the holder's group, and never
+  a reused pid of another group; the trap of `slot-holder.zsh` only sets the stop flag.
+- **The train keeps only live groups in `<lock>/exec`** (T5.2): before each guard run the noted groups that are gone
+  are dropped, so a dead train run no longer keeps the train lock alive through a foreign group.
+- README Known gaps: the exclusive lock free during the pause (T1), no journal line when the wrapper is killed (T2),
+  `stopRun` of `guards-remote-host.js` waits only for the leader (T5.1), a pgid reused within one train run.
+
 ## 0.4.44 - 2026-11-12
 
 - **The analysis checker on Codex is started only by `analysis-check.js run`** (p-codex-D2b-1b, mechanism M4). The
