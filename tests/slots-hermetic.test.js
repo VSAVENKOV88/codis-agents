@@ -23,8 +23,8 @@ for (const re of [/^: \$\{([A-Z][A-Z0-9_]*):=/gm, /\[\[ -v ([A-Z][A-Z0-9_]*) \]\
   for (const m of SLOTS.matchAll(re)) if (/^(SLOTS?|GUARDS)_/.test(m[1])) knobs.add(m[1]);
 }
 // Knobs the patterns above cannot find: SLOT_EXEC_NOTE is read by scripts/slot-group.pl (perl $ENV{...}) and
-// CODIS_SLOT_HELD is tested with [[ -n ... ]]; the pauses are named too, so that a change of their form keeps them here.
-for (const k of ['SLOT_KILL_GRACE', 'SLOT_EMPTY_WAIT', 'SLOT_EXEC_NOTE', 'CODIS_SLOT_HELD']) knobs.add(k);
+// CODIS_SLOT_HELD and GUARDS_EXCLUSIVE_HELD are tested with [[ -n ... ]]; the pauses are named too, so that a change of their form keeps them here.
+for (const k of ['SLOT_KILL_GRACE', 'SLOT_EMPTY_WAIT', 'SLOT_EXEC_NOTE', 'CODIS_SLOT_HELD', 'GUARDS_EXCLUSIVE_HELD']) knobs.add(k);
 ok('knobs found in slots.zsh (swap threshold, extra-slot thresholds, counts, locks)', ['SLOT_SWAP_MIN_MB', 'SLOT_THIRD_FREE_PCT', 'SLOT_THIRD_SWAP_GROW_MB', 'SLOT_MEDIUM_N', 'GUARDS_EXCLUSIVE_LOCK', 'SLOTS_DIR', 'SLOT_OS', 'SLOT_PROC'].every((k) => knobs.has(k)), [...knobs].join(' '));
 
 // The tests that run heavy.sh / medium.sh / guards-all.sh / stand.sh or source slots.zsh.
