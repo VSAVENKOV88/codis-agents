@@ -6,6 +6,16 @@ key and script, and this file says when and why each one changed. Versions befor
 
 ## Unreleased
 
+- **The analysis checker on Codex is started only by `analysis-check.js run`** (p-codex-D2b-1b, mechanism M4). The
+  fourth execpolicy rule of the coordinator home is now `["node", "<plugin>/scripts/analysis-check.js", "run"]`
+  instead of `["codex", "exec", "--sandbox", "read-only"]`: rewrite `$CODEX_HOME/rules/codis-agents.rules` after the
+  update; a direct `codex exec` no longer matches a rule. `run --shared --analysis --sha --run <n>` (any other argument
+  exits 64) needs `ps` (69 in the sandbox), refuses symbolic links on its paths and a marker whose argv is not the
+  template of this copy of the plugin (65), claims `runs/<n>.running` `{pid, lstart}` exclusively, starts the checker
+  in the foreground with stdin `/dev/null`, passes INT, TERM and HUP to it and records `runs/<n>.exit` before it reads
+  the answer. A second `run` of the run is refused (3) while its process lives, and records `runs/<n>.died` when it is
+  gone (the state `not-run: died`, after the journal). `prepare` prints the `run` command; `collect --exit` and
+  `prepare --abandon` refuse a run with `runs/<n>.running`.
 - **An exclusive guard under the exclusive lock already taken up the process no longer waits for itself**
   (p-codex-A2b-1c0, G30). `heavy.sh zsh heavy.sh node x-run.js` of a role of Claude, and `heavy-req -- heavy.sh ...`
   of the heavy channel, waited forever: the inner `heavy.sh` opened the `flock(2)` lock again in another process.

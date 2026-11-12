@@ -142,17 +142,20 @@ trust_level = "trusted"
 prefix_rule(pattern=["node", "<plugin>/scripts/chain-run.js"], decision="allow")
 prefix_rule(pattern=["node", "<plugin>/scripts/train.js"], decision="allow")
 prefix_rule(pattern=["git"], decision="allow")
-prefix_rule(pattern=["codex", "exec", "--sandbox", "read-only"], decision="allow")
+prefix_rule(pattern=["node", "<plugin>/scripts/analysis-check.js", "run"], decision="allow")
 ```
 
    These four run outside the sandbox without a window: the conductor and the train need the network and write outside
-   the project, git writes into the git folder, and the analysis checker needs the network (it runs read-only itself).
+   the project, git writes into the git folder, and `analysis-check.js run` starts the analysis checker, which needs the
+   network (it runs read-only itself). No rule lets a direct `codex exec` out: it runs in the sandbox without the
+   network, or asks in the window - and the owner refuses that window.
    There is no rule for `wait-step.js`: it would let any command out. A rule matches only a plain argv that starts with
    its pattern - the literal path, no variable, no `nohup`, no `VAR=` in front, no `&`, no redirection - so the
    commands of the Codex blocks are written that way; anything else runs in the sandbox or asks in the window. None of
    these forms matches either (measured with `codex execpolicy check` on 0.167.0): a `node -e` wrapper, `sh -c` or
    `bash -lc`, `env` in front, a node flag before the script, any other path to node, a relative script path.
-   `node <plugin>/scripts/chain-run.js` resolves `node` by the PATH of the session; `codex exec` is called by its name.
+   `node <plugin>/scripts/chain-run.js` resolves `node` by the PATH of the session; the `codex exec` that
+   `analysis-check.js run` starts is called by its name.
    Check a rule with `codex execpolicy check --rules <rules file> -- <command>` (the answer names `"decision":"allow"`).
    Inside the sandbox `ps` is refused, so a conductor started there cannot name itself in the lock of a task:
    `chain-run.js start` refuses with exit 69 and names `CODEX_SANDBOX`. After such a refusal, or any other that names
@@ -233,10 +236,12 @@ goes by step 4.
 
 #### On Codex
 
-`codex exec` in the coordinator home, read-only, with a fixed version of the analysis. Every launch is a run of its own
-in `<sharedDir>/analysis-checks/<sha256>/` (`<sha256>`: `shasum -a 256 <analysis>`), outside the worktree and the task
-and feature folders; no result of an earlier run is removed or overwritten, and every result reaches the owner.
-`analysis-check.js` runs in the sandbox (no rule: it writes only there and into the report next to the analysis):
+The checker runs in the coordinator home, read-only, on a fixed version of the analysis. Every launch is a run of its
+own in `<sharedDir>/analysis-checks/<sha256>/` (`<sha256>`: `shasum -a 256 <analysis>`), outside the worktree and the
+task and feature folders; no result of an earlier run is removed or overwritten, and every result reaches the owner.
+`prepare` and `collect` run in the sandbox (no rule: they write only there and into the report next to the analysis);
+`run` runs under the fourth rule and is the only start of the checker. Never run `codex exec` directly: no rule lets it
+out, and on a window that asks for it the owner refuses.
 
 1. **Prepare.** `node <plugin>/scripts/analysis-check.js prepare --shared <sharedDir> --analysis <analysis> --task <key> --worktree <worktree> --model <model> --brief <brief>`
    (`--task` once per key the check is for; `--use-cases` and `--spec` when the task has them; `<model>`: `codex.models`
@@ -249,19 +254,26 @@ and feature folders; no result of an earlier run is removed or overwritten, and 
    what is there and run nothing: a result of this version for a key (in `runs/`, in the earlier layout
    `analysis-checks/<task>/<sha256>/last.json`, or a run of `<name of the analysis>.check.md` with this
    `Analysis-sha256` and the key in `Tasks`) - show it to the owner; a new run only with `--again <reason>` (another
-   model, a brief changed while the analysis did not); or a pending run - poll the command that runs it. Only when the
-   turn that ran the command has ended without an answer: `prepare ... --abandon <n> --reason <why>`.
-2. **Run** the command it printed, once, directly, under its rule: `codex exec --sandbox read-only --ephemeral --skip-git-repo-check --output-schema <plugin>/schemas/analysis-check.schema.json -o <check folder>/runs/<n>.json -C <worktree> -m <model> "Read <check folder>/task-<n>.md and do what it says."`
-   When the shell tool answers "still running", poll that same command in the same turn; never run it again: a second
-   run overwrites `runs/<n>.json`. Do not end the turn while the checker runs.
-3. **Collect.** `node <plugin>/scripts/analysis-check.js collect --shared <sharedDir> --analysis <analysis> --run <n> --exit <N>`
-   records the exit of `codex exec` and shows every run of this version with its state: a result (the answer
+   model, a brief changed while the analysis did not); or a pending run - poll the command that started it (the
+   refusal names it). `prepare ... --abandon <n> --reason <why>` only for a run that was never started; a run started
+   by `run` is told dead by `run` itself: run its command again, and when its process is gone it records it as died and
+   `prepare` makes a new run.
+2. **Run** the command it printed, once, under the fourth rule: `node <plugin>/scripts/analysis-check.js run --shared <sharedDir> --analysis <analysis> --sha <sha256> --run <n>`.
+   It starts the checker, codex exec in the coordinator home, read-only, with the answer schema
+   `<plugin>/schemas/analysis-check.schema.json`, `-o <check folder>/runs/<n>.json`, `-C <worktree>` and `-m <model>`:
+   the argv is built by the script from the marker of the run (a marker whose argv differs is refused, exit 65), and
+   `run` waits for the checker in the foreground. When the shell tool answers "still running", poll that same command
+   in the same turn; running it again is refused while the run lives (exit 3), from this turn or another session. Do
+   not end the turn while the checker runs. Its exit 69 names the sandbox: the command did not match the rule (see the
+   homes above); its exit 3 names the state of the run.
+3. **Collect.** `run` records the exit of the checker and prints every run of this version with its state; `node <plugin>/scripts/analysis-check.js collect --shared <sharedDir> --analysis <analysis>`
+   shows the same at any time: a result (the answer
    `runs/<n>.json` is `{analysisSha256, tasks, verdict, significantGaps, report}`; it counts only for the keys in its
    `tasks`), not-run with its reason, or pending. When the snapshot after (step 3 above) did not void the check,
    `node <plugin>/scripts/analysis-check.js collect --shared <sharedDir> --analysis <analysis> --run <n> --append`
    appends `report` to `<name of the analysis>.check.md` with `Saved-by: coordinator` under the header of the run and
    `Analysis-sha256` filled in when missing; a second `--append` of the run writes nothing. Two verdicts of one version
-   for a key (`--again`, a late answer of an abandoned run, a second `codex exec` that rewrote an answer `prepare` or
+   for a key (`--again`, a late answer of an abandoned or died run, a second `codex exec` that rewrote an answer `prepare` or
    `collect` had seen: every answer a command saw stays in the journal of the run) are both appended and both named to
    the owner (step 5). When the analysis later changes, its sha256 differs: that
    version was not checked, prepare again.

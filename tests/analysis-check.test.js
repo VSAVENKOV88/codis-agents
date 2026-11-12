@@ -86,15 +86,15 @@ if (!fs.existsSync(SCRIPT)) done();
   const want = ['codex', 'exec', '--sandbox', 'read-only', '--ephemeral', '--skip-git-repo-check', '--output-schema', path.join(PLUGIN, 'schemas', 'analysis-check.schema.json'),
     '-o', path.join(dir, 'runs', '1.json'), '-C', c.WT, '-m', 'm1', `Read ${path.join(dir, 'task-1.md')} and do what it says.`];
   ok('A1 prepare: the exact argv of codex exec, -o runs/1.json', p1.out && JSON.stringify(p1.out.argv) === JSON.stringify(want), JSON.stringify(p1.out && p1.out.argv));
-  ok('A1 prepare: the command line starts with the plain argv the fourth rule matches', p1.out && typeof p1.out.command === 'string'
-    && p1.out.command.startsWith(`codex exec --sandbox read-only --ephemeral --skip-git-repo-check --output-schema ${want[7]} -o ${want[9]} -C ${c.WT} -m m1 `), p1.out && p1.out.command);
+  ok('A1 prepare: the command line is the plain argv the fourth rule matches, node <this script> run ... --run 1', p1.out
+    && p1.out.command === `node ${SCRIPT} run --shared ${c.S} --analysis ${c.A} --sha ${c.sha} --run 1`, p1.out && p1.out.command);
   ok('A17 prepare: its output says to run the command once and poll it', /once/.test(p1.all) && /poll/i.test(p1.all), p1.all);
 
   const p2 = prep(c);
   ok('A2 prepare with run 1 pending: exit 3, no second marker', p2.code === 3 && !fs.existsSync(path.join(dir, 'runs', '2.prepared')), p2.all);
-  ok('A2/A17 the refusal: poll the command that runs it, never run it again, a second run overwrites runs/1.json, --abandon only when its turn ended',
-    /Poll the command that runs it/.test(p2.all) && /never run it again/.test(p2.all) && /a second run overwrites runs\/1\.json/.test(p2.all)
-    && /prepare --abandon 1 --reason/.test(p2.all), p2.all);
+  ok('A2/A17 the refusal: poll the command that started it (named), refused while the run lives, --abandon only for a run never started',
+    /Poll the command that started it/.test(p2.all) && p2.all.includes(p1.out.command) && /refused while the run lives/.test(p2.all)
+    && /never started: prepare --abandon 1 --reason/.test(p2.all) && !/never run it again/.test(p2.all), p2.all);
 
   const c0 = collect(c);
   ok('collect: run 1 is prepared (pending)', c0.code === 0 && runOf(c0.out, 1) && runOf(c0.out, 1).state === 'prepared', c0.all);
@@ -155,7 +155,7 @@ if (!fs.existsSync(SCRIPT)) done();
   const c = fresh();
   prep(c);
   const p = prep(c, ['t1'], ['--again', 'x']);
-  ok('A13 --again with run 1 pending: exit 3 as A2', p.code === 3 && /never run it again/.test(p.all), p.all);
+  ok('A13 --again with run 1 pending: exit 3 as A2', p.code === 3 && /refused while the run lives/.test(p.all), p.all);
 }
 
 // ---- A4, A18: abandon, and a late answer of the abandoned run ----
@@ -261,7 +261,7 @@ if (!fs.existsSync(SCRIPT)) done();
   const c = fresh();
   const p1 = prep(c, ['t1']);
   const pt2 = prep(c, ['t2']);
-  ok('A10 a pending run of t1 refuses prepare for t2 (one pending run per version)', pt2.code === 3 && /never run it again/.test(pt2.all), pt2.all);
+  ok('A10 a pending run of t1 refuses prepare for t2 (one pending run per version)', pt2.code === 3 && /refused while the run lives/.test(pt2.all), pt2.all);
   writeAnswer(oFile(p1), answer(c.sha, ['t1'], 'ready', 0));
   const p2 = prep(c, ['t2']);
   ok('A10 a result for t1: prepare for t2 runs 2 in the same version folder, t1 named for reference', p2.code === 0 && p2.out.run === 2 && p2.out.dir === p1.out.dir
@@ -509,7 +509,7 @@ let raceA23 = Promise.resolve();
     ok('B9 A seen, then runs/1.json removed: run 1 a result (not pending), "is gone"', !!r && r.state === 'result' && /is gone/.test(JSON.stringify(r)) && vs(col.out) === 'changes-needed1', JSON.stringify(r));
     const again = prep(c);
     const ab = prep(c, ['t1'], ['--abandon', '1', '--reason', 'x']);
-    ok('B9 prepare refuses by the result, not as pending; --abandon refused', again.code === 3 && !/never run it again/.test((again.out && again.out.refused) || '')
+    ok('B9 prepare refuses by the result, not as pending; --abandon refused', again.code === 3 && !/refused while the run lives/.test((again.out && again.out.refused) || '')
       && ab.code === 3 && /has a result/.test(ab.all), (again.out && again.out.refused) || again.all.slice(0, 200));
   }
   {
@@ -679,11 +679,25 @@ let raceA23 = Promise.resolve();
   }
 }
 
+// ---- analysis-check.js run (p-codex-D2b-1b, mechanism M4): tests/analysis-check-run-cases.js, a child with its own tally ----
+{
+  const rc = spawnSync(process.execPath, [path.join(__dirname, 'analysis-check-run-cases.js')], { encoding: 'utf8', timeout: 300000 });
+  ok('the cells of analysis-check.js run (tests/analysis-check-run-cases.js) pass', rc.status === 0,
+    `exit ${rc.status} ${rc.signal || ''} ${(rc.stdout || '').split('\n').filter((l) => /FAIL/.test(l)).join('\n').slice(-3000)} ${(rc.stderr || '').slice(-500)}`);
+}
+
 // ---- the tester cells: tests/analysis-check-tester-cases.js, a child with its own tally, so README keeps counting test files ----
 {
   const tc = spawnSync(process.execPath, [path.join(__dirname, 'analysis-check-tester-cases.js')], { encoding: 'utf8', timeout: 120000 });
   ok('the tester cells of analysis-check.js (tests/analysis-check-tester-cases.js) pass', tc.status === 0,
     `exit ${tc.status} ${tc.signal || ''} ${(tc.stdout || '').split('\n').filter((l) => /FAIL/.test(l)).join('\n').slice(-1500)} ${(tc.stderr || '').slice(-500)}`);
+}
+
+// ---- the tester cells of analysis-check.js run (p-codex-D2b-1b): tests/analysis-check-run-tester-cases.js, a child with its own tally ----
+{
+  const rt = spawnSync(process.execPath, [path.join(__dirname, 'analysis-check-run-tester-cases.js')], { encoding: 'utf8', timeout: 120000 });
+  ok('the tester cells of analysis-check.js run (tests/analysis-check-run-tester-cases.js) pass', rt.status === 0,
+    `exit ${rt.status} ${rt.signal || ''} ${(rt.stdout || '').split('\n').filter((l) => /FAIL/.test(l)).join('\n').slice(-1500)} ${(rt.stderr || '').slice(-500)}`);
 }
 
 raceA23.then(() => done());
