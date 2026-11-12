@@ -390,5 +390,13 @@ const specFile = (d, envx) => {
       ok(`C1-27 slots.kinds.${k}: an error (a reserved kind of the heavy channel)`, r.errors.some((e) => new RegExp(`slots\\.kinds\\.${k}: .*reserved`).test(e)), JSON.stringify(r.errors));
     }
   }
+
+  // ---- the tester cells: tests/heavy-guards-tester-cases.js (TG1-TG8: a new red alone, a gone spec in guards-all.sh,
+  // the end of the call and a signal, a cancel during the rerun, recovery after kill -9, an inherited variable, a flaky
+  // selection, the client's refusals), a child with its own tally, so README keeps counting test files
+  {
+    const tc = spawnSync(process.execPath, [path.join(__dirname, 'heavy-guards-tester-cases.js')], { encoding: 'utf8', timeout: 280000 });
+    ok('the tester cells of the guard runs (tests/heavy-guards-tester-cases.js) pass', tc.status === 0, `exit ${tc.status} ${tc.signal || ''}\n${String(tc.stdout).split('\n').filter((l) => /FAIL/.test(l)).join('\n').slice(0, 3000)}${String(tc.stderr).slice(-800)}`);
+  }
   done();
 })().catch((e) => { ok('the test ran to its end', false, e.stack); done(); });
