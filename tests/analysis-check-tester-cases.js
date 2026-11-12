@@ -136,9 +136,10 @@ const keyOf = (o, t) => (o && o.keys && o.keys[t]) || null;
   {
     const c = fresh('sp a$b"c`d\\e');
     const p = prep(c);
-    const sh = spawnSync('/bin/sh', ['-c', `for a in ${(p.out && p.out.command || '').replace(/^codex /, '')}; do printf '%s\\n' "$a"; done`], { encoding: 'utf8' });
-    const got = ['codex', ...sh.stdout.split('\n').slice(0, -1)];
-    ok('A1 the command line parses back into the exact argv (quoting)', p.code === 0 && JSON.stringify(got) === JSON.stringify(p.out.argv), JSON.stringify(got));
+    const sh = spawnSync('/bin/sh', ['-c', `for a in ${(p.out && p.out.command || '').replace(/^node /, '')}; do printf '%s\\n' "$a"; done`], { encoding: 'utf8' });
+    const got = ['node', ...sh.stdout.split('\n').slice(0, -1)];
+    const want = ['node', SCRIPT, 'run', '--shared', c.S, '--analysis', c.A, '--sha', c.sha, '--run', '1'];
+    ok('A1 the command line parses back into the exact argv of analysis-check.js run (quoting)', p.code === 0 && JSON.stringify(got) === JSON.stringify(want), JSON.stringify(got));
   }
 
   // ---- A21: a real race of several prepare of one version: one run, one marker ----

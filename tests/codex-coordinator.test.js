@@ -5,15 +5,17 @@
 // Code", the same step for Codex under a heading "On Codex" next to it, and a Codex block names no Claude Code tool
 // except as a negation ("no Monitor on this host"). On Codex the coordinator's session runs in workspace-write with
 // execpolicy rules that let exactly these commands out of the sandbox: node <plugin>/scripts/chain-run.js,
-// node <plugin>/scripts/train.js, git and codex exec --sandbox read-only, so
-// every such command of a Codex block is a plain argv with the literal plugin path - a variable, nohup, a redirection,
+// node <plugin>/scripts/train.js, git and node <plugin>/scripts/analysis-check.js run (which starts the analysis
+// checker itself; no rule lets a direct codex exec out), so every such command of a Codex block is a plain argv with the literal plugin path - a variable, nohup, a redirection,
 // a pipe or & would not match the rule. The wait is a slice of 25 s (the shell tool of Codex returns "still running"
 // after about 30 s), for the coordinator and for a role (the host section of role-exec.js).
 // Cells (analyst.md, pass 2, and the brief's "cells after E2 and (a)"): L1, L2, L7*, L8, L9, L10, L12*, L13, L14', L15,
 // L17*, L18*, L22* (a)-(g), W1-W4, C1-C4, K1-K5, R1.
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
-const { ok, done } = require('./lib');
+const { spawnSync } = require('child_process');
+const { ok, skip, has, done } = require('./lib');
 
 const ROOT = path.join(__dirname, '..');
 const read = (f) => { try { return fs.readFileSync(path.join(ROOT, f), 'utf8'); } catch { return ''; } };
@@ -136,8 +138,8 @@ ok('C1/G6 coordinator: codex login, /hooks and the trust are the owner\'s steps;
 // G3/G4: the rules file
 const RULE_RE = /^prefix_rule\(pattern=(\[[^\]]*\]), decision="allow"\)$/;
 const rules = homes.split('\n').filter((l) => RULE_RE.test(l)).map((l) => JSON.parse(RULE_RE.exec(l)[1]));
-const want = [['node', '<plugin>/scripts/chain-run.js'], ['node', '<plugin>/scripts/train.js'], ['git'], ['codex', 'exec', '--sandbox', 'read-only']];
-ok('C2/G3 coordinator: exactly four rules - chain-run.js, train.js, git, codex exec --sandbox read-only', JSON.stringify(rules) === JSON.stringify(want), JSON.stringify(rules));
+const want = [['node', '<plugin>/scripts/chain-run.js'], ['node', '<plugin>/scripts/train.js'], ['git'], ['node', '<plugin>/scripts/analysis-check.js', 'run']];
+ok('C2/G3 coordinator: exactly four rules - chain-run.js, train.js, git, analysis-check.js run', JSON.stringify(rules) === JSON.stringify(want), JSON.stringify(rules));
 ok('C2/G3 coordinator: the rules go into $CODEX_HOME/rules/codis-agents.rules of the coordinator home; no rule for wait-step.js',
   /\$CODEX_HOME\/rules\/codis-agents\.rules/.test(homesF) && /no rule for `wait-step\.js`/.test(homesF), homesF.slice(0, 600));
 ok('G4 coordinator: the rules name the installed copy of the plugin (the path with its version), not a working clone', /installed copy/.test(homesF) && /<version>/.test(homesF));
@@ -148,11 +150,12 @@ ok('C3 coordinator: CODEX_HOME of the coordinator home; ~/.codex only in a claus
 // G4: every command of a Codex block that a rule should let out is a plain argv that the rule matches
 const allCodex = SKILLS.map((s) => hostText(skill[s], 'codex')).join('\n');
 const spans = [...allCodex.matchAll(/`([^`\n]+)`/g)].map((m) => m[1]).concat(allCodex.split('\n').map((l) => l.trim()))
-  .filter((c) => /^(node <plugin>\/scripts\/(chain-run|train)\.js|git |codex exec )/.test(c));
+  .filter((c) => /^(node <plugin>\/scripts\/(chain-run|train)\.js|node <plugin>\/scripts\/analysis-check\.js run |git |codex exec )/.test(c));
 const argv = (c) => (c.match(/"[^"]*"|\S+/g) || []).map((t) => t.replace(/^"|"$/g, ''));
 const matches = (c) => want.some((p) => p.every((t, i) => argv(c)[i] === t));
 const special = (c) => /\$|\bnohup\b|[|&;]|\bsetsid\b|^[A-Z_]+=/.test(c.replace(/<[^<>]*>/g, 'X').replace(/"[^"]*"/g, 'X')) || /[<>]/.test(c.replace(/<[^<>]*>/g, 'X'));
-ok('G4 the Codex blocks call chain-run.js, train.js and codex exec at all', spans.some((c) => /chain-run\.js start/.test(c)) && spans.some((c) => /train\.js watch --detach/.test(c)) && spans.some((c) => /^codex exec --sandbox read-only/.test(c)), spans.join(' | '));
+ok('G4 the Codex blocks call chain-run.js, train.js and analysis-check.js run at all', spans.some((c) => /chain-run\.js start/.test(c)) && spans.some((c) => /train\.js watch --detach/.test(c)) && spans.some((c) => /analysis-check\.js run /.test(c)), spans.join(' | '));
+ok('G4 no command of a Codex block starts with codex exec (the checker is started only by analysis-check.js run)', !spans.some((c) => /^codex exec /.test(c)), spans.filter((c) => /^codex exec /.test(c)).join(' | '));
 ok('G4 every such command of a Codex block matches a rule (a plain argv, the literal plugin path)', spans.every(matches), spans.filter((c) => !matches(c)).join(' | '));
 ok('G4 no variable, nohup, redirection, pipe or & in those commands', !spans.some(special), spans.filter(special).join(' | '));
 // L7*
@@ -175,9 +178,13 @@ ok('L17* coordinator, Codex: between waves, both homes, /hooks and the check aga
 // K1-K5
 const chk = flat(section(co, /^Check the analysis/));
 const chkCodex = flat(hostText(section(co, /^Check the analysis/), 'codex'));
-ok('K1 coordinator, Codex: codex exec --sandbox read-only --ephemeral --output-schema <plugin>/schemas/analysis-check.schema.json -o ... -C <worktree> in the coordinator home',
-  /codex exec --sandbox read-only --ephemeral --skip-git-repo-check --output-schema <plugin>\/schemas\/analysis-check\.schema\.json -o <check folder>\/runs\/<n>\.json -C <worktree> -m <model>/.test(chkCodex)
+ok('K1 coordinator, Codex: analysis-check.js run starts codex exec read-only with the answer schema, its argv built by the script from the marker, in the coordinator home',
+  /`node <plugin>\/scripts\/analysis-check\.js run --shared <sharedDir> --analysis <analysis> --sha <sha256> --run <n>`/.test(chkCodex)
+  && /starts the checker, codex exec[^.]*read-only[^.]*analysis-check\.schema\.json/.test(chkCodex) && /argv[^.]*built by the script/.test(chkCodex)
   && /coordinator home/.test(chkCodex), chkCodex.slice(0, 800));
+ok('N13 coordinator, Codex: prepare and collect run in the sandbox, run under the fourth rule; never codex exec directly; the owner refuses a window that asks for it',
+  /`prepare` and `collect` run in the sandbox/.test(chkCodex) && /`run` runs under the fourth rule/.test(chkCodex) && /[Nn]ever run `codex exec` directly/.test(chkCodex)
+  && /window[^.]*owner refuses|owner refuses[^.]*window/.test(chkCodex), chkCodex);
 ok('K1 coordinator, Codex: the checker runs directly under its rule and is waited for in the turn (no wait-step.js)', /still running/.test(chkCodex) && !/wait-step\.js start/.test(chkCodex), chkCodex);
 ok('K2 coordinator, Codex: a copy analysis-<sha256>.md outside the worktree and the task and feature folders; the answer carries analysisSha256; the report Analysis-sha256 of the copy',
   /analysis-<sha256>\.md/.test(chkCodex) && /analysisSha256/.test(chkCodex) && /Analysis-sha256/.test(chkCodex) && /outside the worktree/.test(chkCodex), chkCodex);
@@ -194,13 +201,13 @@ ok('K5 coordinator: the steps snapshot before and after stay common (outside the
 ok('A14 coordinator, Codex: no "Remove a last.json" - an earlier result of the same version is never removed', !/Remove a `last\.json`/.test(chkCodex) && !/-o <check folder>\/last\.json/.test(chkCodex), chkCodex.slice(0, 600));
 ok('A14 coordinator, Codex: analysis-check.js prepare first; its exit 3 - show the result or the pending run, run nothing',
   /`node <plugin>\/scripts\/analysis-check\.js prepare /.test(chkCodex) && /exit 3[^.]*(show|shows)[^.]*run nothing|run nothing[^.]*exit 3/.test(chkCodex), chkCodex);
-ok('A14/A17 coordinator, Codex: the printed command once; "still running" - poll that same command, never run it again',
-  /once/.test(chkCodex) && /still running[^.]*poll[^.]*same command/.test(chkCodex) && /never run it again/.test(chkCodex), chkCodex);
-ok('A14 coordinator, Codex: collect --run <n> --exit, then collect --run <n> --append (only when the snapshot after did not void the check)',
-  /analysis-check\.js collect [^`]*--run <n> --exit <N>/.test(chkCodex) && /analysis-check\.js collect [^`]*--run <n> --append/.test(chkCodex)
+ok('A14/A17 coordinator, Codex: the printed command once; "still running" - poll that same command; running it again is refused while the run lives',
+  /once/.test(chkCodex) && /still running[^.]*poll[^.]*same command/.test(chkCodex) && /refused while the run lives/.test(chkCodex) && !/never run it again/.test(chkCodex), chkCodex);
+ok('A14 coordinator, Codex: run records the exit; collect --run <n> --append (only when the snapshot after did not void the check); no collect --exit',
+  /`run` records the exit/.test(chkCodex) && /analysis-check\.js collect [^`]*--run <n> --append/.test(chkCodex) && !/--exit <N>/.test(chkCodex)
   && /snapshot after[^.]*void/i.test(chkCodex), chkCodex);
-ok('A14 coordinator, Codex: --abandon only when the turn that ran the command has ended; every result to the owner',
-  /--abandon <n> --reason/.test(chkCodex) && /turn[^.]*ended/.test(chkCodex) && /every result|all (the )?results|both verdicts/.test(chkCodex), chkCodex);
+ok('A14 coordinator, Codex: --abandon only for a run that was never started; a started run is told dead by run itself; every result to the owner',
+  /--abandon <n> --reason/.test(chkCodex) && /never started/.test(chkCodex) && /records it as died/.test(chkCodex) && /every result|all (the )?results|both verdicts/.test(chkCodex), chkCodex);
 const step5 = flat((section(co, /^Check the analysis/).match(/5\. \*\*Closure\.\*\*[^]*?(?=\n### |\n\d\. \*\*)/) || [''])[0]);
 ok('A6 coordinator step 5: two runs of one version for a task - a changes-needed needs its Closure lines, a later ready of the same version does not cancel it',
   /later `ready` of the same version does not cancel/.test(step5), step5);
@@ -208,11 +215,15 @@ const wavesStep = flat(((rules0Early().match(/\n## Waves[^\n]*\n([\s\S]*?)\n## /
 ok('A6 rule Waves: a later ready of the same version does not cancel a changes-needed; both verdicts named to the owner',
   /later `ready` of the same version does not cancel/.test(wavesStep) && /both/.test(wavesStep), wavesStep.slice(0, 400));
 const readmeGaps = flat((read('README.md').match(/\n## Known gaps\n([\s\S]*?)\n## /) || ['', ''])[1]);
-ok('A17 README Known gaps: a second codex exec of the same prepared run is not told from the first',
-  /second `codex exec` of the same prepared run/.test(readmeGaps), '');
+ok('A17 README Known gaps: a second analysis-check.js run of a run that lives is refused; open: an owner window that lets out a direct codex exec, a checker that outlives a killed run',
+  /second `analysis-check\.js run` of a run that lives is refused/.test(readmeGaps) && /window[^.]*direct `codex exec`/.test(readmeGaps) && /outlives/.test(readmeGaps), readmeGaps.slice(0, 3000));
+ok('N13 README Known gaps: the rule analysis-check.js run is a prefix, the script refuses every other argument (64); no gap of the rule codex exec --sandbox read-only',
+  /rule `node <plugin>\/scripts\/analysis-check\.js run` is a prefix[^.]*exit 64/.test(readmeGaps) && !/rule `codex exec --sandbox read-only` is a prefix/.test(readmeGaps), '');
+ok('N13 README Known gaps: the argv of the marker is not signed - a changed worktree or model within the checked forms passes',
+  /runs\/<n>\.prepared/.test(readmeGaps) && /not signed/.test(readmeGaps), '');
 // B17 (mechanism M2.2): every answer a command saw is kept in the journal of the run; only a rewrite nobody saw is lost
 ok('B17 README Known gaps: only an answer rewritten before any prepare or collect saw it is lost',
-  /rewritten before any `prepare` or `collect` saw it/.test(readmeGaps), readmeGaps.slice(Math.max(0, readmeGaps.indexOf('second `codex exec`') - 100), readmeGaps.indexOf('second `codex exec`') + 700));
+  /rewritten before any `prepare` or `collect` saw it/.test(readmeGaps), '');
 const acRow = flat(read('README.md').split('\n').find((l) => l.startsWith('| `scripts/analysis-check.js`')) || '');
 ok('B17 README scripts table: the journal runs/<n>.answers/<k>.json, every answer seen is a verdict', /`runs\/<n>\.answers\/<k>\.json`/.test(acRow) && /every answer/.test(acRow), acRow);
 ok('B17 coordinator, Codex step 3: a second codex exec that rewrote an answer prepare or collect had seen',
@@ -269,6 +280,35 @@ ok('R1 README Quick start: a Codex line', /Codex/.test(sec2('Quick start')));
 ok('R1 README Known gaps: no "part D2" and no "does not run on Codex yet"', !/part D2/.test(readme) && !/does not run on Codex yet/.test(readme));
 const rrules = readme.split('\n').filter((l) => RULE_RE.test(l)).map((l) => JSON.parse(RULE_RE.exec(l)[1]));
 ok('R1 README: the same four rules as the coordinator skill', JSON.stringify(rrules) === JSON.stringify(want), JSON.stringify(rrules));
+
+// ---- N15 (M4-6): the rules of the skill under codex execpolicy check (codex-cli 0.167.0, experiment X8 of the analysis) ----
+{
+  const rulesText = homes.split('\n').filter((l) => RULE_RE.test(l)).join('\n').split('<plugin>').join(ROOT) + '\n';
+  const AC = `${ROOT}/scripts/analysis-check.js`;
+  const cmds = [
+    ['analysis-check.js run', ['node', AC, 'run', '--shared', '/s', '--analysis', '/a', '--sha', 'x', '--run', '1'], 'allow'],
+    ['analysis-check.js prepare', ['node', AC, 'prepare', '--shared', '/s', '--analysis', '/a'], null],
+    ['analysis-check.js collect', ['node', AC, 'collect', '--shared', '/s', '--analysis', '/a'], null],
+    ['a direct codex exec --sandbox read-only', ['codex', 'exec', '--sandbox', 'read-only', '--ephemeral', '-o', '/s/runs/1.json', 'x'], null],
+    ['codex exec --dangerously-bypass-approvals-and-sandbox', ['codex', 'exec', '--dangerously-bypass-approvals-and-sandbox', 'x'], null],
+  ];
+  if (!has('codex')) {
+    for (const [name] of cmds) skip(`N15 codex execpolicy check: ${name}`, 'no codex in PATH');
+  } else {
+    const T = fs.mkdtempSync(path.join(os.tmpdir(), 'codis-ep-'));
+    const rf = path.join(T, 'codis-agents.rules');
+    fs.writeFileSync(rf, rulesText);
+    fs.mkdirSync(path.join(T, 'home'));
+    for (const [name, argv, want] of cmds) {
+      const r = spawnSync('codex', ['execpolicy', 'check', '--rules', rf, '--', ...argv], { encoding: 'utf8', env: Object.assign({}, process.env, { CODEX_HOME: path.join(T, 'home') }) });
+      let j = null;
+      try { j = JSON.parse(r.stdout); } catch { /* not JSON */ }
+      ok(`N15 codex execpolicy check with the rules of the skill: ${name} -> ${want || 'no match (the sandbox)'}`, !!j && (want ? j.decision === want : !(j.matchedRules || []).length),
+        `${r.status} ${r.stdout} ${r.stderr}`.slice(0, 400));
+    }
+    fs.rmSync(T, { recursive: true, force: true });
+  }
+}
 ok('R1 README: the coordinator home config names writable_roots and the rules file', /writable_roots = \["<sharedDir>", "<worktreeRoot>"\]/.test(readme) && /rules\/codis-agents\.rules/.test(readme));
 // the entry of the version that brought the coordinator on Codex (0.4.38), wherever later versions put it
 const entry0438 = (read('CHANGELOG.md').split('\n## ').find((s) => /^0\.4\.38 /.test(s)) || '');
