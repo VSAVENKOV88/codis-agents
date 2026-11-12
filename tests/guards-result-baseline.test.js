@@ -75,6 +75,14 @@ try {
     tk.status !== 0 && tk.stderr.includes(`guardBaseline good.json is broken: ${NOT}`), tk.stdout + tk.stderr);
   ok('H15 quarantine-take refused: the target of the link and the quarantine are byte for byte the same, the link is still a link',
     fs.readFileSync(path.join(out, 'good.json'), 'utf8') === gBefore && fs.readFileSync(q, 'utf8') === qBefore && fs.lstatSync(path.join(wt, 'good.json')).isSymbolicLink());
+  // a dangling link and a missing file behind a directory link: refused too, the link not replaced by a file, nothing
+  // written through the directory link
+  fs.symlinkSync(path.join(out, 'nowhere.json'), path.join(wt, 'dangling.json'));
+  const tk3 = spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'guards-result.js'), 'quarantine-take', wt, 'dangling.json', q], { encoding: 'utf8' });
+  const tk4 = spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'guards-result.js'), 'quarantine-take', wt, 'dirlink/new.json', q], { encoding: 'utf8' });
+  ok('H15 quarantine-take into a dangling link or through a directory link: refused, nothing written, the quarantine kept',
+    tk3.status !== 0 && tk3.stderr.includes(NOT) && fs.lstatSync(path.join(wt, 'dangling.json')).isSymbolicLink() && !fs.existsSync(path.join(out, 'nowhere.json'))
+      && tk4.status !== 0 && tk4.stderr.includes(NOT) && !fs.existsSync(path.join(out, 'dir', 'new.json')) && fs.readFileSync(q, 'utf8') === qBefore, tk3.stderr + tk4.stderr);
   const tk2 = spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'guards-result.js'), 'quarantine-take', wt, 'known.json', q], { encoding: 'utf8' });
   ok('H15 quarantine-take into a regular baseline works as before', tk2.status === 0 && JSON.parse(fs.readFileSync(path.join(wt, 'known.json'), 'utf8'))['t/x.js'], tk2.stdout + tk2.stderr);
 } catch (e) {
