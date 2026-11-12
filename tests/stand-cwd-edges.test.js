@@ -65,7 +65,7 @@ const env = Object.assign({}, process.env, { HOME, PATH: BIN + path.delimiter + 
 // Run inside an outer slot, the outer slots.zsh has exported its lock, journal and counts; thresholds set outside are
 // dropped too (the list slots-hermetic.test.js checks), and the config paths of an outer project.
 for (const k of ['SLOTS_DIR', 'SLOT_JOURNAL', 'SLOT_LEGACY_LOCK', 'CLAUDE_PROJECT_DIR', 'GUARDS_EXCLUSIVE_LOCK', 'SLOT_MEDIUM_N', 'SLOT_HEAVY_N', 'SLOT_TOTAL_MAX', 'GUARDS_JOBS_ALONE', 'GUARDS_JOBS_SHARED', 'SLOT_EXCL_TOOLS', 'GUARDS_EXCL_GLOB', 'GUARDS_EXCL_MARKER', 'SLOT_PATH',
-  'SLOT_LABEL', 'SLOT_KIND', 'SLOT_RETRY_RC', 'SLOT_PRIORITY', 'SLOT_KILL_GRACE', 'SLOT_EMPTY_WAIT', 'SLOT_EXEC_NOTE', 'CODIS_SLOT_HELD', 'SLOT_SWAP_MIN_MB', 'SLOT_THIRD_FREE_PCT', 'SLOT_THIRD_SWAP_GROW_MB', 'SLOT_PROC']) delete env[k];
+  'SLOT_LABEL', 'SLOT_KIND', 'SLOT_RETRY_RC', 'SLOT_PRIORITY', 'SLOT_KILL_GRACE', 'SLOT_EMPTY_WAIT', 'SLOT_EXEC_NOTE', 'GUARDS_EXCLUSIVE_HELD', 'CODIS_SLOT_HELD', 'SLOT_SWAP_MIN_MB', 'SLOT_THIRD_FREE_PCT', 'SLOT_THIRD_SWAP_GROW_MB', 'SLOT_PROC']) delete env[k];
 for (const k of Object.keys(env)) if (/^CODIS_/.test(k)) delete env[k];
 
 const st = (args, e) => spawnSync('zsh', [path.join(S, 'stand.sh'), ...args], { cwd: W, env: Object.assign({}, env, e), encoding: 'utf8', timeout: 60000 });

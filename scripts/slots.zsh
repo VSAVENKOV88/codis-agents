@@ -759,9 +759,10 @@ slot_guard_plan() {
 # A guard marked exclusive runs under the exclusive lock, waiting out loud (`lockf -k` without -t waited silently
 # while holding a heavy slot). Attempts every SLOT_SAY s; a marker file tells "lock not given" (75 from the utility)
 # apart from the command's own exit code. The lock is flock(2) (see the header): lockf(1) -k -t <s>, or flock(1)
-# -o (the command does not inherit the lock) -w <s> -E 75.
+# -o (the command does not inherit the lock) -w <s> -E 75. The command gets GUARDS_EXCLUSIVE_HELD (_slot_excl_mark):
+# a heavy.sh of an exclusive guard inside it runs without taking the lock again (slot_exclusive_held).
 slot_exclusive_run() {
-  local m rc t0=$EPOCHSECONDS treq=$(_slot_now) tacq tool w=${SLOT_SAY%.*} pre
+  local m rc t0=$EPOCHSECONDS treq=$(_slot_now) tacq tool w=${SLOT_SAY%.*} pre held=$(_slot_excl_mark)
   for tool in ${=SLOT_EXCL_TOOLS} ''; do [[ -n $tool && -x $tool ]] && break; done
   if [[ -z $tool ]]; then
     print -u2 -r -- "codis-agents slots: refused - the exclusive lock $GUARDS_EXCLUSIVE_LOCK is a flock(2) lock (the project runner takes it with lockf or flock), but none of SLOT_EXCL_TOOLS is executable ($SLOT_EXCL_TOOLS); install util-linux (flock) or set SLOT_EXCL_TOOLS"
@@ -771,7 +772,7 @@ slot_exclusive_run() {
   m=$(_slot_tmp exclgot) || { print -u2 -r -- "slot_exclusive_run: no temporary file in ${TMPDIR:-/tmp} (mktemp failed)"; return 73; }
   rm -f $m
   while true; do
-    $pre "$GUARDS_EXCLUSIVE_LOCK" zsh -c 'zmodload zsh/datetime; t=${EPOCHREALTIME/,/.}; print -r -- ${t%%.*}.${${t#*.}[1,3]} > "$1"; shift; exec "$@"' excl $m "$@" 0<&0
+    GUARDS_EXCLUSIVE_HELD=$held $pre "$GUARDS_EXCLUSIVE_LOCK" zsh -c 'zmodload zsh/datetime; t=${EPOCHREALTIME/,/.}; print -r -- ${t%%.*}.${${t#*.}[1,3]} > "$1"; shift; exec "$@"' excl $m "$@" 0<&0
     rc=$?
     if [[ -e $m ]]; then
       tacq=$(<$m); rm -f $m
@@ -782,3 +783,12 @@ slot_exclusive_run() {
     print -r -- "waiting for the exclusive lock ($(( EPOCHSECONDS - t0 )) s): $GUARDS_EXCLUSIVE_LOCK is held by another exclusive guard"
   done
 }
+
+# "<lock path> <process group>" of the caller: the lock slot_exclusive_run holds for its command, and the group the
+# command runs in (lockf/flock keep the group; perl inherits it). Nothing when the group cannot be read.
+_slot_excl_mark() { local g; g=$(perl $_SLOT_GROUP pgrp 2>/dev/null) && [[ $g == <1-> ]] && print -r -- "$GUARDS_EXCLUSIVE_LOCK $g" }
+# 0 when the caller runs under the exclusive lock slot_exclusive_run took up the process: GUARDS_EXCLUSIVE_HELD names
+# this lock path and this process group. The lock is flock(2): a second open of the file in another process waits for
+# the first holder, its own ancestor, forever (G30). A value from elsewhere - another group (an outer shell, a command
+# that left the group with setsid), another lock path, an empty one - does not match, and the lock is taken as before.
+slot_exclusive_held() { local v; [[ -n $GUARDS_EXCLUSIVE_HELD ]] && v=$(_slot_excl_mark) && [[ -n $v && $GUARDS_EXCLUSIVE_HELD == "$v" ]] }

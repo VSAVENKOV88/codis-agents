@@ -249,7 +249,7 @@ codis-agents/
  ├── scripts/      45 scripts: memory slots, guard runs and selection, the train, post-checks, remote runner, cost
 ├── examples/     example project and machine configs
 ├── schemas/      their JSON schemas
-└── tests/        186 test files of the plugin itself (npm test)
+└── tests/        187 test files of the plugin itself (npm test)
 ```
 
 Every file, script and config key is described in the [Technical reference](#technical-reference).
@@ -1155,7 +1155,11 @@ noted there, and the train lock lives while one of them lives (`scripts/train-lo
 marked `guards:exclusive` (`<slots.lockDir>/exclusive.lock`) is a `flock(2)` lock by contract, because the project's
 guard runner takes the same file with `lockf(1)` or `flock(1)` and on Linux the two lock types do not see each other:
 the slot scripts take it with the first executable of `SLOT_EXCL_TOOLS` (default `/usr/bin/lockf /usr/bin/flock
-/bin/flock`); with none, a guard marked exclusive is refused (exit 72). Every lock of the slot directory must be
+/bin/flock`); with none, a guard marked exclusive is refused (exit 72). A `heavy.sh` of an exclusive guard inside the
+command of another one (a role of Claude: `heavy.sh zsh heavy.sh node x-run.js`; the heavy channel: `heavy-req --
+heavy.sh ...`) runs without taking the lock again: `slot_exclusive_run` gives its command
+`GUARDS_EXCLUSIVE_HELD="<lock> <process group>"`, and only the same lock path in the same process group matches (a
+second open of a `flock(2)` lock in another process would wait for its own ancestor forever). Every lock of the slot directory must be
 writable for the user: `zsystem flock` opens the file for writing and a failed open looks like "busy", so a slot file,
 `admit.lock`, `queue.lock` or the directory left unwritable (by `sudo heavy.sh`, or by root in a container over a shared
 slot directory) is a refusal with one line naming the path (exit 77), never an endless wait; so is a slot directory
@@ -1242,6 +1246,10 @@ fallback to another slot directory: a second directory would be a second queue t
   waiter of an older copy on the same slot directory sees the lock alone. `kill -9` of a holder in the instant between
   the start of its command and the write of the marker, while a waiter picks the slot, lets one more command into it.
   `role-leftovers-check.js` judges a slot by the pid in `<slot>.who` and does not read markers.
+- The exclusive lock taken up the process: a command under it that leaves its process group (`setsid`, a daemon) and
+  runs `heavy.sh` of an exclusive guard waits for that lock until the outer guard ends - the bypass is bound to the
+  process group. On the path of Claude the inner `heavy.sh` of such a nested exclusive guard takes a heavy slot of its
+  own (a second one, as for any nested `heavy.sh` outside the heavy channel).
 - The heavy channel of a codex role (A2b-1b): the network of its sandbox is the loopback of the whole Mac, so a command
   reaches any local service (the owner's stack, a neighbour's vite) - the owner's choice "a" of 2026-11-11. A browser
   and the file watcher of vite do not work under that sandbox; the channel runs such a guard like any other command

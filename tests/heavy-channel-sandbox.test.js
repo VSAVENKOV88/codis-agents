@@ -20,7 +20,7 @@ const HS = require(path.join(S, 'heavy-service.js'));
 const CLIENT = path.join(S, 'heavy-req.js');
 
 // Every knob of slots.zsh by name (tests/slots-hermetic.test.js checks the list), then the rest of the same families.
-for (const k of ['SLOTS_DIR', 'SLOT_LEGACY_LOCK', 'SLOT_JOURNAL', 'SLOT_LABEL', 'SLOT_KIND', 'SLOT_RETRY_RC', 'SLOT_PRIORITY', 'SLOT_KILL_GRACE', 'SLOT_EMPTY_WAIT', 'SLOT_EXEC_NOTE', 'CODIS_SLOT_HELD', 'GUARDS_EXCLUSIVE_LOCK', 'SLOT_MEDIUM_N', 'SLOT_HEAVY_N', 'SLOT_TOTAL_MAX', 'GUARDS_JOBS_ALONE', 'GUARDS_JOBS_SHARED', 'SLOT_EXCL_TOOLS', 'GUARDS_EXCL_GLOB', 'GUARDS_EXCL_MARKER', 'SLOT_PATH',
+for (const k of ['SLOTS_DIR', 'SLOT_LEGACY_LOCK', 'SLOT_JOURNAL', 'SLOT_LABEL', 'SLOT_KIND', 'SLOT_RETRY_RC', 'SLOT_PRIORITY', 'SLOT_KILL_GRACE', 'SLOT_EMPTY_WAIT', 'SLOT_EXEC_NOTE', 'GUARDS_EXCLUSIVE_HELD', 'CODIS_SLOT_HELD', 'GUARDS_EXCLUSIVE_LOCK', 'SLOT_MEDIUM_N', 'SLOT_HEAVY_N', 'SLOT_TOTAL_MAX', 'GUARDS_JOBS_ALONE', 'GUARDS_JOBS_SHARED', 'SLOT_EXCL_TOOLS', 'GUARDS_EXCL_GLOB', 'GUARDS_EXCL_MARKER', 'SLOT_PATH',
   'SLOT_SWAP_MIN_MB', 'SLOT_THIRD_FREE_PCT', 'SLOT_THIRD_SWAP_GROW_MB', 'SLOT_PROC', 'SLOT_OS', 'SLOT_POLL', 'SLOT_SAY', 'SLOT_THIRD_WINDOW', 'SLOT_HIST_GAP', 'CODIS_AGENTS_CONFIG']) delete process.env[k];
 for (const k of Object.keys(process.env)) if (/^(SLOT_|SLOTS_|GUARDS_|CODIS_)/.test(k)) delete process.env[k];
 
@@ -88,6 +88,20 @@ const tailOf = (a) => (a && a.log && fs.existsSync(a.log) ? fs.readFileSync(a.lo
     ok('B\'13 argv drops CODIS_SLOT_HELD: the queue refuses at once with 77 (the slot directory is not a root)', n5.state === 'done' && n5.rc === 77, tailOf(n5));
     const n2 = await req(d, ['--max', '60', '--', 'env', '-u', 'SLOTS_DIR', 'zsh', H, 'true']);
     ok('B\'13 without SLOTS_DIR: 77 at once (the default slot directory is not a root either)', n2.state === 'done' && n2.rc === 77, tailOf(n2));
+    await svc.close();
+  }
+  // ---- C0-2 (G30): heavy.sh of an exclusive guard asked through the channel - the executor's heavy.sh takes the lock, the
+  // inner one runs under it in the held slot without a second lockf (flock(2) LOCK_NB of the guard through perl: 75 held)
+  {
+    const d = setup();
+    const svc = open(d);
+    const H = path.join(S, 'heavy.sh');
+    fs.writeFileSync(path.join(d.wt, 'z-run.mjs'), '// guards:exclusive — a fixed port of the test\nimport { spawnSync } from "child_process";\n'
+      + 'const r = spawnSync("perl", ["-MFcntl=:flock", "-e", "open(my $f, \\"<\\", $ARGV[0]) or exit 2; exit(flock($f, LOCK_EX | LOCK_NB) ? 0 : 75)", process.env.GUARDS_EXCLUSIVE_LOCK || ""]);\n'
+      + 'console.log("ZX held=" + r.status + " sp=" + process.env.SLOT_PATH);\n');
+    const n8 = await req(d, ['--max', '30', '--', 'zsh', H, 'node', 'z-run.mjs']);
+    ok('C0-2 heavy-req -- heavy.sh node <exclusive guard> under codex sandbox: done rc 0, the guard ran once under the held lock in the held slot, no wait for the lock',
+      n8.state === 'done' && n8.rc === 0 && (tailOf(n8).match(/ZX held=75 sp=\/\S*heavy\.\d+\.lock/g) || []).length === 1 && !/waiting for the exclusive lock/.test(tailOf(n8)), JSON.stringify(n8) + tailOf(n8));
     await svc.close();
   }
   // ---- B'10 x B'12 in the sandbox: the run's config lies outside the roots and the worktree has none; the nested heavy.sh

@@ -4,6 +4,16 @@ Every version of the codis-agents plugin, newest first. What the plugin does now
 [README.md](README.md); its [Technical reference](README.md#technical-reference) is the current state of every rule,
 key and script, and this file says when and why each one changed. Versions before 0.4.14 are in the git history.
 
+## Unreleased
+
+- **An exclusive guard under the exclusive lock already taken up the process no longer waits for itself**
+  (p-codex-A2b-1c0, G30). `heavy.sh zsh heavy.sh node x-run.js` of a role of Claude, and `heavy-req -- heavy.sh ...`
+  of the heavy channel, waited forever: the inner `heavy.sh` opened the `flock(2)` lock again in another process.
+  `slot_exclusive_run` now gives its command `GUARDS_EXCLUSIVE_HELD="<lock> <process group>"`, and `heavy.sh` of an
+  exclusive guard whose lock path and process group match it runs without a second `lockf`; a value from another
+  group or for another lock path takes the lock as before. Tests that run the slot scripts neutralise the new
+  variable (`tests/slots-hermetic.test.js`).
+
 ## 0.4.43 - 2026-11-11
 
 - **The heavy channel of a Codex role** (p-codex-A2b-1b). A `prog` or `test` role on Codex asks the adapter to run a
