@@ -341,5 +341,12 @@ const guardsOf = (m) => (m && Array.isArray(m.incomplete) ? m.incomplete.map((x)
     ok('C2a-17 README Known gaps: a full run has no base, a marker new in the task is not flagged', /a full run has no base: a marker new in the task is not flagged/.test(readme), '');
     ok('C2a-17 the header of guards-all.sh: guardNeeds, {skipArgs}, incomplete', /guardNeeds/.test(head) && /\{skipArgs\}/.test(head) && /incomplete/.test(head), head.slice(-1200));
   }
+  // ---- the tester cells: tests/heavy-guards-needs-tester-cases.js (TN1-TN9: quoted guard names, several marker lines,
+  // a need removed or replaced against the base, a deleted selected file, lines that are not markers, the channel
+  // without the key, verdictOf of an own meta without the result, an unreadable selected guard)
+  {
+    const tc = spawnSync(process.execPath, [path.join(__dirname, 'heavy-guards-needs-tester-cases.js')], { encoding: 'utf8', timeout: 280000 });
+    ok('the tester cells of the needs of guards (tests/heavy-guards-needs-tester-cases.js) pass', tc.status === 0, `exit ${tc.status} ${tc.signal || ''}\n${String(tc.stdout).split('\n').filter((l) => /FAIL/.test(l)).join('\n').slice(0, 3000)}${String(tc.stderr).slice(-800)}`);
+  }
   done();
 })().catch((e) => { ok('the test ran to its end', false, e.stack); done(); });
