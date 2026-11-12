@@ -13,7 +13,9 @@
 #   TC6 two markers on one slot, one of a dead group and one of a live group: busy; the live group ends - the waiter runs
 #       and both markers are gone (A'5);
 #   TC7 a half-written marker (<slot>.exectmp.<pgid>) of a dead writer on a free slot: the waiter takes the slot and
-#       removes it.
+#       removes it;
+#   TC8 TERM to heavy.sh before the command's perl has made its group (setpgrp): the command never runs, the slot free;
+#   TC9 stand.sh deploy x TERM with a stubborn deploy command: the medium slot held in the pause, then free, 143.
 H=${SLOTS_H:-${0:A:h:h}/scripts}
 zmodload zsh/datetime zsh/system
 T=$(mktemp -d "${${TMPDIR:-/tmp}%/}/slots-exec-tester.XXXXXX"); T=${T:A}
@@ -152,6 +154,40 @@ ok "TC6. the live group ended: the waiter ran, both markers removed" '(( rc == 0
 print -r -- 99999998 > $S1.exectmp.99999998
 tm 10 $H/heavy.sh true > $T/7.out 2>&1; rc=$?
 ok "TC7. a leftover <slot>.exectmp.<pgid> on a free slot: the slot is given and the leftover removed" '(( rc == 0 )) && [[ ! -e $S1.exectmp.99999998 ]]' "rc $rc, files '$(markers)'; $(tail -2 $T/7.out)"
+
+# TC8. TERM to heavy.sh in the window between the start of `slot-group.pl run` and its setpgrp: the group of the command
+# does not exist yet, so the stop reaches the pid. A copy of the scripts whose slot-group.pl waits 3 s before setpgrp
+# (no test knob in the product): the command never runs, 143, the slot free, no marker, the perl of the window gone.
+H8=$T/h8; cp -R $H $H8
+perl -pi -e 's/^(  my \$slot = shift \@ARGV;)$/$1 open(my \$wf, ">", "'${T//\//\\/}'\/8.win"); print \$wf "\$\$\\n"; close \$wf; select(undef, undef, undef, 3);/' $H8/slot-group.pl
+ok "TC8. (setup) the copy of slot-group.pl waits before setpgrp" 'grep -q "8.win" $H8/slot-group.pl'
+rm -f $T/8.win $T/8.ran
+lead $H8/heavy.sh zsh -c 'print -r -- $$ > '$T'/8.ran; sleep 0.5' > $T/8.out 2>&1 & w8=$!; BG+=$w8; GROUPS_MADE+=$w8
+waitfor '[[ -s $T/8.win ]]' 100; p8=$(<$T/8.win)
+ok "TC8. (setup) the holder's perl is in the window before setpgrp, no marker yet" '[[ -n $p8 ]] && kill -0 $p8 2>/dev/null && [[ -z $(markers) ]]' "win '$p8', markers '$(markers)'; $(tail -2 $T/8.out)"
+kill -TERM $w8
+bwait $w8 80; rc=$?
+sleep 3.5
+ok "TC8. TERM in the window: 143, the command never ran, the perl of the window gone, the slot free, no marker" '(( rc == 143 )) && [[ ! -e $T/8.ran ]] && ! kill -0 ${p8:-0} 2>/dev/null && ! busy $S1 && [[ -z $(markers) ]]' "rc $rc, ran '$(cat $T/8.ran 2>/dev/null)', markers '$(markers)'; $(ps -o pid,pgid,stat,command -p ${p8:-0} 2>/dev/null); $(tail -2 $T/8.out)"
+
+# TC9. stand.sh deploy x TERM with a stubborn deploy command: the medium slot is held in the pause, 143, the group of the
+# deploy gone, then the slot free and the marker gone (the path of slot_run medium, as TC2)
+W9=$T/wts/st; mkdir -p $W9/.git $T/main
+print -r -- '{"repoDir": "'$T'/main", "worktreeRoot": "'$T'/wts", "sharedDir": "'$T'/shared",
+  "stand": {"project": "tc9", "ports": [39998], "up": "true", "down": "true", "status": "print -r -- up",
+  "reset": "true", "deploy": ": {wt}; trap \"\" TERM; print -r -- $$ > '$T'/9.c; while :; do sleep 0.2; done", "memLimitMB": 1024}}' > $T/cfg9.json
+( export CODIS_AGENTS_CONFIG=$T/cfg9.json; cd $W9 && exec $H/stand.sh take ) > $T/9.take 2>&1 & t9=$!; BG+=$t9
+waitfor 'grep -q "ticket taken" $T/9.take' 100
+ok "TC9. (setup) the stand ticket is held by the worktree" 'grep -q "ticket taken" $T/9.take' "$(cat $T/9.take)"
+( export CODIS_AGENTS_CONFIG=$T/cfg9.json; cd $W9 && lead $H/stand.sh deploy ) > $T/9.out 2>&1 & w9=$!; BG+=$w9; GROUPS_MADE+=$w9
+waitfor '[[ -s $T/9.c ]]' 100; c9=$(<$T/9.c); g9=$(ps -o pgid= -p ${c9:-0} | tr -d ' '); GROUPS_MADE+=$g9
+ok "TC9. (setup) the deploy runs in the medium slot, marked" 'busy $M1 && [[ -n $g9 && -e $M1.exec.$g9 ]]' "group '$g9', markers '$(markers)'; $(tail -3 $T/9.out)"
+t0=$EPOCHREALTIME; kill -TERM $w9; sleep 1
+ok "TC9. in the pause: stand.sh deploy alive, the medium slot held" 'kill -0 $w9 2>/dev/null && busy $M1' "$(tail -2 $T/9.out)"
+bwait $w9 80; rc=$?; dt=$(( EPOCHREALTIME - t0 ))
+ok "TC9. after KILL: 143, the deploy's group gone, the medium slot free, the marker gone" '(( rc == 143 && dt >= 2 )) && ! galive $g9 && ! busy $M1 && [[ ! -e $M1.exec.$g9 ]]' "rc $rc in $dt s, markers '$(markers)'; $(ps -o pid,pgid,stat,command -g ${g9:-0} 2>/dev/null); $(tail -2 $T/9.out)"
+( export CODIS_AGENTS_CONFIG=$T/cfg9.json; cd $W9 && $H/stand.sh release ) > /dev/null 2>&1
+bwait $t9 50
 
 print -r -- "slots-exec-tester: $pass ok, $fail failed"
 (( fail == 0 ))
