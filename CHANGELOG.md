@@ -4,8 +4,17 @@ Every version of the codis-agents plugin, newest first. What the plugin does now
 [README.md](README.md); its [Technical reference](README.md#technical-reference) is the current state of every rule,
 key and script, and this file says when and why each one changed. Versions before 0.4.14 are in the git history.
 
-## Unreleased
+## 0.4.46 - 2026-11-12
 
+- **Declared needs of guards and the incomplete result of a codex role's guard run** (p-codex-A2b-1c2a). The new
+  project key `guardNeeds` (`glob`, default `guardFiles`; `marker`, a string or a list) marks guards that need what the
+  sandbox of a codex role lacks; `{skipArgs}` is filled only in `guardCommand` and `guardCommandLegacy` (`guardNeeds`
+  without it in either: 78). Under `CODIS_GUARDS_EXEC` `guards-all.sh` lists the marked guards before the slot: a full
+  run skips them through `{skipArgs}`, a selection drops them from `{onlyArgs}` and from its count, a selection of only
+  marked guards takes no slot; the run then ends 79 (`incomplete`, with the list) instead of 0, a red stays red, and an
+  unreadable list is 69. A marker new against the base of a selection is named "(marker new in this diff)". The answer
+  of the heavy channel carries `verdict` (green, incomplete, red, environment, judged only from the run's own meta) and
+  `notRun`. Without the variable nothing changes.
 - **Trusted git: no hook and no fsmonitor of the repository runs in a trusted process** (p-codex-A2b-2h-1; owner
   2026-11-12: hooks off in every trusted git operation). The new `scripts/trusted-git.js` runs git with
   `-c core.hooksPath=/dev/null -c core.fsmonitor=false --no-optional-locks`; every git call of the conductor's service
@@ -23,6 +32,10 @@ key and script, and this file says when and why each one changed. Versions befor
   worktree or anything but a regular file is "not a regular file inside the worktree" and nothing is read (a rerun keeps
   the runner's code, `quarantine-take` writes nothing); a broken JSON no longer quotes the file's first bytes.
 
+- Known gaps added: a project runner that itself exits 79 is judged `environment` (or `incomplete` when guards were
+  skipped), not `red` (A2b-1c2a, coordinator's decision: the runner's code is not kept apart from the plugin's 79);
+  trusted git closes hooks and `core.fsmonitor` only - other executable config written by a branch (`clean`/`smudge`/
+  `process` filters, `diff.textconv`, `core.sshCommand`) is not closed (A2b-2h, gap 13).
 ## 0.4.45 - 2026-11-12
 
 - **Guard runs of a Codex role go through the heavy channel** (p-codex-A2b-1c1, M-B). `heavy-req.js --kind full` and

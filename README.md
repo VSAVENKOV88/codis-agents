@@ -1,6 +1,6 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT"></a>
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-0.4.45-informational" alt="Version 0.4.45"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-0.4.46-informational" alt="Version 0.4.46"></a>
   <a href="https://claude.com/claude-code"><img src="https://img.shields.io/badge/Claude%20Code-plugin-D97757" alt="Claude Code plugin"></a>
   <a href="#codex-cli"><img src="https://img.shields.io/badge/Codex%20CLI-preview-yellow" alt="Codex CLI: preview"></a>
 </p>
@@ -1270,6 +1270,12 @@ fallback to another slot directory: a second directory would be a second queue t
   guard in a full run unseen; a guard without a marker that needs what the sandbox lacks stays red (a red of the
   run, not of the product, until the project marks it); a runner that ignores `--skip` runs the marked guards anyway -
   a red of one keeps the run red, a green still ends 79 with the list, never 0.
+- Declared needs: a project runner that itself exits 79 is not told from the plugin's 79 - `verdictOf` judges its own
+  meta `environment`, or `incomplete` when guards were skipped, where `red` is due (the runner's code is not kept apart).
+- Trusted git (`scripts/trusted-git.js`) switches off hooks and `core.fsmonitor`; other executable config that branch
+  code writes into a config git reads (`clean`/`smudge`/`process` filters, `diff.textconv`, `core.sshCommand`) is not
+  closed: a trusted `status` or `ls-files` did not run a `clean` filter in the experiment, but that is not proven in
+  general.
 
 **The boundary of the guarantees.** The roles count as trusted participants that can make mistakes. The plugin guards against accidental damage to data, repeated execution, mixed runs and overuse of resources. The sandbox is no protection from a hostile agent: a deliberate forgery of state by one role against another is outside the guarantees, and code a role wrote runs outside the sandbox (hooks, the train).
 
