@@ -78,7 +78,7 @@
 #   budget (its own slots.jobsAlone).
 # Guard run of a codex role (scripts/heavy-service.js, heavy-req.js --kind full | --kind select --base <ref>): the
 #   adapter starts this script outside the sandbox with CODIS_GUARDS_EXEC naming the executor spec of the run. Then the
-#   run is local whatever the machine file says (the remote runner waits for A2b-2) and its log gets the line "local
+#   run is local whatever the machine file says (it stays on this machine, in its sandbox) and its log gets the line "local
 #   full run: ..." / "local selection: ..."; "guards log: <log>" is printed first; the slot journal label adds the label
 #   of the spec ("guards-all <name> codex <task> <role> <id>"); every command of the project - the runner in each mode
 #   and a single rerun (guards-result.js) - runs through scripts/heavy-exec.js in codex sandbox; the meta names the
@@ -293,7 +293,7 @@ while true; do
       "${X[@]}" zsh -c "$(sub "$TPL" $n)" > "$OUT" 2>&1; print -r -- $? > "$RCF"
     fi
     rm -f "$SLOT_PATH.jobs" "$SLOT_PATH.limit" "$SLOT_PATH.limit.tmp" "$SLOT_PATH.limit.active" "$SLOT_PATH.whole"
-    [[ -n $WHERE ]] && print -r -- "$WHERE: a codex role'"'"'s run through the heavy channel; the remote runner waits for A2b-2" >> "$OUT"
+    [[ -n $WHERE ]] && print -r -- "$WHERE: a codex role'"'"'s run through the heavy channel, in the sandbox of this machine" >> "$OUT"
     tail -25 "$OUT"
     # selected N - accounted for N (a run given guards by --only): fewer is the environment, 69, before any rerun
     COUNTED=1

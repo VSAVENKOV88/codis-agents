@@ -356,6 +356,11 @@ flowchart LR
 With `guardSubsetCommand` in the config the task has no full guard run of its own: the workflow runs the selection of
 its diff after every programmer round, and the full run belongs to the train. Without the key the reviewed branch is
 done after the review and the coordinator merges it, as before.
+The selection, the tester's selection and the train run with the project config the chain was started with
+(`CODIS_AGENTS_CONFIG=<config>` in each command), never with the `.claude/codis-agents.json` a branch commits: a change
+of the config in a task's branch (`guardSubsetCommand`, `guardFiles`, `guardAlways`, ...) takes effect for the
+selection and the train only after the branch is merged into the arc. A chain started without a config file (the
+defaults) leaves the variable out, and `guards-all.sh` looks the config up from the worktree as before.
 
 Each role runs as its own agent; each task has its own git worktree. A second rejection for code stops the fix rounds: the next round
 starts with the analyst. Work on access, keys or cookies gets a security reviewer as well. A role that hits an open
@@ -627,15 +632,14 @@ Limits:
 - the heavy channel of prog and test (p-codex A2b-1b) runs single heavy commands - tsc, a guard with vite and its
   watcher off - in a memory slot through the adapter (`heavy-req.js`, see Memory slots), and guard runs of the role
   (`--kind full`, `--kind select --base <ref>`: guards-all.sh outside the sandbox, every command of the project inside
-  it; on this Mac only, the remote runner waits for A2b-2); a guard whose file declares a need (`guardNeeds`: a browser,
+  it; on this Mac only, in its sandbox - the remote runner does not take them); a guard whose file declares a need (`guardNeeds`: a browser,
   a file watcher, `ps`, a nested sandbox, Docker, a disk image) does not run there - the run that would be green ends 79
   with `verdict: incomplete` and `notRun`, never green and not a red of the product; a guard without the marker that is
   red only from the sandbox is a red of the run, a candidate for the marker;
-- a branch whose roles ran on codex requires isolation, and until A2b the conductor runs neither the selection wait step
-  nor the train on it: the task stops with status `coordinator` and the reason "train and selection for codex role
-  branches wait for A2b isolation" before the step, nothing run (`requiresIsolation`, set by `chain-run.js` from the
-  host of its run - `false` only on claude -, never by a tasks file; `train.js enqueue`/`ride --requires-isolation`
-  exit 65 before the queue);
+- a branch whose roles ran on codex rides the selection wait step and the train like a branch of Claude roles: its
+  code runs in them with the rights of this machine or of the remote runner, as the code of any branch does (the
+  isolation of those runs in a container is in the plugin's backlog); `train.js enqueue`/`ride --requires-isolation`
+  of an older plugin is refused as an unknown option (64);
 - a role on codex has no network (except test) and no Docker for its acceptance;
 - the coordinator waits by polling in slices; a long run costs one model turn per slice, and the length of one Codex
   turn over hours is not measured;
@@ -869,8 +873,7 @@ the newest run, or follows an `abort`, holds). For a feature, `useCasesFirst: tr
 analyst write only the use cases with their open questions and stops the task with status `use-cases-review`; after
 the review with the owner the coordinator relaunches it with `useCases` and `analystFirst`.
 Each task ends `done`, `use-cases-review` or `stopped` with the reason, the open questions, a proposed split or the
-review findings, or `coordinator` when its branch requires isolation (its roles ran on codex) and reached the selection
-or the train before A2b: the reason names A2b, the result carries `isolation: "A2b"` and `head`, nothing ran on it.
+review findings.
 
 On codex the conductor gives `prog` and `test` the commit channel (`scripts/commit-service.js`): its state folder is
 `<sharedDir>/runs/.commit`, one per project, so the journal of a task, `<sharedDir>/runs/.commit/<key>/commits.jsonl`,
@@ -1026,8 +1029,8 @@ No automatic `resume` is computed for a stopped task: the coordinator follows th
   `train.js resume`; 74 (queue unavailable), 75 (the queue halted by the environment of a train) and 124 (the step's
   deadline) are `environment` - the queue stands until the coordinator, the entry stays and its verdict comes later
   without an addressee: `train.js status` names it, `train.js watch` (the coordinator's background wait) ends on it, a
-  relaunch of the task alone takes it, `train.js ack` takes it by hand; 65 - refused before the queue (a protected base or not a branch, or `--requires-isolation`: a branch whose roles ran on codex, until A2b); 64 - refused arguments,
-  among them `head is not a full sha: <value>`. The head is the full sha: the workflow resolves an abbreviated head of a
+  relaunch of the task alone takes it, `train.js ack` takes it by hand; 65 - refused before the queue (a protected base or not a branch); 64 - refused arguments,
+  among them `head is not a full sha: <value>` and the unknown option `--requires-isolation` anywhere in argv. The head is the full sha: the workflow resolves an abbreviated head of a
   role (hex digits, at least 4, gitrevisions(7)) right after the role's answer with one cheap service step
   (`git rev-parse --verify -q '<h>^{commit}'`), so the post-checks, the selection, the result file and the ride all use
   it; a head that does not resolve is kept as given, and `train.js` refuses it. The light mode rides too.
@@ -1305,7 +1308,7 @@ fallback to another slot directory: a second directory would be a second queue t
   reaches any local service (the owner's stack, a neighbour's vite) - the owner's choice "a" of 2026-11-11. A browser
   and the file watcher of vite do not work under that sandbox; the channel runs such a guard like any other command
   and its red is the environment (an incomplete verdict for a guard run comes with A2b-1c2); a guard run under the
-channel runs on this Mac only (A2b-2). After `kill -9` of the adapter the slot
+channel runs on this Mac only, in its sandbox. After `kill -9` of the adapter the slot
   journal's `hold` line ends with the holder, earlier than the command: the hold goes on under the marker ("held by the
   exec marker ..." in the reason of a waiter). Lines `nested` of the slot journal are not written from the sandbox (the
   slot directory is not a root). `kill -9` of the adapter between `acquired` and the marker leaves no command running

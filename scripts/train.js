@@ -77,11 +77,11 @@
 //      not the one that would be merged, so the passengers ride the next train on the new head.
 //   5. Red: the attribution and the seam (redTrain below, p-train-c2).
 //
-// usage: train.js enqueue --task <t> --branch <b> --head <sha> --base <arc> [--dir <task folder>] [--requires-isolation]
+// usage: train.js enqueue --task <t> --branch <b> --head <sha> --base <arc> [--dir <task folder>]
 //          -> the entry (same task and head already queued: kept; another head of the task: replaced; a result for this
 //             task and head already there: printed, nothing queued); refused before the queue (exit 65) when base is a
-//             protected branch or not a branch of the repository, and with --requires-isolation (a branch whose roles
-//             ran on codex: until A2b, before any result); a queue that cannot be written -> exit 74
+//             protected branch or not a branch of the repository; a queue that cannot be written -> exit 74. A branch
+//             rides the same way whichever host its roles ran on; --requires-isolation is an unknown option (64).
 //        train.js ride (the same arguments)     -> the chain after the review (p-train-c3): enqueue + await, the exit code is
 //             the verdict: 0 green, 10 green-unmerged, 11 red, 12 seam (after the partner's own result: the fix starts on
 //             the arc head that holds it), 13 conflict, 14 arc-red, 15 coordinator, 75 the queue halted (environment)
@@ -763,10 +763,6 @@ const rideRc = (o) => (o && Object.prototype.hasOwnProperty.call(RIDE_RC, o.verd
 function enqueue(P, a, USAGE) {
   headOk(a.head);
   if (!TASK.test(a.task || '') || !branchOk(a.branch) || !branchOk(a.base)) die(64, `${USAGE}\n  (task: letters, digits . _ -; head: a full sha; branch and base: branch names)`);
-  // A branch marked --requires-isolation (its roles ran on codex; the conductor marks it) is refused before the queue
-  // and before any result: a train runs the code of the branch with the rights of this machine or of the runner, and
-  // until A2b nothing isolates it.
-  if (a.isolated) die(RC_REFUSED, `refused before the queue: branch ${a.branch} head ${a.head} requires isolation (its roles ran on codex) - train and selection for codex role branches wait for A2b isolation`);
   // Refused before the queue (coordinator's decisions for c3): the dispatcher moves the arc branch, so the base is a
   // branch of the repository (a commit cannot be moved) and never a protected one (rule push: merges into a protected
   // branch are the owner's call).
@@ -809,12 +805,15 @@ async function awaitEntry(P, task, head, poll) {
 async function main() {
   const [cmd, ...rest] = process.argv.slice(2);
   CMD = cmd;
-  const USAGE = 'usage: train.js enqueue --task <t> --branch <b> --head <sha> --base <arc> [--dir <folder>] [--requires-isolation] | ride (the same) | run | await --task <t> --head <sha> [--poll <s>] | status | resume | ack --task <t> --head <sha> | watch [--detach] [--poll <s>]';
+  const USAGE = 'usage: train.js enqueue --task <t> --branch <b> --head <sha> --base <arc> [--dir <folder>] | ride (the same) | run | await --task <t> --head <sha> [--poll <s>] | status | resume | ack --task <t> --head <sha> | watch [--detach] [--poll <s>]';
   if (!['enqueue', 'ride', 'run', 'await', 'status', 'resume', 'ack', 'watch'].includes(cmd)) die(64, USAGE);
   const detach = cmd === 'watch' && rest.includes('--detach');
-  const iso = (cmd === 'enqueue' || cmd === 'ride') && rest.includes('--requires-isolation');
-  const list = detach || iso ? rest.filter((x) => x !== '--detach' && x !== '--requires-isolation') : rest;
-  const a = Object.assign(args(list), { isolated: iso });
+  // args() takes the word after every option as its value, so a flag without a value would eat the next option
+  // (--requires-isolation --task x): the flag a caller of an older plugin may still pass is refused by name, anywhere
+  // in argv, before the queue and before any result.
+  if (rest.includes('--requires-isolation')) die(64, `unknown option --requires-isolation (a branch rides the same way whichever host its roles ran on)\n${USAGE}`);
+  const list = detach ? rest.filter((x) => x !== '--detach') : rest;
+  const a = args(list);
   const P = project();
   if (detach) {
     // one detached watch at a time: a live one is returned as it is; the records of the others are dropped (their

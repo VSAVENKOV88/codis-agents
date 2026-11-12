@@ -126,9 +126,9 @@ async function configPinned() {
     ok(`P2 ${rt}: the ride keeps its CODIS_AGENTS_CONFIG=<the chain's config>`, ride(x).startsWith(`${PFX}node /p/scripts/train.js ride`), ride(x));
     ok(`P3 ${rt}: the tester's own selection in its prompt carries the same prefix, at its programmer's HEAD`,
       testerSel(x).includes(`${PFX}/p/scripts/guards-all.sh --select '${HP}' 'w'`), testerSel(x).slice(0, 400));
-    const bare = Object.values(x.prompts).flat().map((p) => p.replace(new RegExp(esc(PFX) + esc('/p/scripts/guards-all.sh --select'), 'g'), ''))
+    const bare = Object.entries(x.prompts).filter(([role]) => ['pre', 'prog', 'test', 'review'].includes(role)).map(([, ps]) => ps).flat().map((p) => p.replace(new RegExp(esc(PFX) + esc('/p/scripts/guards-all.sh --select'), 'g'), ''))
       .filter((p) => /\/p\/scripts\/guards-all\.sh --select/.test(p));
-    ok(`P4 ${rt}: no guards-all.sh --select in any role prompt without the prefix`, bare.length === 0,
+    ok(`P4 ${rt}: no guards-all.sh --select in any role prompt without the prefix`, bare.length === 0 && Object.keys(x.prompts).includes('test'),
       bare.map((p) => (p.match(/.{0,120}\/p\/scripts\/guards-all\.sh --select.{0,40}/) || [''])[0]).join(' | '));
   }
   for (const [what, cp] of [['configPath absent', undefined], ['configPath null', null], ["configPath ''", ''], ['configPath of blanks', '  ']]) {

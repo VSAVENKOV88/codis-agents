@@ -4,6 +4,20 @@ Every version of the codis-agents plugin, newest first. What the plugin does now
 [README.md](README.md); its [Technical reference](README.md#technical-reference) is the current state of every rule,
 key and script, and this file says when and why each one changed. Versions before 0.4.14 are in the git history.
 
+## Unreleased
+
+- **Branches whose roles ran on codex ride the selection and the train like branches of Claude roles**
+  (p-codex-A2b-2h-2; owner 2026-11-12: the container isolation goes to the backlog). The task field
+  `requiresIsolation`, its stop with status `coordinator` (`isolation: "A2b"`) at the selection wait step and at the
+  ride, `chain-run.js requiresIsolationOf` and its refusal in `parseTasks` are gone; `train.js enqueue`/`ride
+  --requires-isolation` is refused as an unknown option (64) anywhere in argv instead of 65. The line of a codex role's
+  guard run through the heavy channel no longer says the remote runner waits for A2b-2.
+- **The selection takes the chain's config, not the branch's** (owner 2026-11-12: the config of a trusted process
+  comes only from the task). The selection wait step and the tester's selection in its prompt run
+  `CODIS_AGENTS_CONFIG=<the chain's config> guards-all.sh --select ...`, as the ride already did; a branch that commits
+  its own `.claude/codis-agents.json` gets it for the selection and the train only after its merge into the arc. A
+  chain without a config file (the defaults) gets no prefix.
+
 ## 0.4.46 - 2026-11-12
 
 - **Declared needs of guards and the incomplete result of a codex role's guard run** (p-codex-A2b-1c2a). The new

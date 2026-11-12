@@ -113,24 +113,20 @@ const ONE_RUN = typeof CFG.guardSubsetCommand === 'string' && CFG.guardSubsetCom
 // train-only.md, 80 tasks): a selection found a real finding in 21 % of tasks while every task waited for it (a median of
 // 32 min, 84-125 min under load); the runner at 6 tasks 94 % -> 65 %.
 const INNER = ONE_RUN && CFG.innerSelect !== false
-// A branch whose roles ran on codex requires isolation (task field requiresIsolation, set by the conductor from the host
-// of its run, scripts/chain-run.js requiresIsolationOf; a tasks file cannot set it). Until A2b isolates the checks of
-// such a branch, the workflow runs neither the selection wait step nor the train ride on it: both execute the code of the
-// branch with the rights of this machine or of the remote runner. Under the conductor (exec) a task without the field
-// requires isolation (no data - isolation); under the Workflow runtime the roles are Claude agents and only an explicit
-// field other than false counts. The refusal comes before the step, so nothing runs; the task ends with status
-// coordinator (isolationStop: progStep's callers pass its object to stop() as extra, which keeps that status).
-const ISOLATION_WHY = 'train and selection for codex role branches wait for A2b isolation'
-const needsIsolation = (t) => (typeof exec === 'function' ? t.requiresIsolation !== false : t.requiresIsolation !== undefined && t.requiresIsolation !== false)
-const isolationStop = (t, step, head) => ({ fail: `${step}: ${ISOLATION_WHY} - branch ${t.branch} head ${head} requires isolation (its roles ran on codex); nothing was run on it, the coordinator decides`,
-  status: 'coordinator', isolation: 'A2b', head })
+// The config of every trusted guard run the chain starts - the selection wait step, the tester's selection in its prompt,
+// the ride - is the chain's own (CFG.configPath, pinned by CODIS_AGENTS_CONFIG), never the .claude/codis-agents.json a
+// branch commits: guards-all.sh looks the config up from the worktree only without the variable (owner 2026-11-12: the
+// config of a trusted process comes only from the task). A branch's own config change takes effect after its merge
+// into the arc. Without a configPath (a config of defaults) no prefix: guards-all.sh looks the config up itself, never
+// CODIS_AGENTS_CONFIG=''.
+const cfgEnv = () => (nonBlankS(CFG.configPath) ? `CODIS_AGENTS_CONFIG=${sq(CFG.configPath)} ` : '')
 const baseArg = (t) => (nonBlankS(t.base) ? sq(t.base.trim()) : '<the branch or commit this task started from>')
-const selectRun = (t) => `${SCRIPTS}/guards-all.sh --select ${baseArg(t)} ${sq(t.gdir)}`
+const selectRun = (t) => `${cfgEnv()}${SCRIPTS}/guards-all.sh --select ${baseArg(t)} ${sq(t.gdir)}`
 // The tester's selection (p-tester-select, measured 2026-11-01: the repeated selection of the whole task took a median of
 // 17.9 min of a task's path and the runner from 58 % to 85 % of its capacity): the diff of its own commits from the
 // programmer's HEAD of its round (st.head before the tester), so its guards, the guards that import or name a fixture it
 // changed and guardAlways run, not the task's product guards again.
-const testerSelectRun = (t, head) => `${SCRIPTS}/guards-all.sh --select ${nonBlankS(head) ? sq(head.trim()) : "<the programmer's HEAD you started from>"} ${sq(t.gdir)}`
+const testerSelectRun = (t, head) => `${cfgEnv()}${SCRIPTS}/guards-all.sh --select ${nonBlankS(head) ? sq(head.trim()) : "<the programmer's HEAD you started from>"} ${sq(t.gdir)}`
 function nonBlankS(v) { return typeof v === 'string' && v.trim() !== '' }
 
 // Rules that reach a role only through its prompt (rules/multi-agent.md: the pause and 200k rules worked once they
@@ -142,14 +138,14 @@ const RULE_LIST = (t) => [
   ['decisions', 'Only the coordinator writes the owner\'s decisions. An open question goes into your own report as a line "❓ coordinator: ..."; do not decide it yourself.'],
   ['pauses', `Pauses: never wait longer than 270 s at a time. A turn without a tool call ends your role - Monitor does not wake a workflow agent (its events reach you only as an attachment to your next request, and a turn of text alone makes no next request), so never end a turn with text like 'Waiting.': start anything long with Bash run_in_background, then wait for it with a blocking Bash loop (timeout 270000: until its log's final line appears or its process has died; do sleep 3; done) and repeat the loop, not with Monitor; an agent with no output for 10 minutes is killed. While your own process waits in a slot queue or runs, keep waiting in slices while your process is alive: do not end your work to wait (the chain has no status for it; ${INNER ? 'the selection of the task\'s guards after a programmer round' : ONE_RUN ? 'the integration train' : 'the one full guard run'} is waited for by the workflow, not by you).`],
   ['context', 'Context: past ~200k finish the current stage, write the report with "Next step: ..." and stop - a fresh agent continues.'],
-  ['slots', `Heavy work goes through memory slots: ${SCRIPTS}/heavy.sh <cmd>, ${SCRIPTS}/medium.sh <cmd>, ${INNER ? `a selection of guards ${SCRIPTS}/guards-all.sh --select <ref> ${sq(t.gdir)} (the selection of the task from its base is run by the workflow, never by a role; a role runs only a selection its own instructions name - the tester the one of its own diff)` : ONE_RUN ? 'no selection and no full run of guards in the task (innerSelect false: the train runs them); a guard of your own that needs a browser or a bundler goes through heavy.sh' : `full guard run ${SCRIPTS}/guards-all.sh ${t.gdir}`}; start heavy.sh and guards-all.sh themselves only through Bash run_in_background, never as a blocking call (a blocking call to the heavy command itself is killed by the Bash timeout, its ticket dropped by the slot's trap, and it rejoins the queue at the end), then wait for it with a separate blocking Bash loop of at most 270 s (timeout 270000: until its log's final line appears or its process has died; do sleep 3; done) and repeat it - a turn without a tool call ends your role.`],
+  ['slots', `Heavy work goes through memory slots: ${SCRIPTS}/heavy.sh <cmd>, ${SCRIPTS}/medium.sh <cmd>, ${INNER ? `a selection of guards ${cfgEnv()}${SCRIPTS}/guards-all.sh --select <ref> ${sq(t.gdir)} (the selection of the task from its base is run by the workflow, never by a role; a role runs only a selection its own instructions name - the tester the one of its own diff)` : ONE_RUN ? 'no selection and no full run of guards in the task (innerSelect false: the train runs them); a guard of your own that needs a browser or a bundler goes through heavy.sh' : `full guard run ${SCRIPTS}/guards-all.sh ${t.gdir}`}; start heavy.sh and guards-all.sh themselves only through Bash run_in_background, never as a blocking call (a blocking call to the heavy command itself is killed by the Bash timeout, its ticket dropped by the slot's trap, and it rejoins the queue at the end), then wait for it with a separate blocking Bash loop of at most 270 s (timeout 270000: until its log's final line appears or its process has died; do sleep 3; done) and repeat it - a turn without a tool call ends your role.`],
   ['rerun', ONE_RUN && !INNER
     ? `No role runs guards-all.sh in the task (innerSelect false): the integration train after the review reruns each new red of its full run alone; red again alone - the task's new red, which comes back to the programmer with the train's result; green alone - flaky, written into the project's quarantine by the train, not a regression.${CFG.guardBaseline ? ` Known reds listed in ${CFG.guardBaseline} (config guardBaseline) are subtracted first and never rerun: not a regression; a fix that turns one green removes its entry in the same commit; do not edit the quarantine.` : ''} Your own guards you run directly; a red one is yours to fix.`
     : `New reds of a ${ONE_RUN ? 'selection' : 'full run'}: ${SCRIPTS}/guards-all.sh reruns each one alone in the same slot. Red again alone - a new red (a regression); green alone - flaky: not a regression, name it in your report under "Flaky guards" for the coordinator, who puts it into the project backlog.${CFG.guardBaseline ? ` Known reds listed in ${CFG.guardBaseline} (config guardBaseline) are subtracted first and never rerun ("N known red"): not a regression; a fix that turns one green removes its entry in the same commit.${ONE_RUN ? ` On a selection the project's quarantine is read only (<sharedDir>/guards-quarantine.json, known reds it lists are subtracted): a flaky guard goes into your report, not into the quarantine; do not edit either file for it.` : ` A flaky guard is written into the project's quarantine (<sharedDir>/guards-quarantine.json, outside the worktree) and is known in later runs; only the coordinator moves it into ${CFG.guardBaseline}: do not edit either file for it.`}` : ''} A ${ONE_RUN ? 'selection' : 'full run'} on the same HEAD with a clean tracked tree that ended green is reused ("reused, HEAD <sha>"); --force runs again.`],
   ['onerun', ONE_RUN && !INNER
     ? `No selection and no full guard run in the task (innerSelect false): the integration train after the review is the first run of all guards. The programmer and the tester run only their new or changed guards and their mutations, never guards-all.sh. A red train comes back to the programmer with its result; a fix that touches the product (a file outside docs and the tester's guards and fixtures) gets a short tester round - the acceptance of the cells the fix touches and the tester's own guards over them - before the second review (in the light mode there is no tester: the programmer-checker runs that acceptance itself), a fix of guards or docs only goes straight to the second review; then the train again.`
     : ONE_RUN
-    ? `No full guard run in the task: after every programmer round with a new HEAD the workflow runs the selection of the task's guards, ${selectRun(t)} (a wait step: changed guards, guards that import a changed file or name it, the project's guardAlways; new reds rerun alone, known reds subtracted, the quarantine read only), and hands its log to the next role; no role runs the full suite. The programmer runs only its new guards and mutations, no selection. The tester, after its own commits, runs the selection of its own diff from the programmer's HEAD of its round through Bash run_in_background: ${SCRIPTS}/guards-all.sh --select <the programmer's HEAD> ${sq(t.gdir)} (its guards, the guards that import or name a file it changed - a fixture -, the project's guardAlways; its log ${CFG.sharedDir}/guards-${gname(t)}.select.txt; "nothing selected" - run your new guards directly); no commit of the tester - no selection of its own, the workflow's log is the evidence. A flaky guard of a selection goes into your report, not into the quarantine.`
+    ? `No full guard run in the task: after every programmer round with a new HEAD the workflow runs the selection of the task's guards, ${selectRun(t)} (a wait step: changed guards, guards that import a changed file or name it, the project's guardAlways; new reds rerun alone, known reds subtracted, the quarantine read only), and hands its log to the next role; no role runs the full suite. The programmer runs only its new guards and mutations, no selection. The tester, after its own commits, runs the selection of its own diff from the programmer's HEAD of its round through Bash run_in_background: ${cfgEnv()}${SCRIPTS}/guards-all.sh --select <the programmer's HEAD> ${sq(t.gdir)} (its guards, the guards that import or name a file it changed - a fixture -, the project's guardAlways; its log ${CFG.sharedDir}/guards-${gname(t)}.select.txt; "nothing selected" - run your new guards directly); no commit of the tester - no selection of its own, the workflow's log is the evidence. A flaky guard of a selection goes into your report, not into the quarantine.`
     : `One full guard run per task: the project config has no guardSubsetCommand, so the programmer runs the full run (${SCRIPTS}/guards-all.sh ${t.gdir}) and the tester reuses its log; ${SCRIPTS}/guards-select.js --wt ${sq(t.wt)} --base ${baseArg(t)} lists the guards a change touches.`],
   ['docker', `Docker: ${CFG.ownerStackReadOnly ? `the owner's stack ${CFG.ownerStackReadOnly}` : 'the owner\'s stack'} is read-only (docker cp out is fine); never write into its containers; only a tester runs its own stack, and only when the brief asks, then removes it with its images and volumes (docker compose -p <stack> down -v --rmi all). Never remove the owner's stack or its images; other images and the build cache are not yours to clean. A post-check after you removes what the task left (its stack, processes in its worktree, the slots they hold) and reports it.`],
   ['stand', CFG.stand && CFG.stand.project
@@ -743,7 +739,6 @@ async function progStep(t, st, task, n, report, sameStops, mergeCheck) {
   let merged = p, tag = n
   for (let k = 0; ; k++) {
     if (st.selAt && st.head === st.selAt) { log(`${t.title}: the selection on ${st.head} is done - not repeated`); return { p: merged } }
-    if (needsIsolation(t)) return isolationStop(t, `selection after programmer ${tag}`, st.head)
     const sel = await selectStep(t, tag)
     if (sel.fail) return sel
     st.sel = sel; st.selAt = st.head
@@ -1100,7 +1095,7 @@ async function mergeOnlyStep(t, n, before, head) {
   return mergeAnswered(res) && res.mergeOnly === true ? res : null
 }
 const resultOf = (t, head) => `${CFG.sharedDir}/train/result/${t.key}-${head}.json`
-const rideCmd = (t, head) => `${CFG.configPath ? `CODIS_AGENTS_CONFIG=${sq(CFG.configPath)} ` : ''}node ${SCRIPTS}/train.js ride --task ${sq(t.key)} --branch ${sq(t.branch)} --head ${sq(head)} --base ${sq(String(t.base).trim())} --dir ${sq(t.sdir)}`
+const rideCmd = (t, head) => `${cfgEnv()}node ${SCRIPTS}/train.js ride --task ${sq(t.key)} --branch ${sq(t.branch)} --head ${sq(head)} --base ${sq(String(t.base).trim())} --dir ${sq(t.sdir)}`
 const fixTail = (t) => (INNER
   ? 'Commit on the branch (a red guard first when none covers it, mutations after the commit); do not run the selection or a full run yourself: the workflow runs the selection on your new HEAD, then the second review of the diff, then the train again. If there is nothing to fix on the branch (a known or a stale guard), explain it in prog.md and commit nothing: the coordinator decides.'
   : t.light
@@ -1141,7 +1136,6 @@ const trainTask = (t, v, res) => {
 }
 async function ride(t, st, review) {
   if (!ONE_RUN) return { task: t.key, status: 'done', review }
-  if (needsIsolation(t)) { const z = isolationStop(t, 'train 1', st.head); return stop(t, z.fail, { status: z.status, isolation: z.isolation, head: z.head, review }) }
   const results = []
   for (let n = 1; ; n++) {
     const head = st.head, step = `train-${n}`, res = resultOf(t, head)

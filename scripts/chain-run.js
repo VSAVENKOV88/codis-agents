@@ -271,7 +271,6 @@ function parseTasks(text) {
     if (keys.has(t.key.toLowerCase())) return { error: `two tasks have the key ${t.key}` };
     keys.add(t.key.toLowerCase());
     if (Object.prototype.hasOwnProperty.call(t, 'stepDir')) return { error: `task ${t.key}: the field stepDir is the conductor's (the steps folder of a run), a tasks file cannot set it` };
-    if (Object.prototype.hasOwnProperty.call(t, 'requiresIsolation')) return { error: `task ${t.key}: the field requiresIsolation is the conductor's (from the host of its run), a tasks file cannot set it` };
     if (Object.prototype.hasOwnProperty.call(t, 'resumeSince')) return { error: `task ${t.key}: the field resumeSince is the conductor's (from the decision of resolve), a tasks file cannot set it` };
     for (const [k, x] of Object.entries(t)) {
       const fine = typeof x === 'string' || typeof x === 'boolean' || (Array.isArray(x) && x.every((y) => typeof y === 'string'))
@@ -839,17 +838,12 @@ function makePipeline(note, onTaskEnd, signalled) {
   }));
 }
 
-// Whether the branch of a task whose roles run on this host requires isolation (workflows/role-chain.js refuses it the
-// selection wait step and the train until A2b): only the claude host does not; codex, and any host not known here, does.
-const requiresIsolationOf = (host) => host !== 'claude';
-
 // Runs workflows/role-chain.js with args over the adapter: {results, threw}. o: {host, args, pluginRoot?, launch?
 // (the adapter's launcher, tests), exec? (a fake runner of service steps, tests), adapter? (host CLI options), callsDir?,
 // steps? (makeSteps: the journal of the steps), log (the script's log), note (the conductor's own lines), onTaskEnd?}.
 async function runScript(o) {
   const note = o.note || (() => {});
-  // every task carries the conductor's own requiresIsolation, from the host of this run, over whatever args held
-  const args = Object.assign({}, o.args, { tasks: (o.args.tasks || []).map((t) => Object.assign({}, t, { requiresIsolation: requiresIsolationOf(o.host) })) });
+  const args = o.args;
   const ended = new Set();
   const onTaskEnd = (key, r) => { if (ended.has(key)) return; ended.add(key); if (o.onTaskEnd) o.onTaskEnd(key, r); };
   const keys = (args.tasks || []).map((t) => t.key);
@@ -1302,7 +1296,7 @@ function status(argv) {
 }
 
 // Before the command line: resolve (scripts/chain-resolve.js) takes these functions at call time.
-module.exports = { requiresIsolationOf, authorProblem, commitJournalProblem, heavyJournalProblem, commitStateDir, beginStop, StopError, lockData, liveText, read3, openStepVerdict, lockFileOf, loadConfig, runDirOf, refusalText, makeSteps, stepExec, openStepText, stateRootProblem, runScript, makePipeline, taskTable, parseTasks, lstartOf, normL, psCause, liveness, reconcile, acquireTask, unrecordedCalls, takeLock, releaseLock, execStep, hookGate, adapterCfg, logState, CAUSE_KNOWN, MAX_WAIT };
+module.exports = { authorProblem, commitJournalProblem, heavyJournalProblem, commitStateDir, beginStop, StopError, lockData, liveText, read3, openStepVerdict, lockFileOf, loadConfig, runDirOf, refusalText, makeSteps, stepExec, openStepText, stateRootProblem, runScript, makePipeline, taskTable, parseTasks, lstartOf, normL, psCause, liveness, reconcile, acquireTask, unrecordedCalls, takeLock, releaseLock, execStep, hookGate, adapterCfg, logState, CAUSE_KNOWN, MAX_WAIT };
 
 if (require.main === module) {
   const [cmd, ...rest] = process.argv.slice(2);
