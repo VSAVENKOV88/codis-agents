@@ -693,4 +693,11 @@ let raceA23 = Promise.resolve();
     `exit ${tc.status} ${tc.signal || ''} ${(tc.stdout || '').split('\n').filter((l) => /FAIL/.test(l)).join('\n').slice(-1500)} ${(tc.stderr || '').slice(-500)}`);
 }
 
+// ---- the tester cells of analysis-check.js run (p-codex-D2b-1b): tests/analysis-check-run-tester-cases.js, a child with its own tally ----
+{
+  const rt = spawnSync(process.execPath, [path.join(__dirname, 'analysis-check-run-tester-cases.js')], { encoding: 'utf8', timeout: 120000 });
+  ok('the tester cells of analysis-check.js run (tests/analysis-check-run-tester-cases.js) pass', rt.status === 0,
+    `exit ${rt.status} ${rt.signal || ''} ${(rt.stdout || '').split('\n').filter((l) => /FAIL/.test(l)).join('\n').slice(-1500)} ${(rt.stderr || '').slice(-500)}`);
+}
+
 raceA23.then(() => done());
