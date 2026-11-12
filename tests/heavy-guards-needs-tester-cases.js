@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 'use strict';
 // The tester cells of the declared needs of guards (p-codex-A2b-1c2a), a child of tests/heavy-guards-needs.test.js with
 // its own tally:
