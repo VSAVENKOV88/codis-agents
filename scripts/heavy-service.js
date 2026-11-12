@@ -64,7 +64,11 @@
 // killGraceMs + emptyWaitMs for G to be gone (guards-all.sh's slot_run waits for its holder, which stops the runner with
 // its own two pauses), KILL, emptyWaitMs. G gone -> group-empty, the spec and the run's TMPDIR removed (out.log stays),
 // done or stopped. The answer adds base, where ("local full run" | "local selection") and guardsLog (the line "guards
-// log: <path>" of guards-all.sh).
+// log: <path>" of guards-all.sh); a done run adds verdict (green | incomplete | red | environment) and notRun (the guards
+// of guardNeeds it did not run, [{guard, needs, reason, newMarker?}]) from guards-result.js verdictOf: the meta of the
+// guard log counts only when its exec is the spec of this run, so the meta an earlier run left (an exit before the
+// slot: reuse, nothing selected, a refusal) never gives this run a verdict it did not have. An answer rebuilt for a run
+// of an earlier call has no verdict.
 //
 // Recovery (a new call of the task, chain-run.js status and its start check): a run left without a final state is
 // judged by its group: G alive -> "running without adapter" (the task waits for the coordinator: resolve --heavy ...
@@ -76,6 +80,7 @@ const crypto = require('crypto');
 const net = require('net');
 const { spawn, spawnSync } = require('child_process');
 const { readNoFollow, CODEX_ADDED } = require('./commit-service');
+const { verdictOf } = require('./guards-result');
 const rolePlaces = require('./role-roots');
 
 const HEAVY_CODEX_VERSIONS = Object.freeze(['0.167.0']);
@@ -379,7 +384,7 @@ function openHeavyService(o) {
   };
   const publicOf = (r) => {
     const a = { state: r.state, kind: r.kind || null, cls: r.cls || null };
-    for (const k of ['position', 'why', 'slot', 'pgid', 'log', 'rc', 'base', 'where']) if (r[k] !== undefined && r[k] !== null) a[k] = r[k];
+    for (const k of ['position', 'why', 'slot', 'pgid', 'log', 'rc', 'base', 'where', 'verdict', 'notRun']) if (r[k] !== undefined && r[k] !== null) a[k] = r[k];
     if (FINAL.has(r.state) && r.log) {
       a.tail = tailOf(r.log);
       const g = r.guard ? /^guards log: (.+)$/m.exec(readText(r.log) || '') : null;
@@ -442,8 +447,9 @@ function openHeavyService(o) {
   // from the slot guards-all.sh holds
   const execEnv = (x) => {
     const dirs = [path.dirname(process.execPath)].concat(gitDir ? [gitDir] : [], SAFE_PATH.split(':'));
+    // TMPPREFIX: zsh writes the temporary file of a here-doc and of =(...) there, not under /tmp, read only in the sandbox
     const e = { PATH: [...new Set(dirs)].join(':'), HOME: typeof userEnv.HOME === 'string' ? userEnv.HOME : '/', CODEX_HOME: x.codexHome, TMPDIR: x.tmpdir,
-      LANG: locale(userEnv.LANG), LC_ALL: locale(userEnv.LC_ALL || userEnv.LANG) };
+      TMPPREFIX: path.join(x.tmpdir, 'zsh'), LANG: locale(userEnv.LANG), LC_ALL: locale(userEnv.LC_ALL || userEnv.LANG) };
     if (x.slot) Object.assign(e, { SLOTS_DIR: path.dirname(x.slot), CODIS_SLOT_HELD: `${x.cls} ${x.slot}`, GUARDS_EXCLUSIVE_LOCK: x.lock });
     // the nested <class>.sh and every heavy.sh / medium.sh of the argv read the run's config, as the holder and the
     // exclusive check do: its guardExclusive decides which guard takes the exclusive lock, whatever the worktree holds
@@ -698,7 +704,12 @@ function openHeavyService(o) {
     clean();
     r.why = null;
     const rc = readText(r.rcFile);
-    if (rc !== null && /^\d+\s*$/.test(rc)) return finalize(r, 'done', { rc: +rc });
+    if (rc !== null && /^\d+\s*$/.test(rc)) {
+      const gl = /^guards log: (.+)$/m.exec(readText(r.log) || '');
+      let meta = null;
+      try { meta = gl ? JSON.parse(fs.readFileSync(`${gl[1]}.meta.json`, 'utf8')) : null; } catch { /* no meta: not this run's */ }
+      return finalize(r, 'done', Object.assign({ rc: +rc }, verdictOf(+rc, meta, specFile)));
+    }
     const g = await gate.exited;
     return finalize(r, 'stopped', { why: how.stop || `exit code lost: the gate ended ${g.sig ? `by ${g.sig}` : `with ${g.rc}`}` });
   };

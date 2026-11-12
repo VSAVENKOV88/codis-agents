@@ -298,6 +298,8 @@ const guardsOf = (m) => (m && Array.isArray(m.incomplete) ? m.incomplete.map((x)
   // ---- C2a-14, C2a-15, C2a-21: through the adapter (heavy-req.js, fake codex)
   {
     const d = setup({ needs: NEEDS, guards: { 'a.g': 'exit 0', 'b.g': B, 't.g': 'print -r -- "TP=$TMPPREFIX"' } });
+    // the executor gets HOME of the user: here one without a machine file, as the slot directory of the case decides
+    d.env.HOME = d.root;
     const svc = HS.openHeavyService({ task: 'K', callId: 'prog-1', role: 'prog', wt: d.wt, tdir: d.tdir, box: d.box, stateDir: d.state, config: d.P.cfg,
       codex: path.join(bin, 'codex'), userEnv: d.env, killGraceMs: 2000, emptyWaitMs: 2000, pollMs: 200, inject: { probe: async () => ({}) } });
     const answers = path.join(d.state, 'K', 'heavy-calls', 'prog-1');

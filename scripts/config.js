@@ -59,6 +59,14 @@ const SPEC = {
   // whose name matches one of glob and that has a line `<marker> guards:exclusive — <reason>`. Without the key the
   // default below (resolve()); with it both members are required and replace the default.
   guardExclusive: ['object', null],
+  // Guards that need what the executor of a codex role does not give (a browser, a file watcher, ps, a nested sandbox,
+  // Docker, a disk image): a guard file whose path matches one of glob (default guardFiles) and that has a line
+  // `<marker> guards:needs <need>[, <need>...] — <reason>` (marker: one line-comment marker or a list of them). In a guard
+  // run of a codex role (CODIS_GUARDS_EXEC, scripts/heavy-service.js) such a guard never runs: a full run passes it to
+  // the runner through {skipArgs} of guardCommand (required with this key), a selection leaves it out; the run that
+  // would be green ends incomplete (scripts/guards-result.js). Without the key - nothing is excluded; outside the channel
+  // the marker is ignored.
+  guardNeeds: ['object', null],
   // The selection of a task's guards (scripts/guards-select.js, guards-all.sh --select): what a guard file is, which
   // guards always run, the subset command ({jobs} and {limitFile} as guardCommand, else counted as the whole budget).
   guardFiles: ['string[]', ['*-run.js', '*-run.mjs', '*-run.cjs']],
@@ -125,6 +133,7 @@ const WT_SPEC = { scan: ['string[]', []], skip: ['string[]', []], link: ['string
 const RERUN_SPEC = { command: ['string', undefined], newRedPattern: ['string', undefined], tallyPattern: ['string', ''], maxReruns: ['number', 10], uncountedIsRed: ['boolean', false] };
 const EXCL_SPEC = { glob: ['string[]', undefined], marker: ['string', undefined] };
 const EXCL_DEFAULT = { glob: ['*-run.js', '*-run.mjs'], marker: '//' };
+const NEEDS_SPEC = { glob: ['string[]', undefined], marker: ['any', undefined] };
 const PROBE_SPEC = { file: ['string', undefined], contains: ['string', undefined] };
 const HOOKS_SPEC = { blockICloudCopies: ['boolean', false], preCommit: ['string[]', []] };
 const STANDING_SPEC = { branches: ['string[]', []], check: ['string', ''] };
@@ -338,7 +347,9 @@ const show = (v) => (typeof v === 'string' ? JSON.stringify(v) : String(v));
 // The placeholders each guard command template is filled with, by the place that fills it (p-noghost, case
 // 2026-10-30: the part here filled only {wt} and {onlyArgs} of a guardSubsetCommand with {jobs}, the project's runner
 // took "--concurrency {jobs}" literally, ran 0 of 10 guards and exited 0):
-//   guardCommand, remoteRun.command - guards-all.sh sub() (here; on the runner its guardCommand);
+//   guardCommand, remoteRun.command - guards-all.sh sub() (here; on the runner its guardCommand); {skipArgs} - one
+//     --skip <guard> per guard excluded by guardNeeds in a guard run of a codex role, '' otherwise (guardCommand only:
+//     under the channel the run is always local, and a selection leaves the excluded guards out of {onlyArgs});
 //   guardCommandLegacy, remoteRun.commandLegacy - the same, a fixed worker count (no {limitFile});
 //   guardSubsetCommand, remoteRun.subsetCommand - guards-all.sh --select / --guards: {onlyArgs}, then sub();
 //   remoteRun.localCommand - the part here (scripts/guards-remote.js): {wt} and {onlyArgs} only;
@@ -346,8 +357,8 @@ const show = (v) => (typeof v === 'string' ? JSON.stringify(v) : String(v));
 // A token is {identifier} not right after $ (zsh ${VAR} is a parameter; {a,b} and {1..3} are brace expansions, not
 // identifiers). The template is checked, never the filled string: a worktree path or a guard name may hold braces.
 const FILLS = {
-  guardCommand: ['wt', 'jobs', 'limitFile'],
-  guardCommandLegacy: ['wt', 'jobs'],
+  guardCommand: ['wt', 'jobs', 'limitFile', 'skipArgs'],
+  guardCommandLegacy: ['wt', 'jobs', 'skipArgs'],
   guardSubsetCommand: ['wt', 'jobs', 'limitFile', 'onlyArgs'],
   'remoteRun.command': ['wt', 'jobs', 'limitFile'],
   'remoteRun.commandLegacy': ['wt', 'jobs'],
@@ -521,6 +532,16 @@ function resolve(raw, opts = {}) {
     if (x.marker === undefined) errors.push('guardExclusive.marker: required');
     else if (!x.marker || /\s/.test(x.marker)) errors.push(`guardExclusive.marker: the line-comment marker, not empty and without blanks: ${JSON.stringify(x.marker)}`);
   } else c.guardExclusive = { glob: [...EXCL_DEFAULT.glob], marker: EXCL_DEFAULT.marker };
+  if (c.guardNeeds) {
+    const x = c.guardNeeds = level(NEEDS_SPEC, c.guardNeeds, 'guardNeeds.', errors);
+    // the glob is that of guardFiles (scripts/stand.js matches: without "/" the file name at any depth, with "/" the path)
+    if (x.glob === undefined) x.glob = c.guardFiles.slice();
+    else if (!x.glob.length || x.glob.some((g) => !g || /\n/.test(g))) errors.push('guardNeeds.glob: expected at least one non-empty glob');
+    const ms = x.marker === undefined ? null : [].concat(x.marker);
+    if (!ms) errors.push('guardNeeds.marker: required');
+    else if (!ms.length || ms.some((m) => typeof m !== 'string' || !m || /\s/.test(m))) errors.push(`guardNeeds.marker: a line-comment marker or a list of them, each not empty and without blanks: ${JSON.stringify(x.marker)}`);
+    for (const k of ['guardCommand', 'guardCommandLegacy']) if (c[k] && !c[k].includes('{skipArgs}')) errors.push(`guardNeeds needs {skipArgs} in ${k}: the runner gets --skip <guard> for each guard a codex role cannot run (README, guardNeeds)`);
+  }
   if (c.standingPush) {
     c.standingPush = level(STANDING_SPEC, c.standingPush, 'standingPush.', errors);
     if (!c.standingPush.branches.length || !c.standingPush.check.trim()) errors.push('standingPush: branches and check are required');

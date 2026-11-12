@@ -16,9 +16,10 @@
 #   late single heavy jobs do not pass it either; exit 75 (budget taken after admission) - back to the queue with the
 #   same ticket (SLOT_RETRY_RC).
 # Command: project config key guardCommand, run with zsh in the worktree; placeholders {wt}, {jobs} (optional),
-#   {limitFile} (optional). A placeholder this script does not fill ({onlyArgs} in a full command, {name}, a typo) is
+#   {limitFile} (optional), {skipArgs} (required with guardNeeds; filled only in a guard run of a codex role). A placeholder this script does not fill ({onlyArgs} in a full command, {name}, a typo) is
 #   a config error (scripts/config.js FILLS), so slots.zsh refuses 78 naming the key before anything runs.
-# Exit code: the runner's own (the last 25 log lines are printed either way). The runner's code travels through a file,
+# Exit code: the runner's own (the last 25 log lines are printed either way); in a guard run of a codex role that left
+#   out guards of guardNeeds, the code of incomplete instead of 0 (below). The runner's code travels through a file,
 #   so a runner that itself exits 75 is never mistaken for "no worker budget" and retried.
 # Rerun (project config key guardRerun; scripts/guards-result.js): after a red full run, still in the same slot, every
 #   new red named in the log runs once more alone. Red again -> new red, the runner's code stays; green alone -> flaky,
@@ -82,6 +83,17 @@
 #   of the spec ("guards-all <name> codex <task> <role> <id>"); every command of the project - the runner in each mode
 #   and a single rerun (guards-result.js) - runs through scripts/heavy-exec.js in codex sandbox; the meta names the
 #   environment sandbox:codex, and such a run is never reused by a run without the variable (guards-result.js reuse).
+#   Declared needs (project key guardNeeds; scripts/guards-result.js needs): a guard file with a line
+#   `<marker> guards:needs <need>[, ...] — <reason>` needs what the executor does not give; before the slot such guards
+#   are listed and never run there - a full run passes them to the runner as {skipArgs} of guardCommand (--skip <guard>
+#   each; the key requires the placeholder, which is empty outside the channel), a selection drops them from {onlyArgs}
+#   and from its count, a single rerun never runs one nor names it "known red not red now". A run that would end 0 ends
+#   with the code of incomplete (guards-result.js INCOMPLETE) and the line "incomplete: N guards not run in the sandbox
+#   of a codex role: <guard> (needs <need>: <reason>) ..." (a selection adds "(marker new in this diff)" to a need the
+#   same path did not declare on its merge-base); a red keeps its code and the line. The meta keeps exec (the spec) and
+#   incomplete (the list); an incomplete run is never reused (reuse needs exit 0). A selection whose every guard is
+#   excluded runs nothing and takes no slot (that code and line, its own meta); a list that cannot be read: 69, the line
+#   "environment: the needs of the guards cannot be read: ...", nothing runs.
 #   Without the variable nothing of this happens. Inside a held slot (CODIS_SLOT_HELD: a command of the heavy channel)
 #   this script refuses 64 at once: its own ticket would wait behind the held slot forever.
 # usage: guards-all.sh [--force] [--main-checkout] [--local] [--no-quarantine] [--quarantine-read-only] [--priority] [--select <base> | --guards <names file>] <worktree>   (a name under worktreeRoot, or a path) -> log in <sharedDir>/guards-<name>.txt (.select.txt)
@@ -204,12 +216,42 @@ if [[ $ENVID == remote:* ]]; then
   ( cd "$WT" 2>/dev/null; SLOT_LABEL="guards-all $NAME on $RHOST" _slot_journal $treq $treq $(_slot_now) remote - full $rc guards-all )
   exit $rc
 fi
+# Declared needs (guardNeeds; guards-result.js needs): under the channel the guards a codex role cannot run are listed
+# before the slot - a full run passes them as {skipArgs}, a selection drops them from {onlyArgs} and from its count. A
+# list that cannot be read is the environment (69, nothing runs); a selection whose every guard is excluded runs nothing
+# and takes no slot. NEEDF holds the list for the rerun, the line "incomplete: ..." and the meta.
+NEEDF= SKIP=
+if [[ -n $WHERE ]] && NEEDS=$(cfg guardNeeds) && [[ -n $NEEDS && $NEEDS != null ]]; then
+  NEEDF=$(_slot_tmp guardsneeds) || { print -u2 "guards-all: no temporary file in ${TMPDIR:-/tmp} (mktemp failed)"; exit 73; }
+  trap 'rm -f $NEEDF $NEEDF.names ${SELTMP:+$SELFILE}' EXIT
+  NERR=$(_slot_tmp guardsneedserr) || { print -u2 "guards-all: no temporary file in ${TMPDIR:-/tmp} (mktemp failed)"; exit 73; }
+  if [[ -n $SELFILE ]]; then NOUT=$(node "$H/guards-result.js" needs "$WT" "$NEEDS" "$NEEDF" "$SELFILE" "$SELBASE" 2>$NERR); nrc=$?
+  else NOUT=$(node "$H/guards-result.js" needs "$WT" "$NEEDS" "$NEEDF" 2>$NERR); nrc=$?; fi
+  NWHY=$(<$NERR); rm -f $NERR
+  if (( nrc != 0 && nrc != 3 )); then
+    node "$H/guards-result.js" meta-start "$WT" "$OUT" "$CMD" "$ENVID"
+    print -r -- "${NWHY:-environment: the needs of the guards cannot be read: guards-result.js needs exited $nrc}" > "$OUT"
+    print -u2 -r -- "guards-all: $(<$OUT)"
+    node "$H/guards-result.js" meta-end "$WT" "$OUT" 69; exit 69
+  fi
+  if (( nrc == 3 )); then
+    node "$H/guards-result.js" meta-start "$WT" "$OUT" "$CMD" "$ENVID"
+    print -r -- "$WHERE: every selected guard declares a need of guardNeeds that the sandbox of a codex role does not give - nothing ran, no slot taken" > "$OUT"
+    cat "$OUT"
+    node "$H/guards-result.js" incomplete "$OUT" "$NEEDF" 0; nrc=$?
+    node "$H/guards-result.js" meta-end "$WT" "$OUT" $nrc "" "$NEEDF"; exit $nrc
+  fi
+  if [[ -n $SELFILE ]]; then
+    ONLY=$NOUT CMD=${TPL//\{onlyArgs\}/$NOUT}
+    if [[ -n $SELTMP ]]; then mv -f "$NEEDF.names" "$SELFILE"; else SELFILE=$NEEDF.names; fi
+  else SKIP=$NOUT; fi
+fi
 RCF=$(_slot_tmp guardsrc) || { print -u2 "guards-all: no temporary file in ${TMPDIR:-/tmp} (mktemp failed)"; exit 73; }
-trap 'rm -f $RCF ${SELTMP:+$SELFILE}' EXIT
+trap 'rm -f $RCF ${SELTMP:+$SELFILE} $NEEDF ${NEEDF:+$NEEDF.names}' EXIT
 while true; do
   : > $RCF
   SLOT_KIND=$kind SLOT_RETRY_RC=75 SLOT_PRIORITY=$PRIO SLOT_LABEL="guards-all $NAME${GLABEL:+ $GLABEL}" slot_run heavy zsh -c '
-    source "$1"; WT="$2"; OUT="$3"; CMD="$4"; mode="$5"; RCF="$6"; GR="$7"; RERUN="$8"; BASELINE="$9"; QFILE="${10}"; QRO="${11}"; SELFILE="${12}"; LPAT="${13}"; TPL="${14}"; ONLY="${15}"; PR="${16}"; ENVID="${17}"; WHERE="${18}"
+    source "$1"; WT="$2"; OUT="$3"; CMD="$4"; mode="$5"; RCF="$6"; GR="$7"; RERUN="$8"; BASELINE="$9"; QFILE="${10}"; QRO="${11}"; SELFILE="${12}"; LPAT="${13}"; TPL="${14}"; ONLY="${15}"; PR="${16}"; ENVID="${17}"; WHERE="${18}"; SKIP="${19}"; NEEDF="${20}"
     # a guard run of a codex role (CODIS_GUARDS_EXEC): the runner goes into the executor through heavy-exec.js
     X=(); [[ -n $CODIS_GUARDS_EXEC ]] && X=(node "${1:h}/heavy-exec.js" "$CODIS_GUARDS_EXEC" --)
     # the train (--priority) in the worker budget: runs without it yield (slots.zsh, slot_guard_plan)
@@ -232,8 +274,9 @@ while true; do
       sleep $SLOT_POLL
     done
     node "$GR" meta-start "$WT" "$OUT" "$CMD" "$ENVID"
-    # the template is filled, {onlyArgs} last: a value (a guard name, the worktree path) is never filled in again
-    sub() { local c=$1; c=${c//\{jobs\}/$2}; c=${c//\{limitFile\}/${(q)SLOT_PATH}.limit}; c=${c//\{wt\}/${(q)WT}}; c=${c//\{onlyArgs\}/$ONLY}; print -r -- $c }
+    # the template is filled, {skipArgs} and {onlyArgs} last: a value (a guard name, the worktree path) is never filled in
+    # again; {skipArgs} is empty outside the run of a codex role
+    sub() { local c=$1; c=${c//\{jobs\}/$2}; c=${c//\{limitFile\}/${(q)SLOT_PATH}.limit}; c=${c//\{wt\}/${(q)WT}}; c=${c//\{skipArgs\}/$SKIP}; c=${c//\{onlyArgs\}/$ONLY}; print -r -- $c }
     if [[ $mode == adaptive ]]; then
       print -r -- "workers at start: $n (ceiling $GUARDS_JOBS_ALONE, re-evaluated every $SLOT_POLL s; $SLOT_PATH)$PRSAY"
       { while sleep $SLOT_POLL; do slot_guard_plan "$SLOT_PATH" adaptive run $PR > /dev/null; done } &
@@ -253,8 +296,10 @@ while true; do
     # selected N - accounted for N (a run given guards by --only): fewer is the environment, 69, before any rerun
     COUNTED=1
     if [[ -n $SELFILE ]] && ! node "$GR" count "$OUT" "$RERUN" "$SELFILE" "$LPAT"; then print -r -- 69 > "$RCF"; COUNTED=; fi
-    if [[ -n $RERUN && -n $COUNTED ]]; then node "$GR" rerun "$WT" "$OUT" "$(<$RCF)" "$RERUN" "$BASELINE" "$QFILE" "$QRO" ${SELFILE:+"$SELFILE"}; print -r -- $? > "$RCF"; fi
-    node "$GR" meta-end "$WT" "$OUT" "$(<$RCF)" "$QFILE"' guards-all "$H/slots.zsh" "$WT" "$OUT" "$CMD" "$mode" "$RCF" "$H/guards-result.js" "$RERUN" "$BASELINE" "$QFILE" "$QRO" "$SELFILE" "$LPAT" "${TPL:-$CMD}" "$ONLY" "${${PRIO:#0}:+priority}" "$ENVID" "$WHERE"
+    if [[ -n $RERUN && -n $COUNTED ]]; then node "$GR" rerun "$WT" "$OUT" "$(<$RCF)" "$RERUN" "$BASELINE" "$QFILE" "$QRO" "$SELFILE" "$NEEDF"; print -r -- $? > "$RCF"; fi
+    # the guards a codex role did not run: the line "incomplete: ...", and the code of incomplete instead of 0
+    if [[ -n $NEEDF ]]; then node "$GR" incomplete "$OUT" "$NEEDF" "$(<$RCF)"; print -r -- $? > "$RCF"; fi
+    node "$GR" meta-end "$WT" "$OUT" "$(<$RCF)" "$QFILE" "$NEEDF"' guards-all "$H/slots.zsh" "$WT" "$OUT" "$CMD" "$mode" "$RCF" "$H/guards-result.js" "$RERUN" "$BASELINE" "$QFILE" "$QRO" "$SELFILE" "$LPAT" "${TPL:-$CMD}" "$ONLY" "${${PRIO:#0}:+priority}" "$ENVID" "$WHERE" "$SKIP" "$NEEDF"
   rc=$?
   [[ -s $RCF ]] && exit $(<$RCF)          # the runner ran: its code
   (( rc == 75 )) || exit $rc              # 75 without a run: no worker budget - queue again

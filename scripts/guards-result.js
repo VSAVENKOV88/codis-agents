@@ -50,14 +50,29 @@
 //    scripts/heavy-exec.js into the executor, like the run itself; a rerun whose executor could not start (exit 69 and
 //    "environment: heavy-exec: ..." on stderr) is the environment, neither flaky nor a new red. Its quarantine is
 //    read only (guards-all.sh --quarantine-read-only), and the log says so for a codex role.
+// 4. Declared needs (project key guardNeeds; owner decision 8 of p-codex-A2b: a guard the sandbox cannot run is not run,
+//    a skipped guard is never green). A guard file with a line `<marker> guards:needs <need>[, <need>...] — <reason>`
+//    needs what the executor of a codex role does not give. Under CODIS_GUARDS_EXEC (only there) such a guard never
+//    runs: needsOf lists them (a full run - every tracked and untracked, not ignored, file matching guardNeeds.glob; a
+//    selection - its selected guards), guards-all.sh passes them to the runner as --skip ({skipArgs}) or leaves them out
+//    of {onlyArgs} and of the count, and a single rerun never runs one nor calls a known red among them "not red now".
+//    Every marked guard is excluded, whatever its need: the known needs (KNOWN_NEEDS, measured in the executor) only name
+//    the reason, an unknown one is "unknown need <need>". A run that would end 0 ends INCOMPLETE (79) with the line
+//    "incomplete: N guards not run in the sandbox of a codex role: <guard> (needs <need>: <reason>), ..."; a red keeps its
+//    code and the line too. The meta of the run keeps the list (incomplete) and the executor spec (exec): verdictOf reads
+//    a meta as the run's own only when exec is the spec of that run (an earlier run's meta is never taken for it). A
+//    selection flags a marker new against its base (newMarker, "(marker new in this diff)"): a need the same path did
+//    not declare on merge-base(HEAD, base); a full run has no base and flags nothing. The list cannot be read (a file, git)
+//    -> exit 69, nothing runs: a marked guard run anyway would be a red of the environment taken for the product's.
 //
-// usage: guards-result.js rerun <wt> <log> <runner rc> <guardRerun JSON> [<guardBaseline> [<quarantine file> [ro [<selected file>]]]]
+// usage: guards-result.js rerun <wt> <log> <runner rc> <guardRerun JSON> [<guardBaseline> [<quarantine file> [ro [<selected file> [<needs file>]]]]]
 //          (ro: the quarantine is subtracted, never written - the remote runner, guards-all.sh --quarantine-read-only); select: the same on a selection, guards-all.sh --select
 //          <selected file>: a JSON array of the guards a selection ran (guards-select.js --names-out); a known red is
 //          then "not red now" only when it is among them (one outside the selection did not run)
 //          -> summary on stdout, appended to the log; exit = final code
 //        guards-result.js meta-start <wt> <log> <command template> [<env>]
-//        guards-result.js meta-end <wt> <log> <final rc> [<quarantine file>]
+//        guards-result.js meta-end <wt> <log> <final rc> [<quarantine file> [<needs file>]]   (needs: the list of
+//          guards-result.js needs, kept as incomplete when it is not empty)
 //        guards-result.js reuse <wt> <log> <command template> [<env> [<quarantine file>]]
 //                                                                         -> exit 0 and the message when reusable,
 //                                                                            exit 1 and the reason otherwise
@@ -69,6 +84,12 @@
 //          group 1 of the last tally line against the selected guards minus those a localPattern line names as skipped;
 //          fewer, no tally line or a pattern without a group -> "environment: <label> accounted for T of N selected
 //          guards: ..." appended to the log and printed, exit 69; otherwise exit 0, nothing written
+//        guards-result.js needs <wt> <guardNeeds JSON> <out file> [<names file> [<base>]]   -> the excluded guards
+//          [{guard, needs, reason, newMarker?}] into <out file>; a full run (no names file): {skipArgs} on stdout (one
+//          --skip <guard> each, quoted for zsh); a selection: the kept names into <out file>.names and their {onlyArgs} on
+//          stdout, exit 3 when none is kept; the list cannot be read: "environment: ..." on stderr, exit 69
+//        guards-result.js incomplete <log> <needs file> <rc>   -> with excluded guards: the line "incomplete: ..."
+//          appended to the log and printed; exit INCOMPLETE when rc is 0, else rc
 //        guards-result.js only-args <names file>   -> {onlyArgs} of guardSubsetCommand for the guards of a JSON array of
 //          names (guards-all.sh --guards: the attribution of a red train), one --only <guard> each, quoted for zsh;
 //          exit 3 when the list is empty, 64 when the file is not a JSON array of non-empty names
@@ -78,6 +99,86 @@ const crypto = require('crypto');
 const { spawnSync } = require('child_process');
 
 const q = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
+const { matches } = require('./stand');
+
+// The exit code of a guard run that would be green but did not run every guard (outside sysexits 64-78, the codes of
+// the train 10-15, 69 and 75).
+const INCOMPLETE = 79;
+// The needs measured as missing in the executor of a codex role (p-codex-A2b step 2 and c2-measure): they name the
+// reason; a marker with another need excludes the guard too ("unknown need").
+const KNOWN_NEEDS = ['browser', 'file-watcher', 'process-list', 'nested-sandbox', 'docker', 'disk-image'];
+const reEsc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// The marker lines of a guard's text -> {needs, reason} or null. The form of guards:exclusive (slots.zsh): blanks around
+// the marker, the long dash, a reason that is not empty; needs separated by commas. Several lines: their needs together,
+// their reasons joined by "; ".
+function parseNeeds(text, markers) {
+  const ms = [].concat(markers || []);
+  if (!ms.length) return null;
+  const re = new RegExp(`^[ \\t]*(?:${ms.map(reEsc).join('|')})[ \\t]*guards:needs[ \\t]+([A-Za-z0-9][A-Za-z0-9_-]*(?:[ \\t]*,[ \\t]*[A-Za-z0-9][A-Za-z0-9_-]*)*)[ \\t]+—[ \\t]+(\\S.*?)[ \\t\\r]*$`, 'gm');
+  const needs = [], reasons = [];
+  for (const m of String(text).matchAll(re)) {
+    for (const n of m[1].split(',').map((x) => x.trim())) if (!needs.includes(n)) needs.push(n);
+    if (!reasons.includes(m[2])) reasons.push(m[2]);
+  }
+  return needs.length ? { needs, reason: reasons.join('; ') } : null;
+}
+// "needs <need>, ...: <reason>", or "unknown need <need>, ...: <reason>" when a need is not among KNOWN_NEEDS.
+const needText = (x) => {
+  const unknown = x.needs.filter((n) => !KNOWN_NEEDS.includes(n));
+  return `${unknown.length ? `unknown need ${unknown.join(', ')}` : `needs ${x.needs.join(', ')}`}: ${x.reason}`;
+};
+const gitOut = (wt, args) => {
+  const r = spawnSync('git', ['-C', wt].concat(args), { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
+  if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${String(r.stderr || (r.error && r.error.message) || 'failed').trim().slice(0, 300)}`);
+  return r.stdout;
+};
+// The guards of the worktree that declare a need -> {list: [{guard, needs, reason, newMarker?}]} sorted by guard, or
+// {error}. cfg: guardNeeds of the config ({glob, marker}). names: the guards of a selection (paths from the worktree
+// root; a name that is no file is no guard file); left out - every file git lists (tracked, and untracked not ignored:
+// the runner may run those) whose path matches cfg.glob. base: the base of a selection - a need the same path did not
+// declare on merge-base(HEAD, base) gives newMarker: true.
+function needsOf({ wt, cfg, names, base }) {
+  try {
+    const files = names ? names.slice() : gitOut(wt, ['ls-files', '-z', '--cached', '--others', '--exclude-standard']).split('\0').filter(Boolean)
+      .filter((f, i, a) => a.indexOf(f) === i && matches(cfg.glob || [], f));
+    const list = [];
+    for (const f of files) {
+      let text;
+      try { text = fs.readFileSync(path.join(wt, f), 'utf8'); } catch (e) {
+        if (e.code === 'ENOENT' || e.code === 'EISDIR' || e.code === 'ENOTDIR') continue;
+        throw new Error(`${f}: ${e.code || e.message}`);
+      }
+      const n = parseNeeds(text, cfg.marker);
+      if (n) list.push(Object.assign({ guard: f }, n));
+    }
+    if (base && list.length) {
+      const mb = gitOut(wt, ['merge-base', 'HEAD', base]).trim();
+      for (const x of list) {
+        const there = gitOut(wt, ['ls-tree', '--name-only', mb, '--', x.guard]).trim() !== '';
+        const was = there ? parseNeeds(gitOut(wt, ['show', `${mb}:${x.guard}`]), cfg.marker) : null;
+        if (x.needs.some((n) => !(was && was.needs.includes(n)))) x.newMarker = true;
+      }
+    }
+    return { list: list.sort((a, b) => (a.guard < b.guard ? -1 : a.guard > b.guard ? 1 : 0)) };
+  } catch (e) { return { error: e.message }; }
+}
+// The line of a run with excluded guards ('' without them).
+const incompleteLine = (list) => (list && list.length
+  ? `incomplete: ${list.length} guard${list.length === 1 ? '' : 's'} not run in the sandbox of a codex role: ${list.map((x) => `${x.guard} (${needText(x)})${x.newMarker ? ' (marker new in this diff)' : ''}`).join(', ')}\n` : '');
+const readList = (file) => { if (!file) return []; try { const l = JSON.parse(fs.readFileSync(file, 'utf8')); return Array.isArray(l) ? l : []; } catch { return []; } };
+// The verdict of a guard run of a codex role for the answer of the adapter (scripts/heavy-service.js): rc - the exit
+// code of guards-all.sh, meta - its <log>.meta.json (null when there is none), spec - the executor spec of this run. The
+// meta is this run's own only when meta.exec is that spec: an exit before the slot (reuse, nothing selected, 64, 65,
+// 66, 73, 78) leaves the meta of an earlier run in place. -> {verdict: green | incomplete | red | environment, notRun?}
+function verdictOf(rc, meta, spec) {
+  const own = !!meta && !!spec && meta.exec === spec && meta.rc === rc;
+  const inc = own && Array.isArray(meta.incomplete) && meta.incomplete.length ? meta.incomplete : undefined;
+  if (rc === 0) return { verdict: 'green' };
+  if (rc === 69) return { verdict: 'environment' };
+  if (rc === INCOMPLETE && inc) return { verdict: 'incomplete', notRun: inc };
+  if (own && rc !== INCOMPLETE) return inc ? { verdict: 'red', notRun: inc } : { verdict: 'red' };
+  return { verdict: 'environment' };
+}
 const subst = (cmd, wt, name) => cmd.replace(/\{wt\}/g, () => q(wt)).replace(/\{name\}/g, () => q(name));
 
 // {names, tally}: the new reds named in the log (unique, in order) and whether the log reached its tally.
@@ -242,8 +343,10 @@ const quarantineHash = (file) => { try { return sha256(fs.readFileSync(path.reso
 // writes the flaky guards of the log it gets back, scripts/guards-remote.js); 'select' - a selection of a task's guards
 // (guards-all.sh --select): nothing is written anywhere, the flaky guards go into the role's report.
 // selected: the guards a selection ran (an array; null or left out - a full run): a known red that is not red in the
-// log is called stale only when it is among them, since a known red outside the selection never ran.
-function rerun({ wt, log, rc, cfg, baseline, quarantine, readOnly, selected }) {
+// log is called stale only when it is among them, since a known red outside the selection never ran. excluded: the
+// guards a codex role's run did not run (guardNeeds): never rerun, never "not red now"; one red in the log anyway (a
+// runner that ignored --skip) keeps the runner's code.
+function rerun({ wt, log, rc, cfg, baseline, quarantine, readOnly, selected, excluded }) {
   const res = { rc, repeated: [], flaky: [], uncounted: [], known: [], quarantined: [], text: '' };
   const head = '==== rerun of new reds one by one (guardRerun) ====\n';
   const finish = (text) => { res.text = text; fs.appendFileSync(log, '\n' + text); return res; };
@@ -262,20 +365,23 @@ function rerun({ wt, log, rc, cfg, baseline, quarantine, readOnly, selected }) {
   const source = (n) => (Object.hasOwn(tree, n) ? `guardBaseline ${baseline}` : `quarantine ${quarantine}`);
   const p = newReds(fs.readFileSync(log, 'utf8'), cfg);
   // a known name not red in a finished run: the fix landed, the entry is stale (a flaky one is green most of the time)
-  const ran = Array.isArray(selected) ? (n) => selected.includes(n) : () => true;
+  const ex = Array.isArray(excluded) ? excluded : [];
+  const ran = (n) => !ex.includes(n) && (!Array.isArray(selected) || selected.includes(n));
   const stale = p.tally ? Object.keys(known).filter((n) => ran(n) && !p.names.includes(n) && !FLAKY.test(known[n])) : [];
   const staleText = stale.map((n) => `known red not red now: ${n} — remove it from the ${Object.hasOwn(tree, n) ? `baseline ${baseline}` : `quarantine ${quarantine}`}\n`).join('');
   if (rc === 0) return staleText ? finish(head + staleText) : res;
   const max = cfg.maxReruns || 10;
-  res.known = p.names.filter((n) => Object.hasOwn(known, n));
-  const fresh = p.names.filter((n) => !Object.hasOwn(known, n));
-  const knownText = res.known.map((n) => `known red (${source(n)}): ${n} — ${known[n]}\n`).join('') + staleText;
+  res.known = p.names.filter((n) => Object.hasOwn(known, n) && !ex.includes(n));
+  const exRed = p.names.filter((n) => ex.includes(n));
+  const fresh = p.names.filter((n) => !Object.hasOwn(known, n) && !ex.includes(n));
+  const knownText = res.known.map((n) => `known red (${source(n)}): ${n} — ${known[n]}\n`).join('') + staleText
+    + exRed.map((n) => `red, not rerun: ${n} — declares a need of guardNeeds and should not have run (the runner ignored --skip); the runner's exit code ${rc} stands\n`).join('');
   let text;
   if (!p.tally) text = `${head}no tally in the log (the run was cut off before it): nothing reruns, the runner's exit code ${rc} stands\n`;
   else if (!p.names.length) text = `${head}no new reds found in the log by newRedPattern: nothing reruns, the runner's exit code ${rc} stands\n`;
   else if (!fresh.length) {
-    res.rc = 0;
-    text = `${head}${knownText}${res.known.length} known red, no new reds: nothing reruns, exit 0\n`;
+    res.rc = exRed.length ? rc : 0;
+    text = `${head}${knownText}${res.known.length} known red, no new reds: nothing reruns, exit ${res.rc}\n`;
   } else if (fresh.length > max) text = `${head}${knownText}${fresh.length} new reds, more than maxReruns ${max}: nothing reruns (not flakiness), the runner's exit code ${rc} stands\n`;
   else {
     const details = rerunLog(log);
@@ -295,7 +401,7 @@ function rerun({ wt, log, rc, cfg, baseline, quarantine, readOnly, selected }) {
       else if (one && !one.ok) { res.uncounted.push(name); fs.appendFileSync(details, one.text); res.envText = (res.envText || '') + one.text; }
       else if (r.status === 0) res.flaky.push(name); else res.repeated.push({ name, rc: code });
     }
-    if (!res.repeated.length) res.rc = 0;
+    if (!res.repeated.length) res.rc = exRed.length ? rc : 0;
     // a repeated red stays the code of the red: the environment is named only when no guard repeated (review a, round 1)
     if (res.uncounted.length && !res.repeated.length) res.rc = 69;
     let qText = '';
@@ -370,10 +476,12 @@ function gitState(wt) {
   return { head: h.stdout.trim(), clean: s.status === 0 && s.stdout.trim() === '' };
 }
 // env: left out for a run on this machine (the record stays as it always was), "remote:<host>" for the runner,
-// "sandbox:codex" for a guard run of a codex role.
+// "sandbox:codex" for a guard run of a codex role; exec: the executor spec of that run (CODIS_GUARDS_EXEC), which makes
+// the record the run's own for the adapter (verdictOf).
 function metaStart(wt, log, command, env) {
   const g = gitState(wt);
-  fs.writeFileSync(metaFile(log), JSON.stringify(Object.assign({ v: 1, head: g.head, cleanStart: g.clean, command, startedAt: new Date().toISOString() }, env && env !== 'local' ? { env } : {}), null, 1) + '\n');
+  const ex = process.env.CODIS_GUARDS_EXEC;
+  fs.writeFileSync(metaFile(log), JSON.stringify(Object.assign({ v: 1, head: g.head, cleanStart: g.clean, command, startedAt: new Date().toISOString() }, env && env !== 'local' ? { env } : {}, ex ? { exec: ex } : {}), null, 1) + '\n');
 }
 function metaEnd(wt, log, rc, extra) {
   let m = {};
@@ -405,7 +513,7 @@ function reusable(wt, log, command, env = 'local', quarantine = '') {
     text: `reused, HEAD ${short}: the full run of ${m.finishedAt} on this HEAD with a clean tracked tree ended with exit 0 (log ${log}); --force runs again` };
 }
 
-module.exports = { newReds, tallyCount, countCheck, rerun, readBaseline, subst, metaStart, metaEnd, reusable, rerunLog,
+module.exports = { INCOMPLETE, KNOWN_NEEDS, parseNeeds, needText, needsOf, incompleteLine, verdictOf, newReds, tallyCount, countCheck, rerun, readBaseline, subst, metaStart, metaEnd, reusable, rerunLog,
   quarantineFile, readQuarantine, addQuarantine, dropQuarantine, takeQuarantine, quarantineHash, writeFlaky, flakyInLog, repeatedInLog };
 
 if (require.main === module) {
@@ -419,7 +527,9 @@ if (require.main === module) {
         process.exit(Number(x) || 1);
       }
     }
-    const r = rerun({ wt, log, rc: Number(x), cfg: JSON.parse(y), baseline: z || '', quarantine: u || '', readOnly: v === 'select' ? 'select' : v === 'ro', selected });
+    const nf = process.argv[11];
+    const excluded = nf ? readList(nf).map((e) => e && e.guard).filter(Boolean) : [];
+    const r = rerun({ wt, log, rc: Number(x), cfg: JSON.parse(y), baseline: z || '', quarantine: u || '', readOnly: v === 'select' ? 'select' : v === 'ro', selected, excluded });
     if (r.quarantineHash !== undefined) {
       try { const m = JSON.parse(fs.readFileSync(metaFile(log), 'utf8')); m.quarantine = r.quarantineHash; fs.writeFileSync(metaFile(log), JSON.stringify(m, null, 1) + '\n'); } catch { /* no start record: the run stays unusable */ }
     }
@@ -442,8 +552,34 @@ if (require.main === module) {
     if (!Array.isArray(names) || !names.every((n) => typeof n === 'string' && n !== '')) { console.error(`guards-result: only-args: ${wt} is not a JSON array of guard names`); process.exit(64); }
     if (!names.length) process.exit(3);
     process.stdout.write(names.map((n) => `--only ${q(n)}`).join(' ') + '\n');
+  } else if (cmd === 'needs') {
+    // needs <wt> <guardNeeds JSON> <out file> [<names file> [<base>]]: log holds the JSON, x the out file
+    let n = null, names;
+    try { n = JSON.parse(log); } catch { /* below */ }
+    const fail = (m) => { process.stderr.write(`environment: the needs of the guards cannot be read: ${m}\n`); process.exit(69); };
+    if (!n || typeof n !== 'object') fail(`guardNeeds is not a JSON object: ${log}`);
+    if (y) { try { names = JSON.parse(fs.readFileSync(y, 'utf8')); } catch (e) { fail(`the selected guards file ${y}: ${e.message}`); } }
+    if (names !== undefined && !(Array.isArray(names) && names.every((g) => typeof g === 'string'))) fail(`the selected guards file ${y} is not a JSON array of names`);
+    const r = needsOf({ wt, cfg: n, names, base: z || '' });
+    if (r.error) fail(r.error);
+    try { fs.writeFileSync(x, JSON.stringify(r.list) + '\n'); } catch (e) { fail(`${x}: ${e.message}`); }
+    const out = new Set(r.list.map((e) => e.guard));
+    if (names === undefined) { process.stdout.write(r.list.map((e) => `--skip ${q(e.guard)}`).join(' ') + '\n'); process.exit(0); }
+    const kept = names.filter((g) => !out.has(g));
+    try { fs.writeFileSync(`${x}.names`, JSON.stringify(kept) + '\n'); } catch (e) { fail(`${x}.names: ${e.message}`); }
+    if (!kept.length) process.exit(3);
+    process.stdout.write(kept.map((g) => `--only ${q(g)}`).join(' ') + '\n');
+  } else if (cmd === 'incomplete') {
+    // incomplete <log> <needs file> <rc>: the args shift by one (no wt)
+    const [, lg, nf, rc] = process.argv.slice(2);
+    const line = incompleteLine(readList(nf));
+    if (line) { fs.appendFileSync(lg, '\n' + line); process.stdout.write('\n' + line); }
+    process.exit(line && Number(rc) === 0 ? INCOMPLETE : Number(rc));
   } else if (cmd === 'meta-start') metaStart(wt, log, x, y);
-  else if (cmd === 'meta-end') metaEnd(wt, log, x, y ? { quarantine: quarantineHash(y) } : undefined);
+  else if (cmd === 'meta-end') {
+    const list = readList(z);
+    metaEnd(wt, log, x, Object.assign(y ? { quarantine: quarantineHash(y) } : {}, list.length ? { incomplete: list } : {}));
+  }
   else if (cmd === 'reuse') {
     const r = reusable(wt, log, x, y || 'local', z || '');
     console.log(r.reuse ? r.text : `full run: ${r.reason}`);
@@ -468,5 +604,5 @@ if (require.main === module) {
       if (r.missing.length) console.log(`not in the quarantine: ${r.missing.join(', ')}`);
       process.exit(r.missing.length ? 1 : 0);
     } catch (e) { console.error(`${cmd}: ${e.message}`); process.exit(1); }
-  } else { console.error('usage: guards-result.js rerun|count|meta-start|meta-end|reuse|quarantine-take|quarantine-drop|only-args ...'); process.exit(64); }
+  } else { console.error('usage: guards-result.js rerun|count|needs|incomplete|meta-start|meta-end|reuse|quarantine-take|quarantine-drop|only-args ...'); process.exit(64); }
 }

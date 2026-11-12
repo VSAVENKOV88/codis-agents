@@ -13,7 +13,9 @@
 // is written whole into a temporary file of the box and published by a rename; the id is 32 random hex digits; cwd is
 // the current folder unless --cwd names another (it must lie in the worktree); a guard run {id, kind, base?, cwd} has no
 // argv: the adapter runs guards-all.sh with the run's project config, and its answer adds base, where ("local full run" |
-// "local selection") and guardsLog (the guard log in the shared folder). A cancel is the file <id>.cancel. The
+// "local selection") and guardsLog (the guard log in the shared folder); a done guard run adds verdict (green |
+// incomplete | red | environment) and notRun ([{guard, needs, reason, newMarker?}]: the guards of guardNeeds the sandbox
+// did not run; rc 79 with verdict incomplete is a run that would be green without them, never a green one). A cancel is the file <id>.cancel. The
 // client then waits for a final state at most --max seconds (default 25, ceiling 270: the longest single wait, not an
 // interval) and prints the answer as one JSON line: {id, state, kind, cls, position?, why?, slot?, pgid?, log?, rc?,
 // tail?}; state queued | holding | acquired | running | stopping (not final: wait again) or done | stopped |
