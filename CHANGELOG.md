@@ -4,7 +4,7 @@ Every version of the codis-agents plugin, newest first. What the plugin does now
 [README.md](README.md); its [Technical reference](README.md#technical-reference) is the current state of every rule,
 key and script, and this file says when and why each one changed. Versions before 0.4.14 are in the git history.
 
-## Unreleased
+## 0.4.44 - 2026-11-12
 
 - **The analysis checker on Codex is started only by `analysis-check.js run`** (p-codex-D2b-1b, mechanism M4). The
   fourth execpolicy rule of the coordinator home is now `["node", "<plugin>/scripts/analysis-check.js", "run"]`
