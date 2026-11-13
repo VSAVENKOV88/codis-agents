@@ -38,7 +38,7 @@ const frF = flat(fr);
 ok('S1 coordinator: a step "First run on Codex" inside "On Codex: homes, sandbox and rules"', !!fr && /^### First run on Codex/m.test(homes), homes.slice(0, 200));
 ok('S2 the check runs at the start of a coordinator session on Codex, before any task', /start of (every|each|a) coordinator session/.test(frF) && /before any task/.test(frF), frF.slice(0, 400));
 ok('S3 the personal ~/.codex (or $CODEX_HOME empty) is refused with the reason and a separate home ~/.codex-codis-coord offered; nothing is set up there',
-  /`\$CODEX_HOME`[^.]*(empty|not set)/.test(frF) && /refuse/.test(frF) && /~\/\.codex-codis-coord/.test(frF) && /every session of (that|a|the) home/.test(frF), frF.slice(0, 900));
+  /`\$CODEX_HOME`[^.]*(empty|not set)/.test(frF) && /refuse to go on/.test(frF) && /~\/\.codex-codis-coord/.test(frF) && /every session of (that|a|the) home/.test(frF), frF.slice(0, 900));
 ok('S4 the values come from the project config: config.js get repoDir, worktreeRoot, sharedDir (absolute, ~ expanded)',
   ['repoDir', 'worktreeRoot', 'sharedDir'].every((k) => fr.includes(`node <plugin>/scripts/config.js get ${k}`)) && /absolute/.test(frF), frF.slice(0, 900));
 ok('S5 the plugin path is the installed copy (two levels above this SKILL.md, under $CODEX_HOME/plugins/cache/); a working clone is named',
