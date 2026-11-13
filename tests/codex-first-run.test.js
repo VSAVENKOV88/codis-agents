@@ -64,6 +64,12 @@ ok('T1 the coordinator description names the first run on Codex: the Codex setup
   /Codex setup/.test(desc) && /first message/.test(desc) && /config\.toml/.test(desc) && /rules/.test(desc) && /First run on Codex/.test(desc), desc);
 ok('S2b the check also runs when the owner asks to check the Codex setup, and before the first chain-run.js start of the session',
   /check the Codex setup/.test(frF) && /before the first `chain-run\.js start`/.test(frF), frF.slice(0, 600));
+// The description is a plain YAML scalar on one line: ": " or " #" inside it breaks the frontmatter (Codex and Claude
+// Code then do not list the skill at all).
+for (const f of fs.readdirSync(path.join(ROOT, 'skills'))) {
+  const d = (read(`skills/${f}/SKILL.md`).match(/^description: (.*)$/m) || ['', ''])[1];
+  ok(`T6 skills/${f}: the description is a plain YAML scalar (no ": ", no " #", not quoted)`, !!d && !/: | #/.test(d) && !/^["'>|]/.test(d), d.slice(0, 200));
+}
 const rcCodexSec = flat(section(read('skills/role-chain/SKILL.md'), /^On Codex, or roles on another host/));
 ok('T2 role-chain on Codex: before the start, the step "First run on Codex" of the coordinator skill',
   /[Bb]efore the first start[^.]*"First run on Codex"[^.]*codis-agents:coordinator/.test(rcCodexSec), rcCodexSec.slice(0, 700));
