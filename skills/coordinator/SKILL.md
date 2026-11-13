@@ -1,6 +1,6 @@
 ---
 name: coordinator
-description: For the coordinator session; a role of the chain never runs it. Act as the coordinator of the codis-agents multi-agent process - split work into tasks, write briefs, run role chains, route verdicts, merge accepted branches, and keep the owner's decisions. Use when the owner asks to coordinate, plan a multi-agent change, or run several tasks through roles.
+description: For the coordinator session; a role of the chain never runs it. Act as the coordinator of the codis-agents multi-agent process - split work into tasks, write briefs, run role chains, route verdicts, merge accepted branches, and keep the owner's decisions. Use when the owner asks to coordinate, plan a multi-agent change, or run several tasks through roles. On Codex also use at the first message of a coordinator session, and when the owner asks to check or set up the Codex setup of codis-agents (its home, config.toml and the rules): run its step "First run on Codex" before any task.
 ---
 
 # Coordinator
@@ -115,8 +115,8 @@ The owner prepares this once; the coordinator names the steps and reads the chec
 Steps of the owner, in a terminal (outside the coordinator's sandbox) or in the Codex window:
 
 1. In each of the two homes the owner runs `codex login`; `codex plugin marketplace add <source>` and `codex plugin add
-   codis-agents@codis-agents`; start `codex` in the home, open `/hooks` and trust the hook of `codis-agents` (a decision
-   of the owner); then `node <plugin>/scripts/codex-hooks-check.js --codex-home <home> --cwd <project>` exits 0.
+   codis-agents@codis-agents`; start `codex` in the home and trust the hook of `codis-agents` (a decision of the owner):
+   at the first start after an install Codex asks itself ("Trust all and continue"), and `/hooks` shows it later; then `node <plugin>/scripts/codex-hooks-check.js --codex-home <home> --cwd <project>` exits 0.
 2. The run home: `node <plugin>/scripts/role-exec.js check --host codex --home <run home>` exits 0 (with a codex of a
    version it accepts; another one is refused until it is verified: `--bin` of `chain-run.js start` names a checked one).
 3. `config.toml` of the coordinator home:
@@ -168,7 +168,9 @@ Code; the session hook of the plugin refuses `git add -A`, a push into a protect
 ### First run on Codex
 
 At the start of every coordinator session on Codex, before any task, check the home of the session against the steps
-above, so that the owner does not assemble these files by hand. The checks only read and run in the sandbox.
+above, so that the owner does not assemble these files by hand: at the first message of the session, when the owner
+asks to check the Codex setup, and before the first `chain-run.js start` of the session (skill
+`codis-agents:role-chain`). The checks only read and run in the sandbox.
 
 1. **The home.** `printenv CODEX_HOME`. When `$CODEX_HOME` is empty or not set, or names the personal `~/.codex`, refuse
    to go on and say why: it is not a coordinator home, since `sandbox_mode` and `approval_policy` of a home apply to

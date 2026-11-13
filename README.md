@@ -578,9 +578,11 @@ You need Codex CLI with an account to log in, git, Node.js 18+ and a project wit
    CODEX_HOME=~/.codex-codis-coord codex
    ```
 
-   At the first start the coordinator skill (its step "First run on Codex") checks the home and offers the finished
-   `config.toml` and `rules/codis-agents.rules` with one command to paste into the Terminal; it never writes into the
-   home itself. Run the command and start a new session. After a plugin update it offers the rules file again.
+   Type as your first message `Check the Codex setup of codis-agents`: the coordinator skill (its step "First run on
+   Codex") checks the home and offers the finished `config.toml` and `rules/codis-agents.rules` with one command to
+   paste into the Terminal; it never writes into the home itself. Run the command and start a new session. The skill
+   runs the same check at the first message of any coordinator session and before its first chain start, so after a
+   plugin update it offers the rules file again.
 6. **Or fill the two files by hand**, from the templates in [The coordinator on Codex](#the-coordinator-on-codex):
 
    | Placeholder | Where it comes from |
@@ -596,7 +598,8 @@ You need Codex CLI with an account to log in, git, Node.js 18+ and a project wit
      table).
    - Every key and table once: when `config.toml` already has `sandbox_mode`, change that line instead of adding a
      second one (Codex refuses a file with a repeated key).
-   - Make a copy before the edit: `cp ~/.codex-codis-coord/config.toml ~/.codex-codis-coord/config.toml.bak`.
+   - Make a copy before the edit, dated so that a later edit does not overwrite it:
+     `cp ~/.codex-codis-coord/config.toml ~/.codex-codis-coord/config.toml.bak-$(date +%Y%m%d-%H%M%S)`.
    - The rules file names the installed copy, whose path holds the version: rewrite it after every update of the
      plugin, then start a new session (Codex reads the config and the rules at the start of a session).
 

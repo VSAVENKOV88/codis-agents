@@ -90,7 +90,8 @@ that moves between the Workflow and the conductor carries `prior` (and `priorRea
 ### On Codex, or roles on another host: the conductor
 
 There is no Workflow and no Monitor on Codex. The conductor runs the same chain as a detached process; this session
-only starts it and watches it.
+only starts it and watches it. Before the first start of a session on Codex, run the step "First run on Codex" of the
+skill `codis-agents:coordinator` (the coordinator home, its `config.toml` and rules) unless this session already did.
 
 1. Write the tasks (a JSON array of the objects of step 2) and the owner's words, verbatim, into two files inside
    `sharedDir`, not inside a worktree (e.g. `<sharedDir>/<key>/chain-tasks.json` and `<sharedDir>/<key>/chain-owner.txt`).
