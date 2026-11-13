@@ -113,6 +113,6 @@ ok('R8 the coordinator skill offers config.toml and the rules at the first start
 ok('R9 by hand: every value has its source - config.js get, "Installed plugin root" or find chain-run.js',
   ['sharedDir', 'worktreeRoot', 'repoDir'].every((k) => nr.includes(`config.js get ${k}`)) && /Installed plugin root/.test(nrF) && /find "\$CODEX_HOME" -name chain-run\.js/.test(nr), nrF);
 ok('R10 by hand: absolute paths, every key once in TOML, a copy before the edit, the rules rewritten after every update',
-  /absolute/.test(nrF) && /once/.test(nrF) && /copy/.test(nrF) && /after every (plugin )?update/.test(nrF), nrF);
+  /[Aa]bsolute/.test(nrF) && /once/.test(nrF) && /copy/.test(nrF) && /after every (plugin )?update/.test(nrF), nrF);
 ok('R11 the run home passes role-exec.js check', /role-exec\.js check --host codex --home ~\/\.codex-codis/.test(nr), nrF);
 done();

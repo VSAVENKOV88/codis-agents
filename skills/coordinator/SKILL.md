@@ -165,6 +165,59 @@ prefix_rule(pattern=["node", "<plugin>/scripts/analysis-check.js", "run"], decis
 The `git` rule lets every git command out (`reset --hard`, `push --force` into a working branch too), as on Claude
 Code; the session hook of the plugin refuses `git add -A`, a push into a protected branch and tags.
 
+### First run on Codex
+
+At the start of every coordinator session on Codex, before any task, check the home of the session against the steps
+above, so that the owner does not assemble these files by hand. The checks only read and run in the sandbox.
+
+1. **The home.** `printenv CODEX_HOME`. When `$CODEX_HOME` is empty or not set, or names the personal `~/.codex`, refuse
+   to go on and say why: it is not a coordinator home, since `sandbox_mode` and `approval_policy` of a home apply to
+   every session of that home. Offer a separate home, such as `~/.codex-codis-coord` (not the personal one), with the
+   README steps "First steps on Codex", and stop.
+2. **The version.** `codex --version`; a version outside `VERIFIED_CODEX_VERSIONS` of
+   `<plugin>/scripts/commit-service.js` gets a warning with the verified list, not a refusal: advise the owner not to
+   update Codex until the plugin has verified that version.
+3. **The values.** `node <plugin>/scripts/config.js path` names the project config found from the folder the session
+   started in; none - the session started outside the project: tell the owner to start it from the worktree of the
+   arc, the folder with `.claude/codis-agents.json`. Then `node <plugin>/scripts/config.js get repoDir`,
+   `node <plugin>/scripts/config.js get worktreeRoot` and `node <plugin>/scripts/config.js get sharedDir` print the
+   values as absolute paths (`~` expanded); the files below take only absolute paths. `<plugin>` is the installed copy,
+   the folder two levels above this `SKILL.md`, under `$CODEX_HOME/plugins/cache/`; when it lies elsewhere (a working
+   clone), say so: the rules must name the installed copy.
+4. **What is checked.** `$CODEX_HOME/config.toml` holds `sandbox_mode = "workspace-write"`,
+   `approval_policy = "on-request"`, `writable_roots` of `[sandbox_workspace_write]` with `sharedDir` and
+   `worktreeRoot`, and `[projects."<repoDir>"]` with `trust_level = "trusted"`. `$CODEX_HOME/rules/codis-agents.rules`
+   holds the four rules of step 4 with the literal `<plugin>`, and `codex execpolicy check --rules <rules file> -- node
+   <plugin>/scripts/chain-run.js status x` answers `"decision":"allow"`. The hook trust is the owner's and is not checked
+   from the session (`codex-hooks-check.js` starts an app-server that writes into the home): ask the owner to look at
+   `/hooks` (the hook of codis-agents: Trust: Trusted, `[x]`) or to run `node <plugin>/scripts/codex-hooks-check.js
+   --codex-home <home> --cwd <project>` in the Terminal.
+5. **When something is missing or different**, build the finished texts. A new `config.toml` is the template of step
+   3 with the values filled in; the `model` and `model_reasoning_effort` lines go in only when the owner names them. An
+   existing `config.toml` is merged: its other keys and tables are kept as they are, the keys above are changed in
+   place, and no key or table appears twice (Codex refuses a file with a repeated key). The rules file belongs to the
+   plugin and is written whole. Show the owner each text whole and what changes ("was -> becomes"), then one block for
+   the Terminal, outside the sandbox (leave out a file that needs no change):
+
+```sh
+H='<coordinator home>'
+mkdir -p "$H/rules"
+if [ -f "$H/config.toml" ]; then cp -p "$H/config.toml" "$H/config.toml.codis-agents-$(date +%Y%m%d-%H%M%S).bak"; fi
+cat > "$H/config.toml" <<'CODIS_EOF'
+<the full new config.toml>
+CODIS_EOF
+cat > "$H/rules/codis-agents.rules" <<'CODIS_EOF'
+<the four rules with the literal plugin path>
+CODIS_EOF
+```
+
+   Every copy `config.toml.codis-agents-<date-time>.bak` stays; name the `cp` line that puts it back. The session never
+   writes into the home itself: the home lies outside its `writable_roots`, and it is the owner's configuration. It
+   waits for the owner; Codex reads `config.toml` and the rules at the start of a session, so after the block the owner
+   starts a new session, and its first run checks again.
+6. **After a plugin update** the installed copy has a new path (it holds the version): the same check finds the rules
+   naming the old path and offers the rules file again; the update also resets the hook trust (`/hooks`).
+
 ## After a plugin update
 
 When a project uses generated `AGENTS.md` files (`"agentsMd": true`), a new plugin version or a change of a `CLAUDE.md`

@@ -510,8 +510,9 @@ the manifests.
 Codex CLI (checked with 0.166.0 and 0.167.0) installs the same repository as it is: its marketplace and plugin come from
 `.claude-plugin/`, and it runs the same session hook from `hooks/hooks.json`. There is no second manifest for Codex
 (`.codex-plugin/`, a root `plugin.json`, `.agents/plugins/marketplace.json` or `api_marketplace.json` would override
-the name or the version; `tests/codex-manifests.test.js` forbids them). Install into the Codex home your sessions use,
-named explicitly (`~/.codex` is the default when `CODEX_HOME` is not set):
+the name or the version; `tests/codex-manifests.test.js` forbids them). Install into each Codex home of the process,
+named explicitly ([First steps on Codex](#first-steps-on-codex-a-newcomer) names them; `~/.codex` is the default when
+`CODEX_HOME` is not set, and it is not one of them):
 
 ```sh
 export CODEX_HOME=/path/to/codex-home
@@ -519,8 +520,9 @@ codex plugin marketplace add /path/to/codis-agents          # or a git source: <
 codex plugin add codis-agents@codis-agents
 ```
 
-Codex keeps the hook inactive until you trust it: start `codex` in that home, open `/hooks` and trust the hook of
-`codis-agents`. Then check that Codex will run it:
+Codex keeps the hook inactive until you trust it: at the first start of `codex` in that home after the install, Codex
+asks about the plugin's hooks itself ("Trust all and continue"); `/hooks` shows the result. Then check that Codex will
+run it:
 
 ```sh
 node /path/to/codis-agents/scripts/codex-hooks-check.js --codex-home "$CODEX_HOME" [--cwd /path/to/project]
@@ -535,6 +537,65 @@ checks. It changes no trust itself: trust stays a decision made in `/hooks`.
 To update: `codex plugin marketplace upgrade` (a git source; a local folder is read as it is), then
 `codex plugin add codis-agents@codis-agents` again - until then the old copy keeps running. Codex resets the trust
 whenever any file of the installed plugin changes, so after every update open `/hooks` again and rerun the check.
+
+#### First steps on Codex (a newcomer)
+
+You need Codex CLI with an account to log in, git, Node.js 18+ and a project with `.claude/codis-agents.json`
+([Configure a project](#configure-a-project)). Then:
+
+1. **Do not update Codex** when it offers a newer version at start, until the plugin has verified that version. Verified:
+   0.166.0 and 0.167.0 (`VERIFIED_CODEX_VERSIONS` of `scripts/commit-service.js`); the run home refuses another one.
+2. **Two homes of your own**, apart from your personal `~/.codex`:
+   - `~/.codex-codis-coord` - the coordinator home, your session;
+   - `~/.codex-codis` - the run home, the roles of the conductor (with roles on Claude Code, `--host claude`, you need
+     only the coordinator home).
+
+   Your personal `~/.codex` is not a coordinator home: `sandbox_mode` and `approval_policy` apply to every session of
+   the home whose config holds them, so the coordinator's sandbox would become the sandbox of all your other Codex work.
+3. **Install the plugin into each home** (run the block once with each name):
+
+   ```sh
+   export CODEX_HOME=~/.codex-codis-coord        # then again with ~/.codex-codis
+   mkdir -p "$CODEX_HOME"
+   codex login
+   codex plugin marketplace add VSAVENKOV88/codis-agents
+   codex plugin add codis-agents@codis-agents    # its line "Installed plugin root" is <plugin> below
+   ```
+
+4. **Trust the hook at the first start.** Start `codex` in the home: after an install Codex asks about the plugin's
+   hooks itself - choose "Trust all and continue". To look later, open `/hooks`: the event `PreToolUse` shows Installed
+   1, Active 1, and the details of the hook show "Unnamed hook" with Trust: Trusted and `[x]` (enabled). Space or Enter
+   in those details turn the hook off, so leave them as they are. The check by script works in these homes:
+   `node <plugin>/scripts/codex-hooks-check.js --codex-home ~/.codex-codis-coord` exits 0, and the run home also passes
+   `node <plugin>/scripts/role-exec.js check --host codex --home ~/.codex-codis`. `codex-hooks-check.js` refuses the
+   personal `~/.codex` with exit 2 by design (the app-server it starts writes state into the home it checks); there,
+   look in `/hooks`.
+5. **Start the coordinator from the worktree of the arc**, the folder of the project that holds
+   `.claude/codis-agents.json` (an older copy of the repository has another config):
+
+   ```sh
+   cd <arc worktree>
+   CODEX_HOME=~/.codex-codis-coord codex
+   ```
+
+   At the first start the coordinator skill (its step "First run on Codex") checks the home and offers the finished
+   `config.toml` and `rules/codis-agents.rules` with one command to paste into the Terminal; it never writes into the
+   home itself. Run the command and start a new session. After a plugin update it offers the rules file again.
+6. **Or fill the two files by hand**, from the templates in [The coordinator on Codex](#the-coordinator-on-codex):
+
+   | Placeholder | Where it comes from |
+   |---|---|
+   | `<plugin>` | the line "Installed plugin root" of `codex plugin add`, or `find "$CODEX_HOME" -name chain-run.js` (the folder above `scripts/`) |
+   | `<sharedDir>` | `node <plugin>/scripts/config.js get sharedDir`, run in the project |
+   | `<worktreeRoot>` | `node <plugin>/scripts/config.js get worktreeRoot` |
+   | `<main repository root>` | `node <plugin>/scripts/config.js get repoDir` |
+
+   - Absolute paths only: `config.js get` prints them with `~` expanded.
+   - Every key and table once: when `config.toml` already has `sandbox_mode`, change that line instead of adding a
+     second one (Codex refuses a file with a repeated key).
+   - Make a copy before the edit: `cp ~/.codex-codis-coord/config.toml ~/.codex-codis-coord/config.toml.bak`.
+   - The rules file names the installed copy, whose path holds the version: rewrite it after every update of the
+     plugin, then start a new session (Codex reads the config and the rules at the start of a session).
 
 #### Project rules on Codex: the roles and your own session
 
