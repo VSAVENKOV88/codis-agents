@@ -58,6 +58,18 @@ ok('S12 the hook trust is the owner\'s: /hooks (Trust: Trusted, [x]) or codex-ho
   /\/hooks/.test(frF) && /Trust: Trusted/.test(frF) && /codex-hooks-check\.js/.test(frF), frF);
 ok('S13 model and effort lines only when the owner names them', /model[^.]*only when the owner names/.test(frF), frF);
 
+// ---- the trigger: the model reads a skill body only when a request matches its description ----
+const desc = (co.match(/^description: (.*)$/m) || ['', ''])[1];
+ok('T1 the coordinator description names the first run on Codex: the Codex setup, its home, config.toml and the rules, at the first message of a session',
+  /Codex setup/.test(desc) && /first message/.test(desc) && /config\.toml/.test(desc) && /rules/.test(desc) && /First run on Codex/.test(desc), desc);
+ok('S2b the check also runs when the owner asks to check the Codex setup, and before the first chain-run.js start of the session',
+  /check the Codex setup/.test(frF) && /before the first `chain-run\.js start`/.test(frF), frF.slice(0, 600));
+const rcCodexSec = flat(section(read('skills/role-chain/SKILL.md'), /^On Codex, or roles on another host/));
+ok('T2 role-chain on Codex: before the start, the step "First run on Codex" of the coordinator skill',
+  /[Bb]efore the first start[^.]*"First run on Codex"[^.]*codis-agents:coordinator/.test(rcCodexSec), rcCodexSec.slice(0, 700));
+ok('T4 owner step 1: Codex asks about the hook at the first start ("Trust all and continue"), /hooks to look later',
+  /Trust all and continue/.test(flat(section(homes, /^On Codex: homes/).split('### First run on Codex')[0])), '');
+
 // ---- the Terminal command of the skill, run for real in a temporary home ----
 const sh = (fr.match(/```sh\n([\s\S]*?)```/) || ['', ''])[1];
 ok('S14 the Terminal command is one sh block that starts H=\'<coordinator home>\' and runs no codex', /^H='<coordinator home>'$/m.test(sh) && !/^\s*codex\b/m.test(sh), sh);
@@ -118,5 +130,9 @@ ok('R10 by hand: absolute paths, every key once in TOML, a copy before the edit,
   /[Aa]bsolute/.test(nrF) && /once/.test(nrF) && /copy/.test(nrF) && /after every (plugin )?update/.test(nrF), nrF);
 ok('R12 by hand: codex plugin add already wrote config.toml; the top-level keys go above its first [table] line',
   /codex plugin add[^.]*config\.toml/.test(nrF) && /above (its|the) first `\[[^`]*\]` line/.test(nrF), nrF);
+const firstMsg = (nrF.match(/first message[^`]*`([^`]+)`/) || ['', ''])[1];
+ok('T3 README step 5: the first message to type names the Codex setup, the words of the coordinator description',
+  /Codex setup/.test(firstMsg) && desc.includes('Codex setup'), firstMsg || nrF.slice(0, 300));
+ok('T5 README by hand: the copy before the edit carries the date and time', /config\.toml\.bak-\$\(date \+%Y%m%d-%H%M%S\)/.test(nr), nrF);
 ok('R11 the run home passes role-exec.js check', /role-exec\.js check --host codex --home ~\/\.codex-codis/.test(nr), nrF);
 done();
