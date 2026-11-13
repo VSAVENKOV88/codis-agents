@@ -4,6 +4,21 @@ Every version of the codis-agents plugin, newest first. What the plugin does now
 [README.md](README.md); its [Technical reference](README.md#technical-reference) is the current state of every rule,
 key and script, and this file says when and why each one changed. Versions before 0.4.14 are in the git history.
 
+## 0.4.48 - 2026-11-13
+
+- **The new user's path on Codex** (p-codex-setup; owner 2026-11-13: "let's just explain in the README how to fill
+  config.toml", then "maybe a skill so the model offers to create it at start"). The coordinator skill gets the section
+  "First run on Codex": on the first message of a coordinator session on Codex, on the owner's request ("Check the Codex
+  setup of codis-agents") and before the first `chain-run.js start`, the model checks the home (`$CODEX_HOME` set and
+  not the personal `~/.codex`; `rules/codis-agents.rules` with the path of the enabled plugin copy; the sandbox keys and
+  the project trust in `config.toml`), fills in the values (folders from the project config, the project root, the
+  installed copy) and shows the ready file texts and one Terminal command (a dated backup, then the write); it never
+  writes into the home itself. After a plugin update it does the same for the rules. The README describes the same path
+  by hand: two homes (`~/.codex-codis-coord` for the coordinator, `~/.codex-codis` for the roles), where each value
+  comes from, that the sandbox keys apply to every session of the home, the trust prompt at the first start ("Trust all
+  and continue") and `/hooks` as a visual check only, not updating Codex before its version is verified, the folder to
+  start from.
+
 ## 0.4.47 - 2026-11-13
 
 - **Branches whose roles ran on codex ride the selection and the train like branches of Claude roles**
