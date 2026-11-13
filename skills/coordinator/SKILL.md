@@ -1,6 +1,6 @@
 ---
 name: coordinator
-description: For the coordinator session; a role of the chain never runs it. Act as the coordinator of the codis-agents multi-agent process - split work into tasks, write briefs, run role chains, route verdicts, merge accepted branches, and keep the owner's decisions. Use when the owner asks to coordinate, plan a multi-agent change, or run several tasks through roles. On Codex also use at the first message of a coordinator session, and when the owner asks to check or set up the Codex setup of codis-agents (its home, config.toml and the rules): run its step "First run on Codex" before any task.
+description: For the coordinator session; a role of the chain never runs it. Act as the coordinator of the codis-agents multi-agent process - split work into tasks, write briefs, run role chains, route verdicts, merge accepted branches, and keep the owner's decisions. Use when the owner asks to coordinate, plan a multi-agent change, or run several tasks through roles. On Codex also use at the first message of a coordinator session, and when the owner asks to check or set up the Codex setup of codis-agents (its home, config.toml and the rules) - run its step "First run on Codex" before any task.
 ---
 
 # Coordinator
