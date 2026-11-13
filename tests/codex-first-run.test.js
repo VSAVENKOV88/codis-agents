@@ -49,6 +49,8 @@ ok('S7 the owner gets the finished texts and one Terminal command; a copy config
   /one (command|block) for (the )?Terminal/.test(frF) && /config\.toml\.codis-agents-/.test(fr) && /never writes into the home|writes nothing into the home/.test(frF), frF.slice(0, 900));
 ok('S8 it waits for the owner, then a new session (config and rules are read at the start)', /waits for the owner/.test(frF) && /new session/.test(frF), frF);
 ok('S9 an existing config.toml is merged: the other keys kept, ours changed in place, no key or table twice', /no key or table (appears )?twice|never a second copy of a key/.test(frF) && /kept/.test(frF), frF);
+ok('S9b the top-level keys go above the first [table] line (a key below a table header belongs to that table); the plugin\'s own entries of codex plugin add are kept',
+  /above the first `\[[^`]*\]` line/.test(frF) && /codex plugin add/.test(frF), frF);
 ok('S10 after a plugin update the same check for the rules file (the path holds the version)', /plugin update/.test(frF) && /version/.test(frF), frF);
 ok('S11 a Codex version outside VERIFIED_CODEX_VERSIONS is a warning, not a refusal; do not update before it is verified',
   /codex --version/.test(frF) && /VERIFIED_CODEX_VERSIONS/.test(frF) && /warning/.test(frF), frF);
@@ -114,5 +116,7 @@ ok('R9 by hand: every value has its source - config.js get, "Installed plugin ro
   ['sharedDir', 'worktreeRoot', 'repoDir'].every((k) => nr.includes(`config.js get ${k}`)) && /Installed plugin root/.test(nrF) && /find "\$CODEX_HOME" -name chain-run\.js/.test(nr), nrF);
 ok('R10 by hand: absolute paths, every key once in TOML, a copy before the edit, the rules rewritten after every update',
   /[Aa]bsolute/.test(nrF) && /once/.test(nrF) && /copy/.test(nrF) && /after every (plugin )?update/.test(nrF), nrF);
+ok('R12 by hand: codex plugin add already wrote config.toml; the top-level keys go above its first [table] line',
+  /codex plugin add[^.]*config\.toml/.test(nrF) && /above (its|the) first `\[[^`]*\]` line/.test(nrF), nrF);
 ok('R11 the run home passes role-exec.js check', /role-exec\.js check --host codex --home ~\/\.codex-codis/.test(nr), nrF);
 done();
