@@ -116,7 +116,8 @@ Steps of the owner, in a terminal (outside the coordinator's sandbox) or in the 
 
 1. In each of the two homes the owner runs `codex login`; `codex plugin marketplace add <source>` and `codex plugin add
    codis-agents@codis-agents`; start `codex` in the home and trust the hook of `codis-agents` (a decision of the owner):
-   at the first start after an install Codex asks itself ("Trust all and continue"), and `/hooks` shows it later; then `node <plugin>/scripts/codex-hooks-check.js --codex-home <home> --cwd <project>` exits 0.
+   at the first start after an install Codex asks itself ("Trust all and continue"), and `/hooks` shows it later; then
+   `node <plugin>/scripts/codex-hooks-check.js --codex-home <home> --cwd <project>` exits 0.
 2. The run home: `node <plugin>/scripts/role-exec.js check --host codex --home <run home>` exits 0 (with a codex of a
    version it accepts; another one is refused until it is verified: `--bin` of `chain-run.js start` names a checked one).
 3. `config.toml` of the coordinator home:
