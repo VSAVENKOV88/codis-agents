@@ -194,8 +194,10 @@ above, so that the owner does not assemble these files by hand. The checks only 
    --codex-home <home> --cwd <project>` in the Terminal.
 5. **When something is missing or different**, build the finished texts. A new `config.toml` is the template of step
    3 with the values filled in; the `model` and `model_reasoning_effort` lines go in only when the owner names them. An
-   existing `config.toml` is merged: its other keys and tables are kept as they are, the keys above are changed in
-   place, and no key or table appears twice (Codex refuses a file with a repeated key). The rules file belongs to the
+   existing `config.toml` (`codex plugin add` already writes one, with the marketplace and plugin tables) is merged:
+   its other keys and tables are kept as they are, the keys above are changed in place, and no key or table appears
+   twice (Codex refuses a file with a repeated key). `sandbox_mode` and `approval_policy` are top-level keys and go
+   above the first `[table]` line: a key below a table header belongs to that table. The rules file belongs to the
    plugin and is written whole. Show the owner each text whole and what changes ("was -> becomes"), then one block for
    the Terminal, outside the sandbox (leave out a file that needs no change):
 

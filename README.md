@@ -591,6 +591,9 @@ You need Codex CLI with an account to log in, git, Node.js 18+ and a project wit
    | `<main repository root>` | `node <plugin>/scripts/config.js get repoDir` |
 
    - Absolute paths only: `config.js get` prints them with `~` expanded.
+   - `codex plugin add` has already written `config.toml` with its marketplace and plugin tables: keep them, and put
+     `sandbox_mode` and `approval_policy` above its first `[table]` line (a key below a table header belongs to that
+     table).
    - Every key and table once: when `config.toml` already has `sandbox_mode`, change that line instead of adding a
      second one (Codex refuses a file with a repeated key).
    - Make a copy before the edit: `cp ~/.codex-codis-coord/config.toml ~/.codex-codis-coord/config.toml.bak`.
