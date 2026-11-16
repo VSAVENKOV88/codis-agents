@@ -141,16 +141,17 @@ const STANDING_SPEC = { branches: ['string[]', []], check: ['string', ''] };
 // Environment floors of the preconditions (scripts/env-check.js documents why these defaults).
 const PRE_SPEC = { minFreeDiskGB: ['number', 10], minSwapGB: ['number', 4] };
 // The project's shared stand (scripts/stand.sh): one Docker stack that tasks take in turn by ticket instead of building
-// their own. The plugin only calls these commands (zsh, in repoDir); what they do is the project's. Placeholders:
+// their own. The plugin calls these commands in stand.cwd (or repoDir); what they do is the project's. Placeholders:
 // {project}, {port} (first of ports), {ports}, {repo}, and {wt} (deploy only: the worktree whose committed HEAD goes in).
 // status exits 0 only while the stand is up. imageFiles: globs of files that define the stand's image (a task whose
 // commits touch one builds its own stack); a glob without "/" matches the file name at any depth, * and ? stay
 // within one path segment, ** crosses them. memLimitMB: the stand's memory ceiling, for reference and status.
-// cwd (owner 2026-10-21): the directory the commands run in, absolute or ~ and existing; empty - repoDir, as before.
+// cwd: an existing absolute or ~ directory; empty means repoDir. Optional read-only imageBase returns the full
+// actual image-base SHA; missing means unchecked freshness, invalid output means unknown.
 const STAND_SPEC = {
   project: ['string', undefined], ports: ['number[]', []], up: ['string', undefined], deploy: ['string', undefined],
   reset: ['string', undefined], status: ['string', undefined], down: ['string', undefined], imageFiles: ['string[]', []],
-  memLimitMB: ['number', null], cwd: ['path', ''],
+  memLimitMB: ['number', null], cwd: ['path', ''], imageBase: ['string', ''],
 };
 const STAND_REQUIRED = ['project', 'up', 'deploy', 'reset', 'status', 'down'];
 // remoteRun (scripts/guards-remote.js): command / commandLegacy - the guard command on the runner (default guardCommand /

@@ -9,6 +9,8 @@
 //        stand.js cmd <up|deploy|reset|status|down> [--wt <dir>]
 //                                           -> the command with {project} {port} {ports} {repo} {wt} filled in
 //                                              (each value shell-quoted); deploy needs --wt
+//        stand.js freshness [--target <ref-or-sha> | --wt <dir>] [--gate]
+//                                           -> read-only snapshot; gate exits 69 on stale/unknown/down
 //        stand.js get <key>                 -> one value of the section (arrays space-separated); get cwd gives
 //                                              stand.cwd, or repoDir when it is not set
 //        stand.js image-diff --base <ref> [--wt <dir>]
@@ -55,7 +57,45 @@ function globRe(g) {
 }
 const matches = (globs, file) => globs.some((g) => (g.includes('/') ? globRe(g).test(file) : globRe(g).test(path.posix.basename(file))));
 
-module.exports = { loadStand, fill, globRe, matches, CMDS };
+// Freshness is a snapshot of two committed trees, never a comparison of commit identities or merge bases.
+// The probe is project-owned; only its validated SHA may leave this boundary, never its raw diagnostics.
+function freshness(config, { target, wt, env = process.env } = {}) {
+  const stand = config.stand;
+  if (!stand) return null;
+  const result = { project: stand.project, target: wt ? 'HEAD' : target || null, targetSha: null, imageBase: null, files: [] };
+  const state = (name, reason) => Object.assign(result, { state: name, ...(reason ? { reason } : {}) });
+  if (!wt && !target) return state('unchecked', 'target not specified');
+  if (!stand.imageBase) return state('unchecked', 'imageBase not configured');
+  if (!stand.imageFiles.length) return state('unchecked', 'no image files configured');
+  const cwd = wt || config.repoDir;
+  const git = args => TG.run(['-C', cwd, ...args], { encoding: 'utf8', env, maxBuffer: 64 * 1024 * 1024 });
+  const ref = git(['rev-parse', '--verify', '--end-of-options', `${wt ? 'HEAD' : target}^{commit}`]);
+  if (ref.status !== 0 || !/^[a-f0-9]{40}\n?$/.test(ref.stdout || '')) return state('unknown', 'cannot resolve target commit');
+  result.targetSha = ref.stdout.trim();
+  const run = command => spawnSync('zsh', ['-c', fill(command, config, wt)], {
+    cwd: stand.cwd || config.repoDir, env: { ...env, CODIS_AGENTS_CONFIG: config.configPath || env.CODIS_AGENTS_CONFIG }, encoding: 'utf8',
+  });
+  const up = run(stand.status);
+  if (up.status !== 0) return state('down', `status exit ${up.status === null ? 'unavailable' : up.status}`);
+  const probe = run(stand.imageBase);
+  if (probe.status !== 0) return state('unknown', `imageBase exit ${probe.status === null ? 'unavailable' : probe.status}`);
+  if (!/^[a-fA-F0-9]{40}\n?$/.test(probe.stdout || '')) return state('unknown', 'imageBase must return one full commit SHA');
+  result.imageBase = probe.stdout.trim().toLowerCase();
+  const base = git(['cat-file', '-t', result.imageBase]);
+  if (base.status !== 0 || base.stdout.trim() !== 'commit') return state('unknown', 'imageBase commit unavailable');
+  const diff = git(['diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--name-only', '-z', result.imageBase, result.targetSha, '--']);
+  if (diff.status !== 0) return state('unknown', 'cannot compare image trees');
+  result.files = diff.stdout.split('\0').filter(f => f && matches(stand.imageFiles, f));
+  return state(result.files.length ? 'stale' : 'fresh');
+}
+
+function freshnessText(r) {
+  const target = !r.target ? '' : /^[a-fA-F0-9]{40}$/.test(r.target)
+    ? `; target SHA ${r.targetSha || r.target}` : `; target ref ${r.target} @ ${r.targetSha || 'unresolved'}`;
+  return `stand ${r.state}: ${r.project}${r.reason ? ': ' + r.reason : ''}${r.imageBase ? '; base ' + r.imageBase : ''}${target}${r.files.length ? '; files ' + r.files.map(f => JSON.stringify(f)).join(', ') : ''}`;
+}
+
+module.exports = { loadStand, fill, globRe, matches, CMDS, freshness, freshnessText };
 
 if (require.main === module) {
   const a = process.argv.slice(2);
@@ -66,7 +106,11 @@ if (require.main === module) {
   const { config, stand } = L;
   const cmd = a[0];
   if (cmd === 'check') process.exit(0);
-  if (cmd === 'cmd') {
+  if (cmd === 'freshness') {
+    const r = freshness(config, { target: opt('--target'), wt: opt('--wt') });
+    console.log(freshnessText(r));
+    process.exit(a.includes('--gate') && ['stale', 'unknown', 'down'].includes(r.state) ? 69 : 0);
+  } else if (cmd === 'cmd') {
     const name = a[1], wt = opt('--wt');
     if (!CMDS.includes(name)) die(`usage: stand.js cmd <${CMDS.join('|')}> [--wt <dir>]`, 64);
     if (name === 'deploy' && !wt) die('stand.js cmd deploy: --wt <dir> is required', 64);

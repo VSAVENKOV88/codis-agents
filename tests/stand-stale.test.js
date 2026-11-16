@@ -5,6 +5,8 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const fixture = require('./stand-stale-fixture');
+const { has, skip, done } = require('./lib');
+if (!has('zsh')) { skip('stand freshness integration', 'zsh not found'); done(); }
 (async () => {
   const f = fixture(); let count = 0;
   const check = (name, yes, detail = '') => { assert(yes, name + ': ' + detail); console.log('ok ' + name); count++; };
@@ -24,6 +26,12 @@ const fixture = require('./stand-stale-fixture');
     }
     f.config.stand.imageBase = 'echo SECRET >&2; exit 7'; f.save(); r = status(f.task);
     check('C14 nonzero probe is unknown, rc only', /unknown.*7/.test(r.text) && !/SECRET/.test(r.text), r.text);
+    f.probe(); f.put(f.baseFile, f.base);
+    const oldHolder = f.take(f.worktree('old-holder', f.base));
+    await f.wait(() => /ticket taken by/.test(oldHolder.text));
+    const staleWaiter = f.take(); await f.wait(() => staleWaiter.ended || /waiting for the stand ticket/.test(staleWaiter.text));
+    check('C17 stale refuses before entering an occupied queue', staleWaiter.ended && staleWaiter.rc === 69 && /stand stale/.test(staleWaiter.text), staleWaiter.text);
+    await f.stop(staleWaiter); await f.stop(oldHolder);
     f.probe(); f.put(f.baseFile, f.target + '\n');
     check('C9 different commit, same image files is fresh', /stand fresh/.test(status(f.task).text));
     check('C28 missing explicit target is unknown', /stand unknown/.test(status('refs/heads/missing').text));
@@ -49,7 +57,7 @@ const fixture = require('./stand-stale-fixture');
     // Hold all medium slots with real flock, then change either input after deploy has queued.
     for (const changed of ['base', 'head']) {
       f.git(f.wt, 'reset', '--hard', f.task); f.put(f.baseFile, f.target);
-      const blocker = f.start('zsh', ['-c', `source '${f.S}/slots.zsh'; for i in {1..3}; do zsystem flock -f fd ${f.slots}/medium.$i.lock; done; print blocked; while true; do sleep 0.1; done`]);
+      const blocker = f.start('zsh', ['-c', `source '${f.S}/slots.zsh'; for i in {1..3}; do : >> ${f.slots}/medium.$i.lock; zsystem flock -f fd ${f.slots}/medium.$i.lock || exit 1; done; print blocked; while true; do sleep 0.1; done`]);
       await f.wait(() => blocker.text.includes('blocked'));
       const deploy = f.start('zsh', [path.join(f.S, 'stand.sh'), 'deploy', f.wt]);
       await f.wait(() => /waiting/.test(deploy.text) || deploy.ended);
@@ -92,6 +100,11 @@ const fixture = require('./stand-stale-fixture');
     f.git(f.repo, 'config', 'diff.broken.command', '/nonexistent-diff');
     // --name-only should not execute external diff drivers; unknown objects are tested above.
     check('C15 image comparison does not execute diff drivers', /stand stale/.test(status(f.task).text));
+    const realGit = f.run('which', ['git']).stdout.trim();
+    const fakeGit = path.join(f.root, 'bin/git');
+    f.put(fakeGit, `#!/bin/zsh\nfor a in "$@"; do [[ $a == diff ]] && { print SECRET >&2; exit 42; }; done\nexec '${realGit}' "$@"\n`);
+    fs.chmodSync(fakeGit, 0o755); r = status(f.task);
+    check('C15 git diff failure is unknown without diagnostics', /stand unknown.*cannot compare/.test(r.text) && !/SECRET/.test(r.text), r.text);
     console.log(`${count} passed, 0 failed`);
   } finally { await f.cleanup(); }
 })().catch(e => { console.error(e); process.exitCode = 1; });

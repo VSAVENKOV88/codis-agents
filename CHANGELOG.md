@@ -4,6 +4,19 @@ Every version of the codis-agents plugin, newest first. What the plugin does now
 [README.md](README.md); its [Technical reference](README.md#technical-reference) is the current state of every rule,
 key and script, and this file says when and why each one changed. Versions before 0.4.14 are in the git history.
 
+## 0.4.49 - 2026-11-15
+
+- **Stand freshness** (p-stand-stale): optional read-only `stand.imageBase` supplies the actual full image-base SHA.
+  Compare committed trees by imageFiles, report stale/fresh/unknown/down/unchecked, and refuse stale/unknown before
+  take's reset and deploy. Recheck after both the ticket queue and the medium-slot queue. Legacy configs remain
+  unchecked and keep their existing take/deploy behaviour; raw probe output is never disclosed.
+- A green train reports the current arc's stand compatibility without changing its code verdict. Explicit
+  `--target <ref-or-full-sha>` on stand status and train status/watch makes manual merges observable, without
+  guessing from train history. Watch emits each stale snapshot once and rearms after observing fresh. Rebuilds
+  remain manual; the project's deploy check remains the final protection against an external rebuild race.
+- Real git/zsh fake integration covers pinned config/cwd, divergent trees, live holders, queued take/deploy,
+  CAS/ff-only trains, manual targets, rebuilds and watch deduplication; no live Docker is used.
+
 ## 0.4.48 - 2026-11-13
 
 - **The new user's path on Codex** (p-codex-setup; owner 2026-11-13: "let's just explain in the README how to fill

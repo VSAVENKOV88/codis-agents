@@ -11,7 +11,7 @@
 #        stand.sh reset                   - the holder's worktree only: the project's reset
 #        stand.sh release [--force]       - the holder's worktree only (--force: the coordinator, any worktree, written
 #                                           to the journal): reset while still held, then the ticket is free
-#        stand.sh status                  - the stand (its status command), the ticket (holder, since when, how long),
+#        stand.sh status [--target <ref-or-sha>] - the stand (its status command), the ticket (holder, since when, how long),
 #                                           the queue
 #        stand.sh up | down [--force]     - the coordinator: the project's up / down (down refused while held)
 #        stand.sh image-diff --base <ref> [--wt <dir>]
@@ -100,6 +100,7 @@ st_take() {
     print -u2 -r -- "stand: refused - the stand $PROJECT is not up (status exit $rc)${out:+: $out}. It is brought up by the coordinator (stand.sh up); nothing is held."
     return 69
   fi
+  node "$H/stand.js" freshness --gate --wt "$wt" || return $?
   if [[ $(_st_state) == held ]] && _st_who && [[ $W_WT == $wt ]]; then
     print -r -- "stand $PROJECT: this worktree already holds the ticket (pid $W_PID, since $(_st_since $W_TACQ)); nothing changed"; return 0
   fi
@@ -135,6 +136,7 @@ st_take() {
   done
   out=$(_st_cmd status 2>&1); rc=$?
   (( rc )) && { print -u2 -r -- "stand: refused - the stand $PROJECT went down while waiting (status exit $rc)${out:+: $out}"; _st_end refused 69; }
+  node "$H/stand.js" freshness --gate --wt "$wt" || { rc=$?; _st_end refused $rc; }
   print -r -- "stand $PROJECT: ticket acquired, resetting the stand before it is given"
   _st_cmd reset; rc=$?
   (( rc )) && { print -u2 -r -- "stand: reset failed (exit $rc) - the ticket is not given and is free again"; _st_end refused $rc; }
@@ -188,6 +190,7 @@ st_status() {
   out=$(_st_cmd status 2>&1); rc=$?
   print -r -- "stand $PROJECT: $( (( rc )) && print -r -- "down (status exit $rc)" || print up )${MEMLIM:+, memory limit $MEMLIM MB}"
   [[ -n $out ]] && print -r -- "  ${out//$'\n'/$'\n'  }"
+  node "$H/stand.js" freshness ${OPT_TARGET:+--target} ${OPT_TARGET:+"$OPT_TARGET"}
   print -r -- "project config $CODIS_AGENTS_CONFIG"
   case $(_st_state) in
     held) if _st_who; then print -r -- "ticket: held by $W_WT (pid $W_PID) since $(_st_since $W_TACQ)"; else print -r -- "ticket: held (holder file not written yet)"; fi ;;
@@ -204,10 +207,11 @@ st_status() {
 }
 
 cmd=$1; shift 2>/dev/null
-OPT_WT= OPT_FORCE=0 POS=()
+OPT_WT= OPT_TARGET= OPT_FORCE=0 POS=()
 while (( $# )); do
   case $1 in
     --wt) OPT_WT=$2; shift 2 ;;
+    --target) (( $# >= 2 )) && [[ -n $2 ]] || exit 64; OPT_TARGET=$2; shift 2 ;;
     --force) OPT_FORCE=1; shift ;;
     *) POS+=( "$1" ); shift ;;
   esac
@@ -222,7 +226,8 @@ case $cmd in
     c=$(node "$H/stand.js" cmd deploy --wt "$W") || exit 78
     print -r -- "stand $PROJECT: deploy of $W, project config $CODIS_AGENTS_CONFIG"
     cd -- $W || exit 66
-    SLOT_LABEL="stand deploy ${W:t}" slot_run medium zsh -c 'cd -- "$1" || exit 66; eval "$2"' stand-deploy "$STCWD" "$c"
+    # Read both inputs inside the acquired slot: the queue can outlive either snapshot.
+    SLOT_LABEL="stand deploy ${W:t}" slot_run medium zsh -c 'node "$3/stand.js" freshness --gate --wt "$4" || exit $?; cd -- "$1" || exit 66; eval "$2"' stand-deploy "$STCWD" "$c" "$H" "$W"
     exit $? ;;
   status) st_status; exit $? ;;
   up) _st_cmd up; exit $? ;;

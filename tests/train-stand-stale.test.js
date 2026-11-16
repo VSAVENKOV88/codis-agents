@@ -5,6 +5,8 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const fixture = require('./stand-stale-fixture');
+const { has, skip, done } = require('./lib');
+if (!has('zsh')) { skip('stand freshness integration', 'zsh not found'); done(); }
 (async () => {
   const f = fixture(); let count = 0;
   const check = (name, yes, detail = '') => { assert(yes, name + ': ' + detail); console.log('ok ' + name); count++; };
@@ -16,6 +18,10 @@ const fixture = require('./stand-stale-fixture');
   };
   try {
     f.probe();
+    const active = f.take(f.worktree('active-old-task', f.base));
+    await f.wait(() => /ticket taken by/.test(active.text) || active.ended);
+    check('C19 real holder acquired before train', !active.ended, active.text);
+    const initialLog = f.log();
     for (const [name, checkedOut] of [['cas', false], ['ff', true]]) {
       f.git(f.repo, 'branch', name, f.base);
       const w = checkedOut ? f.worktree('arc-' + name, name) : null;
@@ -25,15 +31,17 @@ const fixture = require('./stand-stale-fixture');
       check('C1/C2 green ' + name + ' reports actual stale arc', r.verdict === 'green' && /stand stale/.test(log) && log.includes(f.base) && log.includes('refs/heads/' + name) && log.includes(f.git(f.repo, 'rev-parse', name)) && log.includes('Dockerfile'), log);
       if (w) check('C2 checked-out tree moved', f.git(w, 'rev-parse', 'HEAD') === f.git(f.repo, 'rev-parse', name));
     }
+    check('C19 green signal leaves existing holder and stand intact', !active.ended && f.log() === initialLog);
+    await f.stop(active);
     f.git(f.repo, 'branch', 'dirty', f.base); const dirty = f.worktree('dirty-wt', 'dirty'); f.git(dirty, 'checkout', 'dirty');
     f.put(path.join(dirty, 'Dockerfile'), 'dirty');
     let r = train('unmerged', 'dirty');
     check('C4 unmerged does not report completed stand transition', r.verdict === 'green-unmerged' && !/stand stale/.test(fs.readFileSync(r.log, 'utf8')));
-    f.config.guardCommand = 'false'; f.save(); f.git(f.repo, 'branch', 'red-arc', f.base);
+    f.config.guardCommand = 'cd {wt} && false'; f.save(); f.git(f.repo, 'branch', 'red-arc', f.base);
     r = train('red', 'red-arc');
     check('C5 red does not report completed stand transition', r.verdict !== 'green' && !/stand stale/.test(fs.readFileSync(r.log, 'utf8')));
-    f.config.guardCommand = 'true'; f.save();
-    f.tr('resume');
+    f.config.guardCommand = 'cd {wt} && true'; f.save();
+    f.tr('resume'); f.tr('run');
     // Status/watch use the explicit ref even with no train history for it.
     f.git(f.repo, 'update-ref', 'refs/heads/manual', f.task);
     let s = f.tr('status', '--target', 'refs/heads/manual');
@@ -48,7 +56,7 @@ const fixture = require('./stand-stale-fixture');
     await f.wait(() => {
       const d = path.join(f.config.sharedDir, 'train');
       return fs.readdirSync(d).filter(n => /stand/.test(n)).some(n => {
-        try { return /fresh/.test(fs.readFileSync(path.join(d, n), 'utf8')); } catch { return false; }
+        try { const o = JSON.parse(fs.readFileSync(path.join(d, n), 'utf8')); return o.target === 'refs/heads/manual' && o.state === 'fresh'; } catch { return false; }
       });
     });
     f.put(f.baseFile, f.base); await f.wait(() => w.ended);
@@ -70,7 +78,7 @@ const fixture = require('./stand-stale-fixture');
     check('C3 code-only train fresh', r.verdict === 'green' && /stand fresh/.test(fs.readFileSync(r.log, 'utf8')) && !/stand stale/.test(fs.readFileSync(r.log, 'utf8')));
     delete f.config.stand; f.save();
     check('C12 no stand means no probe or stand diagnostic', !/stand (fresh|stale|unknown|unchecked)/.test(f.tr('status', '--target', f.task).text));
-    check('no project mutating commands from train/status/watch', f.log() === '', f.log());
+    check('no project mutating commands from train/status/watch', f.log() === initialLog, f.log());
     console.log(`${count} passed, 0 failed`);
   } finally { await f.cleanup(); }
 })().catch(e => { console.error(e); process.exitCode = 1; });

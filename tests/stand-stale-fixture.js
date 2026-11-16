@@ -37,8 +37,9 @@ module.exports = function fixture() {
   fake('vm_stat', 'print "Mach Virtual Memory Statistics: (page size of 16384 bytes)"\nprint "Swapouts: 0."');
   fake('df', 'print "Filesystem 1M-blocks Used Available Capacity Mounted"\nprint "/dev/disk 100000 0 0 0% /System/Volumes/VM"');
   const env = { ...process.env };
-  for (const k of Object.keys(env)) if (/^(SLOT_|SLOTS_|GUARDS_|CODIS_SLOT_|CLAUDE_PROJECT_DIR$)/.test(k)) delete env[k];
-  Object.assign(env, { CODIS_AGENTS_CONFIG: cfg, PATH: bin + path.delimiter + process.env.PATH, SLOT_OS: 'darwin', SLOT_POLL: '0.1', SLOT_SAY: '1', CODIS_TRAIN_POLL: '0.1' });
+  for (const k of ['SLOTS_DIR', 'SLOT_JOURNAL', 'SLOT_LEGACY_LOCK', 'CLAUDE_PROJECT_DIR', 'GUARDS_EXCLUSIVE_LOCK', 'SLOT_MEDIUM_N', 'SLOT_HEAVY_N', 'SLOT_TOTAL_MAX', 'GUARDS_JOBS_ALONE', 'GUARDS_JOBS_SHARED', 'SLOT_EXCL_TOOLS', 'GUARDS_EXCL_GLOB', 'GUARDS_EXCL_MARKER', 'SLOT_PATH',
+  'SLOT_LABEL', 'SLOT_KIND', 'SLOT_RETRY_RC', 'SLOT_PRIORITY', 'SLOT_KILL_GRACE', 'SLOT_EMPTY_WAIT', 'SLOT_EXEC_NOTE', 'GUARDS_EXCLUSIVE_HELD', 'CODIS_SLOT_HELD', 'SLOT_SWAP_MIN_MB', 'SLOT_THIRD_FREE_PCT', 'SLOT_THIRD_SWAP_GROW_MB', 'SLOT_PROC']) delete env[k];
+  Object.assign(env, { CODIS_AGENTS_CONFIG: cfg, PATH: bin + path.delimiter + process.env.PATH, SLOT_OS: 'darwin', SLOT_POLL: '0.1', SLOT_SAY: '1', SLOT_THIRD_WINDOW: '1', SLOT_HIST_GAP: '2', CODIS_TRAIN_POLL: '0.1' });
   const procs = [];
   const run = (exe, args, cwd = wt) => {
     const r = spawnSync(exe, args, { cwd, env, encoding: 'utf8', timeout: 20000 });

@@ -1,6 +1,6 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT"></a>
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-0.4.48-informational" alt="Version 0.4.48"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-0.4.49-informational" alt="Version 0.4.49"></a>
   <a href="https://claude.com/claude-code"><img src="https://img.shields.io/badge/Claude%20Code-plugin-D97757" alt="Claude Code plugin"></a>
   <a href="#codex-cli"><img src="https://img.shields.io/badge/Codex%20CLI-preview-yellow" alt="Codex CLI: preview"></a>
 </p>
@@ -1315,6 +1315,39 @@ turn by ticket. `scripts/stand.sh`:
 - `status` - the stand, the holder with its worktree, pid and hold time, the queue; `up` / `down` - the coordinator's.
 - `image-diff --base <ref>` - do the worktree's commits since `<ref>` touch `imageFiles` (exit 1: the task builds its
   own stack).
+
+Optional `stand.imageBase` enables freshness checks. This read-only project command runs in the pinned
+`stand.cwd` (or `repoDir`) and must print exactly one full 40-digit commit SHA, optionally followed by one newline:
+the actual image base, not the last deployed commit. Diagnostics belong on stderr. The plugin never parses the
+human-readable status output and never prints raw probe stdout/stderr. An adapter for a project's JSON status
+belongs in that project's config.
+
+Freshness compares the two committed trees with the exact `stand.imageFiles` globs, including additions, deletions
+and mode changes. Different SHAs with identical image files are `fresh`; changed image files are `stand stale`,
+with full base/target SHAs and paths. A failed probe, malformed SHA, missing commit or failed diff is `unknown`;
+project status failure is `down`. Without imageBase (legacy configs), without an explicit status target, or with no
+imageFiles, freshness is `unchecked` with the reason. No heuristic file list or target is inferred.
+
+`take` checks the committed HEAD of the requested task worktree before queuing and again under its ticket before
+reset. `deploy` checks that worktree's current HEAD and imageBase inside its acquired medium slot, immediately
+before the project deploy command. Stale/unknown/down refuse with exit 69; a refused queued take frees its ticket,
+while a refused deploy leaves the existing holder alive. Legacy take/deploy still work. Advancing only the arc
+cannot block a task whose HEAD and image remain compatible.
+
+`stand.sh status --target <ref-or-full-sha>` and `train.js status/watch --target <ref-or-full-sha>` check the specified
+target in the pinned project's repoDir. A ref is resolved anew on each observation (also in watch's existing loop);
+a full SHA pins a snapshot. Both the ref and resolved full SHA are printed. Without `--target` the diagnostic is
+`unchecked: target not specified`, even if a successful train exists. Manual merges need no train history.
+After an actual green merge, the train log checks its current arc ref and reports freshness without changing the
+green verdict; green-unmerged/red/environment do not report a completed arc transition. Watch ends with a `stand`
+event for a new stale snapshot, including one already stale at startup. Project/target/base/state/paths scope the
+notification; identical snapshots are claimed once, and observing fresh rearms the target. Observations and claims
+live under `<sharedDir>/train/stand-*`. Detached watches are reused only for the same target. Status/watch remain
+unchanged when no stand is configured.
+
+The coordinator rebuilds manually after the holder releases its ticket. No automatic rebuild or holder reset is
+triggered by a train. Fresh is a read-only snapshot, not an atomic guarantee against an external rebuild; the
+project's final deploy check remains necessary.
 
 The project config of a call is the one found from the directory `stand.sh` is called in (or `CODIS_AGENTS_CONFIG`),
 not from the task's worktree, and it holds for every command of that call: `take` changes into the worktree, whose

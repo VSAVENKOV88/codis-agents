@@ -91,22 +91,23 @@
 //             {verdict: environment, halted: true, reason} while the queue is halted (the entry stays); exit 0;
 //             no entry and no result -> exit 66. A ride and an await write their waiter file and take (claimedAt) the
 //             result they print as their own; a ride takes it only when its exit code is that result's verdict.
-//        train.js status                      -> the halt, the lock (its train and arc) and the queue (each entry with
+//        train.js status [--target <ref-or-sha>] -> the halt, the lock (its train and arc) and the queue (each entry with
 //             "waiter pid N alive" or "no live waiter" when it has waiter files), the detached watches, then "verdicts
-//             without an addressee"
+//             without an addressee"; stand freshness uses only the explicit target
 //        train.js resume                      -> the coordinator: removes the halt; names the entries without a live waiter
 //        train.js ack --task <t> --head <sha> -> the coordinator takes a verdict by hand (claimedAt); no result -> exit 66
 //        train.js watch --detach [--poll <s>] -> starts the watch below as a process of its own session, its output in
 //             <sharedDir>/train/logs/watch-<time>.log, its record in <sharedDir>/train/watches/<pid>.json, prints
 //             {pid, log} and exits 0: the background of a coordinator whose shell tool has none (Codex, where a command
-//             still attached to a turn dies with the turn); while a detached watch lives it prints that one
+//             still attached to a turn dies with the turn); while a detached watch for the same target lives it prints that one
 //             {pid, log, running: true} and starts none; status names each detached watch: alive, ended with its event,
 //             or gone without an event
 //        train.js watch [--poll <s>]          -> the coordinator's background wait: dispatches trains like any waiter (it
 //             is no waiter itself and takes nothing) and exits 0 with {orphans: [...]} on a verdict without an addressee
 //             that was not there when it started, or with {halt, entriesWithoutWaiter} on a halt that was not there
 //             when it started and leaves an entry whose waiters are all gone without reporting it (none alive, none
-//             left with 75/14/15 after the halt came); both are events, polled at the poll of await
+//             left with 75/14/15 after the halt came), or {stand} on a new stale snapshot of --target; events use
+//             the poll of await, and stand refs are resolved anew each time
 // The project config is found as config.js finds it (CODIS_AGENTS_CONFIG first); no config -> exit 78.
 const fs = require('fs');
 const os = require('os');
@@ -144,6 +145,34 @@ const OWN_PGID = TL.ownPgid();
 const ageMs = (f) => { try { return Date.now() - fs.statSync(f).mtimeMs; } catch { return 0; } };
 const sleep = (ms) => new Promise((z) => setTimeout(z, ms));
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\n');
+
+const { freshness, freshnessText } = require('./stand');
+const { createHash } = require('crypto');
+// Observations are scoped to the pinned project and explicit target, never inferred from train history.
+// A notification claims its snapshot once; observing fresh rearms that target after a manual rebuild.
+function observeStand(P, target, notify = false) {
+  const stand = freshness(P.c, { target, env: P.env });
+  if (!stand) return null;
+  const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+  const scope = hash([P.c.configPath, P.c.stand.project, target || null]);
+  const prefix = `stand-notified-${scope}-`;
+  const key = hash([stand.targetSha, stand.imageBase, stand.state, stand.files]);
+  let event = false;
+  try {
+    writeAtomic(path.join(P.D, `stand-observation-${scope}.json`), stand);
+    if (stand.state === 'fresh') {
+      for (const name of fs.readdirSync(P.D)) if (name.startsWith(prefix)) fs.rmSync(path.join(P.D, name), { force: true });
+    } else if (notify && stand.state === 'stale') {
+      try { fs.writeFileSync(path.join(P.D, prefix + key), '', { flag: 'wx' }); event = true; }
+      catch (e) { if (e.code !== 'EEXIST') throw e; }
+    }
+  } catch (e) {
+    // Failure to save a diagnostic must not change the code verdict or silently lose a stale notification.
+    console.error(`stand notification state unavailable: ${e.code || 'write failed'}`);
+    event = notify && stand.state === 'stale';
+  }
+  return { ...stand, event };
+}
 
 function project() {
   const file = C.find();
@@ -250,7 +279,7 @@ function detachedWatches(P) {
     if (!w || !Number.isInteger(w.pid) || w.pid <= 1) continue;
     let event = null;
     try { event = JSON.parse(fs.readFileSync(w.log, 'utf8').trim().split('\n').pop()); } catch { /* no event line */ }
-    const state = waiterLive(Object.assign({}, w, { state: 'waiting' })) ? 'alive' : event && (event.orphans || event.halt) ? 'ended' : 'gone';
+    const state = waiterLive(Object.assign({}, w, { state: 'waiting' })) ? 'alive' : event && (event.orphans || event.halt || event.stand) ? 'ended' : 'gone';
     list.push(Object.assign(w, { file: path.join(P.WATCH, n), state, event: state === 'ended' ? event : null }));
   }
   return list;
@@ -259,7 +288,7 @@ function watchLine(w) {
   if (w.state === 'alive') return `detached watch pid ${w.pid} alive, log ${w.log}`;
   if (w.state === 'gone') return `detached watch pid ${w.pid} gone without an event, log ${w.log}: start it again with train.js watch --detach`;
   const e = w.event;
-  const what = e.orphans ? `orphans ${e.orphans.map((o) => `${o.task} ${o.head}`).join(', ')}`
+  const what = e.stand ? freshnessText(e.stand) : e.orphans ? `orphans ${e.orphans.map((o) => `${o.task} ${o.head}`).join(', ')}`
     : `halt ${e.halt.reason || '-'}, entries without a waiter ${(e.entriesWithoutWaiter || []).map((x) => `${x.task} ${x.head}`).join(', ') || '-'}`;
   return `detached watch pid ${w.pid} ended: ${what}, log ${w.log}`;
 }
@@ -557,6 +586,10 @@ async function departure(P) {
     record(Object.assign({ verdict: 'arc-moved', reason: note }, base0));
     return Object.assign({ departed: true, verdict: 'arc-moved', reason: note }, base0);
   }
+  if (verdict === 'green') {
+    const stand = observeStand(P, `refs/heads/${base}`);
+    if (stand) lines.push(freshnessText(stand));
+  }
   if (reason) lines.push(`green-unmerged: ${reason}`);
   writeLog(body());
   const text = read(logFile);
@@ -805,7 +838,7 @@ async function awaitEntry(P, task, head, poll) {
 async function main() {
   const [cmd, ...rest] = process.argv.slice(2);
   CMD = cmd;
-  const USAGE = 'usage: train.js enqueue --task <t> --branch <b> --head <sha> --base <arc> [--dir <folder>] | ride (the same) | run | await --task <t> --head <sha> [--poll <s>] | status | resume | ack --task <t> --head <sha> | watch [--detach] [--poll <s>]';
+  const USAGE = 'usage: train.js enqueue --task <t> --branch <b> --head <sha> --base <arc> [--dir <folder>] | ride (the same) | run | await --task <t> --head <sha> [--poll <s>] | status [--target <ref-or-sha>] | resume | ack --task <t> --head <sha> | watch [--detach] [--poll <s>] [--target <ref-or-sha>]';
   if (!['enqueue', 'ride', 'run', 'await', 'status', 'resume', 'ack', 'watch'].includes(cmd)) die(64, USAGE);
   const detach = cmd === 'watch' && rest.includes('--detach');
   // args() takes the word after every option as its value, so a flag without a value would eat the next option
@@ -816,11 +849,10 @@ async function main() {
   const a = args(list);
   const P = project();
   if (detach) {
-    // one detached watch at a time: a live one is returned as it is; the records of the others are dropped (their
-    // logs stay)
-    const ws = detachedWatches(P), live = ws.find((w) => w.state === 'alive');
+    // One detached watch per explicit target: reusing a watch must not silently substitute another target.
+    const ws = detachedWatches(P), live = ws.find((w) => w.state === 'alive' && (w.target || null) === (a.target || null));
     if (live) { out({ pid: live.pid, log: live.log, running: true }); return 0; }
-    for (const w of ws) fs.rmSync(w.file, { force: true });
+    for (const w of ws) if (w.state !== 'alive') fs.rmSync(w.file, { force: true });
     fs.mkdirSync(P.LOGS, { recursive: true });
     fs.mkdirSync(P.WATCH, { recursive: true });
     const log = path.join(P.LOGS, `watch-${new Date().toISOString().replace(/[-:.]/g, '')}-${process.pid}.log`);
@@ -828,7 +860,7 @@ async function main() {
     const child = spawn(process.execPath, [__filename, 'watch', ...list], { detached: true, stdio: ['ignore', fd, fd], env: process.env });
     fs.closeSync(fd);
     child.unref();
-    writeAtomic(path.join(P.WATCH, `${child.pid}.json`), { pid: child.pid, procStart: procStart(child.pid), log, at: new Date().toISOString() });
+    writeAtomic(path.join(P.WATCH, `${child.pid}.json`), { pid: child.pid, procStart: procStart(child.pid), log, target: a.target || null, at: new Date().toISOString() });
     out({ pid: child.pid, log });
     return 0;
   }
@@ -869,6 +901,8 @@ async function main() {
     return 0;
   }
   if (cmd === 'status') {
+    const stand = observeStand(P, a.target);
+    if (stand) console.log(freshnessText(stand));
     const h = readJ(P.HALT), o = readJ(ownerFile(P));
     console.log(h ? `halt: ${h.reason} (since ${h.at}); the coordinator lifts it with train.js resume` : 'halt: none');
     console.log(o ? `lock: train ${o.train || '-'}${o.base ? ` for arc ${o.base}` : ''} by ${o.by === 'watch' ? 'watch ' : ''}pid ${o.pid} (${holderAlive(o, P.LOCK) ? 'alive' : 'dead'}) since ${o.since}` : 'lock: free');
@@ -911,11 +945,13 @@ async function main() {
   }
   if (cmd === 'watch') {
     // the coordinator's background wait: no waiter file, takes nothing; ends on a new orphan or on a new halt that
-    // leaves an entry without a live waiter
+    // leaves an entry without a live waiter, or a new stale snapshot of the explicit stand target
     const key = (o) => `${o.task} ${o.head}`;
     const before = new Set(orphans(P).map(key));
     const h0 = readJ(P.HALT), at0 = h0 ? h0.at : null;
     for (;;) {
+      const stand = observeStand(P, a.target, true);
+      if (stand && stand.event) { out({ stand }); return 0; }
       const fresh = orphans(P).filter((o) => !before.has(key(o)));
       if (fresh.length) { out({ orphans: fresh.map(orphanView) }); return 0; }
       const h = readJ(P.HALT);
