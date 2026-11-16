@@ -8,7 +8,7 @@ const fixture = require('./stand-stale-fixture');
 const { has, skip, done } = require('./lib');
 if (!has('zsh')) { skip('stand freshness integration', 'zsh not found'); done(); }
 (async () => {
-  const f = fixture(); let count = 0;
+  const f = fixture(); let count = 0; const detached = new Set();
   const check = (name, yes, detail = '') => { assert(yes, name + ': ' + detail); console.log('ok ' + name); count++; };
   const last = r => { try { return JSON.parse(r.stdout.trim().split('\n').pop()); } catch { return {}; } };
   const train = (name, base, head = f.task) => {
@@ -76,9 +76,39 @@ if (!has('zsh')) { skip('stand freshness integration', 'zsh not found'); done();
     check('C8 status clears stale after rebuild', /stand fresh/.test(s.text) && !/stand stale/.test(s.text));
     f.git(f.repo, 'branch', 'fresh-arc', f.target); r = train('fresh', 'fresh-arc');
     check('C3 code-only train fresh', r.verdict === 'green' && /stand fresh/.test(fs.readFileSync(r.log, 'utf8')) && !/stand stale/.test(fs.readFileSync(r.log, 'utf8')));
+    // Detached consumers retain independent targets and expose the final stand event through status.
+    f.put(f.baseFile, f.base);
+    const targets = ['refs/heads/detached-a', 'refs/heads/detached-b'];
+    for (const target of targets) f.git(f.repo, 'update-ref', target, f.base);
+    const detach = target => {
+      const r = f.tr('watch', '--detach', '--poll', '0.1', ...(target ? ['--target', target] : []));
+      assert.equal(r.status, 0, r.text);
+      const j = last(r); assert(Number.isInteger(j.pid), r.text); detached.add(j.pid); return j;
+    };
+    const record = pid => path.join(f.config.sharedDir, 'train', 'watches', `${pid}.json`);
+    const status = () => f.tr('status').text;
+    const watches = targets.map(detach);
+    await f.wait(() => watches.every(w => status().includes(`detached watch pid ${w.pid} alive,`)));
+    check('R1 distinct targets start two live detached watches', watches[0].pid !== watches[1].pid);
+    check('R1 starting second target preserves first live record', watches.every(w => fs.existsSync(record(w.pid))));
+    check('R1 detached records retain explicit targets', watches.every((w, i) => JSON.parse(fs.readFileSync(record(w.pid))).target === targets[i]));
+    for (let i = 0; i < watches.length; i++) {
+      const reused = detach(targets[i]);
+      check('R1 same target reuses its own PID ' + i, reused.running === true && reused.pid === watches[i].pid && reused.log === watches[i].log);
+    }
+    // A record from before target support still represents the unspecified target.
+    const legacy = detach(null);
+    const legacyRecord = JSON.parse(fs.readFileSync(record(legacy.pid))); delete legacyRecord.target;
+    fs.writeFileSync(record(legacy.pid), JSON.stringify(legacyRecord));
+    check('R1 legacy record without target reuses unspecified watch', detach(null).pid === legacy.pid);
+    f.git(f.repo, 'update-ref', targets[0], f.task);
+    await f.wait(() => status().includes(`detached watch pid ${watches[0].pid} ended:`));
+    const ended = status().split('\n').find(line => line.startsWith(`detached watch pid ${watches[0].pid} ended:`)) || '';
+    check('R1 status renders detached stand event with target SHA and path', /stand stale/.test(ended) && ended.includes(targets[0]) && ended.includes(f.task) && ended.includes(f.base) && ended.includes('Dockerfile'), ended);
+    check('R1 other target remains alive with its record', status().includes(`detached watch pid ${watches[1].pid} alive,`) && fs.existsSync(record(watches[1].pid)));
     delete f.config.stand; f.save();
-    check('C12 no stand means no probe or stand diagnostic', !/stand (fresh|stale|unknown|unchecked)/.test(f.tr('status', '--target', f.task).text));
+    check('C12 no stand means no probe or stand diagnostic', !/^stand (fresh|stale|unknown|unchecked)/m.test(f.tr('status', '--target', f.task).text));
     check('no project mutating commands from train/status/watch', f.log() === initialLog, f.log());
     console.log(`${count} passed, 0 failed`);
-  } finally { await f.cleanup(); }
+  } finally { for (const pid of detached) { try { process.kill(pid, 'SIGTERM'); } catch {} } await f.cleanup(); }
 })().catch(e => { console.error(e); process.exitCode = 1; });
