@@ -65,7 +65,7 @@ fs.writeFileSync(path.join(IDH, '.gitconfig'), '[user]\n\tname = Home Person\n\t
 const AUTHOR = { name: 'codis-agents', email: 'agents@example.com' };
 const cfgFile = (name, extra) => {
   const f = path.join(W, `${name}.json`);
-  fs.writeFileSync(f, JSON.stringify(Object.assign({ repoDir: REPO, sharedDir: SHARED, worktreeRoot: WTR, guardCommand: 'true {wt}', testerWritable: ['-run\\.js$'] }, extra || {})));
+  fs.writeFileSync(f, JSON.stringify(Object.assign({ repoDir: REPO, sharedDir: SHARED, worktreeRoot: WTR, guardCommand: 'true {wt}', testerWritable: ['-run\\.js$'], conductorFullRun: false }, extra || {})));
   return f;
 };
 const CFG = cfgFile('cfg-author', { commitAuthor: AUTHOR });

@@ -41,7 +41,7 @@ async function chain(o) {
     return list.length ? list.shift() : null;
   };
   const runAns = (s) => {
-    const step = s.label.split(':')[2];
+    const step = s.label.split(':')[2].replace(/#retry$/, '');
     const a = (o.run || {})[step];
     return a === undefined ? { done: true, rc: 0, seconds: 1, log: `${SD}/wait-${step}.log`, tail: '196 of 196 test files passed' } : typeof a === 'function' ? a(s) : a;
   };
@@ -276,7 +276,7 @@ const labels = (x) => x.order.filter((l) => !/^(env|post|diff|left|sha):/.test(l
   const LOG = 'ok a\n196 of 196 test files passed\n';
   let c = cchk(mk(LOG, META), H, 0, TALLY);
   ok('copy-check: a copy of HEAD, clean, the same exit code, with its tally -> ok', c.rc === 0 && c.j && c.j.ok === true && c.j.cut === false, c.out);
-  c = cchk(mk(`FAIL slots-priority.test.sh (3 s, exit 1)\n195 of 196 test files passed\nflaky, red under load, green alone: slots-priority.test.sh\n`, META), H, 0, TALLY);
+  c = cchk(mk(`FAIL slots-priority.test.sh (3 s, exit 1)\n195 of 196 test files passed\n\n==== rerun of new reds one by one (guardRerun) ====\nflaky, red under load, green alone: slots-priority.test.sh\n`, META), H, 0, TALLY);
   ok('copy-check: the flaky guards of the log are listed', c.j && c.j.ok === true && JSON.stringify(c.j.flaky) === '["slots-priority.test.sh"]', c.out);
   c = cchk(path.join(cdir, 'none.guards.txt'), H, 0, TALLY);
   ok('copy-check: no copy -> cut', c.j && c.j.ok === false && c.j.cut === true, c.out);

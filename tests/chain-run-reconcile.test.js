@@ -21,7 +21,7 @@ const BIN = path.join(__dirname, 'fixtures', 'chain-run', 'bin');
 const W = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'chain-run-rc-')));
 const SHARED = path.join(W, 's'), WTR = path.join(W, 'r'), REPO = path.join(W, 'repo'), RUNS = path.join(SHARED, 'runs');
 const CFG = path.join(W, 'codis-agents.json');
-fs.writeFileSync(CFG, JSON.stringify({ repoDir: REPO, sharedDir: SHARED, worktreeRoot: WTR, guardCommand: 'true {wt}', testerWritable: ['-run\\.js$'] }));
+fs.writeFileSync(CFG, JSON.stringify({ repoDir: REPO, sharedDir: SHARED, worktreeRoot: WTR, guardCommand: 'true {wt}', testerWritable: ['-run\\.js$'], conductorFullRun: false }));
 const git = (...a) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t'].concat(a), { encoding: 'utf8' });
 fs.mkdirSync(REPO);
 git('-C', REPO, 'init', '-q');
@@ -311,7 +311,7 @@ const text = (c) => c.reasons.map((r) => r.why).join(' | ') + ' || ' + c.notes.j
       const q = { pre: [PRE], prog: [Object.assign({}, PROG, { head: SHA }), Object.assign({}, PROG, { head: SHA2 })], test: [GREEN], review: [DONE, DONE] };
       const runAns = { 'select-1': { done: true, rc: 0, log: `${sd}/wait-select-1.log` }, 'select-t1': { done: true, rc: 0, log: `${sd}/wait-select-t1.log` }, 'train-1': { done: true, rc: 11, log: `${sd}/wait-train-1.log` }, 'train-2': { done: true, rc: 0, log: `${sd}/wait-train-2.log` } };
       const ans = { env: { ok: true, problems: [], notes: [] }, post: { ok: true, diff: { ok: true, offending: [] }, left: { ok: true, found: [], removed: [], remaining: [] } }, diff: { ok: true, offending: [] }, left: { ok: true, found: [], removed: [], remaining: [] }, run: (s) => runAns[s.label.split(':')[2]] };
-      const config = { sharedDir: path.join(W, 'sx'), worktreeRoot: WTR, scriptsDir: '/p/scripts', testerWritable: ['-run\\.js$'], guardSubsetCommand: 'g {wt} {onlyArgs} {jobs} {limitFile}' };
+      const config = { sharedDir: path.join(W, 'sx'), worktreeRoot: WTR, scriptsDir: '/p/scripts', testerWritable: ['-run\\.js$'], conductorFullRun: false, guardSubsetCommand: 'g {wt} {onlyArgs} {jobs} {limitFile}' };
       const t = { key: 'x', title: 'X', wt: 'w', branch: 'b', accept: 'acc', kind: 'tail', noAnalysis: 'a test task', base: 'arc', stepDir: sd };
       const x = await CRM.runScript({ host: 'claude', pluginRoot: ROOT, args: { owner: 'o', config, tasks: [t] },
         launch: async (plan) => { launches.push(plan); const list = q[plan.label.split(':')[0]] || []; return list.length ? { output: list.shift() } : { outcome: 'crashed', error: 'no answer' }; },

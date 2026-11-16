@@ -43,7 +43,7 @@ const TASK = { key: 'x', title: 'X', wt: 'w', branch: 'b', accept: 'acc', kind: 
 let nRun = 0;
 async function chain(answers, steps, taskExtra, cfgExtra, rootName) {
   const base = path.join(W, rootName || `c${++nRun}`);
-  const config = Object.assign({ sharedDir: path.join(base, 's'), worktreeRoot: path.join(base, 'r'), scriptsDir: '/p/scripts', testerWritable: ['-run\\.js$'] }, cfgExtra || {});
+  const config = Object.assign({ sharedDir: path.join(base, 's'), worktreeRoot: path.join(base, 'r'), scriptsDir: '/p/scripts', testerWritable: ['-run\\.js$'], conductorFullRun: false }, cfgExtra || {});
   const task = Object.assign({}, TASK, taskExtra || {});
   const q = {}; for (const [k, v] of Object.entries(answers)) q[k] = v.slice();
   const launches = [], seen = [];
@@ -79,7 +79,7 @@ const lineOf = (prompt, argv) => prompt.split('\n').map((l) => l.replace(/^\d\. 
 (async () => {
   // ---- T1: the cause of refused, hook-untrusted (known) and hook-unverified (unknown) in the result field adapter
   for (const [oc, want] of [['refused', 'refused'], ['hook-untrusted', 'hook-untrusted'], ['hook-unverified', 'unknown']]) {
-    const config = { sharedDir: path.join(W, `t1-${oc}`, 's'), worktreeRoot: path.join(W, `t1-${oc}`, 'r'), scriptsDir: '/p/scripts', testerWritable: ['-run\\.js$'] };
+    const config = { sharedDir: path.join(W, `t1-${oc}`, 's'), worktreeRoot: path.join(W, `t1-${oc}`, 'r'), scriptsDir: '/p/scripts', testerWritable: ['-run\\.js$'], conductorFullRun: false };
     const y = await CR.runScript({ host: 'claude', pluginRoot: ROOT, args: { owner: 'o', config, tasks: [Object.assign({}, TASK)] },
       launch: async (p) => (p.label.startsWith('pre:') ? { output: PRE } : { outcome: oc, error: `observed ${oc}` }),
       exec: async (s) => ({ value: s.kind === 'env' ? ENV_OK : s.kind === 'left' ? LEFT_OK : null }), note: () => {}, log: () => {} });

@@ -61,7 +61,7 @@ fs.writeFileSync(path.join(PLUG, 'scripts', 'train.js'), `console.log('stub trai
 
 function config(name, extra) {
   const f = path.join(W, `cfg-${name}.json`);
-  fs.writeFileSync(f, JSON.stringify(Object.assign({ repoDir: REPO, sharedDir: SHARED, worktreeRoot: WTR, guardCommand: 'true {wt}', testerWritable: ['-run\\.js$'] }, extra || {})));
+  fs.writeFileSync(f, JSON.stringify(Object.assign({ repoDir: REPO, sharedDir: SHARED, worktreeRoot: WTR, guardCommand: 'true {wt}', testerWritable: ['-run\\.js$'], conductorFullRun: false }, extra || {})));
   return f;
 }
 const CFG = config('plain');

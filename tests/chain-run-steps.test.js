@@ -47,7 +47,7 @@ let nRun = 0;
 // steps {env, diff, left, post, sha, merge, run: value or (step) => value} for exec. Returns what both saw.
 async function chain(answers, steps, taskExtra, cfgExtra) {
   const base = path.join(W, `c${++nRun}`);
-  const config = Object.assign({ sharedDir: path.join(base, 's'), worktreeRoot: path.join(base, 'r'), scriptsDir: '/p/scripts', testerWritable: ['-run\\.js$'] }, cfgExtra || {});
+  const config = Object.assign({ sharedDir: path.join(base, 's'), worktreeRoot: path.join(base, 'r'), scriptsDir: '/p/scripts', testerWritable: ['-run\\.js$'], conductorFullRun: false }, cfgExtra || {});
   const task = Object.assign({ key: 'x', title: 'X', wt: 'w', branch: 'b', accept: 'acc', kind: 'tail', noAnalysis: 'a test task' }, taskExtra || {});
   const q = {}; for (const [k, v] of Object.entries(answers)) q[k] = v.slice();
   const launches = [], seen = [], notes = [];
@@ -176,7 +176,7 @@ const lineOf = (prompt, argv) => prompt.split('\n').map((l) => l.replace(/^\d\. 
   const UNKNOWN = ['crashed', 'killed', 'no-result', 'invalid-result'];
   for (const oc of KNOWN.concat(UNKNOWN)) {
     const base = path.join(W, `a-${oc}`);
-    const config = { sharedDir: path.join(base, 's'), worktreeRoot: path.join(base, 'r'), scriptsDir: '/p/scripts', testerWritable: ['-run\\.js$'] };
+    const config = { sharedDir: path.join(base, 's'), worktreeRoot: path.join(base, 'r'), scriptsDir: '/p/scripts', testerWritable: ['-run\\.js$'], conductorFullRun: false };
     const y = await CR.runScript({ host: 'claude', pluginRoot: ROOT, args: { owner: 'o', config, tasks: [{ key: 'x', title: 'X', wt: 'w', branch: 'b', accept: 'a', kind: 'tail', noAnalysis: 'n' }] },
       launch: async (p) => (p.label.startsWith('pre:') ? { output: PRE } : { outcome: oc, error: `observed ${oc}`, rc: oc === 'killed' ? null : 1, signal: oc === 'killed' ? 'SIGKILL' : null }),
       exec: async (s) => ({ value: s.kind === 'env' ? ENV_OK : s.kind === 'left' ? { ok: true, found: [], removed: [], remaining: [] } : null }), note: () => {}, log: () => {} });
@@ -194,7 +194,7 @@ const lineOf = (prompt, argv) => prompt.split('\n').map((l) => l.replace(/^\d\. 
   // ---- A5: calls.jsonl cannot be written (a folder in its place) - the record still reaches the conductor
   {
     const base = path.join(W, 'a5');
-    const config = { sharedDir: path.join(base, 's'), worktreeRoot: path.join(base, 'r'), scriptsDir: '/p/scripts', testerWritable: ['-run\\.js$'] };
+    const config = { sharedDir: path.join(base, 's'), worktreeRoot: path.join(base, 'r'), scriptsDir: '/p/scripts', testerWritable: ['-run\\.js$'], conductorFullRun: false };
     fs.mkdirSync(path.join(config.sharedDir, 'x', 'calls.jsonl'), { recursive: true });
     const nn = [];
     const y = await CR.runScript({ host: 'claude', pluginRoot: ROOT, args: { owner: 'o', config, tasks: [{ key: 'x', title: 'X', wt: 'w', branch: 'b', accept: 'a', kind: 'tail', noAnalysis: 'n' }] },

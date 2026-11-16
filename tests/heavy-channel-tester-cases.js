@@ -220,7 +220,7 @@ const writeJournal = (d, id, run, extra) => {
     git(REPO, 'commit', '-q', '-m', 'base');
     git(REPO, 'worktree', 'add', '-q', '-b', 'b-h1', path.join(WTR, 'w-h1'), 'HEAD');
     const cfg = path.join(W, 'cfg.json');
-    fs.writeFileSync(cfg, JSON.stringify({ repoDir: REPO, sharedDir: SHARED, worktreeRoot: WTR, guardCommand: 'true {wt}', testerWritable: ['-run\\.js$'], commitAuthor: { name: 'a', email: 'a@example.com' }, slots: { kinds: { tsc: 'medium' } } }));
+    fs.writeFileSync(cfg, JSON.stringify({ repoDir: REPO, sharedDir: SHARED, worktreeRoot: WTR, guardCommand: 'true {wt}', testerWritable: ['-run\\.js$'], conductorFullRun: false, commitAuthor: { name: 'a', email: 'a@example.com' }, slots: { kinds: { tsc: 'medium' } } }));
     const owner = path.join(W, 'owner.txt');
     fs.writeFileSync(owner, 'the owner asked for the test task');
     const hj = path.join(SHARED, 'runs', '.commit', 'h1');

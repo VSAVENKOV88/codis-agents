@@ -80,6 +80,10 @@ const SPEC = {
   // tester run only their own guards, the integration train is the first run of all guards, and a red train fixed in the
   // product gets a short tester round (workflows/role-chain.js INNER). true - the selection after every programmer round.
   innerSelect: ['boolean', true],
+  // Without guardSubsetCommand, under the conductor (scripts/chain-run.js): true - the workflow runs the full guard run on
+  // every new programmer HEAD and on a green tester's own commits as a wait step outside the roles' sandbox
+  // (workflows/role-chain.js FULL); false - the programmer runs it itself. The Workflow runtime ignores the key.
+  conductorFullRun: ['boolean', true],
   worktreeSetup: ['object', null],
   slots: ['object', null],
   reportLanguage: ['string', 'English'],
