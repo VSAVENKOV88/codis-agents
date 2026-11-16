@@ -94,6 +94,19 @@ if (!has('zsh')) { skip('stand freshness integration', 'zsh not found'); done();
     check('C10 deletion stale', /stand stale/.test(status(deleted).text));
     f.put(f.baseFile, deleted);
     check('C10 addition stale', /stand stale/.test(status(f.task).text));
+    // File modes and both sides of a rename are image-tree inputs too.
+    f.git(f.wt, 'reset', '--hard', f.task); f.put(f.baseFile, f.task);
+    f.git(f.wt, 'update-index', '--chmod=+x', 'Dockerfile');
+    f.git(f.wt, 'commit', '-qm', 'image mode');
+    r = status(f.git(f.wt, 'rev-parse', 'HEAD'));
+    check('tester mode-only image change stale', /stand stale/.test(r.text) && r.text.includes('Dockerfile'), r.text);
+    f.git(f.wt, 'reset', '--hard', f.task);
+    f.git(f.wt, 'mv', 'Dockerfile', 'Containerfile'); f.git(f.wt, 'commit', '-qm', 'rename image');
+    r = status(f.git(f.wt, 'rev-parse', 'HEAD'));
+    check('tester rename out of image glob stale', /stand stale/.test(r.text) && r.text.includes('Dockerfile'), r.text);
+    f.put(f.baseFile, f.git(f.wt, 'rev-parse', 'HEAD'));
+    r = status(f.task);
+    check('tester rename into image glob stale', /stand stale/.test(r.text) && r.text.includes('Dockerfile'), r.text);
     // A git failure must not become an empty diff/fresh result.
     f.put(f.baseFile, f.base); fs.mkdirSync(path.join(f.repo, '.git/info'), { recursive: true });
     f.put(path.join(f.repo, '.git/info/attributes'), 'Dockerfile diff=broken\n');
