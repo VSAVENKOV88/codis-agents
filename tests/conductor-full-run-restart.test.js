@@ -138,4 +138,12 @@ try {
   ok('F21\' the guards ran once over the three starts: one run, one reuse', (text(CALLS).match(/^ran /gm) || []).length === 1 && /^reused$/m.test(text(CALLS)), text(CALLS));
   ok('F21\' the copy of the reused log lies in the steps folder of the new run', !!c.j && fs.existsSync(path.join(c.j.runDir, 'steps', 'x', 'wait-full-1.guards.txt')));
 } catch (e) { ok(`the test threw: ${e && e.stack}`, false); }
+// ---- the tester cells: tests/conductor-full-run-tester-cases.js (the same step against the real guards-all.sh, along the
+// use cases: green and reuse, a real red and its fix, the tester's own commit, no tally, a signal, a dirty tree,
+// conductorFullRun false), a child with its own tally, so README keeps counting test files
+{
+  const tc = spawnSync(process.execPath, [path.join(__dirname, 'conductor-full-run-tester-cases.js')], { encoding: 'utf8', timeout: 400000 });
+  ok('the tester cells of the full run step against the real guards-all.sh (tests/conductor-full-run-tester-cases.js) pass', tc.status === 0,
+    `exit ${tc.status} ${tc.signal || ''}\n${String(tc.stdout).split('\n').filter((l) => /FAIL/.test(l)).join('\n').slice(0, 3000)}${String(tc.stderr).slice(-800)}`);
+}
 done();

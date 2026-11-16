@@ -1,0 +1,58 @@
+#!/usr/bin/env node
+'use strict';
+// A fake claude CLI for tests/conductor-full-run-tester-cases.js: like tests/fixtures/chain-run/bin/claude (the role of
+// --agent or "gp:" + the sorted schema properties is the key; the n-th call of a key takes the n-th answer of
+// $FAKE_CLI_DIR/answers.json, then its default), but an answer may act on the worktree first, as a real role does:
+//   "$sh": a /bin/sh command run before answering (a commit of the programmer or the tester);
+//   "$headOf": a worktree whose `git rev-parse HEAD` becomes the answer's head (after "$sh").
+// Every call appends {key, n, prompt} to $FAKE_CLI_DIR/trace.jsonl. No model is called.
+const fs = require('fs');
+const path = require('path');
+const { spawnSync } = require('child_process');
+
+const argv = process.argv.slice(2);
+if (argv[0] === '--version') { process.stdout.write('2.1.318 (Claude Code)\n'); process.exit(0); }
+const dir = process.env.FAKE_CLI_DIR;
+if (!dir) { process.stderr.write('fake claude: FAKE_CLI_DIR is not set\n'); process.exit(2); }
+const flag = (k) => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : null; };
+let schema = {};
+try { schema = JSON.parse(flag('--json-schema') || '{}'); } catch { /* an empty key */ }
+const agent = flag('--agent');
+const key = agent ? agent.replace(/^.*:/, '') : 'gp:' + Object.keys(schema.properties || {}).sort().join(',');
+const sleepMs = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+function take() {
+  const lock = path.join(dir, 'answers.lock');
+  for (;;) { try { fs.mkdirSync(lock); break; } catch { sleepMs(5); } }
+  try {
+    const answers = JSON.parse(fs.readFileSync(path.join(dir, 'answers.json'), 'utf8'));
+    const sf = path.join(dir, 'answers.state.json');
+    let st = {};
+    try { st = JSON.parse(fs.readFileSync(sf, 'utf8')); } catch { /* the first call */ }
+    const n = st[key] || 0;
+    st[key] = n + 1;
+    fs.writeFileSync(sf, JSON.stringify(st));
+    const list = answers[key] || [];
+    return { n: n + 1, a: n < list.length ? list[n] : (answers.default || {})[key] };
+  } finally { fs.rmdirSync(lock); }
+}
+
+let prompt = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (d) => { prompt += d; });
+process.stdin.on('end', () => {
+  const { n, a: a0 } = take();
+  fs.appendFileSync(path.join(dir, 'trace.jsonl'), JSON.stringify({ key, n, prompt }) + '\n');
+  if (a0 === undefined) { process.stderr.write(`fake claude: no answer for ${key}\n`); process.exit(3); }
+  const a = Object.assign({}, a0);
+  if (a.$sh) {
+    const r = spawnSync('/bin/sh', ['-c', a.$sh], { encoding: 'utf8' });
+    if (r.status !== 0) { process.stderr.write(`fake claude: $sh failed: ${r.stderr}\n`); process.exit(4); }
+  }
+  if (a.$headOf) a.head = spawnSync('git', ['-C', a.$headOf, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
+  delete a.$sh; delete a.$headOf;
+  const out = (o) => process.stdout.write(JSON.stringify(o) + '\n');
+  out({ type: 'system', subtype: 'init', session_id: `fake-${process.pid}`, claude_code_version: '2.1.318', tools: [] });
+  out({ type: 'result', subtype: 'success', is_error: false, structured_output: a, session_id: `fake-${process.pid}`, usage: { input_tokens: 1, output_tokens: 1 }, total_cost_usd: 0 });
+  process.exit(0);
+});
