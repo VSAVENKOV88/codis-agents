@@ -4,8 +4,9 @@
 // A3', F26e, F26d, D1 of the analysis and the Closure of its third check): the conductor marks cfg.heavy.fullByWorkflow
 // exactly when workflows/role-chain.js runs the full run as its own wait step (FULL: no guardSubsetCommand after trim,
 // conductorFullRun not false); under the mark the adapter refuses `heavy-req.js --kind full` and an argv with
-// guards-all.sh before the queue, without "environment:" (that prefix would stop the task) and without pointing to
-// --kind full, and the host section of prog and test does not offer --kind full. Without the mark nothing changes.
+// guards-all.sh before the queue, and `--kind select` too (guards-all.sh --select needs guardSubsetCommand, which the
+// mark excludes, so it would end 78, the environment), all without "environment:" (that prefix would stop the task) and
+// without pointing to a guard kind; the host section of prog and test offers no guard kind. Without the mark nothing changes.
 // No slot, no guards-all.sh and no model run here: the refusals come before the queue; the chain runs with a fake
 // launcher and a fake exec (scripts/chain-run.js runScript).
 const fs = require('fs');
@@ -84,8 +85,9 @@ async function fullStepRuns(extra) {
     for (const kind of ['prog', 'test']) {
       const on = RX.hostSection(kind, t, { heavy: true, fullByWorkflow: true });
       const off = RX.hostSection(kind, t, { heavy: true });
-      ok(`F26e ${kind} under the mark: no --kind full, says the workflow runs the full guard run, keeps --kind select and heavy-req.js -- <argv>`,
-        !/--kind full/.test(on) && WF.test(on) && /heavy-req\.js --kind select --base <ref>/.test(on) && /heavy-req\.js[^\n]*-- <argv>/.test(on) && /local selection/.test(on) && !/local full run/.test(on), on.slice(-400));
+      // the mark implies no guardSubsetCommand, so guards-all.sh --select ends 78 (environment): no guard kind is offered
+      ok(`F26e ${kind} under the mark: neither --kind full nor --kind select, says the workflow runs the full guard run, keeps heavy-req.js -- <argv>`,
+        !/--kind full/.test(on) && !/--kind select/.test(on) && WF.test(on) && /heavy-req\.js[^\n]*-- <argv>/.test(on) && !/local selection/.test(on) && !/local full run/.test(on), on.slice(-400));
       ok(`F26e ${kind} without the mark: as before (--kind full offered)`, /heavy-req\.js --kind full/.test(off) && !WF.test(off), off.slice(-400));
     }
     ok('F26e review: no heavy line under the mark either', !/heavy-req/.test(RX.hostSection('review', t, { heavy: true, fullByWorkflow: true })));
@@ -110,6 +112,10 @@ async function fullStepRuns(extra) {
       /conductorFullRun/.test(line) && /the workflow runs the full guard run/.test(line) && !/Without the key the programmer runs the full run itself and the tester reuses its log\./.test(line), line.slice(-600));
     const readme = read(path.join(ROOT, 'README.md'));
     ok('D1 README: the guard run of a codex role names the refusal of --kind full under the workflow\'s full run', /fullByWorkflow/.test(readme) && /refuses `--kind full`/.test(readme));
+    ok('D1 README: under the mark the channel offers no --kind select (it would end 78)', !/host section of prog and test offers only\s+`--kind select`/.test(readme));
+    const row = readme.split('\n').find((l) => /^\| `guardSubsetCommand` \|/.test(l)) || '';
+    ok('D1 README guardSubsetCommand row: without it the workflow runs the full run under the conductor, not "the programmer runs the full run itself" alone',
+      !/Without it the programmer runs the full run itself \|$/.test(row) && /conductorFullRun/.test(row), row.slice(-300));
     const sk = read(path.join(ROOT, 'skills', 'coordinator', 'SKILL.md'));
     ok('D1 coordinator skill: a full run by hand pins the task\'s config (CODIS_AGENTS_CONFIG=<the task\'s config> guards-all.sh <wt>)', /CODIS_AGENTS_CONFIG=<the task's config> [^\n]*guards-all\.sh <wt>/.test(sk));
   }
@@ -168,10 +174,14 @@ async function fullStepRuns(extra) {
       !!g.full && !/^environment:/.test(g.full.why || '') && WF.test(g.full.why || '') && /new and touched guards/.test(g.full.why || '') && !/--kind full/.test(g.full.why || ''), J(g.full));
     ok('A3\' argv with guards-all.sh under the mark: refused, not the environment, no hint to --kind full, the workflow runs the full guard run',
       !!g.ga && g.ga.state === 'refused' && !/^environment:/.test(g.ga.why || '') && !/--kind full/.test(g.ga.why || '') && WF.test(g.ga.why || '') && !evsOf(g, g.ga).includes('queued'), J(g.ga));
-    ok('A3 --kind select under the mark: as before (reaches the check of the worktree: commit first)', !!g.sel && g.sel.state === 'refused' && /commit first/.test(g.sel.why || ''), J(g.sel));
+    ok('A3 --kind select under the mark: refused before the queue (guards-all.sh --select needs guardSubsetCommand, which the mark excludes), not the environment, no hint to any guard kind',
+      !!g.sel && g.sel.state === 'refused' && !evsOf(g, g.sel).includes('queued') && !/commit first/.test(g.sel.why || '') && !/^environment:/.test(g.sel.why || '') && WF.test(g.sel.why || '') && !/--kind (full|select)/.test(g.sel.why || ''), J(g.sel));
+    ok('A3\' argv with guards-all.sh under the mark: no hint to --kind select either', !!g.ga && !/--kind select/.test(g.ga.why || ''), J(g.ga));
   }
   {
     const g = await call({ conductorFullRun: false });
+    ok('A2\' conductorFullRun false: no mark, --kind select takes the earlier path (reaches the check of the worktree: commit first)',
+      !!g.sel && g.sel.state === 'refused' && /commit first/.test(g.sel.why || ''), J(g.sel));
     ok('A2\' conductorFullRun false: no mark, --kind full takes the earlier path (reaches the check of the worktree: commit first)',
       !!g.full && g.full.state === 'refused' && /commit first/.test(g.full.why || ''), J(g.full));
     ok('A2\' conductorFullRun false: the host section offers --kind full as before', !!g.plan && /heavy-req\.js --kind full/.test(g.plan.stdin), g.plan && g.plan.stdin.slice(-400));
@@ -205,6 +215,12 @@ async function fullStepRuns(extra) {
     fs.renameSync(tmp, path.join(d.box, `${id}.json`));
     const a = await until(() => { try { const v = JSON.parse(fs.readFileSync(path.join(d.state, 'K', 'heavy-calls', 'prog-1', `${id}.json`), 'utf8')); return v.state === 'refused' ? v : null; } catch { return null; } });
     ok('A1 openHeavyService({fullByWorkflow: true}): a request {kind: full} is refused with the workflow\'s text', !!a && WF.test(a.why || '') && !/^environment:/.test(a.why || ''), J(a));
+    const id2 = id32();
+    const tmp2 = path.join(d.box, `.${id2}.tmp`);
+    fs.writeFileSync(tmp2, J({ id: id2, kind: 'select', base: 'main' }));
+    fs.renameSync(tmp2, path.join(d.box, `${id2}.json`));
+    const b = await until(() => { try { const v = JSON.parse(fs.readFileSync(path.join(d.state, 'K', 'heavy-calls', 'prog-1', `${id2}.json`), 'utf8')); return v.state === 'refused' ? v : null; } catch { return null; } });
+    ok('A3 openHeavyService({fullByWorkflow: true}): a request {kind: select} is refused with the workflow\'s text, not the environment', !!b && WF.test(b.why || '') && !/^environment:/.test(b.why || ''), J(b));
     await svc.close();
   }
 
