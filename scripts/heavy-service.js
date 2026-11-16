@@ -299,16 +299,17 @@ function requestProblem(r, id) {
   if (r.cwd !== undefined && r.cwd !== null && typeof r.cwd !== 'string') return 'cwd is not a string';
   return null;
 }
-// When the workflow runs the full guard run itself (fullByWorkflow) a full run of the role is refused: the refusal is
-// not the environment (that prefix stops the task) and tells the role its next step, never a kind it would be refused.
+// When the workflow runs the full guard run itself (fullByWorkflow) every guard run of the role is refused: the kind
+// full, and the kind select too, since the mark means no guardSubsetCommand and guards-all.sh --select then ends 78. The
+// refusal is not the environment (that prefix stops the task) and names only the next step that works, no guard kind.
 const BY_WORKFLOW = 'the workflow runs the full guard run on your HEAD as a step of its own, outside this sandbox, after you return: run only your new and touched guards and their mutations (a heavy one as heavy-req.js -- <argv>)';
 // Out of the channel before the queue: docker and the stand (owner decision 9); guards-all.sh in an argv (a guard run
-// is the kind full or select, with the adapter's argv; with fullByWorkflow the kind select only).
+// is the kind full or select, with the adapter's argv; with fullByWorkflow neither, see BY_WORKFLOW).
 function scopeProblem(argv, kind, byWorkflow) {
   const names = argv.map((a) => path.basename(a));
   if (kind === 'docker' || names[0] === 'docker' || names[0] === 'docker-compose' || names.includes('stand.sh')) return 'environment: Docker and the stand are outside A2b';
   if (names.includes('guards-all.sh')) {
-    return byWorkflow ? `guards-all.sh in an argv is refused: ${BY_WORKFLOW}; a selection is heavy-req.js --kind select --base <ref>`
+    return byWorkflow ? `guards-all.sh in an argv is refused: ${BY_WORKFLOW}`
       : 'environment: guards-all.sh runs through the channel: heavy-req.js --kind select --base <ref> | --kind full';
   }
   return null;
@@ -316,7 +317,7 @@ function scopeProblem(argv, kind, byWorkflow) {
 
 // o: {task, callId, role, wt, tdir, box, stateDir, config?, runId?, kinds?, fullByWorkflow?, userEnv?, codex?,
 // codexVersions?, killGraceMs?, emptyWaitMs?, pollMs?, npmCache?, inject?, log?}. fullByWorkflow: the workflow runs the
-// full guard run (the conductor's mark), so the kind full and guards-all.sh in an argv are refused before the queue. config: the absolute path of the run's project config, given as
+// full guard run (the conductor's mark), so the kinds full and select and guards-all.sh in an argv are refused before the queue. config: the absolute path of the run's project config, given as
 // CODIS_AGENTS_CONFIG to every process the service starts that reads the project config - the holder, the exclusive
 // check and the executor with its nested <class>.sh (role-exec.js requires it; without it they look the config up from
 // the worktree, as heavy.sh does). inject (tests): probe() -> {} | {error}; executor(spec) -> spec;
@@ -782,7 +783,7 @@ function openHeavyService(o) {
     const why = requestProblem(q, id);
     if (why) return refuse(id, hash, why);
     const guard = GUARD_KINDS.has(q.kind);
-    if (guard && q.kind === 'full' && byWorkflow) return refuse(id, hash, `a full guard run of the role is refused: ${BY_WORKFLOW}`);
+    if (guard && byWorkflow) return refuse(id, hash, `a guard run of the role (a full run or a selection) is refused: ${BY_WORKFLOW}`);
     const sp = guard ? null : scopeProblem(q.argv, q.kind, byWorkflow);
     if (sp) return refuse(id, hash, sp);
     const cwd = rolePlaces.realish(q.cwd ? path.resolve(wtReal, q.cwd) : wtReal);
