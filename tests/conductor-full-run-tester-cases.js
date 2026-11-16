@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 'use strict';
 // Tester cells, run as a child by tests/conductor-full-run-restart.test.js (its own tally, so README keeps counting
 // test files): the conductor's full run step against the REAL guard-run script (p-codex-fullrun-a1, tester): a real
