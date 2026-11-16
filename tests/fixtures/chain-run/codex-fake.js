@@ -1,6 +1,6 @@
 'use strict';
 // The fake codex CLI behind tests/fixtures/chain-run/bin/codex. It calls no model.
-//   --version, login status, debug models: what `role-exec.js check --host codex` asks. The catalog has two models,
+//   --version, login status, debug models: what `role-exec.js check --host codex` asks. The catalog has three models,
 //   gpt-6-astra (low, high) and gpt-6-luna (low, medium), so a run can pick another model and effort than the defaults.
 //   app-server: the stdio JSON-RPC of Codex 0.166.0 that scripts/codex-hooks-check.js speaks (initialize, hooks/list).
 //     The scenario is $CODEX_HOME/fake-hooks.json {trust: "trusted"|"untrusted"|..., enabled?: bool, mode?: "exit",
@@ -114,7 +114,7 @@ function execRole() {
 if (argv[0] === '--version') out('codex-cli 0.166.0');
 else if (argv[0] === 'login') out('Logged in using ChatGPT');
 else if (argv[0] === 'debug') {
-  out({ models: [{ slug: 'gpt-6-astra', default_reasoning_level: 'high', supported_reasoning_levels: [{ effort: 'low' }, { effort: 'high' }] },
+  out({ models: [{ slug: 'gpt-6.1-sol', default_reasoning_level: 'low', supported_reasoning_levels: [{ effort: 'low' }, { effort: 'high' }] }, { slug: 'gpt-6-astra', default_reasoning_level: 'high', supported_reasoning_levels: [{ effort: 'low' }, { effort: 'high' }] },
     { slug: 'gpt-6-luna', default_reasoning_level: 'low', supported_reasoning_levels: [{ effort: 'low' }, { effort: 'medium' }] }] });
 }
 else if (argv[0] === 'app-server') appServer();
