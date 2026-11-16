@@ -61,7 +61,7 @@ const put = (base, files) => {
     ok(`L1. ${k} on codex: -c project_doc_max_bytes=0 right after -c model_reasoning_effort=<e>`,
       i > 1 && a[i - 1] === '-c' && /^model_reasoning_effort=/.test(a[i - 2]) && a[i - 3] === '-c', a.join(' '));
     ok(`L1. ${k} on codex: the first -c is still model_reasoning_effort, -C is the task folder, stdin "-" last`,
-      a[a.indexOf('-c') + 1] === `model_reasoning_effort=high` && a[a.indexOf('-C') + 1] === TASKS.K.dir && a[a.length - 1] === '-', a.join(' '));
+      a[a.indexOf('-c') + 1] === `model_reasoning_effort=low` && a[a.indexOf('-C') + 1] === TASKS.K.dir && a[a.length - 1] === '-', a.join(' '));
   }
   {
     launched.length = 0;

@@ -165,7 +165,7 @@ const REVIEW_OK = { verdict: 'done', docsOnly: false, fixBehaviourUnchanged: nul
     const d = x.dump || { argv: [], env: {}, stdin: '', cwd: '/' };
     const c = cOf(d.argv);
     ok('S1 prog on codex with cfg.commit and the real CLI: not refused, the role ran and committed', x.rec && x.rec.outcome === 'ok' && !!x.dump && f.tip() !== t0, J(x.rec));
-    ok('S1 argv: -c project_doc_max_bytes=0 right after the effort, then -s workspace-write', d.argv.indexOf('project_doc_max_bytes=0') === d.argv.indexOf('model_reasoning_effort=high') + 2
+    ok('S1 argv: -c project_doc_max_bytes=0 right after the effort, then -s workspace-write', d.argv.indexOf('project_doc_max_bytes=0') === d.argv.indexOf('model_reasoning_effort=low') + 2
       && after(d.argv, '-s') === 'workspace-write' && d.argv.indexOf('-s') > d.argv.indexOf('project_doc_max_bytes=0'), J(d.argv));
     ok('S1 argv: the task folder is the one writable root, network off, -C the worktree (real paths)',
       c.includes(`sandbox_workspace_write.writable_roots=${JSON.stringify([rp(f.tdir)])}`) && c.includes('sandbox_workspace_write.network_access=false')
