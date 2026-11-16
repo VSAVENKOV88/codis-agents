@@ -112,10 +112,10 @@ async function fullStepRuns(extra) {
       /conductorFullRun/.test(line) && /the workflow runs the full guard run/.test(line) && !/Without the key the programmer runs the full run itself and the tester reuses its log\./.test(line), line.slice(-600));
     const readme = read(path.join(ROOT, 'README.md'));
     ok('D1 README: the guard run of a codex role names the refusal of --kind full under the workflow\'s full run', /fullByWorkflow/.test(readme) && /refuses `--kind full`/.test(readme));
-    ok('D1 README: under the mark the channel offers no --kind select (it would end 78)', !/host section of prog and test offers only\s+`--kind select`/.test(readme));
+    ok('D1 README: under the mark the channel offers no --kind select (it would end 78)', !/host section of prog and test\s+offers only\s+`--kind select`/.test(readme) && /host section of prog and test\s+offers no guard run/.test(readme) && /`--kind select` too \(the mark means no `guardSubsetCommand`/.test(readme));
     const row = readme.split('\n').find((l) => /^\| `guardSubsetCommand` \|/.test(l)) || '';
     ok('D1 README guardSubsetCommand row: without it the workflow runs the full run under the conductor, not "the programmer runs the full run itself" alone',
-      !/Without it the programmer runs the full run itself \|$/.test(row) && /conductorFullRun/.test(row), row.slice(-300));
+      !/Without it the programmer/.test(row) && /Without it there is no selection: under the conductor the workflow runs the full guard run/.test(row) && /conductorFullRun/.test(row), row.slice(-300));
     const sk = read(path.join(ROOT, 'skills', 'coordinator', 'SKILL.md'));
     ok('D1 coordinator skill: a full run by hand pins the task\'s config (CODIS_AGENTS_CONFIG=<the task\'s config> guards-all.sh <wt>)', /CODIS_AGENTS_CONFIG=<the task's config> [^\n]*guards-all\.sh <wt>/.test(sk));
   }
