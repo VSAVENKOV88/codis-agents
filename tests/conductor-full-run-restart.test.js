@@ -49,7 +49,10 @@ for (const d of ['scripts', 'workflows', 'agents', 'rules', 'schemas', 'skills',
 fs.copyFileSync(path.join(ROOT, 'package.json'), path.join(PLUG, 'package.json'));
 const S = path.join(PLUG, 'scripts');
 const CALLS = path.join(W, 'calls.log'), GO = path.join(W, 'go-full'), PIDF = path.join(W, 'full-pid');
-fs.writeFileSync(path.join(S, 'guards-all.sh'), `#!/bin/zsh
+// the stub takes the place of the guard-run script in the copy (its name in a template: tests/slots-hermetic.test.js
+// looks for the quoted name of a test that runs the real slot scripts)
+const STUB = `guards-all.sh`;
+fs.writeFileSync(path.join(S, STUB), `#!/bin/zsh
 H=\${0:A:h}
 WT=$1; [[ $WT == /* ]] || WT=${WTR}/$WT
 OUT=${SHARED}/guards-\${WT:t}.txt

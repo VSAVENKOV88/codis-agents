@@ -31,7 +31,7 @@ const CR = require('../scripts/chain-run.js');
 const W = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'codex-train-')));
 process.on('exit', () => { try { fs.rmSync(W, { recursive: true, force: true }); } catch { /* best effort */ } });
 
-const CFG = { sharedDir: '/s', worktreeRoot: '/r', scriptsDir: '/p/scripts', reportLanguage: 'English', testerWritable: ['-run\\.js$'] };
+const CFG = { sharedDir: '/s', worktreeRoot: '/r', scriptsDir: '/p/scripts', reportLanguage: 'English', testerWritable: ['-run\\.js$'], conductorFullRun: false };
 const ONE = Object.assign({}, CFG, { guardSubsetCommand: 'true {wt}' });
 const CP = '/cfg/arc dir/codis-agents.json';
 const PFX = `CODIS_AGENTS_CONFIG='${CP}' `;
