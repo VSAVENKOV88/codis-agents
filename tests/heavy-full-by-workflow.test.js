@@ -207,5 +207,14 @@ async function fullStepRuns(extra) {
     ok('A1 openHeavyService({fullByWorkflow: true}): a request {kind: full} is refused with the workflow\'s text', !!a && WF.test(a.why || '') && !/^environment:/.test(a.why || ''), J(a));
     await svc.close();
   }
+
+  // ---- the tester cells: tests/heavy-full-by-workflow-tester-cases.js (the real conductor on the codex host with the real
+  // commit and heavy channels and guards-all.sh: the mark on, conductorFullRun false, a stop on the full run step and its
+  // resolve), a child with its own tally, so README keeps counting test files
+  {
+    const tc = spawnSync(process.execPath, [path.join(__dirname, 'heavy-full-by-workflow-tester-cases.js')], { encoding: 'utf8', timeout: 400000 });
+    ok('the tester cells through the real codex conductor (tests/heavy-full-by-workflow-tester-cases.js) pass', tc.status === 0,
+      `exit ${tc.status} ${tc.signal || ''}\n${String(tc.stdout).split('\n').filter((l) => /FAIL/.test(l)).join('\n').slice(0, 3000)}${String(tc.stderr).slice(-800)}`);
+  }
   done();
 })().catch((e) => { console.log('  FAIL threw - ' + ((e && e.stack) || e)); process.exit(1); });
