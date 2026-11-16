@@ -4,5 +4,6 @@
   "worktreeRoot": "..",
   "sharedDir": "..",
   "guardCommand": "cd {wt} && CODIS_GUARD_JOBS={jobs} node tests/run.js",
+  "guardRerun": { "command": "cd {wt} && node tests/run.js {name}", "newRedPattern": "^FAIL (\\S+) \\(", "tallyPattern": "^\\d+ of (\\d+) test files passed", "maxReruns": 10 },
   "standingPush": { "branches": ["main"], "check": "node tests/hygiene.test.js" }
 }
