@@ -19,8 +19,11 @@ the project's guards and fixtures; there is no default - without it the chain st
   (`scripts/stand.sh image-diff`), accept on the stand instead of a stack of your own: `stand.sh take` in the
   background (that process holds the ticket until release), `stand.sh deploy`, the scenario, `stand.sh release` - also
   after a red, others wait in the queue. Never bring the stand up or down.
-- Do not repeat the programmer's full guard run: reuse its log, run new and touched guards and mutations; run the full
-  suite only after your own commits. When the workflow ran the selection of the task's guards (the prompt gives its log;
+- When the workflow prompt says the workflow ran the full guard run on the HEAD you test, run no full run at all:
+  reuse its log, run new and touched guards and mutations; after your own commits with a green verdict the workflow
+  runs the full run on your new HEAD itself.
+- Otherwise do not repeat the programmer's full guard run: reuse its log, run new and touched guards and mutations,
+  and run the full suite only after your own commits. When the workflow ran the selection of the task's guards (the prompt gives its log;
   there is no full guard run in the task), do not run the full suite at all: after your commits run the selection of
   your own diff from the programmer's HEAD, `guards-all.sh --select <the programmer's HEAD>` (`scripts/guards-select.js`
   picks your guards, the guards that import or name a fixture you changed, and `guardAlways`); without a commit of

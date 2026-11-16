@@ -249,7 +249,7 @@ codis-agents/
  ├── scripts/      47 scripts: memory slots, guard runs and selection, the train, post-checks, remote runner, cost
 ├── examples/     example project and machine configs
 ├── schemas/      their JSON schemas
-└── tests/        198 test files of the plugin itself (npm test)
+└── tests/        200 test files of the plugin itself (npm test)
 ```
 
 Every file, script and config key is described in the [Technical reference](#technical-reference).
@@ -699,7 +699,8 @@ Limits:
 - the heavy channel of prog and test (p-codex A2b-1b) runs single heavy commands - tsc, a guard with vite and its
   watcher off - in a memory slot through the adapter (`heavy-req.js`, see Memory slots), and guard runs of the role
   (`--kind full`, `--kind select --base <ref>`: guards-all.sh outside the sandbox, every command of the project inside
-  it; on this Mac only, in its sandbox - the remote runner does not take them); a guard whose file declares a need (`guardNeeds`: a browser,
+  it; on this Mac only, in its sandbox - the remote runner does not take them; when the workflow runs the full guard run
+  itself, `conductorFullRun`, the channel refuses `--kind full` and the role runs none); a guard whose file declares a need (`guardNeeds`: a browser,
   a file watcher, `ps`, a nested sandbox, Docker, a disk image) does not run there - the run that would be green ends 79
   with `verdict: incomplete` and `notRun`, never green and not a red of the product; a guard without the marker that is
   red only from the sandbox is a red of the run, a candidate for the marker;
@@ -795,7 +796,7 @@ smoke"); to try an edited copy first, point `CODIS_AGENTS_CONFIG` at it.
 | `guardAlways` | guards always in the selection: a guard whose path contains an entry (scanners of the diff such as secrets or semgrep) |
 | `guardSubsetCommand` | runs the selected guards (zsh; `{wt}`, `{onlyArgs}` = `--only <guard>` per guard, and `{jobs}` and `{limitFile}` as `guardCommand` has them). Contract: it narrows `guardCommand` to the selected guards of the same suite, so a full run includes every guard it selects. Without both `{jobs}` and `{limitFile}` the selection is a runner that sets its own workers: counted as the whole budget `slots.jobsAlone`, it waits for every other heavy job, so selections (and a selection next to the train's full run) go one at a time; `config.js check` and `guards-all.sh --select` print a note then. With `{jobs}` and `{limitFile}` two selections, or a selection and a full run, share the budget (`slots.jobsShared` each, together at most `slots.jobsAlone`). When set: no full guard run in the task - after every programmer round with a new HEAD the workflow runs the selection of the task's diff (`guards-all.sh --select <base>`, its own log, the quarantine read only), so the programmer runs only its new guards and mutations; the tester, after its own commits, runs the selection of its own diff from the programmer's HEAD (`guards-all.sh --select <the programmer's HEAD>`), none without a commit; every task needs `base`; a reviewed task rides the integration train (`scripts/train.js ride`), whose one full run replaces the one of the task. Without it the programmer runs the full run itself |
 | `innerSelect` | with `guardSubsetCommand`: `false` - no selection inside the task (p-train-only): no selection after any programmer round and none of the tester; the programmer and the tester run only their new or changed guards and mutations, and the integration train is the first run of all guards; a red train fixed in the product (a file outside docs and `testerWritable`) gets a short tester round - the acceptance of the cells the fix touches and the tester's guards over them - before the second review, a fix of guards or docs only goes straight to it. Default `true`: the selection after every programmer round, as above |
-| `conductorFullRun` | without `guardSubsetCommand`, under the conductor (`scripts/chain-run.js`, any `--host`): `true` (the default) - the workflow runs the full guard run (`guards-all.sh <worktree>`, with its rerun of new reds and its reuse) on every new programmer HEAD and on the HEAD of a green tester's own commits as a wait step outside the sandbox of every role, checks the copy of its log (`guards-result.js copy-check`: the HEAD, a clean tree, the exit code, the tally) and hands that copy to the next role; a red run goes back to the programmer, an exit code of the environment, a signal or a run cut off before its tally stops the task as the environment; no role runs the full suite. `false` - the programmer runs the full run itself, as under the Workflow runtime, which ignores the key |
+| `conductorFullRun` | without `guardSubsetCommand`, under the conductor (`scripts/chain-run.js`, any `--host`): `true` (the default) - the workflow runs the full guard run (`guards-all.sh <worktree>`, with its rerun of new reds and its reuse) on every new programmer HEAD and on the HEAD of a green tester's own commits as a wait step outside the sandbox of every role, checks the copy of its log (`guards-result.js copy-check`: the HEAD, a clean tree, the exit code, the tally) and hands that copy to the next role; a red run goes back to the programmer, an exit code of the environment, a signal or a run cut off before its tally stops the task as the environment; no role runs the full suite, and the heavy channel of a codex role refuses `--kind full` (see "A guard run of a codex role"). `false` - the programmer runs the full run itself, as under the Workflow runtime, which ignores the key |
 | `mergeOnlyFiles` | globs of the project's docs files (a glob without `/` matches the file name at any depth; `*` and `?` stay within a segment, `**` crosses them), e.g. `["*.md", "docs/**"]`. With `guardSubsetCommand`: a fix round after a train `conflict` whose commit is only the merge of the arc, with every file resolved or edited by hand matching these globs (`scripts/merge-only.js`), skips the selection and goes to the second review and the train; a conflict in code or a guard keeps it (a file matching `guardFiles` too is a guard, not docs). Default `[]`: every round gets its selection |
 | `worktreeSetup` | `scan` directories whose ignored data is copied into a new worktree; `skip` and `link` globs (everything else is a copy-on-write clone) |
 | `slots` | machine settings, read from the machine file (below); a project config may still carry `medium`, `heavy`, `total`, `lockDir`, `legacyLock`, `jobsAlone`, `jobsShared` until `config.js migrate` |
@@ -1292,6 +1293,13 @@ for its slot or workers the answer's `why` is the last "waiting for ..." line of
 code of `guards-all.sh`), `guardsLog`, `where` and `base`. A stop: TERM and CONT to G, up to 60 s (the two pauses of the
 holder that stops the runner), KILL; then the spec and the run's `TMPDIR` are removed (`out.log` stays). Inside a held
 slot (`CODIS_SLOT_HELD`) `guards-all.sh` refuses 64 at once.
+
+When the workflow runs the full guard run itself (`conductorFullRun`, below: no `guardSubsetCommand`, the key not
+`false`), the conductor marks the channel (`cfg.heavy.fullByWorkflow` of `chain-run.js adapterCfg`, the same rule as
+the step of `workflows/role-chain.js`): the adapter refuses `--kind full` before the queue - no slot, no `guards-all.sh` -
+and an argv with `guards-all.sh` too, both without the prefix `environment:` (the role goes on: "the workflow runs the
+full guard run on your HEAD ... run only your new and touched guards"), and the host section of prog and test offers only
+`--kind select`. Without the mark (`conductorFullRun: false`, a project with `guardSubsetCommand`) nothing changes.
 
 Every slot hold appends one line to the slot journal, `<slots.lockDir>/journal.tsv` (`SLOT_JOURNAL` overrides it, empty
 turns it off): request, acquire and release times, class, slot, kind, pid, exit code, worktree and a short command with

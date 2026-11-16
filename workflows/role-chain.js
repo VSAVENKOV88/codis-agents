@@ -120,7 +120,8 @@ const INNER = ONE_RUN && CFG.innerSelect !== false
 // guard run on every new programmer HEAD and on the HEAD of a green tester's own commits, so no role runs it inside its
 // sandbox, where guards that start a sandbox of their own, ask ps or write /tmp fail with EPERM. conductorFullRun false
 // (a project key, default true) keeps the earlier path: the programmer runs the full run itself. The Workflow runtime has
-// no exec: as before.
+// no exec: as before. scripts/chain-run.js (conductorRunsFull) applies the same rule to mark the heavy channel of a
+// codex role (cfg.heavy.fullByWorkflow), which then refuses a full run of the role: change both together.
 const FULL = !ONE_RUN && typeof exec === 'function' && CFG.conductorFullRun !== false
 // The config of every trusted guard run the chain starts - the selection wait step, the tester's selection in its prompt,
 // the ride - is the chain's own (CFG.configPath, pinned by CODIS_AGENTS_CONFIG), never the .claude/codis-agents.json a

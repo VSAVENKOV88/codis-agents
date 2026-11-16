@@ -361,6 +361,9 @@ function loadConfig(file) {
 // call that names none; either left out keeps the adapter's default), the hook check before each launch, pre allowed (the conductor checks the environment itself) and the commit channel of prog and test:
 // the state folder of the project, the runId every event of a task's journal carries, and commitAuthor of the config
 // as author (left out: the adapter takes user.name/user.email of git; the conductor stops a task without either).
+// The rule of FULL in workflows/role-chain.js (a workflow script requires no module, so the rule is written twice;
+// tests/heavy-full-by-workflow.test.js runs the chain on each case and compares the two).
+const conductorRunsFull = (config) => !(typeof config.guardSubsetCommand === 'string' && config.guardSubsetCommand.trim() !== '') && config.conductorFullRun !== false;
 function adapterCfg(host, args, ad, callsDir, log, runId) {
   const cfg = { host, tasks: taskTable(args), pluginRoot: ROOT, callsDir, log };
   if (host === 'codex') {
@@ -370,8 +373,14 @@ function adapterCfg(host, args, ad, callsDir, log, runId) {
     if (config.commitAuthor) cfg.commit.author = { name: config.commitAuthor.name, email: config.commitAuthor.email };
     // the heavy channel of prog and test (scripts/heavy-service.js): the class of a kind from slots.kinds of the config,
     // and the config's own path (configPath of config.js json), whose slot directory the holder queues in; a config
-    // without its path (not loaded by config.js) gets no channel, so no holder queues by a lookup from the worktree
-    if (typeof config.configPath === 'string') cfg.heavy = { config: config.configPath, kinds: (config.slots && config.slots.kinds) || {} };
+    // without its path (not loaded by config.js) gets no channel, so no holder queues by a lookup from the worktree.
+    // fullByWorkflow: the workflow runs the full guard run itself as a wait step (FULL of workflows/role-chain.js: no
+    // guardSubsetCommand after trim, conductorFullRun not false; the conductor always gives the workflow its exec), so
+    // the channel refuses a full run of the role and the host section does not offer one
+    if (typeof config.configPath === 'string') {
+      cfg.heavy = { config: config.configPath, kinds: (config.slots && config.slots.kinds) || {} };
+      if (conductorRunsFull(config)) cfg.heavy.fullByWorkflow = true;
+    }
     cfg.codex = { home: ad.codexHome };
     if (ad.bin) cfg.codex.bin = ad.bin;
     if (ad.codexAuth) cfg.codex.auth = ad.codexAuth;

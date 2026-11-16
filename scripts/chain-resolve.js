@@ -23,8 +23,9 @@
 //   derived and left out. status and the refusal of a start print it; resolve requires it and refuses another one; the
 //   reconciliation closes a reason only by a decision whose basis is the current one.
 // - next comes from the table of continuations (nextOf), after two filters in this order: the context of the step by
-//   the mode of its run and its label (only the main path of a full run, and the programmer or the selection of a light
-//   run, continue in the middle; elsewhere only retry or abort), then the threshold of the analyst (the same predicate as
+//   the mode of its run and its label (only the main path of a full run, and the programmer, the selection or the full
+//   run step of a light run, continue in the middle; elsewhere only retry or abort; a stop on a full run step continues
+//   with that run again, not with a programmer round), then the threshold of the analyst (the same predicate as
 //   testerRed, reviewLoop, light and ride of workflows/role-chain.js: at the threshold resolve refuses and names the
 //   route). The verdict of a step is read from its whole result line in the segments (recordedOf), never from the fold,
 //   which cuts a value at 400 characters.
@@ -105,8 +106,11 @@ function stepLines(runDir, key, n) {
 }
 
 // ---- labels: the grammar of workflows/role-chain.js
-// prog:<k>#<tag>, test:<k>#<tag>, review|sec:<k>#<tag>, run:<k>:select-<tag>, run:<k>:train-<n>; pre, analyst, usecases,
-// env:<k>; the service steps post, diff, left, sha, merge. A check repeated by checkTwice ends with #retry.
+// prog:<k>#<tag>, test:<k>#<tag>, review|sec:<k>#<tag>, run:<k>:select-<tag>, run:<k>:train-<n>; the full run steps
+// run:<k>:full-<tag> (after a programmer round, the tags of a selection), run:<k>:full-tester-<tag> (on the HEAD of a
+// green tester), run:<k>:full-entry (the entry of the review) and their copy checks <label>-copy (copy: true, the role
+// of the step they check); pre, analyst, usecases, env:<k>; the service steps post, diff, left, sha, merge. A check
+// repeated by checkTwice ends with #retry.
 // Tags: buildAndTest rounds <1..n> with the prefix A (after the analyst of a rejection or a red train) or T (after the
 // analyst of a red tester round); m - the repeat after a pass of the mechanism; f - the fix round of a red selection;
 // r, after-review, the second review - the round after a rejection; t<n>, t<n>-<k> - the rounds after a train.
@@ -114,13 +118,21 @@ function labelInfo(label) {
   const base = String(label || '').replace(/#retry$/, '');
   let m = /^(prog|test|review|sec):[^:#]+#(.+)$/.exec(base);
   if (m) return { role: m[1], tag: m[2] };
+  m = /^run:[^:#]+:full-(.+?)(-copy)?$/.exec(base);
+  if (m) {
+    const c = m[2] ? { copy: true } : {};
+    if (m[1] === 'entry') return Object.assign({ role: 'full-entry', tag: '' }, c);
+    const tm = /^tester-(.+)$/.exec(m[1]);
+    return Object.assign(tm ? { role: 'full-tester', tag: tm[1] } : { role: 'full', tag: m[1] }, c);
+  }
   m = /^run:[^:#]+:(select|train)-(.+)$/.exec(base);
   if (m) return { role: m[1], tag: m[2] };
   if (/^(pre|analyst|usecases|env):[^:#]+$/.test(base)) return { role: base.split(':')[0], tag: '' };
   if (/^(post|diff|left|sha|merge):/.test(base)) return { role: base.split(':')[0], service: true };
   return { role: null };
 }
-const MAIN = { prog: /^[AT]?\d+[mf]*$/, test: /^[AT]?\d+$/, review: /^[AT]?1$/, sec: /^[AT]?1$/, select: /^[AT]?\d+[mf]*$/, train: /^\d+$/ };
+const MAIN = { prog: /^[AT]?\d+[mf]*$/, test: /^[AT]?\d+$/, review: /^[AT]?1$/, sec: /^[AT]?1$/, select: /^[AT]?\d+[mf]*$/, train: /^\d+$/,
+  full: /^[AT]?\d+[mf]*$/, 'full-tester': /^[AT]?\d+$/, 'full-entry': /^$/ };
 // 'main' | 'after-review' | 'after-train' | 'unknown'
 function contextOf(info) {
   if (['pre', 'analyst', 'usecases', 'env'].includes(info.role)) return 'main';
@@ -135,13 +147,17 @@ function contextOf(info) {
 const TRAIN_RC = { 0: 'green', 10: 'green-unmerged', 11: 'red', 12: 'seam', 13: 'conflict', 14: 'arc-red', 15: 'coordinator' };
 const SELECT_ENV = new Set([124, 77, 78, 72, 73, 65, 69]); // ENV_RC of role-chain.js
 const VERDICTS = { test: ['green', 'red', 'environment'], review: ['done', 'rejected'], sec: ['done', 'rejected'], select: ['green', 'red'],
-  train: ['green', 'green-unmerged', 'red', 'seam', 'conflict', 'arc-red', 'coordinator', 'environment'] };
+  train: ['green', 'green-unmerged', 'red', 'seam', 'conflict', 'arc-red', 'coordinator', 'environment'],
+  full: ['green', 'red', 'environment'], 'full-tester': ['green', 'red', 'environment'], 'full-entry': ['green', 'red', 'environment'] };
+const FULL_ROLES = new Set(['full', 'full-tester', 'full-entry']);
 // {has, verdict?, head?, docsOnly?}: has false when the step has no result line or its value carries no verdict.
 function recordedOf(runDir, key, n) {
   const l = stepLines(runDir, key, n);
   const info = labelInfo(l.intent && l.intent.label);
   const v = l.result && l.result.value;
-  if (!isPlain(v) || !VERDICTS[info.role]) return { has: false };
+  if (!isPlain(v) || !VERDICTS[info.role] || info.copy) return { has: false };
+  // a full run step: green, the environment (ENV_RC or a signal, 128 + n: the chain stops it as the environment), else red
+  if (FULL_ROLES.has(info.role)) return typeof v.rc === 'number' ? { has: true, verdict: v.rc === 0 ? 'green' : SELECT_ENV.has(v.rc) || v.rc >= 128 ? 'environment' : 'red' } : { has: false };
   if (info.role === 'select' || info.role === 'train') {
     if (typeof v.rc !== 'number') return { has: false };
     const verdict = info.role === 'train' ? TRAIN_RC[v.rc] || 'environment' : v.rc === 0 ? 'green' : SELECT_ENV.has(v.rc) ? 'environment' : 'red';
@@ -184,6 +200,7 @@ function nextOf(o) {
   const at = (resumeAt, head, since) => ({ next: { resumeAt, head, since: since || null, counts: Cn } });
   const plus = (k) => Object.assign({}, Cn, { [k]: (Cn[k] || 0) + 1 });
   const vset = VERDICTS[role];
+  if (info.copy && o.as === 'ran') return err(`only retry or abort: step ${s.label} checks the copy of a full run log; its verdict is the full run's (retry runs the full run again, reused when it was green)`);
   if (o.as === 'retry' && (o.verdict !== undefined || o.head !== undefined)) return err('--verdict and --head go with ran only');
   if (o.as === 'ran' && vset) {
     if (o.verdict === undefined) return err(`ran on a ${role} step needs --verdict, one of ${vset.join(', ')} (the outcome the coordinator read, e.g. from the log or the report)`);
@@ -199,6 +216,21 @@ function nextOf(o) {
     return null;
   };
   if (info.service) return { next: null };
+  // A full run step continues with the run again, never with a new programmer round: the entry whose way in runs it
+  // first (workflows/role-chain.js entryFull: resumeAt tester - the full run on the HEAD before the tester; resumeAt
+  // review - one full run before the review, the only entry of a light run). A red run after a programmer round is a
+  // programmer round (as a red selection), a red run on a green tester's HEAD a red tester round. Off the main path, as a
+  // selection step there: only retry (from the beginning) or abort.
+  if (FULL_ROLES.has(role)) {
+    if (o.form.light && role === 'full-tester') return err(`only retry or abort: step ${s.label} is of no round of a light run (it has no tester)`);
+    const fx = contextOf(info);
+    if (fx !== 'main') return o.as === 'retry' ? begin() : err(`only retry or abort in this round: step ${s.label} is ${fx === 'unknown' ? 'of no known round of the chain' : `in the round ${fx}`}, where the chain has no entry in the middle`);
+    const entry = o.form.light || role !== 'full' ? 'review' : 'tester';
+    if (o.as === 'retry' || o.verdict === 'green' || o.verdict === 'environment') return at(entry, H);
+    if (role !== 'full-tester') return begin();
+    const t = threshold('test', 'red', Cn, undefined, false);
+    return t ? err(t) : begin(plus('testerReds'));
+  }
   if (o.as === 'retry' && o.form.light) return begin();
   if (o.form.light) {
     if (role === 'prog' && MAIN.prog.test(info.tag)) { const e = headOk(o.head, H); return e ? err(e) : at('review', o.head); }
