@@ -102,7 +102,7 @@ const lineOf = (prompt, argv) => prompt.split('\n').map((l) => l.replace(/^\d\. 
   // ---- T3, T4 through the adapter on codex
   const home0 = path.join(W, 'home0');
   fs.mkdirSync(home0);
-  fs.writeFileSync(path.join(home0, RE.CATALOG_FILE), JSON.stringify({ models: [{ slug: 'gpt-6-astra', supported_reasoning_levels: ['high'] }] }));
+  fs.writeFileSync(path.join(home0, RE.CATALOG_FILE), JSON.stringify({ models: [{ slug: 'gpt-6.1-sol', supported_reasoning_levels: ['low'] }] }));
   const PRE_S = { type: 'object', properties: { ok: { type: 'boolean' }, problems: { type: 'array', items: { type: 'string' } }, blockingQuestions: { type: 'array', items: { type: 'string' } } }, required: ['ok', 'problems', 'blockingQuestions'] };
   const tdir = path.join(W, 'tdir');
   fs.mkdirSync(tdir);

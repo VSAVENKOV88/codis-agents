@@ -208,7 +208,7 @@ const lineOf = (prompt, argv) => prompt.split('\n').map((l) => l.replace(/^\d\. 
   // ---- A12, A13: pre on codex under the conductor's flag; prog and test without cfg.commit are refused
   const home = path.join(W, 'home');
   fs.mkdirSync(home);
-  fs.writeFileSync(path.join(home, RE.CATALOG_FILE), JSON.stringify({ models: [{ slug: 'gpt-6-astra', supported_reasoning_levels: ['high'] }] }));
+  fs.writeFileSync(path.join(home, RE.CATALOG_FILE), JSON.stringify({ models: [{ slug: 'gpt-6.1-sol', supported_reasoning_levels: ['low'] }] }));
   const PRE_S = { type: 'object', properties: { ok: { type: 'boolean' }, problems: { type: 'array', items: { type: 'string' } }, blockingQuestions: { type: 'array', items: { type: 'string' } } }, required: ['ok', 'problems', 'blockingQuestions'] };
   const tdir = path.join(W, 'tdir');
   fs.mkdirSync(tdir);

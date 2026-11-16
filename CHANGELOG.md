@@ -4,6 +4,11 @@ Every version of the codis-agents plugin, newest first. What the plugin does now
 [README.md](README.md); its [Technical reference](README.md#technical-reference) is the current state of every rule,
 key and script, and this file says when and why each one changed. Versions before 0.4.14 are in the git history.
 
+## 0.4.50 - 2026-11-16
+
+- Codex roles default to `gpt-6.1-sol` with `low` effort; explicit run settings and role effort keep precedence.
+  The coordinator configuration example uses `gpt-6.1-sol` with `medium`.
+
 ## 0.4.49 - 2026-11-15
 
 - **Stand freshness** (p-stand-stale): optional read-only `stand.imageBase` supplies the actual full image-base SHA.

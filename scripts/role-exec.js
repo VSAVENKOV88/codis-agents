@@ -53,9 +53,9 @@ const { realish, inside, overlap, roleRoots } = require('./role-roots');
 // JSON Schema; only these words are converted, and any other one is refused before a call, never guessed (A1-04).
 const KEYWORDS = new Set(['type', 'properties', 'required', 'items', 'enum', 'description']);
 // The model table of codex: the Claude alias of the role (role-chain.js modelOf) -> the codex model; "default" for a call
-// without a model. Owner 2026-11-05 (question 8): every role on codex runs gpt-6-astra with effort high.
-const DEFAULT_CODEX_MODELS = Object.freeze({ opus: 'gpt-6-astra', default: 'gpt-6-astra' });
-const DEFAULT_CODEX_EFFORT = 'high';
+// without a model. Roles default to gpt-6.1-sol/low; explicit model and effort settings take precedence.
+const DEFAULT_CODEX_MODELS = Object.freeze({ opus: 'gpt-6.1-sol', default: 'gpt-6.1-sol' });
+const DEFAULT_CODEX_EFFORT = 'low';
 // The allowed codex versions of `check`: the verified list of the commit channel itself (one list, never a copy).
 const DEFAULT_CODEX_VERSIONS = VERIFIED_CODEX_VERSIONS;
 // The catalog of codex models (`codex debug models`), cached by `check` in the run home and read by the adapter.

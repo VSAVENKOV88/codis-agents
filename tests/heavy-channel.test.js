@@ -464,7 +464,7 @@ const groupAlive = (g) => { try { process.kill(-g, 0); return true; } catch (e) 
     fs.mkdirSync(home);
     const seen = [];
     const mk = (heavy) => RX.createAgent({ host: 'codex', callsDir: path.join(d.root, 'calls'), pluginRoot: ROOT, log: () => {}, env: d.env,
-      codex: { home, catalog: { models: [{ slug: 'gpt-6-astra', supported_reasoning_levels: ['high'] }] } },
+      codex: { home, catalog: { models: [{ slug: 'gpt-6.1-sol', supported_reasoning_levels: ['low'] }] } },
       tasks: { K: { dir: d.tdir, wt: d.wt, branch: 'task' } }, commit: { stateDir: d.state }, heavy,
       launch: async (plan) => { seen.push(plan); return { outcome: 'crashed', error: 'a test launcher' }; } });
     const schema = { type: 'object', properties: { a: { type: 'string' } } };
@@ -488,7 +488,7 @@ const groupAlive = (g) => { try { process.kill(-g, 0); return true; } catch (e) 
     fs.mkdirSync(home);
     let got = null;
     const mk = (heavy) => RX.createAgent({ host: 'codex', callsDir: path.join(d.root, 'calls'), pluginRoot: ROOT, log: () => {}, env: d.env,
-      codex: { home, catalog: { models: [{ slug: 'gpt-6-astra', supported_reasoning_levels: ['high'] }] } },
+      codex: { home, catalog: { models: [{ slug: 'gpt-6.1-sol', supported_reasoning_levels: ['low'] }] } },
       tasks: { K: { dir: d.tdir, wt: d.wt, branch: 'task' } }, commit: { stateDir: d.state }, heavy,
       launch: async (plan) => {
         got = jsonOut(await req(d, ['--max', '20', '--', 'true'], { CODIS_HEAVY_BOX: plan.env.CODIS_HEAVY_BOX, CODIS_HEAVY_ANSWERS: plan.env.CODIS_HEAVY_ANSWERS }));

@@ -123,8 +123,8 @@ Steps of the owner, in a terminal (outside the coordinator's sandbox) or in the 
 3. `config.toml` of the coordinator home:
 
 ```toml
-model = "<model>"
-model_reasoning_effort = "high"
+model = "gpt-6.1-sol"
+model_reasoning_effort = "medium"
 sandbox_mode = "workspace-write"
 approval_policy = "on-request"
 

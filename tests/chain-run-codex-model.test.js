@@ -4,7 +4,7 @@
 // chain-run.js start --host codex --codex-model <slug> --codex-effort <level> gives the adapter cfg.codex.models (every
 // model alias of the config and "default" -> slug) and cfg.codex.effort (level). The conductor runs as a process with the
 // fake codex of tests/fixtures/chain-run/bin (its catalog: gpt-6.1-sol low/high, gpt-6-luna low/medium); no model is called.
-//   M1 with the flags every role call runs with that slug and effort: argv -m / model_reasoning_effort, calls.jsonl;
+//   M1 with the flags every role uses that slug; explicit role effort wins over the run effort: argv -m / model_reasoning_effort, calls.jsonl;
 //   M2 a slug outside the catalog or an effort the model does not support stops the task before any role (the host check);
 //      an empty slug or effort is refused at start (exit 64, no run folder), never replaced by the defaults;
 //   M3 without the flags the defaults of the adapter: gpt-6.1-sol, effort low (pre keeps the low effort it names);
@@ -141,11 +141,11 @@ try {
   {
     const c = codexRun('m1', ['--codex-model', 'gpt-6-luna', '--codex-effort', 'medium']);
     ok('M1 the chain ran to the end: pre, prog, test, review; done', c.r && c.r.status === 'done' && c.execs.map((e) => e.key).join('>') === [K_PRE, K_PROG, K_TEST, K_REVIEW].join('>'), J(c.r) + ' ' + c.out);
-    ok('M1 every codex exec ran with -m gpt-6-luna and model_reasoning_effort=medium', c.execs.length === 4 && c.execs.every((e) => argOf(e.argv, '-m') === 'gpt-6-luna' && effortOf(e.argv) === 'medium'),
+    ok('M1 every exec uses luna; pre keeps low, other roles use medium', c.execs.length === 4 && c.execs.every((e) => argOf(e.argv, '-m') === 'gpt-6-luna' && effortOf(e.argv) === (e.key === K_PRE ? 'low' : 'medium')),
       J(c.execs.map((e) => [argOf(e.argv, '-m'), effortOf(e.argv)])));
-    ok('M1 calls.jsonl: every call model gpt-6-luna, effort medium, ok', c.calls.length === 4 && c.calls.every((x) => x.model === 'gpt-6-luna' && x.effort === 'medium' && x.outcome === 'ok'),
+    ok('M1 calls.jsonl: luna, pre low, other roles medium, ok', c.calls.length === 4 && c.calls.every((x) => x.model === 'gpt-6-luna' && x.effort === (x.role === 'preconditions' ? 'low' : 'medium') && x.outcome === 'ok'),
       J(c.calls.map((x) => [x.label, x.model, x.effort, x.outcome])));
-    ok('M5 run.json records codexModel gpt-6-luna and codexEffort low', c.runJson && c.runJson.codexModel === 'gpt-6-luna' && c.runJson.codexEffort === 'medium', J(c.runJson));
+    ok('M5 run.json records codexModel gpt-6-luna and codexEffort medium', c.runJson && c.runJson.codexModel === 'gpt-6-luna' && c.runJson.codexEffort === 'medium', J(c.runJson));
     const s = c.j ? cr(['status', c.j.runDir, '--config', CFG]) : null;
     let sj = null;
     try { sj = JSON.parse(s.stdout); } catch { /* below */ }
@@ -157,7 +157,7 @@ try {
     const c = codexRun('m3', []);
     ok('M3 without the flags: done', c.r && c.r.status === 'done', J(c.r) + ' ' + c.out);
     ok('M3 without the flags: every exec -m gpt-6.1-sol; effort low, pre the low it names',
-      c.execs.length === 4 && c.execs.every((e) => argOf(e.argv, '-m') === 'gpt-6.1-sol' && effortOf(e.argv) === (e.key === K_PRE ? 'low' : 'low')),
+      c.execs.length === 4 && c.execs.every((e) => argOf(e.argv, '-m') === 'gpt-6.1-sol' && effortOf(e.argv) === 'low'),
       J(c.execs.map((e) => [argOf(e.argv, '-m'), effortOf(e.argv)])));
     ok('M5 status without flags shows sol/low', c.st && c.st.codexModel === 'gpt-6.1-sol' && c.st.codexEffort === 'low', J(c.st));
     ok('M5 without the flags run.json records the defaults: gpt-6.1-sol, low', c.runJson && c.runJson.codexModel === 'gpt-6.1-sol' && c.runJson.codexEffort === 'low', J(c.runJson));

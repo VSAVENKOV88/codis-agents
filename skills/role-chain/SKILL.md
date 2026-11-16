@@ -97,7 +97,7 @@ skill `codis-agents:coordinator` (the coordinator home, its `config.toml` and ru
    `sharedDir`, not inside a worktree (e.g. `<sharedDir>/<key>/chain-tasks.json` and `<sharedDir>/<key>/chain-owner.txt`).
 2. Start: `node <plugin>/scripts/chain-run.js start --host codex --tasks <tasks file> --owner <owner file> --codex-home <run home>`
    (add `--config <codis-agents.json>` when the config is not found from the working directory, and `--bin <codex>`
-   for a codex of a version the run home was checked with). The roles run `gpt-6-astra` with effort `high`; for
+   for a codex of a version the run home was checked with). The roles run `gpt-6.1-sol` with effort `low`; for
    another model and effort of the whole run add `--codex-model <slug> --codex-effort <level>` (e.g. `gpt-6-luna` `low`
    for a cheap acceptance run; only with `--host codex`). A slug outside the catalog of the run home or an effort the
    model does not support stops every task before any role; `status` shows `codexModel` and `codexEffort`. Keep the

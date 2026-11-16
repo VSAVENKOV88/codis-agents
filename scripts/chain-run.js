@@ -37,7 +37,7 @@
 //                [--codex-model <slug>] [--codex-effort <level>]
 //     --codex-model and --codex-effort (only with --host codex; with --host claude exit 64) pick the model and effort of
 //     every role of the run: each model alias of the config and "default" map to the slug, the level is the effort of a
-//     call that names none (pre names low). Without them the adapter's defaults hold (gpt-6-astra, high). The conductor's
+//     call that names none (pre names low). Without them the adapter's defaults hold (gpt-6.1-sol, low). The conductor's
 //     host check (role-exec.js check --model --effort) refuses a slug outside the catalog of the run home or an effort
 //     the model does not support, and every task stops before any role. An empty value is a usage error (exit 64): an
 //     unset shell variable would otherwise run every role on the defaults.

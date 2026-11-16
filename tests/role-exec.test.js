@@ -235,9 +235,9 @@ const readCall = (plan, f) => { try { return fs.readFileSync(path.join(plan.call
   // X argv: codex exec ... -m <model> -c model_reasoning_effort=<e> --output-schema <call>/schema.json -o <call>/last.json; schema = strict form
   answer = { rc: 0, output: JSON.stringify({ verdict: 'done', docsOnly: false, fixBehaviourUnchanged: null, summary: 's' }) };
   r = await call(X, 'review:K#1');
-  ok('X argv: exec --json --ephemeral, -m gpt-6-astra (opus by the default table), effort high (default), stdin "-"',
+  ok('X argv: exec --json --ephemeral, -m gpt-6.1-sol (opus by the default table), effort low (default), stdin "-"',
     r.plan && r.plan.bin === '/fake/codex' && r.plan.argv[0] === 'exec' && r.plan.argv.includes('--json') && r.plan.argv.includes('--ephemeral')
-    && argOf(r.plan, '-m') === 'gpt-6-astra' && argOf(r.plan, '-c') === 'model_reasoning_effort=high' && r.plan.argv[r.plan.argv.length - 1] === '-', r.plan && r.plan.argv.join(' '));
+    && argOf(r.plan, '-m') === 'gpt-6.1-sol' && argOf(r.plan, '-c') === 'model_reasoning_effort=low' && r.plan.argv[r.plan.argv.length - 1] === '-', r.plan && r.plan.argv.join(' '));
   ok('X argv: --output-schema is <call dir>/schema.json holding strict(schema); -o is <call dir>/last.json',
     r.plan && argOf(r.plan, '--output-schema') === path.join(r.plan.callDir, 'schema.json') && argOf(r.plan, '-o') === path.join(r.plan.callDir, 'last.json')
     && same(JSON.parse(readCall(r.plan, 'schema.json')), ST.REVIEW_SCHEMA));
@@ -326,9 +326,9 @@ const readCall = (plan, f) => { try { return fs.readFileSync(path.join(plan.call
   // A1-10 models
   answer = { rc: 0, output: JSON.stringify(sample(ST.REVIEW_SCHEMA, true)) };
   r = await call(X, 'review:K#1', { opts: { model: 'opus' } });
-  ok('A1-10 X opus -> gpt-6-astra', argOf(r.plan, '-m') === 'gpt-6-astra');
+  ok('A1-10 X opus -> gpt-6.1-sol', argOf(r.plan, '-m') === 'gpt-6.1-sol');
   r = await call(X, 'review:K#1', { opts: { model: undefined } });
-  ok('A1-10 X no model -> the default of the table', argOf(r.plan, '-m') === 'gpt-6-astra');
+  ok('A1-10 X no model -> the default of the table', argOf(r.plan, '-m') === 'gpt-6.1-sol');
   const XH = mk('codex', { codex: { models: { opus: 'gpt-6-astra', haiku: 'gpt-6-luna', default: 'gpt-6.1-sol' } } });
   r = await call(XH, 'review:K#1', { opts: { model: 'haiku' } });
   ok('A1-10 X haiku by a configured table', argOf(r.plan, '-m') === 'gpt-6-luna');
@@ -350,7 +350,7 @@ const readCall = (plan, f) => { try { return fs.readFileSync(path.join(plan.call
   r = await call(mk('codex', { codex: { effort: 'medium' } }), 'review:K#1', { opts: { effort: undefined } });
   ok('A1-11 X no effort -> cfg.codex.effort', argOf(r.plan, '-c') === 'model_reasoning_effort=medium');
   r = await call(X, 'review:K#1', { opts: { effort: 'max' } });
-  ok('A1-11 X max is in the catalog of gpt-6-astra -> passed as is (by the catalog, not by a list)', argOf(r.plan, '-c') === 'model_reasoning_effort=max');
+  ok('A1-11 X max is in the catalog of gpt-6.1-sol -> passed as is (by the catalog, not by a list)', argOf(r.plan, '-c') === 'model_reasoning_effort=max');
   await refused(mk('codex', { codex: { models: { opus: 'gpt-6-luna', default: 'gpt-6-luna' } } }), 'review:K#1', /effort/, { opts: { effort: 'ultra' } }, 'A1-11 X effort not supported by the model');
   await refused(X, 'review:K#1', /effort/, { opts: { effort: 'turbo' } }, 'A1-11 X unknown effort');
   await refused(mk('codex', { codex: { catalog: null, home: path.join(TMP, 'empty-home') } }), 'review:K#1', /catalog/, {}, 'X no model catalog (no check run)');
@@ -401,7 +401,7 @@ const readCall = (plan, f) => { try { return fs.readFileSync(path.join(plan.call
     'outcome', 'rc', 'signal', 'error', 'usage', 'costUSD', 'notes', 'sessionId', 'credentialExpiresAt', 'callDir'];
   ok('record: one line per call with every field (ts, host, label, task, role, phase, model, effort, times, outcome, usage, ...)',
     rec.length === 1 && FIELDS.every((f) => f in rec[0]) && rec[0].host === 'codex' && rec[0].label === 'review:K#7' && rec[0].task === 'K' && rec[0].role === 'reviewer'
-    && rec[0].phase === 'Reviewer' && rec[0].model === 'gpt-6-astra' && rec[0].effort === 'high' && rec[0].outcome === 'ok' && rec[0].usage.input === 5 && rec[0].pid === 42
+    && rec[0].phase === 'Reviewer' && rec[0].model === 'gpt-6.1-sol' && rec[0].effort === 'low' && rec[0].outcome === 'ok' && rec[0].usage.input === 5 && rec[0].pid === 42
     && rec[0].sessionId === 's1' && rec[0].callDir === r.plan.callDir, JSON.stringify(rec));
   // a refusal for an unknown key goes to callsDir (G7)
   const nc = records(CALLS).length;
@@ -463,7 +463,7 @@ console.error('unexpected ' + a); process.exit(9);\n`);
     fs.existsSync(path.join(HOME, 'codis-agents-models.json')));
   answer = { rc: 0, output: JSON.stringify(sample(ST.REVIEW_SCHEMA, true)) };
   r = await call(mk('codex', { codex: { catalog: undefined, home: HOME } }), 'review:K#1');
-  ok('A1-29 the adapter reads the catalog that check cached', argOf(r.plan, '-m') === 'gpt-6-astra' && r.res && r.res.verdict === 'done', JSON.stringify(r.res));
+  ok('A1-29 the adapter reads the catalog that check cached', argOf(r.plan, '-m') === 'gpt-6.1-sol' && r.res && r.res.verdict === 'done', JSON.stringify(r.res));
   c = check(cx, { version: 'codex-cli 0.150.0' });
   ok('A1-29 check codex: a version outside the list -> red with the reason', c.rc === 1 && c.j && c.j.ok === false && c.j.problems.some((p) => /version/.test(p)), c.out);
   // p-codex-v167 C1/C4: 0.166.0 and 0.167.0 are verified, the next minor is not

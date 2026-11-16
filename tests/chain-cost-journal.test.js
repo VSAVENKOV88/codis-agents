@@ -208,7 +208,7 @@ try {
       const ag = RX.createAgent({
         host: 'codex', tasks: { c25: { wt: tmp, dir: tdir } }, pluginRoot: ROOT, callsDir: path.join(tmp, 'c25-calls'), log: () => {},
         launch: async () => ({ rc: 0, output: JSON.stringify({ verdict: 'done' }), usage: E1 }),
-        codex: { bin: '/fake/codex', home: path.join(tmp, 'c25-home'), catalog: { models: [{ slug: 'gpt-6-astra', supported_reasoning_levels: [{ effort: 'high' }] }] } },
+        codex: { bin: '/fake/codex', home: path.join(tmp, 'c25-home'), models: { default: 'gpt-6-astra' }, effort: 'high', catalog: { models: [{ slug: 'gpt-6-astra', supported_reasoning_levels: [{ effort: 'high' }] }] } },
       });
       const v = await ag('Review.\n', { label: 'review:c25#1', phase: 'Review', agentType: 'general-purpose', schema: { type: 'object', properties: { verdict: { type: 'string' } }, required: ['verdict'] } });
       const y = run('--journal', tdir, '--median', '5e6');
