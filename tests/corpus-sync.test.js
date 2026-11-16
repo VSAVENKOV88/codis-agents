@@ -52,11 +52,12 @@ function files(top) {
 fs.mkdirSync(fake); fs.mkdirSync(shared); fs.mkdirSync(server);
 // ssh: logs its arguments; FAKE_SSH_FAIL=1 - the host does not answer; otherwise the command after the destination
 // runs with sh in the server home, stdin passed through, and nothing of this machine's environment but PATH.
+// A failed connection drains the bundle before exiting so the assertion sees the SSH refusal rather than a pipe race.
 fs.writeFileSync(path.join(fake, 'ssh'), `#!${process.execPath}
 const fs = require('fs'); const { spawnSync } = require('child_process');
 const a = process.argv.slice(2);
 fs.appendFileSync(process.env.SSH_LOG, JSON.stringify(a) + '\\n');
-if (process.env.FAKE_SSH_FAIL) { process.stderr.write('ssh: connect to host example.org port 22: Connection refused\\n'); process.exit(255); }
+if (process.env.FAKE_SSH_FAIL) { fs.readFileSync(0); process.stderr.write('ssh: connect to host example.org port 22: Connection refused\\n'); process.exit(255); }
 const withArg = new Set(['-F', '-i', '-o', '-p', '-l', '-E', '-b', '-c', '-D', '-e', '-I', '-J', '-L', '-m', '-O', '-Q', '-R', '-S', '-W', '-w']);
 let i = 0; while (i < a.length && a[i].startsWith('-')) i += withArg.has(a[i]) ? 2 : 1;
 const cmd = a.slice(i + 1).join(' ');

@@ -280,7 +280,7 @@ const sect = (h, c) => `\nContents of ${h}:\n\n${c}`;
   fs.writeFileSync(f, Buffer.concat([gen, Buffer.from('an edit by hand\n')]));
   const c = check(d);
   ok('K2. body edited by hand: check exit 1 "edited by hand", the hint names CLAUDE.md and --discard-edits',
-    c.status === 1 && /AGENTS\.md was edited by hand/.test(c.out) && /move the edit into CLAUDE\.md/.test(c.out) && /--discard-edits/.test(c.out) && !/stale/.test(c.out), c.out);
+    c.status === 1 && /AGENTS\.md was edited by hand/.test(c.out) && /move the edit into CLAUDE\.md/.test(c.out) && /--discard-edits/.test(c.out) && !/AGENTS\.md is stale/.test(c.out), c.out);
   const edited = agents(d);
   const w = write(d);
   ok('K2. write does not overwrite an edited file without --discard-edits (exit 1, file unchanged)', w.status === 1 && /edited by hand/.test(w.out) && agents(d).equals(edited), w.out);
