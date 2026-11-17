@@ -19,7 +19,7 @@ const BIN = path.join(__dirname, 'fixtures', 'chain-run', 'bin');
 const W = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'chain-run-j-')));
 const SHARED = path.join(W, 's'), WTR = path.join(W, 'r'), REPO = path.join(W, 'repo');
 const CFG = path.join(W, 'codis-agents.json');
-fs.writeFileSync(CFG, JSON.stringify({ repoDir: REPO, sharedDir: SHARED, worktreeRoot: WTR, guardCommand: 'true {wt}', testerWritable: ['-run\\.js$'] }));
+fs.writeFileSync(CFG, JSON.stringify({ repoDir: REPO, sharedDir: SHARED, worktreeRoot: WTR, guardCommand: 'true {wt}', testerWritable: ['-run\\.js$'], conductorFullRun: false }));
 const git = (...a) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t'].concat(a), { encoding: 'utf8' });
 fs.mkdirSync(REPO);
 git('-C', REPO, 'init', '-q');
@@ -185,7 +185,7 @@ const cleanup = () => {
     // S14 at the intent and at the launch, with a fake launcher: nothing runs after the journal refuses.
     {
       const mkRun = () => { const d = path.join(W, `direct${++nFake}`); fs.mkdirSync(d); return d; };
-      const config = { sharedDir: path.join(W, 'sd'), worktreeRoot: WTR, guardCommand: 'true {wt}', testerWritable: ['-run\\.js$'], scriptsDir: path.join(ROOT, 'scripts') };
+      const config = { sharedDir: path.join(W, 'sd'), worktreeRoot: WTR, guardCommand: 'true {wt}', testerWritable: ['-run\\.js$'], conductorFullRun: false, scriptsDir: path.join(ROOT, 'scripts') };
       const runDirect = async (key, failAt, onlyThat) => {
         const dirR = mkRun();
         let n = 0;
@@ -276,7 +276,7 @@ const cleanup = () => {
     // ---- the place: a sharedDir inside a write root refuses the start, before anything is written
     const refused = (name, tasks, cfgObj, host, extraEnv) => {
       const cfg = path.join(W, `cfg${++nTasks}.json`);
-      fs.writeFileSync(cfg, JSON.stringify(Object.assign({ repoDir: REPO, sharedDir: SHARED, worktreeRoot: WTR, guardCommand: 'true {wt}', testerWritable: ['-run\\.js$'] }, cfgObj || {})));
+      fs.writeFileSync(cfg, JSON.stringify(Object.assign({ repoDir: REPO, sharedDir: SHARED, worktreeRoot: WTR, guardCommand: 'true {wt}', testerWritable: ['-run\\.js$'], conductorFullRun: false }, cfgObj || {})));
       const sd = (cfgObj && cfgObj.sharedDir) || SHARED;
       const runs = path.join(sd, 'runs');
       const n0 = fs.existsSync(runs) ? fs.readdirSync(runs).length : 0;
@@ -334,7 +334,7 @@ const cleanup = () => {
       fs.mkdirSync(realS);
       fs.symlinkSync(realS, linkS);
       const cfgL = path.join(W, 'cfg-linked.json');
-      fs.writeFileSync(cfgL, JSON.stringify({ repoDir: REPO, sharedDir: linkS, worktreeRoot: WTR, guardCommand: 'true {wt}', testerWritable: ['-run\\.js$'] }));
+      fs.writeFileSync(cfgL, JSON.stringify({ repoDir: REPO, sharedDir: linkS, worktreeRoot: WTR, guardCommand: 'true {wt}', testerWritable: ['-run\\.js$'], conductorFullRun: false }));
       const fdL = fake({ programmer: [{ $sleep: 120, then: PROG }] });
       const sL = start([task('l1')], fdL, cfgL);
       until(() => starts(fdL, 'programmer')[0]);
@@ -570,7 +570,7 @@ const cleanup = () => {
       }
       for (const [name, shared] of cfgs) {
         const cf = path.join(W, `cfg-c2-${name.length}.json`);
-        fs.writeFileSync(cf, JSON.stringify({ repoDir: REPO, sharedDir: shared, worktreeRoot: WTR, guardCommand: 'true {wt}', testerWritable: ['-run\\.js$'] }));
+        fs.writeFileSync(cf, JSON.stringify({ repoDir: REPO, sharedDir: shared, worktreeRoot: WTR, guardCommand: 'true {wt}', testerWritable: ['-run\\.js$'], conductorFullRun: false }));
         fd = fake({});
         const p = cr(['start', '--host', 'claude', '--tasks', tasksFile([task('c2', { dir: path.join(W, 'c2-dir') })]), '--owner', OWNER, '--config', cf], envOf(fd));
         ok(`C2 sharedDir ${name}: exit 64 with the cause, no stack, no role`, p.status === 64 && /chain-run: .*state folder/.test(p.stderr) && !/\n\s+at /.test(p.stderr) && !starts(fd).length, `${p.status} ${p.stderr}`);

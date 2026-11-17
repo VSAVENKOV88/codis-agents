@@ -5,7 +5,8 @@ export const meta = {
   phases: [
     { title: 'Preconditions', detail: 'brief, worktree, branch, open questions' },
     { title: 'Analyst', detail: 'matrix of cases or a diagnosis (before the programmer, after the second rejection, or after the second red tester round)' },
-    { title: 'Programmer', detail: 'red guard -> code -> mutations (-> its own full guard run without guardSubsetCommand)' },
+    { title: 'Programmer', detail: 'red guard -> code -> mutations (-> its own full guard run without guardSubsetCommand, only when the workflow does not run it)' },
+    { title: 'Full run', detail: 'without guardSubsetCommand, under the conductor: the full guard run of every new programmer HEAD (and of a green tester\'s own commits) as a wait step outside the roles\' sandbox, its log checked and handed to the next role (conductorFullRun false: the programmer runs it)' },
     { title: 'Selection', detail: 'the guards of the task\'s diff on every new programmer HEAD, run by the workflow as a wait step (no full guard run in the task; none with innerSelect false)' },
     { title: 'Tester', detail: 'independent inventory, own guards, acceptance in the real environment' },
     { title: 'Reviewer', detail: 'read only, tries to refute' },
@@ -103,7 +104,8 @@ const gname = (t) => String(t.gdir).replace(/\/+$/, '').split('/').pop()
 // own commits, runs the selection of its own diff from the programmer's HEAD (testerSelectRun, p-tester-select: it
 // changes only guards and fixtures, so the product guards of the task's selection are already green on the same code),
 // and none without a commit. The one full run of the branch belongs to the integration train, not to the task. Without
-// the key the programmer runs the full run itself, as before.
+// the key the full run belongs to the task: under the conductor the workflow runs it (FULL, below), under the Workflow
+// runtime the programmer runs it itself.
 const ONE_RUN = typeof CFG.guardSubsetCommand === 'string' && CFG.guardSubsetCommand.trim() !== ''
 // Only the train (p-train-only, owner 2026-11-01, translated: "1. Only the train, plus a short tester round after a red train"):
 // with guardSubsetCommand and innerSelect false there is no selection inside the task at all - no wait step after a
@@ -113,6 +115,14 @@ const ONE_RUN = typeof CFG.guardSubsetCommand === 'string' && CFG.guardSubsetCom
 // train-only.md, 80 tasks): a selection found a real finding in 21 % of tasks while every task waited for it (a median of
 // 32 min, 84-125 min under load); the runner at 6 tasks 94 % -> 65 %.
 const INNER = ONE_RUN && CFG.innerSelect !== false
+// The full run as a wait step of the conductor (p-codex-fullrun, mechanism M1): without guardSubsetCommand, under the
+// conductor (exec: it runs the step's argv as a process outside the sandbox of every role), the workflow runs the full
+// guard run on every new programmer HEAD and on the HEAD of a green tester's own commits, so no role runs it inside its
+// sandbox, where guards that start a sandbox of their own, ask ps or write /tmp fail with EPERM. conductorFullRun false
+// (a project key, default true) keeps the earlier path: the programmer runs the full run itself. The Workflow runtime has
+// no exec: as before. scripts/chain-run.js (conductorRunsFull) applies the same rule to mark the heavy channel of a
+// codex role (cfg.heavy.fullByWorkflow), which then refuses a full run of the role: change both together.
+const FULL = !ONE_RUN && typeof exec === 'function' && CFG.conductorFullRun !== false
 // The config of every trusted guard run the chain starts - the selection wait step, the tester's selection in its prompt,
 // the ride - is the chain's own (CFG.configPath, pinned by CODIS_AGENTS_CONFIG), never the .claude/codis-agents.json a
 // branch commits: guards-all.sh looks the config up from the worktree only without the variable (owner 2026-11-12: the
@@ -126,6 +136,8 @@ const selectRun = (t) => `${cfgEnv()}${SCRIPTS}/guards-all.sh --select ${baseArg
 // 17.9 min of a task's path and the runner from 58 % to 85 % of its capacity): the diff of its own commits from the
 // programmer's HEAD of its round (st.head before the tester), so its guards, the guards that import or name a fixture it
 // changed and guardAlways run, not the task's product guards again.
+// The full run of the task as the workflow runs it (FULL): guards-all.sh on the worktree, with the chain's own config.
+const fullRun = (t) => `${cfgEnv()}${SCRIPTS}/guards-all.sh ${sq(t.gdir)}`
 const testerSelectRun = (t, head) => `${cfgEnv()}${SCRIPTS}/guards-all.sh --select ${nonBlankS(head) ? sq(head.trim()) : "<the programmer's HEAD you started from>"} ${sq(t.gdir)}`
 function nonBlankS(v) { return typeof v === 'string' && v.trim() !== '' }
 
@@ -138,14 +150,16 @@ const RULE_LIST = (t) => [
   ['decisions', 'Only the coordinator writes the owner\'s decisions. An open question goes into your own report as a line "❓ coordinator: ..."; do not decide it yourself.'],
   ['pauses', `Pauses: never wait longer than 270 s at a time. A turn without a tool call ends your role - Monitor does not wake a workflow agent (its events reach you only as an attachment to your next request, and a turn of text alone makes no next request), so never end a turn with text like 'Waiting.': start anything long with Bash run_in_background, then wait for it with a blocking Bash loop (timeout 270000: until its log's final line appears or its process has died; do sleep 3; done) and repeat the loop, not with Monitor; an agent with no output for 10 minutes is killed. While your own process waits in a slot queue or runs, keep waiting in slices while your process is alive: do not end your work to wait (the chain has no status for it; ${INNER ? 'the selection of the task\'s guards after a programmer round' : ONE_RUN ? 'the integration train' : 'the one full guard run'} is waited for by the workflow, not by you).`],
   ['context', 'Context: past ~200k finish the current stage, write the report with "Next step: ..." and stop - a fresh agent continues.'],
-  ['slots', `Heavy work goes through memory slots: ${SCRIPTS}/heavy.sh <cmd>, ${SCRIPTS}/medium.sh <cmd>, ${INNER ? `a selection of guards ${cfgEnv()}${SCRIPTS}/guards-all.sh --select <ref> ${sq(t.gdir)} (the selection of the task from its base is run by the workflow, never by a role; a role runs only a selection its own instructions name - the tester the one of its own diff)` : ONE_RUN ? 'no selection and no full run of guards in the task (innerSelect false: the train runs them); a guard of your own that needs a browser or a bundler goes through heavy.sh' : `full guard run ${SCRIPTS}/guards-all.sh ${t.gdir}`}; start heavy.sh and guards-all.sh themselves only through Bash run_in_background, never as a blocking call (a blocking call to the heavy command itself is killed by the Bash timeout, its ticket dropped by the slot's trap, and it rejoins the queue at the end), then wait for it with a separate blocking Bash loop of at most 270 s (timeout 270000: until its log's final line appears or its process has died; do sleep 3; done) and repeat it - a turn without a tool call ends your role.`],
+  ['slots', `Heavy work goes through memory slots: ${SCRIPTS}/heavy.sh <cmd>, ${SCRIPTS}/medium.sh <cmd>, ${INNER ? `a selection of guards ${cfgEnv()}${SCRIPTS}/guards-all.sh --select <ref> ${sq(t.gdir)} (the selection of the task from its base is run by the workflow, never by a role; a role runs only a selection its own instructions name - the tester the one of its own diff)` : ONE_RUN ? 'no selection and no full run of guards in the task (innerSelect false: the train runs them); a guard of your own that needs a browser or a bundler goes through heavy.sh' : FULL ? `no full guard run of your own (the workflow runs ${fullRun(t)} as a wait step on every new HEAD); a guard of your own that needs a browser or a bundler goes through heavy.sh` : `full guard run ${SCRIPTS}/guards-all.sh ${t.gdir}`}; start heavy.sh and guards-all.sh themselves only through Bash run_in_background, never as a blocking call (a blocking call to the heavy command itself is killed by the Bash timeout, its ticket dropped by the slot's trap, and it rejoins the queue at the end), then wait for it with a separate blocking Bash loop of at most 270 s (timeout 270000: until its log's final line appears or its process has died; do sleep 3; done) and repeat it - a turn without a tool call ends your role.`],
   ['rerun', ONE_RUN && !INNER
     ? `No role runs guards-all.sh in the task (innerSelect false): the integration train after the review reruns each new red of its full run alone; red again alone - the task's new red, which comes back to the programmer with the train's result; green alone - flaky, written into the project's quarantine by the train, not a regression.${CFG.guardBaseline ? ` Known reds listed in ${CFG.guardBaseline} (config guardBaseline) are subtracted first and never rerun: not a regression; a fix that turns one green removes its entry in the same commit; do not edit the quarantine.` : ''} Your own guards you run directly; a red one is yours to fix.`
-    : `New reds of a ${ONE_RUN ? 'selection' : 'full run'}: ${SCRIPTS}/guards-all.sh reruns each one alone in the same slot. Red again alone - a new red (a regression); green alone - flaky: not a regression, name it in your report under "Flaky guards" for the coordinator, who puts it into the project backlog.${CFG.guardBaseline ? ` Known reds listed in ${CFG.guardBaseline} (config guardBaseline) are subtracted first and never rerun ("N known red"): not a regression; a fix that turns one green removes its entry in the same commit.${ONE_RUN ? ` On a selection the project's quarantine is read only (<sharedDir>/guards-quarantine.json, known reds it lists are subtracted): a flaky guard goes into your report, not into the quarantine; do not edit either file for it.` : ` A flaky guard is written into the project's quarantine (<sharedDir>/guards-quarantine.json, outside the worktree) and is known in later runs; only the coordinator moves it into ${CFG.guardBaseline}: do not edit either file for it.`}` : ''} A ${ONE_RUN ? 'selection' : 'full run'} on the same HEAD with a clean tracked tree that ended green is reused ("reused, HEAD <sha>"); --force runs again.`],
+    : `New reds of a ${ONE_RUN ? 'selection' : FULL ? 'full run (the workflow\'s)' : 'full run'}: ${SCRIPTS}/guards-all.sh reruns each one alone in the same slot. Red again alone - a new red (a regression); green alone - flaky: not a regression, name it in your report under "Flaky guards" for the coordinator, who puts it into the project backlog.${CFG.guardBaseline ? ` Known reds listed in ${CFG.guardBaseline} (config guardBaseline) are subtracted first and never rerun ("N known red"): not a regression; a fix that turns one green removes its entry in the same commit.${ONE_RUN ? ` On a selection the project's quarantine is read only (<sharedDir>/guards-quarantine.json, known reds it lists are subtracted): a flaky guard goes into your report, not into the quarantine; do not edit either file for it.` : ` A flaky guard is written into the project's quarantine (<sharedDir>/guards-quarantine.json, outside the worktree) and is known in later runs; only the coordinator moves it into ${CFG.guardBaseline}: do not edit either file for it.`}` : ''} A ${ONE_RUN ? 'selection' : 'full run'} on the same HEAD with a clean tracked tree that ended green is reused ("reused, HEAD <sha>"); --force runs again.`],
   ['onerun', ONE_RUN && !INNER
     ? `No selection and no full guard run in the task (innerSelect false): the integration train after the review is the first run of all guards. The programmer and the tester run only their new or changed guards and their mutations, never guards-all.sh. A red train comes back to the programmer with its result; a fix that touches the product (a file outside docs and the tester's guards and fixtures) gets a short tester round - the acceptance of the cells the fix touches and the tester's own guards over them - before the second review (in the light mode there is no tester: the programmer-checker runs that acceptance itself), a fix of guards or docs only goes straight to the second review; then the train again.`
     : ONE_RUN
     ? `No full guard run in the task: after every programmer round with a new HEAD the workflow runs the selection of the task's guards, ${selectRun(t)} (a wait step: changed guards, guards that import a changed file or name it, the project's guardAlways; new reds rerun alone, known reds subtracted, the quarantine read only), and hands its log to the next role; no role runs the full suite. The programmer runs only its new guards and mutations, no selection. The tester, after its own commits, runs the selection of its own diff from the programmer's HEAD of its round through Bash run_in_background: ${cfgEnv()}${SCRIPTS}/guards-all.sh --select <the programmer's HEAD> ${sq(t.gdir)} (its guards, the guards that import or name a file it changed - a fixture -, the project's guardAlways; its log ${CFG.sharedDir}/guards-${gname(t)}.select.txt; "nothing selected" - run your new guards directly); no commit of the tester - no selection of its own, the workflow's log is the evidence. A flaky guard of a selection goes into your report, not into the quarantine.`
+    : FULL
+    ? `One full guard run per HEAD, run by the workflow: the project config has no guardSubsetCommand, so after every programmer round with a new HEAD, and after the own commits of a tester whose verdict is green, the workflow runs the full run ${fullRun(t)} as a wait step outside the sandbox of any role, checks its log and hands a copy of it to the next role; a red full run comes back to the programmer with that log. No role runs the full suite (no guards-all.sh without --select, no full run through a heavy channel): the programmer and the tester run only their new or touched guards and their mutations. ${SCRIPTS}/guards-select.js --wt ${sq(t.wt)} --base ${baseArg(t)} lists the guards a change touches.`
     : `One full guard run per task: the project config has no guardSubsetCommand, so the programmer runs the full run (${SCRIPTS}/guards-all.sh ${t.gdir}) and the tester reuses its log; ${SCRIPTS}/guards-select.js --wt ${sq(t.wt)} --base ${baseArg(t)} lists the guards a change touches.`],
   ['docker', `Docker: ${CFG.ownerStackReadOnly ? `the owner's stack ${CFG.ownerStackReadOnly}` : 'the owner\'s stack'} is read-only (docker cp out is fine); never write into its containers; only a tester runs its own stack, and only when the brief asks, then removes it with its images and volumes (docker compose -p <stack> down -v --rmi all). Never remove the owner's stack or its images; other images and the build cache are not yours to clean. A post-check after you removes what the task left (its stack, processes in its worktree, the slots they hold) and reports it.`],
   ['stand', CFG.stand && CFG.stand.project
@@ -423,6 +437,103 @@ const selectStep = async (t, n) => {
 const selLine = (r) => (r ? `exit ${r.rc}; summary ${r.log}, selection log ${r.guards}` : 'none on this HEAD')
 const MAX_SEL_FIX = 2
 
+// The full run step (FULL). The wait step runs guards-all.sh <gdir> (no --select: the full suite, its reruns of new reds
+// alone and its reuse of a green run of the same HEAD) and copies its log and the log's record into the steps folder: the
+// next run of the worktree, by the workflow, the coordinator or a role, rewrites guards-<name>.txt. Then a service step,
+// guards-result.js copy-check, tells whether the copy is the run of this step on st.head (the workflow reads no files);
+// only a checked copy reaches a role. The outcome of fullStep: {fail, environment?, full?} (the task stops: the step could
+// not run, the environment - ENV_RC, a signal (exit >= 128: tests/run.js and wait-step.js pass 128+n), a copy cut off
+// before its tally -, or a copy that is not of this run on HEAD, which the coordinator decides), or the run {rc, log,
+// guards (the copy), head} with rc 0 (green) or any other code (red for the product).
+const COPY_SCHEMA = { type: 'object', properties: {
+  ok: { type: 'boolean' }, cut: { type: 'boolean' }, why: { type: 'string' }, flaky: { type: 'array', items: { type: 'string' } }, error: { type: 'string' },
+}, required: ['ok'] }
+const FULL_TALLY = CFG.guardRerun && nonBlankS(CFG.guardRerun.tallyPattern) ? CFG.guardRerun.tallyPattern : ''
+const copyCheck1 = (t, step, copy, head, rc, retry) => {
+  const ws = node('guards-result.js').concat([lit('copy-check'), copy, head, lit(rc)], FULL_TALLY ? [FULL_TALLY] : [])
+  const opts = checkOpts(`run:${t.key}:${step}-copy`, 'Full run', COPY_SCHEMA, retry)
+  return svc({ kind: 'copy', label: opts.label, phase: 'Full run', effect: 'none', argv: argvOf(ws), schema: COPY_SCHEMA, noJson: { ok: false, error: '$error' },
+    agent: { prompt: `Run one command and return its JSON output as the schema fields (change nothing, analyse nothing):
+${cmdLine(ws)}
+If it prints no JSON - ok=false, error = the error text.`, opts } })
+}
+const copyAnswered = (c) => !!(c && typeof c.ok === 'boolean' && !c.error)
+const fullLine = (r) => `exit ${r.rc} on ${r.head}; summary ${r.log}, full run log ${r.guards}`
+// What the next role is told of the full run of the HEAD it works on (st.full: the last full run step of the task).
+const fullSeen = (st) => (st && st.full && st.full.head === st.head ? `HEAD ${st.head}: ${fullLine(st.full)}${st.full.rc ? ' - red, explained by the programmer in prog.md' : ''}` : 'none on this HEAD')
+async function fullStep(t, st, tag, where) {
+  const step = `full-${tag}`
+  const copy = `${t.sdir}/wait-${step}.guards.txt`
+  const src = `${CFG.sharedDir}/guards-${gname(t)}.txt`
+  const head = st.head
+  const r = await runStep(t, step, `${fullRun(t)}; rc=$?; cp ${sq(src)} ${sq(copy)} 2>/dev/null; cp ${sq(`${src}.meta.json`)} ${sq(`${copy}.meta.json`)} 2>/dev/null; exit $rc`, 'Full run')
+  const f = runFail(step, r)
+  if (f) return { fail: f }
+  const run = { rc: r.rc, log: r.log, tail: r.tail || '', guards: copy, head }
+  const envOut = (why) => ({ fail: `full run ${where}: red from the environment, not the product - ${why}`, environment: why, full: fullLine(run) })
+  if (ENV_RC[r.rc]) return envOut(`exit ${r.rc}: ${ENV_RC[r.rc]}${r.error ? ` (${r.error})` : ''}; log ${r.log}`)
+  if (r.rc >= 128) return envOut(`the full run was cut off before its tally (exit ${r.rc}: killed by signal ${r.rc - 128}); log ${r.log}`)
+  const { res: c } = await checkTwice(t, `copy of the full run log ${copy}`, copyAnswered, (retry) => copyCheck1(t, step, copy, head, r.rc, retry))
+  if (!copyAnswered(c)) return { fail: `full run ${where}: the check of its log ${copy} could not run: ${(c && c.error) || 'no result'}`, full: fullLine(run) }
+  if (!c.ok && c.cut) return envOut(`the full run was cut off before its tally: ${c.why || '?'}; log ${r.log}`)
+  if (!c.ok) return { fail: `full run ${where}: its full run log is not the run of this step on ${head} - ${c.why || '?'} (exit ${r.rc}, log ${r.log}); the coordinator decides`, full: fullLine(run) }
+  if ((c.flaky || []).length) log(`${t.title}: full run ${where} - flaky (red under load, green alone; for the backlog): ${c.flaky.join(', ')}`)
+  st.full = run
+  st.fullAt = head
+  return run
+}
+const fullFixTask = (t, where, r) => `The full guard run the workflow ran ${where} (${fullRun(t)}) exited ${r.rc}: summary ${r.log}, full run log ${r.guards}. Analyse every new red that repeated alone: fix what your change caused (commit, mutations after the commit, your new guards); a known red or a flaky guard - explain it in prog.md and change nothing; a red from the environment (the slot queue refused, disk or swap) - status=environment with the evidence. Do not run the full run yourself: if you commit, the workflow runs it again on your new HEAD.\n${r.tail || ''}`
+// The full run after a programmer round (FULL): a run on every new HEAD; red -> a programmer round with its log (fix and
+// commit, or explain and change nothing), then the run again, at most MAX_SEL_FIX rounds; a HEAD whose run is done is
+// not run again (st.fullAt), a round of docs only gets one too (the guards of a project may read its docs).
+async function fullLoop(t, st, p, n) {
+  let merged = p, tag = n
+  for (let k = 0; ; k++) {
+    if (st.fullAt && st.head === st.fullAt) { log(`${t.title}: the full run on ${st.head} is done - not repeated`); return { p: merged } }
+    const r = await fullStep(t, st, tag, `after programmer ${tag}`)
+    if (r.fail) return r
+    log(`${t.title}: full run after programmer ${tag} - exit ${r.rc}`)
+    if (r.rc === 0) return { p: merged }
+    if (k === MAX_SEL_FIX) return { fail: `the full guard run is still red after ${k} programmer rounds with its log (exit ${r.rc}, ${r.log})`, full: fullLine(r) }
+    const m2 = await progMech(t, st, fullFixTask(t, `on your HEAD after round ${tag}`, r), `${tag}f`, { report: `${r.log} (summary) and ${r.guards} (full run log)`, before: st.head })
+    if (m2.fail) return m2
+    const p2 = m2.p
+    if (!p2) return { fail: 'the programmer returned no result' }
+    if (p2.status === 'blocked') return { fail: 'programmer: an answer is needed', questions: p2.questions }
+    if (p2.status === 'environment') return envProg(`${tag}f`, p2)
+    merged = Object.assign({}, p2, { changedFiles: (merged.changedFiles || []).concat((p2.changedFiles || []).filter((f) => !(merged.changedFiles || []).includes(f))) })
+    tag = `${tag}f`
+    const head2 = await fullHead(t, 'programmer', 'Programmer', p2.head)
+    if (head2 === st.head) { log(`${t.title}: the red of the full run explained without a commit - the next role gets its log`); return { p: merged } }
+    st.head = head2
+  }
+}
+// The full run on the HEAD of a tester whose verdict is green and who committed (FULL; a red tester's commits get none:
+// the programmer's next HEAD gets it). null - nothing to run or green; {fail...} - the task stops; {red: run} - a red
+// full run, which counts as the task's red tester round (once: the tester's own verdict was green).
+async function testerFull(t, st, round) {
+  if (!FULL || st.fullAt === st.head) return null
+  const r = await fullStep(t, st, `tester-${round}`, `on the tester's HEAD after tester ${round}`)
+  if (r.fail) return r
+  log(`${t.title}: full run on the tester's HEAD after tester ${round} - exit ${r.rc}`)
+  return r.rc === 0 ? null : { red: r }
+}
+const fullRed = (round, r) => `the full run on the tester's HEAD after tester round ${round} is red (${fullLine(r)})`
+// The entry of resolve (FULL): resumeAt tester - the full run (and its fix rounds) on the entry HEAD before the tester;
+// resumeAt review (full and light) - one full run before the review, whose red or environment stops the task for the
+// coordinator (resolve chose the entry as ready for the review). null to go on, or the task's result.
+async function entryFull(t, st) {
+  if (t.resume.at === 'tester') {
+    const x = await fullLoop(t, st, {}, '1')
+    return x.fail ? stop(t, `at the entry of the tester: ${x.fail}`, x) : null
+  }
+  if (t.resume.at !== 'review') return null
+  const r = await fullStep(t, st, 'entry', 'at the entry of the review')
+  if (r.fail) return stop(t, `at the entry of the review: ${r.fail}`, r)
+  log(`${t.title}: full run at the entry of the review - exit ${r.rc}`)
+  return r.rc === 0 ? null : stop(t, `at the entry of the review: the full run on ${st.head} is red (${fullLine(r)}) - resolve chose this entry as ready for the review; the coordinator decides`, { full: fullLine(r) })
+}
+
 // The analysis marker of a task: {mode: 'run'|'reused'|'none', path?, reason?}, or {error} when not exactly one is given.
 const nonBlank = (v) => typeof v === 'string' && v.trim() !== ''
 const MARKERS = 'the task must carry exactly one of `analystFirst` (true: the analyst runs first), `analysis` (absolute path of an existing analyst or diagnosis report of this task, inside its folder or the folder of its `feature`), `noAnalysis` (why no analysis is needed: a tail, a one-line fix; for a defect, why the diagnosis is skipped); an arc specification goes into `spec`, it is not an analysis'
@@ -636,6 +747,8 @@ const guardsPart = (t) => (ONE_RUN && !INNER
   ? `no selection and no full run (innerSelect false): only your new or changed guards and their mutations; the integration train after the review is the first run of all guards (fullRun = "the train runs them" and the result of your new guards)`
   : ONE_RUN
   ? `no selection of guards and no full run of your own (there is no full guard run in the task): after you return, the workflow runs the selection ${selectRun(t)} on your HEAD and hands you its log only if it is red (fullRun = "the workflow runs the selection" and the result of your new guards)`
+  : FULL
+  ? `no full run of your own: after you return, the workflow runs the full run ${fullRun(t)} on your HEAD as a wait step and hands you its log only if it is red (fullRun = "the workflow runs it" and the result of your new guards)`
   : `full run ${SCRIPTS}/guards-all.sh ${t.gdir} in the background -> analysis of new reds that repeated alone (flaky ones go into prog.md for the backlog)`)
 // A fix round (p-fixround, audit P5: a fix round is a new agent that reread the brief, analyst.md, prog.md and test.md
 // - 33 % of its input; its mutations covered every guard again): it reads the findings and the task's diff, the brief and
@@ -661,12 +774,12 @@ const test = (t, n, st, short) => agent(`You are the TESTER. You do not change p
 1. An independent inventory before reading the diff (inputs, places, cells) - compare it with the programmer's coverage.
 2. Your own guards for what is not covered -> commit -> mutations after the commit.
 3. Acceptance in the real environment: ${t.accept}${standSteps(t)}${t.stack ? ` ${CFG.stand && CFG.stand.project ? 'Only when the stand does not fit, your' : 'Your'} own stack: docker compose -p ${t.stack}; afterwards remove it with its images and volumes: docker compose -p ${t.stack} down -v --rmi all.` : ''} Evidence (logs, numbers, screenshots) goes into ${t.dir} with the prefix test-.${t.uc ? ` Build the acceptance along the flows of the use cases (the main flow, every alternative flow, all errors): ${t.uc}.` : ''}
-4. ${ONE_RUN && !INNER ? `There is no selection and no full guard run in the task (innerSelect false): do NOT run guards-all.sh. Run your new and touched guards and their mutations; the integration train after the review is the first run of all guards.` : ONE_RUN ? `There is no full guard run in the task: do NOT run the full suite. The workflow ran the selection of the task's guards on the programmer's HEAD (${selLine(st && st.sel)}); reuse its log ("nothing selected" in it - no guard of the diff, the programmer's new guards are the evidence). Run your new and touched guards and mutations. If you commit guards or fixtures, run the selection of your own diff from the programmer's HEAD through Bash run_in_background: ${testerSelectRun(t, st && st.head)} (your new or changed guards, the guards that import or name a file you changed - a fixture of a product guard outside your diff -, the project's guardAlways; the product guards of the task's selection are already green on the same code); no commit - no selection of your own: reuse its log as the evidence.` : "Do not repeat the programmer's full run: new and touched guards and mutations; a full run only after your own commits."}
+4. ${ONE_RUN && !INNER ? `There is no selection and no full guard run in the task (innerSelect false): do NOT run guards-all.sh. Run your new and touched guards and their mutations; the integration train after the review is the first run of all guards.` : ONE_RUN ? `There is no full guard run in the task: do NOT run the full suite. The workflow ran the selection of the task's guards on the programmer's HEAD (${selLine(st && st.sel)}); reuse its log ("nothing selected" in it - no guard of the diff, the programmer's new guards are the evidence). Run your new and touched guards and mutations. If you commit guards or fixtures, run the selection of your own diff from the programmer's HEAD through Bash run_in_background: ${testerSelectRun(t, st && st.head)} (your new or changed guards, the guards that import or name a file you changed - a fixture of a product guard outside your diff -, the project's guardAlways; the product guards of the task's selection are already green on the same code); no commit - no selection of your own: reuse its log as the evidence.` : FULL ? `There is one full guard run per HEAD and the workflow runs it: do NOT run the full suite. The workflow ran it on the HEAD you test (${fullSeen(st)}); reuse its log as the evidence. Run your new and touched guards and their mutations. If you commit guards or fixtures and your verdict is green, the workflow runs the full run on your new HEAD before the review.` : "Do not repeat the programmer's full run: new and touched guards and mutations; a full run only after your own commits."}
 green - only if the brief's acceptance is met in full. red - the product fails a guard or the acceptance.
-environment - red that the product did not cause, so a programmer has nothing to fix: your or the programmer's full run cut off before its tally (killed, timed out, out of memory), the slot queue refused your heavy job (heavy.sh or guards-all.sh exited 77 or 78) or your waiting process vanished without an exit code - while your heavy.sh, started with run_in_background, is alive in the queue, keep waiting with a blocking Bash loop (a turn without a tool call ends your role): a long queue is not the environment -, disk or swap exhausted (node ${SCRIPTS}/env-check.js --path ${sq(t.wt)} --min-disk-gb ${ENV.minFreeDiskGB} --min-swap-mb ${ENV.swapMinMB}), Docker or your stack down for a reason outside the task's code. Put the cause and its evidence into environment; the task stops for the coordinator. Never use it for a red that the product causes.${note('tester')}`,
+environment - red that the product did not cause, so a programmer has nothing to fix: ${FULL ? 'a guard run of yours' : "your or the programmer's full run"} cut off before its tally (killed, timed out, out of memory), the slot queue refused your heavy job (heavy.sh or guards-all.sh exited 77 or 78) or your waiting process vanished without an exit code - while your heavy.sh, started with run_in_background, is alive in the queue, keep waiting with a blocking Bash loop (a turn without a tool call ends your role): a long queue is not the environment -, disk or swap exhausted (node ${SCRIPTS}/env-check.js --path ${sq(t.wt)} --min-disk-gb ${ENV.minFreeDiskGB} --min-swap-mb ${ENV.swapMinMB}), Docker or your stack down for a reason outside the task's code. Put the cause and its evidence into environment; the task stops for the coordinator. Never use it for a red that the product causes.${note('tester')}`,
   Object.assign({ label: `test:${t.key}#${n}`, phase: 'Tester', schema: TEST_SCHEMA, agentType: roleType('tester') }, modelOf('tester')))
 
-const review = (t, n, scope) => agent(`You are the REVIEWER (read only; you may rerun guards). ${RULES(t)} Report: ${t.dir}/review.md (round ${n}).
+const review = (t, n, scope, st) => agent(`You are the REVIEWER (read only; you may rerun guards). ${RULES(t)} Report: ${t.dir}/review.md (round ${n}).${FULL ? `\nThe full guard run of the task was run by the workflow (${fullSeen(st)}): do not repeat it; check that its HEAD is the HEAD you review.` : ''}
 Read BRIEF.md, analyst.md (if any), prog.md, test.md, git log/diff of branch ${t.branch} for the task${scope ? ' - ' + scope : ''}. Try to refute "done": cells of the matrix,${t.uc ? ` the alternative flows and errors of the use cases ${t.uc} (closed, not only the main flow),` : ''} guesses instead of data (thresholds, name lists), guards without mutations, the tester's evidence against the acceptance scenario (do not rerun the scenario). Write a section "What is not in the diff" in review.md: the sources of each new channel, state or data path (input events, existing data and old frames, nesting, parallel paths) that have no handling or no guard; such a finding is not docsOnly. One line "Mechanism:" in review.md: is there a simpler mechanism without timings (timers, thresholds, races) for what the task does - name it, or "no".${t.light ? ` This task runs in the light mode: there is no tester role; the programmer-checker ran the acceptance - check its evidence in ${t.dir}/test.md against the acceptance scenario and its mutation table in prog.md.` : ''}${AGENTS_MD_REVIEW(t)} Verdict with file:line.${note('reviewer')}`,
   Object.assign({ label: `review:${t.key}#${n}`, phase: 'Reviewer', schema: REVIEW_SCHEMA, agentType: roleType('reviewer') }, modelOf('reviewer')))
 
@@ -689,7 +802,7 @@ async function testChecked(t, st, n, short) {
 // With t.security the review is reviewer + security reviewer, run together (plugin audit P3: both only read), and one
 // git post-check of the reviewers after both, from the same HEAD; done only if both are done.
 async function reviewChecked(t, st, n, scope) {
-  const [rv, sv] = await Promise.all([review(t, n, scope), t.security ? secReview(t, n, scope) : null])
+  const [rv, sv] = await Promise.all([review(t, n, scope, st), t.security ? secReview(t, n, scope) : null])
   if (!rv) return { fail: 'the reviewer returned no result' }
   if (t.security && !sv) return { fail: 'the security reviewer returned no result' }
   const f = diffFail(t.security ? 'reviewer or the security reviewer' : 'reviewer', await diffCheck(t, 'reviewer', st.head))
@@ -730,6 +843,7 @@ async function progStep(t, st, task, n, report, sameStops, mergeCheck) {
   const head = await fullHead(t, 'programmer', 'Programmer', p.head)
   if (sameStops && head === prev) return { p, same: true }
   st.head = head
+  if (FULL) return fullLoop(t, st, p, n)
   if (!ONE_RUN) return { p }
   if (mergeCheck) {
     const mo = await mergeOnlyStep(t, n, prev, head)
@@ -807,12 +921,20 @@ async function buildAndTest(t, st, firstTask, tag, maxRounds, skipFirst) {
     if (x.fail) return x
     const tr = x.tr
     log(`${t.title}: tester ${tag}${r} - ${tr.verdict}`)
-    if (tr.verdict === 'green') return { ok: tr }
     if (tr.verdict === 'environment') return envStop(`${tag}${r}`, tr)
-    const red = testerRed(t, st, `${tag}${r}`, tr)
+    let why = `Tester round ${tag}${r} - red. Fix according to ${t.dir}/test.md:\n${tr.summary}`, report = `${t.dir}/test.md`, summary = tr.summary
+    if (tr.verdict === 'green') {
+      const fx = await testerFull(t, st, `${tag}${r}`)
+      if (!fx) return { ok: tr }
+      if (fx.fail) return fx
+      summary = fullRed(`${tag}${r}`, fx.red)
+      why = `Tester round ${tag}${r} was green, but ${summary}. ${fullFixTask(t, `on the tester's HEAD ${st.head}`, fx.red)} The tester's report: ${t.dir}/test.md.`
+      report = `${fx.red.log} (summary), ${fx.red.guards} (full run log) and ${t.dir}/test.md`
+    }
+    const red = testerRed(t, st, `${tag}${r}`, { summary })
     if (red) return red
-    if (r === maxRounds) return { fail: `${maxRounds} red tester rounds`, test: tr.summary }
-    const s = await progStep(t, st, `Tester round ${tag}${r} - red. Fix according to ${t.dir}/test.md:\n${tr.summary}`, `${tag}${r + 1}`, `${t.dir}/test.md`)
+    if (r === maxRounds) return { fail: `${maxRounds} red tester rounds`, test: summary }
+    const s = await progStep(t, st, why, `${tag}${r + 1}`, report)
     if (s.fail) return s
   }
 }
@@ -841,6 +963,12 @@ async function reviewLoop(t, st, tag) {
     const tr = xt.tr
     if (tr.verdict === 'environment') return Object.assign(envStop(`${tag}after-review`, tr), { review: r1.summary })
     if (tr.verdict !== 'green') return Object.assign(testerRed(t, st, `${tag}after-review`, tr) || { fail: 'tester after the review fix - red', test: tr.summary }, { review: r1.summary })
+    const fx = await testerFull(t, st, `${tag}after-review`)
+    if (fx && fx.fail) return Object.assign({}, fx, { review: r1.summary })
+    if (fx) {
+      const summary = fullRed(`${tag}after-review`, fx.red)
+      return Object.assign(testerRed(t, st, `${tag}after-review`, { summary }) || { fail: `tester after the review fix - green, but ${summary}`, test: summary, full: fullLine(fx.red) }, { review: r1.summary })
+    }
     return {}
   }
   const changed = p.changedFiles || []
@@ -935,7 +1063,7 @@ async function work(t, st) {
   } else log(t.an.mode === 'reused' ? `${t.title}: analyst reused - ${t.an.path}` : `${t.title}: no analyst - ${t.an.reason}`)
 
   if (t.resume) {
-    const z = await resumeEntry(t, st)
+    const z = await resumeEntry(t, st) || (FULL ? await entryFull(t, st) : null)
     if (z) return z
   }
   if (t.light) return light(t, st)
@@ -1135,7 +1263,7 @@ const trainTask = (t, v, res) => {
   return `The integration train found a seam (verdict seam): your branch is green alone on the arc head but red together with its partner, named in ${res} (partner, partnerBranch; the guards in guards; partnerResult is the partner's own result - it arrived first and rode before you). Your fix: merge the head of the arc branch ${base} into your branch ${t.branch} (it holds the partner once partnerResult is green) and fix the seam with it on that head. ${fixTail(t)}`
 }
 async function ride(t, st, review) {
-  if (!ONE_RUN) return { task: t.key, status: 'done', review }
+  if (!ONE_RUN) return Object.assign({ task: t.key, status: 'done', review }, FULL && st.full ? { full: fullLine(st.full) } : {})
   const results = []
   for (let n = 1; ; n++) {
     const head = st.head, step = `train-${n}`, res = resultOf(t, head)

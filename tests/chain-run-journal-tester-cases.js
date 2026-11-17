@@ -19,7 +19,7 @@ const W = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'chain-run-jt-')
 const SHARED = path.join(W, 's'), WTR = path.join(W, 'r'), REPO = path.join(W, 'repo');
 const CFG = path.join(W, 'codis-agents.json');
 // commitAuthor: on codex the conductor needs an author for the commit channel (the machine may have no git identity).
-const baseCfg = { repoDir: REPO, sharedDir: SHARED, worktreeRoot: WTR, guardCommand: 'true {wt}', testerWritable: ['-run\\.js$'],
+const baseCfg = { repoDir: REPO, sharedDir: SHARED, worktreeRoot: WTR, guardCommand: 'true {wt}', testerWritable: ['-run\\.js$'], conductorFullRun: false,
   commitAuthor: { name: 'codis-agents', email: 'agents@example.com' } };
 fs.writeFileSync(CFG, JSON.stringify(baseCfg));
 const git = (...a) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t'].concat(a), { encoding: 'utf8' });

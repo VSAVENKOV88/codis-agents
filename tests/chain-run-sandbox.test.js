@@ -64,7 +64,7 @@ const W = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'chain-run-sandb
 const SHARED = path.join(W, 's'), WTR = path.join(W, 'r'), RUNS = path.join(SHARED, 'runs');
 fs.mkdirSync(WTR, { recursive: true });
 const CFG = path.join(W, 'cfg.json');
-fs.writeFileSync(CFG, JSON.stringify({ repoDir: path.join(W, 'repo'), sharedDir: SHARED, worktreeRoot: WTR, guardCommand: 'true {wt}' }));
+fs.writeFileSync(CFG, JSON.stringify({ repoDir: path.join(W, 'repo'), sharedDir: SHARED, worktreeRoot: WTR, guardCommand: 'true {wt}', conductorFullRun: false }));
 const TASKS = path.join(W, 'tasks.json');
 fs.writeFileSync(TASKS, JSON.stringify([{ key: 'k1', title: 'K1', wt: 'w-k1', branch: 'b-k1', accept: 'acc', kind: 'tail', noAnalysis: 'a test task' }]));
 // A fake ps that refuses (as inside the sandbox) and a PATH with no ps at all (a container without procps).
@@ -154,7 +154,7 @@ try {
   {
     const S2 = path.join(W, 's2'), R2 = path.join(S2, 'runs');
     const CFG2 = path.join(W, 'cfg2.json');
-    fs.writeFileSync(CFG2, JSON.stringify({ repoDir: path.join(W, 'repo'), sharedDir: S2, worktreeRoot: WTR, guardCommand: 'true {wt}' }));
+    fs.writeFileSync(CFG2, JSON.stringify({ repoDir: path.join(W, 'repo'), sharedDir: S2, worktreeRoot: WTR, guardCommand: 'true {wt}', conductorFullRun: false }));
     const START2 = ['start', '--host', 'claude', '--bin', '/usr/bin/false', '--tasks', TASKS, '--config', CFG2];
     const BIN = path.join(__dirname, 'fixtures', 'chain-run', 'bin');
 

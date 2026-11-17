@@ -48,7 +48,7 @@ git('-C', REPO, 'add', 'a.js');
 git('-C', REPO, 'commit', '-q', '-m', 'base');
 const SHA0 = git('-C', REPO, 'rev-parse', 'HEAD').stdout.trim();
 const CFG = F('cfg.json');
-fs.writeFileSync(CFG, JSON.stringify({ repoDir: REPO, sharedDir: SHARED, worktreeRoot: WTR, guardCommand: 'true {wt}', testerWritable: ['-run\\.js$'] }));
+fs.writeFileSync(CFG, JSON.stringify({ repoDir: REPO, sharedDir: SHARED, worktreeRoot: WTR, guardCommand: 'true {wt}', testerWritable: ['-run\\.js$'], conductorFullRun: false }));
 const config = JSON.parse(spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'config.js'), 'json', CFG], { encoding: 'utf8' }).stdout);
 
 const PRE = { ok: true, problems: [], blockingQuestions: [] };

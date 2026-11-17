@@ -82,7 +82,7 @@ for (const [name, pause, cond] of [['role-post-check', 'post', 'true'], ['wait-s
     + `  const p = spawnSync(process.execPath, [path.join(__dirname, '${name}.real.js')].concat(process.argv.slice(2)), { stdio: 'inherit' });\n  process.exit(p.status === null ? 1 : p.status);\n`
     + `} else module.exports = require('./${name}.real.js');\n`);
 }
-const base = { repoDir: REPO, sharedDir: SHARED, worktreeRoot: WTR, guardCommand: 'true {wt}', testerWritable: ['-run\\.js$'] };
+const base = { repoDir: REPO, sharedDir: SHARED, worktreeRoot: WTR, guardCommand: 'true {wt}', testerWritable: ['-run\\.js$'], conductorFullRun: false };
 const CFG = F('cfg-plain.json'), CFG_SEL = F('cfg-sel.json');
 fs.writeFileSync(CFG, JSON.stringify(base));
 fs.writeFileSync(CFG_SEL, JSON.stringify(Object.assign({}, base, { guardSubsetCommand: 'true {wt} {onlyArgs} {jobs} {limitFile}',

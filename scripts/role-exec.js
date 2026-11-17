@@ -99,10 +99,17 @@ const CODEX_REFUSED = (kind, preByConductor) => (KINDS[kind] === 'service'
 // tools this host does not have (Bash run_in_background, Monitor, a blocking Bash loop) and, for prog and test, says how
 // a commit is made (the sandbox refuses git add and git commit) and what head and commits of the answer must name
 // (compareAnswer checks them). With the heavy channel (o.heavy: cfg.heavy, scripts/heavy-service.js) prog and test are
-// told how to run a heavy command through it; without it a slot refusal is the environment.
+// told how to run a heavy command through it; without it a slot refusal is the environment. o.fullByWorkflow (the
+// conductor's mark: the workflow runs the full guard run as its own step, and the project has no guardSubsetCommand):
+// the section offers no guard run of the role and says the full run is the workflow's, as the channel refuses both
+// --kind full and --kind select then (a selection without guardSubsetCommand ends 78).
 const HOST_HEADING = '## On this host (codex)';
 function hostSection(kind, t, o) {
   const heavy = !!(o && o.heavy);
+  const byWf = heavy && !!(o && o.fullByWorkflow);
+  const guardRuns = byWf
+    ? `Guard runs: the workflow runs the full guard run on your HEAD as a step of its own, outside this sandbox, after you return, and gives its log to the next role: never run the whole suite yourself (no guards-all.sh, no runner of all the project's guards in an argv); run your new and touched guards and their mutations, a heavy one as \`node ${HEAVY_CLIENT} -- <argv>\`; the adapter refuses every guard run of the role (a full run and a selection: this project has no selection command).`
+    : `Guard runs: where the rules above say guards-all.sh (a full run, or --select <ref>), ask \`node ${HEAVY_CLIENT} --kind full\` or \`node ${HEAVY_CLIENT} --kind select --base <ref>\` instead (no argv: the adapter runs guards-all.sh outside this sandbox with the run's project config, in a slot of its own, and every command of the project in this sandbox) and wait for it as above; rc is the code of guards-all.sh, guardsLog the guard log in the shared folder (cite it in your report), where says "local full run" or "local selection" (the remote runner is not used for a codex role); verdict is green, red, incomplete or environment, and notRun lists the guards the run did not run, each with its need and reason. incomplete: guards not run in this sandbox (their files declare a \`guards:needs\` marker: a browser, a file watcher, ps, Docker...) - name each under Incomplete in your report with its need and reason; never call the run green; not a red of the product. An answer without verdict is not green: read guardsLog.`
   const id = path.join(t.dir, 'wait-<name>');
   const lines = [HOST_HEADING, '',
     'This section replaces the rules about pauses, slots and git add above: this host has no Bash run_in_background, no Monitor and no blocking Bash loop.',
@@ -111,7 +118,7 @@ function hostSection(kind, t, o) {
     lines.push(
       `- Commits. The sandbox refuses git add, git commit and every write into the git folder: never run them. Commit only through \`node ${COMMIT_CLIENT} -m "<message>" -- <path>...\` (paths relative to the worktree): it prints one JSON line with the sha or the reason of a refusal; exit 3 is pending, then wait with \`node ${COMMIT_CLIENT} wait --id <id>\`. Wait for the sha of each commit before the next step: the red guard committed before the fix, the fix committed before any mutation. Restore a mutated file with \`git show HEAD:<path> > <path>\` (git checkout and git restore are refused here).`,
       '- Your answer: `head` is the last sha the adapter gave you in this call (no commit in this call: `git rev-parse HEAD` at its start); `commits`, where your answer has it, names only the shas the adapter gave you in this call, never commits of an earlier call.',
-      heavy ? `- Heavy commands (tsc, a bundler, a guard with vite, anything that takes a memory slot): never run heavy.sh or medium.sh yourself (inside this sandbox they cannot take a slot). Ask the adapter: \`node ${HEAVY_CLIENT} [--kind <kind>] -- <argv>\` (cwd: the current folder, inside the worktree) runs <argv> in a memory slot, in a sandbox with your write roots and only the loopback network, and prints one JSON line {id, state, rc, log, tail}; while state is not final wait with \`node ${HEAVY_CLIENT} wait --id <id> --max 25\`, stop it with \`node ${HEAVY_CLIENT} cancel --id <id>\`. rc is the code of the command, log its whole output. One run at a time: a second request waits behind the first. A state refused, cancelled-before-start or undetermined whose why starts with "environment:" is the environment, answered as environment with that cause. Guard runs: where the rules above say guards-all.sh (a full run, or --select <ref>), ask \`node ${HEAVY_CLIENT} --kind full\` or \`node ${HEAVY_CLIENT} --kind select --base <ref>\` instead (no argv: the adapter runs guards-all.sh outside this sandbox with the run's project config, in a slot of its own, and every command of the project in this sandbox) and wait for it as above; rc is the code of guards-all.sh, guardsLog the guard log in the shared folder (cite it in your report), where says "local full run" or "local selection" (the remote runner is not used for a codex role); verdict is green, red, incomplete or environment, and notRun lists the guards the run did not run, each with its need and reason. incomplete: guards not run in this sandbox (their files declare a \`guards:needs\` marker: a browser, a file watcher, ps, Docker...) - name each under Incomplete in your report with its need and reason; never call the run green; not a red of the product. An answer without verdict is not green: read guardsLog. guards-all.sh in an argv is refused; Docker and the stand too. A guard without a marker that is red only because this sandbox lacks what it needs (a browser, a file watcher, ps, a nested sandbox, Docker) is a red of the run, named with the guard and the line of its log as a candidate for a \`guards:needs\` marker, never a red of the product.`
+      heavy ? `- Heavy commands (tsc, a bundler, a guard with vite, anything that takes a memory slot): never run heavy.sh or medium.sh yourself (inside this sandbox they cannot take a slot). Ask the adapter: \`node ${HEAVY_CLIENT} [--kind <kind>] -- <argv>\` (cwd: the current folder, inside the worktree) runs <argv> in a memory slot, in a sandbox with your write roots and only the loopback network, and prints one JSON line {id, state, rc, log, tail}; while state is not final wait with \`node ${HEAVY_CLIENT} wait --id <id> --max 25\`, stop it with \`node ${HEAVY_CLIENT} cancel --id <id>\`. rc is the code of the command, log its whole output. One run at a time: a second request waits behind the first. A state refused, cancelled-before-start or undetermined whose why starts with "environment:" is the environment, answered as environment with that cause. ${guardRuns} guards-all.sh in an argv is refused; Docker and the stand too. A guard without a marker that is red only because this sandbox lacks what it needs (a browser, a file watcher, ps, a nested sandbox, Docker) is a red of the run, named with the guard and the line of its log as a candidate for a \`guards:needs\` marker, never a red of the product.`
         : '- Heavy commands. heavy.sh, medium.sh and guards-all.sh cannot take a memory slot inside this sandbox: their exit 77, 72 or 78 is the environment, answered as environment with the cause "needs the heavy channel (A2b)"; never run the work around the slot.',
       '- An acceptance this sandbox cannot run (it needs the network, Docker or a stand) is the environment with its cause: never green or ready without it.',
       '- A merge of the arc (a conflict round of the train) is impossible on this host (the git folder is read only): answer with status blocked and the cause.');
@@ -537,7 +544,8 @@ function createAgent(cfg) {
 
   // The heavy channel (scripts/heavy-service.js): prog and test on codex with the commit channel ask the
   // adapter to run heavy commands in a memory slot. cfg.heavy {config, kinds?: {<kind>: medium | heavy}} turns it on
-  // (config: the run's project config, whose slot directory the holder queues in); its
+  // (config: the run's project config, whose slot directory the holder queues in; fullByWorkflow: the workflow runs the
+  // full guard run, so the service refuses one of the role and the host section offers none); its
   // journal lies in commit.stateDir, out of the role's reach like the commit journal.
   const hv = c.heavy === undefined || c.heavy === null ? null : c.heavy;
   if (hv) {
@@ -547,6 +555,7 @@ function createAgent(cfg) {
     const k = hv.kinds === undefined ? {} : hv.kinds;
     if (!k || typeof k !== 'object' || Array.isArray(k) || Object.values(k).some((v) => v !== 'medium' && v !== 'heavy')) no('heavy.kinds must map a kind to "medium" or "heavy"');
     if (typeof hv.config !== 'string' || !path.isAbsolute(hv.config)) no('heavy.config must be the absolute path of the run\'s project config: the slot holder queues by it, not by a lookup from the worktree');
+    if (hv.fullByWorkflow !== undefined && typeof hv.fullByWorkflow !== 'boolean') no('heavy.fullByWorkflow must be a boolean (the conductor\'s mark: the workflow runs the full guard run itself)');
   }
 
   // {refused} or the plan of the call.
@@ -605,7 +614,7 @@ function createAgent(cfg) {
       const body = roleFile ? fs.readFileSync(roleFile, 'utf8').replace(/^---[\s\S]*?\n---\n/, '') : null;
       return Object.assign(plan, {
         model: slug, effort, bin: cx.bin, strictSchema: strict(o.schema), home: cx.home, auth: cx.auth, keyFile: cx.keyFile,
-        stdin: (body === null ? prompt : body.trim() + '\n\n' + prompt) + '\n\n' + hostSection(lb.kind, t, { heavy: !!hv && channel }),
+        stdin: (body === null ? prompt : body.trim() + '\n\n' + prompt) + '\n\n' + hostSection(lb.kind, t, { heavy: !!hv && channel, fullByWorkflow: !!hv && hv.fullByWorkflow === true }),
         env: codexEnv(c.env || process.env, cx.home, cx.auth, key),
         // project_doc_max_bytes=0: Codex reads no project AGENTS.md at any -C, and the flag beats a trusted
         // .codex/config.toml of the project (measured on codex 0.166.0 and 0.167.0), so a role gets the project rules only from its
@@ -701,7 +710,7 @@ function createAgent(cfg) {
         // KILL) and the call waits for them in close()
         try {
           heavy = openHeavyService({ task: plan.key, callId: path.basename(plan.callDir), role: plan.kind, wt: plan.t.wt, tdir: plan.t.dir,
-            box: path.join(plan.callDir, 'heavy'), stateDir: cm.stateDir, config: hv.config, runId: cm.runId, kinds: hv.kinds || {}, userEnv: c.env || process.env,
+            box: path.join(plan.callDir, 'heavy'), stateDir: cm.stateDir, config: hv.config, runId: cm.runId, kinds: hv.kinds || {}, fullByWorkflow: hv.fullByWorkflow === true, userEnv: c.env || process.env,
             codex: cx.bin, codexVersions: hv.codexVersions, killGraceMs: graceMs, emptyWaitMs: graceMs, npmCache: path.join(plan.callDir, 'npm-cache'), inject: hv.inject, log });
           heavyStop = () => heavy.cancel('signalled');
           enter(heavyStop);

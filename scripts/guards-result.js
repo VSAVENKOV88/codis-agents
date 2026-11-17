@@ -90,6 +90,9 @@
 //          stdout, exit 3 when none is kept; the list cannot be read: "environment: ..." on stderr, exit 69
 //        guards-result.js incomplete <log> <needs file> <rc>   -> with excluded guards: the line "incomplete: ..."
 //          appended to the log and printed; exit INCOMPLETE when rc is 0, else rc
+//        guards-result.js copy-check <copy of a full run log> <head> <exit code of the step> [<tallyPattern>]   -> JSON
+//          {ok, cut, why, flaky} on stdout (copyCheck below): whether the copy the conductor's full run step made is the
+//          run of that step on <head>; exit 64 on missing arguments
 //        guards-result.js only-args <names file>   -> {onlyArgs} of guardSubsetCommand for the guards of a JSON array of
 //          names (guards-all.sh --guards: the attribution of a red train), one --only <guard> each, quoted for zsh;
 //          exit 3 when the list is empty, 64 when the file is not a JSON array of non-empty names
@@ -548,8 +551,36 @@ function reusable(wt, log, command, env = 'local', quarantine = '') {
     text: `reused, HEAD ${short}: the full run of ${m.finishedAt} on this HEAD with a clean tracked tree ended with exit 0 (log ${log}); --force runs again` };
 }
 
+// The copy of a full run log that the conductor's full run step hands to the roles (workflows/role-chain.js, fullStep):
+// the step copies <log> and <log>.meta.json right after guards-all.sh, and this check tells whether the copy is the run
+// of that step on HEAD head. {ok, cut, why, flaky}:
+//   cut  - the run did not reach its end: no copy, a record without an exit code, or no tally line (tallyPattern of
+//          guardRerun, when the project sets it) - the environment, never a red for the programmer nor a green;
+//   !ok  - the copy is of another run (another HEAD, HEAD moved, another exit code, another environment), the tracked
+//          tree was not clean during the run, or the record is missing - the coordinator decides;
+//   ok   - flaky: the guards the rerun found green alone (for the backlog).
+function copyCheck({ copy, head, rc, tally }) {
+  const cut = (why) => ({ ok: false, cut: true, why, flaky: [] });
+  const no = (why) => ({ ok: false, cut: false, why, flaky: [] });
+  let text, m;
+  try { text = fs.readFileSync(copy, 'utf8'); } catch { return cut(`no copy of the full run log at ${copy}`); }
+  try { m = JSON.parse(fs.readFileSync(metaFile(copy), 'utf8')); } catch { return no(`no record of the run next to the copy (${metaFile(copy)})`); }
+  if (!m || typeof m !== 'object') return no(`the record ${metaFile(copy)} is not an object`);
+  if (m.rc === undefined) return cut('the run of the log did not finish (its record has no exit code)');
+  if (m.head !== head || m.headEnd !== head) return no(`the log is not of HEAD ${head}: its run started on ${m.head} and ended on ${m.headEnd} - overwritten by another run`);
+  if (!m.cleanStart || !m.cleanEnd) return no('tracked changes in the worktree during the run: the run does not show HEAD - commit first');
+  if (m.env && m.env !== 'local') return no(`the log is of another environment (${m.env}), not of the conductor's run on this machine`);
+  if (Number(m.rc) !== Number(rc)) return no(`the record of the log ends with exit ${m.rc}, the step with ${rc} - overwritten by another run`);
+  if (tally) {
+    let re;
+    try { re = new RegExp(tally, 'm'); } catch (e) { return no(`guardRerun.tallyPattern ${tally} is not a regular expression: ${e.message}`); }
+    if (!re.test(text)) return cut(`the log has no tally line (guardRerun.tallyPattern ${tally})`);
+  }
+  return { ok: true, cut: false, why: '', flaky: flakyInLog(text) };
+}
+
 module.exports = { INCOMPLETE, KNOWN_NEEDS, parseNeeds, needText, needsOf, incompleteLine, verdictOf, newReds, tallyCount, countCheck, rerun, readBaseline, subst, metaStart, metaEnd, reusable, rerunLog,
-  quarantineFile, readQuarantine, addQuarantine, dropQuarantine, takeQuarantine, quarantineHash, writeFlaky, flakyInLog, repeatedInLog };
+  quarantineFile, readQuarantine, addQuarantine, dropQuarantine, takeQuarantine, quarantineHash, writeFlaky, flakyInLog, repeatedInLog, copyCheck };
 
 if (require.main === module) {
   const [cmd, wt, log, x, y, z, u, v, sf] = process.argv.slice(2);
@@ -610,6 +641,11 @@ if (require.main === module) {
     const line = incompleteLine(readList(nf));
     if (line) { fs.appendFileSync(lg, '\n' + line); process.stdout.write('\n' + line); }
     process.exit(line && Number(rc) === 0 ? INCOMPLETE : Number(rc));
+  } else if (cmd === 'copy-check') {
+    // copy-check <copy> <head> <step rc> [<tallyPattern>]: the args shift by one (no wt)
+    const [, cp, head, rc, tally] = process.argv.slice(2);
+    if (!cp || !head || rc === undefined || !/^\d+$/.test(rc)) { console.error('usage: guards-result.js copy-check <copy of the log> <head> <exit code of the step> [<tallyPattern>]'); process.exit(64); }
+    process.stdout.write(JSON.stringify(copyCheck({ copy: cp, head, rc: Number(rc), tally: tally || '' })) + '\n');
   } else if (cmd === 'meta-start') metaStart(wt, log, x, y);
   else if (cmd === 'meta-end') {
     const list = readList(z);
@@ -639,5 +675,5 @@ if (require.main === module) {
       if (r.missing.length) console.log(`not in the quarantine: ${r.missing.join(', ')}`);
       process.exit(r.missing.length ? 1 : 0);
     } catch (e) { console.error(`${cmd}: ${e.message}`); process.exit(1); }
-  } else { console.error('usage: guards-result.js rerun|count|needs|incomplete|meta-start|meta-end|reuse|quarantine-take|quarantine-drop|only-args ...'); process.exit(64); }
+  } else { console.error('usage: guards-result.js rerun|count|needs|incomplete|copy-check|meta-start|meta-end|reuse|quarantine-take|quarantine-drop|only-args ...'); process.exit(64); }
 }

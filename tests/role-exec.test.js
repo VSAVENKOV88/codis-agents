@@ -27,8 +27,9 @@ const safe = (f) => (...a) => { try { return f(...a); } catch (e) { return { thr
 // ---- the twelve schemas, cut out of the source of role-chain.js and run in order in a vm (POST refers to DIFF, LEFT)
 const SRC = fs.readFileSync(path.join(ROOT, 'workflows', 'role-chain.js'), 'utf8');
 const NAMES = ['PRE', 'ANALYST', 'USECASES', 'PROG', 'TEST', 'DIFF', 'REVIEW', 'SHA', 'LEFT', 'POST', 'RUN', 'MERGE'].map((n) => n + '_SCHEMA');
-// The env step is a step of the conductor alone (exec, p-codex-B1-c): its schema and label never reach agent().
-const EXEC_ONLY = ['ENV_SCHEMA'];
+// The env step and the check of the full run log are steps of the conductor alone (exec, p-codex-B1-c; the full run step
+// runs only under exec, p-codex-fullrun-a1): their schemas never reach agent().
+const EXEC_ONLY = ['ENV_SCHEMA', 'COPY_SCHEMA'];
 const S = (() => {
   const ctx = {}; vm.createContext(ctx);
   const re = /const ([A-Z_]+_SCHEMA) = \{/g; let m; const found = [];
@@ -38,7 +39,7 @@ const S = (() => {
     vm.runInContext(SRC.slice(m.index, i + 1).replace(/^const /, 'var ') + ';', ctx);
     found.push(m[1]);
   }
-  ok('A1-01 the twelve schemas of role-chain.js are found in its source (and the exec-only ENV_SCHEMA)', JSON.stringify(found.slice().sort()) === JSON.stringify(NAMES.concat(EXEC_ONLY).sort()), found.join(','));
+  ok('A1-01 the twelve schemas of role-chain.js are found in its source (and the exec-only ENV_SCHEMA and COPY_SCHEMA)', JSON.stringify(found.slice().sort()) === JSON.stringify(NAMES.concat(EXEC_ONLY).sort()), found.join(','));
   // A plain copy out of the vm realm, then frozen deeply: an adapter that changes a shared schema in place throws (A1-30).
   const out = {};
   for (const n of NAMES) out[n] = JSON.parse(JSON.stringify(ctx[n]));

@@ -10,7 +10,7 @@ const { ok, done } = require('./lib');
 
 const SRC = fs.readFileSync(path.join(__dirname, '..', 'workflows', 'role-chain.js'), 'utf8').replace(/^export const meta/m, 'const meta');
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-const CFG = { sharedDir: '/s', worktreeRoot: '/r', scriptsDir: '/p/scripts', reportLanguage: 'English', testerWritable: ['-run\\.js$'] };
+const CFG = { sharedDir: '/s', worktreeRoot: '/r', scriptsDir: '/p/scripts', reportLanguage: 'English', testerWritable: ['-run\\.js$'], conductorFullRun: false };
 const ONE = Object.assign({}, CFG, { guardSubsetCommand: 'true {wt}' });
 const HB = 'b'.repeat(40), HP = 'a'.repeat(40);
 const T = { key: 'x', title: 'X', dir: '/d', wt: '/w', branch: 'b', gdir: 'w', accept: 'acc', kind: 'tail', noAnalysis: 'one-line fix' };

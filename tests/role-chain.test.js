@@ -31,7 +31,7 @@ const SRC = fs.readFileSync(path.join(ROOT, 'workflows', 'role-chain.js'), 'utf8
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
 const CFG = { sharedDir: '/s', worktreeRoot: '/r', scriptsDir: '/p/scripts', reportLanguage: 'Russian', ownerStackReadOnly: 'own', slots: { lockDir: '/slots' },
-  protectedBranches: ['main'], testerWritable: ['-run\\.js$'], roleNotes: { programmer: 'rebuild the bundle' }, threatModel: 'ACCESS.md' };
+  protectedBranches: ['main'], testerWritable: ['-run\\.js$'], conductorFullRun: false, roleNotes: { programmer: 'rebuild the bundle' }, threatModel: 'ACCESS.md' };
 const T = { key: 'x', title: 'X', dir: '/d', wt: '/w', branch: 'b', gdir: 'w', accept: 'acc', kind: 'tail', noAnalysis: 'one-line fix' };
 // T without the analysis marker (exactly one of analystFirst, analysis, noAnalysis is required).
 const bare = (extra) => { const t = Object.assign({}, T, extra); delete t.noAnalysis; return Object.assign(t, extra); };

@@ -37,7 +37,8 @@ const S = (() => {
     let i = m.index + m[0].length - 1, d = 0;
     for (; i < SRC.length; i++) { if (SRC[i] === '{') d++; else if (SRC[i] === '}' && !--d) break; }
     vm.runInContext(SRC.slice(m.index, i + 1).replace(/^const /, 'var ') + ';', ctx);
-    if (m[1] !== 'ENV_SCHEMA') names.push(m[1]); // the env step is the conductor's alone (exec): it never reaches agent()
+    // the env step and the check of a full run log are the conductor's alone (exec): they never reach agent()
+    if (m[1] !== 'ENV_SCHEMA' && m[1] !== 'COPY_SCHEMA') names.push(m[1]);
   }
   const out = {};
   for (const n of names) out[n] = JSON.parse(JSON.stringify(ctx[n]));
@@ -87,7 +88,8 @@ for (const line of SRC.split('\n')) {
     SITES.push({ kind: m[1], role: at && at[1], gp: !!(at && at[2]), effort: ef ? ef[1] : undefined, schema: sc && sc[1], line: line.trim().slice(0, 80) });
   }
   m = /checkOpts\(`([a-z]+):\$\{t\.key\}[^`]*`, [^,]+, ([A-Z_]+_SCHEMA), retry\)/.exec(line);
-  if (m) SITES.push({ kind: m[1], role: null, gp: /agentType: 'general-purpose'/.test(defCheck), effort: (/effort: '([a-z]+)'/.exec(defCheck) || [])[1], schema: m[2], line: line.trim().slice(0, 80), check: true });
+  // the check of a full run log (COPY_SCHEMA) runs only under the conductor's exec, never through agent()
+  if (m && m[2] !== 'COPY_SCHEMA') SITES.push({ kind: m[1], role: null, gp: /agentType: 'general-purpose'/.test(defCheck), effort: (/effort: '([a-z]+)'/.exec(defCheck) || [])[1], schema: m[2], line: line.trim().slice(0, 80), check: true });
 }
 ok('T2 the call sites of role-chain.js are found (14: 8 role labels with prog twice, 6 service labels), each with its agentType and schema',
   SITES.length === 14 && SITES.every((s) => (s.role || s.gp) && S[s.schema]), JSON.stringify(SITES));

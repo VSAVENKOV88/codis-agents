@@ -24,7 +24,7 @@ const W = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'chain-run-t-'))
 const SHARED = path.join(W, 's'), WTR = path.join(W, 'r');
 const CFG = path.join(W, 'codis-agents.json');
 // commitAuthor: on codex the conductor needs an author for the commit channel (the machine may have no git identity).
-fs.writeFileSync(CFG, JSON.stringify({ repoDir: path.join(W, 'repo'), sharedDir: SHARED, worktreeRoot: WTR, guardCommand: 'true {wt}', testerWritable: ['-run\\.js$'],
+fs.writeFileSync(CFG, JSON.stringify({ repoDir: path.join(W, 'repo'), sharedDir: SHARED, worktreeRoot: WTR, guardCommand: 'true {wt}', testerWritable: ['-run\\.js$'], conductorFullRun: false,
   commitAuthor: { name: 'codis-agents', email: 'agents@example.com' } }));
 // One repository; every task's worktree is a detached worktree of its one commit (SHA0), which the fake roles name as head.
 const REPO = path.join(W, 'repo');

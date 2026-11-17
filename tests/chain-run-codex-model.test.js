@@ -57,7 +57,7 @@ const W = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'chain-run-model
 const SHARED = path.join(W, 's'), WTR = path.join(W, 'r'), REPO = path.join(W, 'repo'), RTMP = path.join(W, 'rtmp'), NOID = path.join(W, 'home-noid');
 for (const d of [RTMP, NOID, REPO]) fs.mkdirSync(d, { recursive: true });
 const CFG = path.join(W, 'cfg.json');
-fs.writeFileSync(CFG, JSON.stringify({ repoDir: REPO, sharedDir: SHARED, worktreeRoot: WTR, guardCommand: 'true {wt}', testerWritable: ['-run\\.js$'],
+fs.writeFileSync(CFG, JSON.stringify({ repoDir: REPO, sharedDir: SHARED, worktreeRoot: WTR, guardCommand: 'true {wt}', testerWritable: ['-run\\.js$'], conductorFullRun: false,
   commitAuthor: { name: 'codis-agents', email: 'agents@example.com' } }));
 const OWNER = path.join(W, 'owner.txt');
 fs.writeFileSync(OWNER, 'the owner asked for the test tasks');

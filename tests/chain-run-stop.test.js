@@ -71,7 +71,7 @@ if (process.argv[2] === '--case') {
     } else if (name === 'gates') {
       CR.beginStop('SIGTERM');
       const execs = [];
-      const config = { sharedDir: path.join(W, 's'), worktreeRoot: path.join(W, 'r'), scriptsDir: '/p/scripts', testerWritable: ['-run\\.js$'] };
+      const config = { sharedDir: path.join(W, 's'), worktreeRoot: path.join(W, 'r'), scriptsDir: '/p/scripts', testerWritable: ['-run\\.js$'], conductorFullRun: false };
       const args = { owner: 'the owner', config, tasks: [{ key: 'x', title: 'X', wt: 'w', branch: 'b', accept: 'acc', kind: 'tail', noAnalysis: 'a test task' }] };
       const x = await CR.runScript({ host: 'claude', args, launch: async (plan) => { launched.push(plan.label); return { output: {} }; },
         exec: async (step) => { execs.push(step.label); return { value: null }; }, callsDir: path.join(W, 'calls') });
@@ -84,7 +84,7 @@ if (process.argv[2] === '--case') {
 const W = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'chain-run-stop-')));
 const SHARED = path.join(W, 's'), RUNS = path.join(SHARED, 'runs');
 const CFG = path.join(W, 'codis-agents.json');
-fs.writeFileSync(CFG, JSON.stringify({ repoDir: W, sharedDir: SHARED, worktreeRoot: path.join(W, 'r'), guardCommand: 'true {wt}', testerWritable: ['-run\\.js$'] }));
+fs.writeFileSync(CFG, JSON.stringify({ repoDir: W, sharedDir: SHARED, worktreeRoot: path.join(W, 'r'), guardCommand: 'true {wt}', testerWritable: ['-run\\.js$'], conductorFullRun: false }));
 const KLOG = path.join(W, 'kill.log'), ALLOW = path.join(W, 'allow');
 const sleeps = [];
 const sleepMs = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
