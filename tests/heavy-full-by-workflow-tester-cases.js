@@ -11,6 +11,10 @@
 //       workflow's run; the task goes on: the conductor runs the suite once on the programmer's HEAD, tester and review,
 //       done; the heavy journal holds no queued full run; the stdin of prog and test (body + prompt + host section)
 //       carries the phrases of agents/*.md and offers no --kind full;
+//   TA1s (after review 1, R1): under the mark the role also asks --kind select --base main (the project has no
+//       guardSubsetCommand, so guards-all.sh --select would end 78 = environment): refused before the queue, not the
+//       environment, naming no guard kind; the stdin of prog and test offers no --kind select and no "local selection";
+//       the argv refusal hints no --kind select; without the mark (TA2) the host section still offers --kind select;
 //   TA2 UC-8 (A2'): conductorFullRun false - no mark: the full run of the role is queued as before (heavy.jsonl queued,
 //       kind full) and the argv with guards-all.sh gets the earlier "environment: ... --kind full"; no full run step;
 //   TR  R-full end to end: the conductor stopped (chain-run.js stop) while its full run step runs; resolve --as retry on
@@ -67,6 +71,7 @@ sh('codex', `if [[ $1 == exec && -n $CODIS_HEAVY_BOX ]]; then
   out=$FAKE_CLI_DIR/heavy-\${CODIS_HEAVY_BOX:h:t}.jsonl
   node ${CLIENT} --kind full --max 20 </dev/null >> $out 2>/dev/null
   node ${CLIENT} --max 20 -- zsh ${GA} $PWD </dev/null >> $out 2>/dev/null
+  [[ -e $FAKE_CLI_DIR/ask-select ]] && node ${CLIENT} --kind select --base main --max 20 </dev/null >> $out 2>/dev/null
 fi
 exec node ${FAKE_JS} "$@"`);
 
@@ -150,12 +155,13 @@ const WF = /the workflow runs the full guard run on your HEAD/;
   {
     const w = wtOf('w-on');
     const fd = fakeDir();
+    fs.writeFileSync(path.join(fd, 'ask-select'), '');
     const x = endOf(start('on', w, CFG, fd), CFG);
     const H = head(w);
     const ha = heavyAnswers(fd);
     const calls = ha.map((c) => c.call).sort();
-    const all = ha.flatMap((c) => c.answers);
-    const full = all.filter((a, i) => i % 2 === 0), argvGa = all.filter((a, i) => i % 2 === 1);
+    const full = ha.map((c) => c.answers[0]).filter(Boolean), argvGa = ha.map((c) => c.answers[1]).filter(Boolean);
+    const sel = ha.map((c) => c.answers[2]).filter(Boolean);
     ok('TA1 the task is done: prog -> the conductor\'s own full run on the programmer\'s HEAD (the suite once) -> tester -> review',
       !!x.r && x.r.status === 'done' && runs('w-on').length === 1 && new RegExp(`exit 0 on ${H}`).test(String(x.r.full || '')), why(x) + text(CALLS));
     ok('TA1 the wrapper asked the heavy channel in a prog and in a test call', calls.some((c) => /^prog/.test(c)) && calls.some((c) => /^test/.test(c)), J(calls));
@@ -165,12 +171,17 @@ const WF = /the workflow runs the full guard run on your HEAD/;
       argvGa.length >= 2 && argvGa.every((a) => a.state === 'refused' && !/^environment:/.test(a.why || '') && !/--kind full/.test(a.why || '') && WF.test(a.why || '')), J(argvGa));
     const jr = journal('on');
     ok('TA1 the heavy journal: the refusals are recorded (refused), no request was queued, no slot was held',
-      jr.filter((e) => e.ev === 'refused').length >= 4 && !jr.some((e) => e.ev === 'queued') && !jr.some((e) => e.ev === 'holding'), J(jr));
+      jr.filter((e) => e.ev === 'refused').length >= 6 && !jr.some((e) => e.ev === 'queued') && !jr.some((e) => e.ev === 'holding'), J(jr));
     const pg = (starts(fd, K_PROG)[0] || {}).prompt || '', ts = (starts(fd, K_TEST)[0] || {}).prompt || '';
     ok('TA1/F26e+F26d the stdin of prog: the body\'s phrase, the workflow\'s full run in the host section, no --kind full',
       /When the workflow prompt says the workflow runs the full guard run on your HEAD, run no full run of your own/.test(pg) && WF.test(pg) && !/--kind full/.test(pg), pg.slice(-600));
     ok('TA1/F26e+F26d the stdin of test: the body\'s phrase, the workflow\'s full run in the host section, no --kind full',
       /When the workflow prompt says the workflow ran the full guard run on the HEAD you test, run no full run at all/.test(ts) && WF.test(ts) && !/--kind full/.test(ts), ts.slice(-600));
+    ok('TA1s/R1 every --kind select of prog and test under the mark: refused before the queue, not the environment, naming the workflow\'s run and no guard kind',
+      sel.length >= 2 && sel.length === ha.length && sel.every((a) => a.state === 'refused' && !/^environment:/.test(a.why || '') && WF.test(a.why || '') && !/--kind/.test(a.why || '')), J(sel));
+    ok('TA1s/R1 the argv refusal under the mark hints no --kind select', argvGa.every((a) => !/--kind select/.test(a.why || '')), J(argvGa));
+    ok('TA1s/R1 the stdin of prog and test under the mark offers no --kind select and no local selection',
+      !/--kind select|local selection/.test(pg) && !/--kind select|local selection/.test(ts), pg.slice(-600) + ts.slice(-600));
   }
 
   // ---- TA2: conductorFullRun false - no mark, the earlier path of the channel
@@ -179,8 +190,8 @@ const WF = /the workflow runs the full guard run on your HEAD/;
     const fd = fakeDir();
     const cfg = cfgFile('cfg-off', { conductorFullRun: false });
     const x = endOf(start('off', w, cfg, fd), cfg);
-    const all = heavyAnswers(fd).flatMap((c) => c.answers);
-    const full = all.filter((a, i) => i % 2 === 0), argvGa = all.filter((a, i) => i % 2 === 1);
+    const ha = heavyAnswers(fd);
+    const full = ha.map((c) => c.answers[0]).filter(Boolean), argvGa = ha.map((c) => c.answers[1]).filter(Boolean);
     const jr = journal('off');
     ok('TA2 conductorFullRun false: the task ends with no full run step of the conductor (the suite never ran)', !!x.r && runs('w-off').length === 0 && !fs.existsSync(path.join(x.runDir || T, 'steps', 'off', 'wait-full-1.guards.txt')), why(x));
     ok('TA2/A2\' --kind full of the role is queued as before (heavy.jsonl queued, kind full), not refused by the mark',
@@ -188,6 +199,7 @@ const WF = /the workflow runs the full guard run on your HEAD/;
     ok('TA2/A3 argv with guards-all.sh without the mark: the earlier "environment: ... | --kind full"',
       argvGa.length >= 1 && argvGa.every((a) => a.state === 'refused' && /^environment: guards-all\.sh runs through the channel: .*--kind full/.test(a.why || '')), J(argvGa));
     ok('TA2 the stdin of prog offers --kind full (host section as before)', /heavy-req\.js --kind full/.test((starts(fd, K_PROG)[0] || {}).prompt || ''));
+    ok('TA2/R1 without the mark the stdin of prog still offers --kind select --base <ref>', /heavy-req\.js --kind select --base <ref>/.test((starts(fd, K_PROG)[0] || {}).prompt || ''));
   }
 
   // ---- TR: a stop during the full run step -> resolve retry -> the step again, not the programmer
