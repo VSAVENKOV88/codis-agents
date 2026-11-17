@@ -4,6 +4,29 @@ Every version of the codis-agents plugin, newest first. What the plugin does now
 [README.md](README.md); its [Technical reference](README.md#technical-reference) is the current state of every rule,
 key and script, and this file says when and why each one changed. Versions before 0.4.14 are in the git history.
 
+## 0.4.51 - 2026-11-17
+
+- **The conductor runs the full guard run itself** (p-codex-fullrun-a1; owner 2026-11-16). New project key
+  `conductorFullRun` (default `true`; only without `guardSubsetCommand`, under `scripts/chain-run.js`, any `--host`):
+  the workflow runs `guards-all.sh <worktree>` as a wait step outside every role's sandbox on each new programmer HEAD
+  and on the HEAD of a green tester's own commits, checks the copy of its log (`guards-result.js copy-check`: HEAD, clean
+  tree, exit code, tally) and hands it to the next role. A red run goes back to the programmer; an environment exit
+  code, a signal or a run cut off before its tally stops the task as the environment; a restart reconciles a live step
+  and reuses its result. `false` keeps the earlier path (the programmer runs the full run); the Workflow runtime ignores
+  the key. Why: Codex roles hit EPERM of the nested sandbox on the full suite and the coordinator had to stop and
+  relaunch them by hand.
+- **Codex roles under the mark do not run guard runs** (p-codex-fullrun-a2). When the workflow owns the full run
+  (`cfg.heavy.fullByWorkflow`), the heavy channel of a codex role refuses `--kind full`, `--kind select` and an argv with
+  `guards-all.sh` before the queue, without the prefix `environment:` (the role goes on with its own new and touched
+  guards), and the host section of prog and test offers no guard run. Without the mark nothing changes.
+- `chain-run.js resolve` knows the full run steps (`run:<key>:full-*`, `full-tester-*`, `full-entry` and their copy
+  checks): a stop on such a step continues with that run again, not with a programmer round.
+- Role texts (`agents/programmer.md`, `agents/tester.md`), the rules (`onerun`), the coordinator and role-chain skills and
+  README describe the new path; the README row of `guardSubsetCommand` no longer says the programmer always runs the
+  full run without it.
+- The plugin's own config gets `guardRerun` without `guardBaseline`: new reds of its full run rerun alone in the same
+  slot, timing tests red only under load (`slots-priority`, `slots-fifo`) count as flaky; no quarantine is read or written.
+
 ## 0.4.50 - 2026-11-16
 
 - Codex roles default to `gpt-6.1-sol` with `low` effort; explicit run settings and role effort keep precedence.
