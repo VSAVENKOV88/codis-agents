@@ -4,6 +4,17 @@ Every version of the codis-agents plugin, newest first. What the plugin does now
 [README.md](README.md); its [Technical reference](README.md#technical-reference) is the current state of every rule,
 key and script, and this file says when and why each one changed. Versions before 0.4.14 are in the git history.
 
+## 0.4.52 - 2026-11-19
+
+- **A train verdict is never taken from another task's log** (p-train-log-per-task). Under the Claude Code Workflow the
+  wait steps of a task live in the task folder, which the parts of a split feature share; the step ids were bare
+  (`wait-train-1`, `wait-select-1`), so a task read the finished log of another task's step of the same name: on
+  2026-11-18 acc-addr-issue-perf-b1 took the green train of -b3 for its own and ended "done" while its branch never rode.
+  Now the id carries the task key there (`wait-<task>-train-<n>`, `wait-<task>-select-<n>` and their `.guards.txt`
+  copies; the steps folder of a conductor run is per task and keeps the bare names), and a ride whose last JSON line
+  names another task or head stops the task as the environment, never as a verdict of this task (`tests/train-chain.test.js`
+  W5b).
+
 ## 0.4.51 - 2026-11-17
 
 - **The conductor runs the full guard run itself** (p-codex-fullrun-a1; owner 2026-11-16). New project key

@@ -389,8 +389,12 @@ const RUN_SCHEMA = { type: 'object', properties: {
 }, required: ['done', 'rc', 'log'] }
 // In the steps folder of a run (sdir is not the task folder) an id names one step: --once refuses a second start of it,
 // and the retry of the same step passes --reuse.
+// In the task folder (sdir is the task folder: the Claude Code Workflow) several tasks can share one folder (the parts
+// of a feature), so the id carries the task key: with a bare step name a task read the finished log of another task's
+// step of the same name and took its green train for its own (2026-11-18, -b1 read -b3's wait-train-1.log).
+const stepId = (t, step) => (t.sdir === t.dir ? `${t.sdir}/wait-${t.key}-${step}` : `${t.sdir}/wait-${step}`)
 const runStep1 = (t, step, cmd, retry, phase = 'Selection') => {
-  const id = `${t.sdir}/wait-${step}`
+  const id = stepId(t, step)
   const start = node('wait-step.js').concat([lit('start'), lit('--id'), id, lit('--cwd'), t.wt], retry ? [lit('--reuse')] : [], t.sdir !== t.dir ? [lit('--once')] : [], [lit('--'), cmd])
   const wait = node('wait-step.js').concat([lit('wait'), lit('--id'), id, lit('--max'), lit(270)])
   const opts = checkOpts(`run:${t.key}:${step}`, phase, RUN_SCHEMA, retry)
@@ -429,7 +433,7 @@ const runFail = (step, r) => (!r ? `the wait step ${step} returned no result`
 // selection overwrites it. It is never the log of a full run (guards-<name>.txt): the selection has its own file.
 const selectStep = async (t, n) => {
   const step = `select-${n}`
-  const copy = `${t.sdir}/wait-${step}.guards.txt`
+  const copy = `${stepId(t, step)}.guards.txt`
   const r = await runStep(t, step, `${selectRun(t)}; rc=$?; cp ${sq(`${CFG.sharedDir}/guards-${gname(t)}.select.txt`)} ${sq(copy)} 2>/dev/null; exit $rc`)
   const f = runFail(step, r)
   return f ? { fail: f } : Object.assign({}, r, { guards: copy })
@@ -463,7 +467,7 @@ const fullLine = (r) => `exit ${r.rc} on ${r.head}; summary ${r.log}, full run l
 const fullSeen = (st) => (st && st.full && st.full.head === st.head ? `HEAD ${st.head}: ${fullLine(st.full)}${st.full.rc ? ' - red, explained by the programmer in prog.md' : ''}` : 'none on this HEAD')
 async function fullStep(t, st, tag, where) {
   const step = `full-${tag}`
-  const copy = `${t.sdir}/wait-${step}.guards.txt`
+  const copy = `${stepId(t, step)}.guards.txt`
   const src = `${CFG.sharedDir}/guards-${gname(t)}.txt`
   const head = st.head
   const r = await runStep(t, step, `${fullRun(t)}; rc=$?; cp ${sq(src)} ${sq(copy)} 2>/dev/null; cp ${sq(`${src}.meta.json`)} ${sq(`${copy}.meta.json`)} 2>/dev/null; exit $rc`, 'Full run')
@@ -1262,6 +1266,18 @@ const trainTask = (t, v, res) => {
   if (v === 'conflict') return `The integration train excluded your branch: merging it into the train conflicts (verdict conflict; the files are in ${res}, field files). Your fix: merge the head of the arc branch ${base} into your branch ${t.branch} and resolve the conflict, then check the guards of those files. ${fixTail(t)}${MERGE_GLOBS.length ? ` When every file you resolve matches mergeOnlyFiles (${MERGE_GLOBS.join(', ')}), commit the merge alone - one merge commit, no other edits and no other commits: the workflow then skips the selection (scripts/merge-only.js) and goes to the second review and the train.` : ''}`
   return `The integration train found a seam (verdict seam): your branch is green alone on the arc head but red together with its partner, named in ${res} (partner, partnerBranch; the guards in guards; partnerResult is the partner's own result - it arrived first and rode before you). Your fix: merge the head of the arc branch ${base} into your branch ${t.branch} (it holds the partner once partnerResult is green) and fix the seam with it on that head. ${fixTail(t)}`
 }
+// The task and head of the last JSON line in the tail of a ride that names them, when they are not this task's; '' otherwise
+// (no such line: the verdict stands on the exit code, as before).
+const foreignVerdict = (tail, key, head) => {
+  const lines = String(tail || '').split('\n').map((l) => l.trim()).filter((l) => l.startsWith('{'))
+  for (let i = lines.length - 1; i >= 0; i--) {
+    let o; try { o = JSON.parse(lines[i]) } catch (_) { continue }
+    if (!o || typeof o.task !== 'string' || typeof o.head !== 'string') continue
+    return o.task === key && o.head === head ? '' : `task ${o.task} head ${o.head}`
+  }
+  return ''
+}
+const keepOf = (t, head) => `the queue entry of branch ${t.branch} head ${head}, if train.js status lists it, gets its verdict later without an addressee: relaunch the task alone (its ride takes the ready verdict) or take it by hand with train.js ack --task ${t.key} --head ${head}; when it is not listed, queue it (train.js enqueue)`
 async function ride(t, st, review) {
   if (!ONE_RUN) return Object.assign({ task: t.key, status: 'done', review }, FULL && st.full ? { full: fullLine(st.full) } : {})
   const results = []
@@ -1272,6 +1288,10 @@ async function ride(t, st, review) {
     // the ride may have queued its entry before it died (killed from outside, the Mac asleep or rebooted): then the entry
     // stays with a dead waiter and its verdict comes without an addressee (source S8 of p-verdict-orphan)
     if (f) return stop(t, `${f}; branch ${t.branch} head ${head} - the review accepted it; the ride may have queued it before it stopped: when train.js status lists the entry, its verdict comes later without an addressee - train.js watch (the coordinator's background wait) ends on it, then relaunch the task alone (its ride takes the ready verdict) or take it by hand with train.js ack --task ${t.key} --head ${head}; when it is not listed, the coordinator queues it (train.js enqueue) or relaunches the task alone`, { review })
+    // The verdict must be this task's: the last JSON line of the ride names its task and head; another task or head there
+    // (a log shared by mistake) is the environment, never a verdict of this task.
+    const alien = foreignVerdict(r.tail, t.key, head)
+    if (alien) return stop(t, `train ${n}: the step log ${r.log} holds the verdict of ${alien}, not of task ${t.key} head ${head} - environment: ${keepOf(t, head)}`, { review, environment: alien })
     const v = TRAIN_RC[r.rc]
     const info = { rc: r.rc, verdict: v || 'environment', result: res, log: r.log, tail: r.tail || '' }
     log(`${t.title}: train ${n} - exit ${r.rc}${v ? ` (${v})` : ''}`)

@@ -81,7 +81,7 @@ const G = (train, more = {}) => Object.assign({ pre: [PRE], prog: [PROG], test: 
     x.r.status === 'done' && x.full === `${HEAD}>run:x:train-1>left:x:end`, x.full);
   const tp = unq((trainSteps(x)[0] || { prompt: '' }).prompt);
   ok('W1. the step runs train.js ride with the task, branch, the head after the review, base and folder, through wait-step.js',
-    tp.includes("/p/scripts/train.js ride --task 'x' --branch 'b' --head 'T' --base 'arc' --dir '/d'") && tp.includes("node /p/scripts/wait-step.js start --id '/d/wait-train-1'"), tp);
+    tp.includes("/p/scripts/train.js ride --task 'x' --branch 'b' --head 'T' --base 'arc' --dir '/d'") && tp.includes("node /p/scripts/wait-step.js start --id '/d/wait-x-train-1'"), tp);
   ok('W1. the step names the project config (CODIS_AGENTS_CONFIG), so the dispatcher finds the project from any directory',
     tp.includes("CODIS_AGENTS_CONFIG='/proj/.claude/codis-agents.json'"), tp);
   ok('W1. the train step is a cheap wait step of its own phase "Train"', trainSteps(x)[0] && trainSteps(x)[0].opts.phase === 'Train' && trainSteps(x)[0].opts.model === 'haiku', JSON.stringify(trainSteps(x)[0] && trainSteps(x)[0].opts));
@@ -90,6 +90,19 @@ const G = (train, more = {}) => Object.assign({ pre: [PRE], prog: [PROG], test: 
   // ---- W5: green -> done with the train's result ----
   ok('W5. green -> done; the result names the verdict green and the result file of the dispatcher',
     x.r.status === 'done' && x.r.train && x.r.train.verdict === 'green' && x.r.train.result === '/s/train/result/x-T.json' && x.r.train.log === '/d/wait-train.log', JSON.stringify(x.r));
+
+  // ---- W5b: the verdict of another task or head in the step log -> environment, never green (p-train-log-per-task) ----
+  ok('W5b. the train step id carries the task key (tasks sharing one folder get separate logs)',
+    trainSteps(x)[0] && trainSteps(x)[0].prompt.includes("--id '/d/wait-x-train-1'"), trainSteps(x)[0] && trainSteps(x)[0].prompt);
+  const alienTail = '{"queued":"/s/q.json"}\n{"task":"y","branch":"b-y","head":"T","verdict":"green"}';
+  x = await run(G([ride(0, alienTail)]));
+  ok('W5b. green whose last JSON line names another task -> stopped as the environment, not done',
+    x.r.status === 'stopped' && /environment/.test(x.r.why) && /task y head T/.test(x.r.environment || ''), JSON.stringify(x.r));
+  x = await run(G([ride(0, '{"task":"x","branch":"b","head":"OTHER","verdict":"green"}')]));
+  ok('W5b. green whose last JSON line names this task with another head -> stopped as the environment',
+    x.r.status === 'stopped' && /head OTHER/.test(x.r.environment || ''), JSON.stringify(x.r));
+  x = await run(G([ride(0, '{"queued":"/s/q.json"}\n{"task":"x","branch":"b","head":"T","verdict":"green"}')]));
+  ok('W5b. green whose last JSON line names this task and head -> done', x.r.status === 'done' && x.r.train && x.r.train.verdict === 'green', JSON.stringify(x.r));
 
   // ---- W6: green-unmerged -> done, the merge waits for the coordinator ----
   x = await run(G([ride(10)]));

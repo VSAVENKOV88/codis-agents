@@ -80,15 +80,15 @@ async function partA() {
   // the command is quoted once more for wait-step.js (sq): unquote '\'' for the checks
   const rp = Object.assign({}, rp0, { prompt: rp0.prompt.split("'\\''").join("'") });
   ok('S1. the step runs guards-all.sh --select <base> on the worktree through wait-step.js and copies the selection log',
-    rp.prompt.includes("/p/scripts/guards-all.sh --select 'arc' 'w'") && rp.prompt.includes("'/s/guards-w.select.txt'") && rp.prompt.includes("'/d/wait-select-1.guards.txt'")
-      && rp.prompt.includes("node /p/scripts/wait-step.js start --id '/d/wait-select-1'"), rp.prompt);
+    rp.prompt.includes("/p/scripts/guards-all.sh --select 'arc' 'w'") && rp.prompt.includes("'/s/guards-w.select.txt'") && rp.prompt.includes("'/d/wait-x-select-1.guards.txt'")
+      && rp.prompt.includes("node /p/scripts/wait-step.js start --id '/d/wait-x-select-1'"), rp.prompt);
   ok('S1. no step of the task is a full run: no guards-all.sh without --select, no full-N label', x.prompts.every((p) => !/^run:x:full/.test(p.label))
     && runsOf(x).every((p) => !/guards-all\.sh '/.test(p.prompt)), x.full);
   ok('S1. the step\'s phase is the selection, not "Full run"', rp.opts && rp.opts.phase === 'Selection', rp.opts && rp.opts.phase);
   // S2: the tester gets the log of the selection
   const tp = pOf(x, 'test');
   ok('S2. the tester gets the selection log (its own file), not the log of a full run',
-    tp.includes('/d/wait-select-1.guards.txt') && tp.includes('/d/wait-select-1.log') && !tp.includes('guards-w.txt') && /no full guard run in the task/i.test(tp), tp);
+    tp.includes('/d/wait-x-select-1.guards.txt') && tp.includes('/d/wait-select-1.log') && !tp.includes('guards-w.txt') && /no full guard run in the task/i.test(tp), tp);
   // p-tester-select: the tester's own selection is of its diff from the programmer's HEAD ('P'), not from the base
   ok('S2. the tester runs its selection after its own commits through guards-all.sh --select <the programmer\'s HEAD> in the background',
     tp.includes("/p/scripts/guards-all.sh --select 'P' 'w'") && /run_in_background/.test(tp), tp);
@@ -97,7 +97,7 @@ async function partA() {
   ok('S3. a red selection -> a programmer round with its log -> the selection on the new HEAD -> tester',
     x.r.status === 'done' && x.full === 'pre>prog>run:x:select-1>prog>run:x:select-1f>test>post:x:tester>review>diff:x:reviewer>run:x:train-1>left:x:end', x.full);
   ok('S3. the fix round names the selection log and its copy, and says there is no full run to run',
-    /selection/.test(pOf(x, 'prog', 1)) && pOf(x, 'prog', 1).includes('/d/wait-select-1.guards.txt') && /exited 1/.test(pOf(x, 'prog', 1)), pOf(x, 'prog', 1));
+    /selection/.test(pOf(x, 'prog', 1)) && pOf(x, 'prog', 1).includes('/d/wait-x-select-1.guards.txt') && /exited 1/.test(pOf(x, 'prog', 1)), pOf(x, 'prog', 1));
   x = await run({ pre: [PRE], prog: [PROG, P2, Object.assign({}, PROG, { head: 'P3' })], run: [REDR, REDR, REDR] });
   ok('S3. the selection still red after two fix rounds -> stopped for the coordinator, no tester',
     x.r.status === 'stopped' && x.trace === 'pre>prog>prog>prog' && /selection/.test(x.r.why), JSON.stringify(x.r));
