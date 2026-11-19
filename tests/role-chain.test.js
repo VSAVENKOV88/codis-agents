@@ -472,7 +472,7 @@ async function run(script, task = T, extra = {}) {
     x.r.status === 'done' && x.full === 'pre>prog>run:x:select-1>test>post:x:tester>review>diff:x:reviewer>run:x:train-1>left:x:end', x.full);
   const rp = runsOf(x)[0];
   ok('the full run step: a cheap agent runs wait-step.js start with guards-all.sh on the worktree, then waits in slices of at most 270 s',
-    rp && rp.opts.model === 'haiku' && rp.opts.agentType === 'general-purpose' && rp.prompt.includes("node /p/scripts/wait-step.js start --id '/d/wait-select-1' --cwd '/w'")
+    rp && rp.opts.model === 'haiku' && rp.opts.agentType === 'general-purpose' && rp.prompt.includes("node /p/scripts/wait-step.js start --id '/d/wait-x-select-1' --cwd '/w'")
       && rp.prompt.includes('/p/scripts/guards-all.sh') && rp.prompt.includes('wait-step.js wait') && /--max 270/.test(rp.prompt), rp && rp.prompt);
   // p-codex-B1-b2a (tester): without exec (the Workflow) a wait step lives in the task folder and starts without --once,
   // also when the task carries a field stepDir (only the conductor gives it, and only with exec).
@@ -481,7 +481,7 @@ async function run(script, task = T, extra = {}) {
     const xs = await run(G1(), Object.assign({}, TB, { stepDir: '/elsewhere/steps/x' }), { config: ONE });
     const rs = runsOf(xs)[0];
     ok('B1-b2a under the Workflow a field stepDir is ignored: the wait step and the selection copy stay in the task folder',
-      xs.r.status === 'done' && !!rs && rs.prompt.includes("--id '/d/wait-select-1'") && rs.prompt.includes('/d/wait-select-1.guards.txt') && !rs.prompt.includes('/elsewhere') && !/--once/.test(rs.prompt), rs && rs.prompt);
+      xs.r.status === 'done' && !!rs && rs.prompt.includes("--id '/d/wait-x-select-1'") && rs.prompt.includes('/d/wait-x-select-1.guards.txt') && !rs.prompt.includes('/elsewhere') && !/--once/.test(rs.prompt), rs && rs.prompt);
   }
   // C1 (p-wait, form 1): the full run of the wait step includes the selection (guardSubsetCommand narrows guardCommand),
   // so the programmer runs no selection after its mutations: no guards-select, no heavy.sh for it in its Order line.
@@ -517,7 +517,7 @@ async function run(script, task = T, extra = {}) {
   x = await run({ pre: [PRE], prog: [PROG, Object.assign({}, PROG, { head: 'P2' })], run: [RUN_RED, RUN_OK], test: [{ verdict: 'green', summary: '' }], review: [D] }, TB, { config: ONE });
   ok('a red full run -> a programmer round with its log -> the full run again -> tester',
     x.r.status === 'done' && x.full === 'pre>prog>run:x:select-1>prog>run:x:select-1f>test>post:x:tester>review>diff:x:reviewer>run:x:train-1>left:x:end', x.full);
-  ok('the fix round gets the exit code, the summary and the copied full log', /exited 1/.test(pOf(x, 'prog', 1)) && pOf(x, 'prog', 1).includes('/d/wait-select-1.log') && pOf(x, 'prog', 1).includes('/d/wait-select-1.guards.txt') && /selection log/.test(pOf(x, 'prog', 1)), pOf(x, 'prog', 1));
+  ok('the fix round gets the exit code, the summary and the copied full log', /exited 1/.test(pOf(x, 'prog', 1)) && pOf(x, 'prog', 1).includes('/d/wait-select-1.log') && pOf(x, 'prog', 1).includes('/d/wait-x-select-1.guards.txt') && /selection log/.test(pOf(x, 'prog', 1)), pOf(x, 'prog', 1));
   const nfLine = (pOf(x, 'prog', 1).match(/^The selection of the task's guards the workflow ran.*$/m) || [''])[0];
   ok('C3. the fix round after a red full run: no "selected guards" (the workflow runs the full run again)', nfLine && !/selected guards/.test(nfLine) && /mutations after the commit/.test(nfLine), nfLine);
   ok('W14. the fix round: the environment is a refused queue (77, 78), not "no slot"', !/no slot/.test(pOf(x, 'prog', 1)) && /77/.test(pOf(x, 'prog', 1)), pOf(x, 'prog', 1));
